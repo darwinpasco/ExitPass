@@ -293,10 +293,28 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 semantic_request_hash_source_version = @semantic_request_hash_source_version,
                 semantic_request_hash_source_fact_count = @semantic_request_hash_source_fact_count,
                 semantic_request_hash_safe_summary = @semantic_request_hash_safe_summary,
-                semantic_request_hash_recorded_at = now(),
+                semantic_request_hash_recorded_at = COALESCE(semantic_request_hash_recorded_at, now()),
                 updated_by_service_identity_id = COALESCE(@updated_by_service_identity_id, updated_by_service_identity_id)
             WHERE fiscal_issuance_reference_id = @fiscal_issuance_reference_id
               AND is_active = true
+              AND (
+                    (
+                        semantic_request_hash_status IS NULL
+                        AND semantic_request_hash_value IS NULL
+                        AND semantic_request_hash_algorithm IS NULL
+                        AND semantic_request_hash_source_version IS NULL
+                        AND semantic_request_hash_source_fact_count IS NULL
+                        AND semantic_request_hash_safe_summary IS NULL
+                    )
+                    OR (
+                        semantic_request_hash_status IS NOT DISTINCT FROM @semantic_request_hash_status
+                        AND semantic_request_hash_value IS NOT DISTINCT FROM @semantic_request_hash_value
+                        AND semantic_request_hash_algorithm IS NOT DISTINCT FROM @semantic_request_hash_algorithm
+                        AND semantic_request_hash_source_version IS NOT DISTINCT FROM @semantic_request_hash_source_version
+                        AND semantic_request_hash_source_fact_count IS NOT DISTINCT FROM @semantic_request_hash_source_fact_count
+                        AND semantic_request_hash_safe_summary IS NOT DISTINCT FROM @semantic_request_hash_safe_summary
+                    )
+              )
             RETURNING
                 fiscal_issuance_reference_id,
                 payment_confirmation_id,
@@ -362,7 +380,26 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
         {
-            throw new InvalidOperationException("Fiscal issuance semantic request hash update returned no rows.");
+            await reader.DisposeAsync();
+
+            const string existenceSql = """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM core.fiscal_issuance_references
+                    WHERE fiscal_issuance_reference_id = @fiscal_issuance_reference_id
+                      AND is_active = true
+                );
+                """;
+            await using var existenceCommand = new NpgsqlCommand(existenceSql, connection)
+            {
+                CommandTimeout = 30
+            };
+            existenceCommand.Parameters.AddWithValue("fiscal_issuance_reference_id", fiscalIssuanceReferenceId);
+            var exists = (bool)(await existenceCommand.ExecuteScalarAsync(cancellationToken) ?? false);
+
+            throw new InvalidOperationException(exists
+                ? "fiscal_issuance_semantic_request_hash_conflict"
+                : "Fiscal issuance semantic request hash update returned no rows.");
         }
 
         return MapReference(reader);

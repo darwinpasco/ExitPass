@@ -284,6 +284,66 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
     }
 
     [Fact]
+    public async Task RecordSemanticRequestHashAsync_WhenRetryHashChanges_FailsClosedWithoutReplacingOriginalHash()
+    {
+        await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);
+        var context = PaymentTestContext.Create(nameof(RecordSemanticRequestHashAsync_WhenRetryHashChanges_FailsClosedWithoutReplacingOriginalHash));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed immutable semantic request hash test data.");
+
+        try
+        {
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var repository = CreateRepository();
+            var reference = await repository.CreateAsync(
+                CreateFailureRequest(context, attempt, confirmation),
+                CancellationToken.None);
+            var original = AvailableHash('a');
+            var changed = AvailableHash('b');
+
+            await repository.RecordSemanticRequestHashAsync(
+                reference.FiscalIssuanceReferenceId,
+                original,
+                serviceIdentityId: null,
+                CancellationToken.None);
+            var replay = await repository.RecordSemanticRequestHashAsync(
+                reference.FiscalIssuanceReferenceId,
+                original,
+                serviceIdentityId: null,
+                CancellationToken.None);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                repository.RecordSemanticRequestHashAsync(
+                    reference.FiscalIssuanceReferenceId,
+                    changed,
+                    serviceIdentityId: null,
+                    CancellationToken.None));
+            var found = await repository.FindByPaymentConfirmationIdAsync(
+                confirmation.PaymentConfirmationId,
+                CancellationToken.None);
+
+            Assert.Equal(original.HashValue, replay.SemanticRequestHashValue);
+            Assert.Equal("fiscal_issuance_semantic_request_hash_conflict", exception.Message);
+            Assert.Equal(original.HashValue, found?.SemanticRequestHashValue);
+        }
+        finally
+        {
+            await CleanupFiscalReferenceRowsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    private static FiscalSemanticRequestHashResult AvailableHash(char value) =>
+        new(
+            Status: FiscalSemanticRequestHashSourceStatus.Available,
+            HashValue: new string(value, 64),
+            HashAlgorithm: FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+            HashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+            SourceFactCount: 42,
+            SafeSourceSummary: "semantic_request_hash_source_available:facts=42",
+            BlockReasonCode: null);
+
+    [Fact]
     public async Task RetrySchedulingPreparationAuditRepository_RecordAsync_PersistsAndSummarizesAttempt()
     {
         await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);

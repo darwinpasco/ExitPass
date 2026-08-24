@@ -358,6 +358,33 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
     }
 
     [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenPersistedProfileHashConflicts_DoesNotCallPosServer()
+    {
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var sut = CreateSut(client: client, orchestration: orchestration);
+        orchestration.RecordSemanticRequestHashAsync(
+                FiscalIssuanceReferenceId,
+                Arg.Any<FiscalSemanticRequestHashResult>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<CancellationToken>())
+            .Returns<Task<FiscalIssuanceReferenceRecord>>(_ =>
+                throw new InvalidOperationException("fiscal_issuance_semantic_request_hash_conflict"));
+
+        var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.LocalContextInvalid);
+        result.Errors.Should().ContainSingle()
+            .Which.Should().Be("semantic_request_hash_persistence_failed:fiscal_issuance_semantic_request_hash_conflict");
+        await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
+        await orchestration.DidNotReceiveWithAnyArgs().MarkRequestedAsync(default, default!, default);
+    }
+
+    [Fact]
     public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenNewlyCreatedReturned_AppliesRecordedState()
     {
         var result = await ExecuteWithPosServerResultAsync(
