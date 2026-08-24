@@ -1,0 +1,76 @@
+{
+  "contractId": "management-platform-statutory-benefit-review:v1",
+  "owner": "Central PMS",
+  "consumer": "ExitPass Management Platform",
+  "authority": {
+    "workflow": "Central PMS canonical statutory-benefit decision commands",
+    "requestOrigins": ["WEBPAY", "ASSISTED_PAYMENT_TERMINAL"],
+    "directClientConnections": false,
+    "browserAuthorityHeaders": false
+  },
+  "routes": [
+    {
+      "operationId": "ListManagementStatutoryBenefitRequests",
+      "method": "GET",
+      "path": "/v1/management-platform/statutory-benefit-requests",
+      "permission": "statutory-discounts.review.queue.read",
+      "defaultStatus": "PENDING",
+      "serverPagination": true
+    },
+    {
+      "operationId": "GetManagementStatutoryBenefitRequest",
+      "method": "GET",
+      "path": "/v1/management-platform/statutory-benefit-requests/{decisionCommandReference}",
+      "permission": "statutory-discounts.review.detail.read"
+    },
+    {
+      "operationId": "GetManagementStatutoryBenefitRequestEvidence",
+      "method": "GET",
+      "path": "/v1/management-platform/statutory-benefit-requests/{decisionCommandReference}/evidence",
+      "permission": "statutory-discounts.evidence.review.view",
+      "safeMetadataOnly": true
+    },
+    {
+      "operationId": "DecideManagementStatutoryBenefitRequest",
+      "method": "POST",
+      "path": "/v1/management-platform/statutory-benefit-requests/{decisionCommandReference}/decision",
+      "permissionsByDecision": {
+        "APPROVE": "statutory-discounts.decision.approve",
+        "REJECT": "statutory-discounts.decision.reject"
+      },
+      "csrfRequired": true,
+      "optimisticVersionRequired": true,
+      "idempotencyKeyRequired": true
+    }
+  ],
+  "listFilters": ["status", "siteReference", "sourceChannel", "benefitType", "submittedFrom", "submittedTo", "search", "page", "pageSize"],
+  "statuses": ["PENDING_REVIEW", "APPROVED", "REJECTED"],
+  "benefitTypes": ["SENIOR_CITIZEN", "PWD"],
+  "sourceChannels": ["WEBPAY", "ASSISTED_PAYMENT_TERMINAL"],
+  "currency": {
+    "supported": ["PHP"],
+    "nonPhpPosture": "reject"
+  },
+  "decisionIntegrity": {
+    "terminalStatesImmutable": true,
+    "duplicateSameDecisionIdempotent": true,
+    "conflictingTerminalDecisionStatus": 409,
+    "rejectionReasonRequired": true,
+    "reviewerFromServerSession": true,
+    "decisionTimeServerGenerated": true
+  },
+  "privacy": {
+    "excluded": ["plateNumber", "rawEvidence", "storageLocator", "checksum", "credentials", "tokens", "browserAuthority"],
+    "browserStorageAllowed": false
+  },
+  "errors": [
+    "HUMAN_SESSION_REQUIRED",
+    "CENTRAL_PMS_RBAC_FORBIDDEN",
+    "STATUTORY_BENEFIT_REQUEST_NOT_FOUND_OR_DENIED",
+    "STATUTORY_BENEFIT_REJECTION_REASON_REQUIRED",
+    "STATUTORY_BENEFIT_REVIEW_VERSION_CONFLICT",
+    "STATUTORY_DISCOUNT_DECISION_ALREADY_COMPLETED",
+    "STATUTORY_BENEFIT_CURRENCY_UNSUPPORTED",
+    "STATUTORY_BENEFIT_REVIEW_CSRF_VALIDATION_FAILED"
+  ]
+}

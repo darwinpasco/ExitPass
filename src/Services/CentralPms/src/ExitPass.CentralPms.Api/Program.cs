@@ -178,6 +178,7 @@ app.MapStatutoryEvidenceChannelEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
 app.MapManagementPlatformIdentityRbacInventoryEndpoints();
 app.MapManagementPlatformIdentityAdministrationEndpoints();
+app.MapManagementStatutoryBenefitReviewEndpoints();
 app.MapManagementDashboardReportingEndpoints();
 app.MapManagementPlatformStatutoryDiscountPolicyCoverageEndpoints();
 app.MapManagementPlatformStatutoryEvidenceGovernanceEndpoints();
@@ -801,7 +802,11 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IStatutoryDiscountParkingEligibilityRepository>(_ =>
         new PostgresStatutoryDiscountParkingEligibilityRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IStatutoryDiscountParkingEligibilityResolver, StatutoryDiscountParkingEligibilityResolver>();
-    builder.Services.AddScoped<IOperatorConsoleServiceChannelStatutoryDiscountReviewService, OperatorConsoleServiceChannelStatutoryDiscountReviewService>();
+    builder.Services.AddScoped<OperatorConsoleServiceChannelStatutoryDiscountReviewService>();
+    builder.Services.AddScoped<IOperatorConsoleServiceChannelStatutoryDiscountReviewService>(serviceProvider =>
+        serviceProvider.GetRequiredService<OperatorConsoleServiceChannelStatutoryDiscountReviewService>());
+    builder.Services.AddScoped<IAuthorizedStatutoryBenefitDecisionService>(serviceProvider =>
+        serviceProvider.GetRequiredService<OperatorConsoleServiceChannelStatutoryDiscountReviewService>());
     builder.Services.AddScoped<IOperatorConsoleStatutoryEvidenceReviewRepository>(_ =>
         new OperatorConsoleStatutoryEvidenceReviewRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleStatutoryEvidenceReviewService, OperatorConsoleStatutoryEvidenceReviewService>();
@@ -814,6 +819,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryService, ManagementPlatformIdentityRbacInventoryService>();
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<IIdentityAdministrationActorAccessor, HttpContextIdentityAdministrationActorAccessor>();
+    builder.Services.AddScoped<IManagementStatutoryBenefitReviewRepository>(_ =>
+        new PostgresManagementStatutoryBenefitReviewRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IManagementStatutoryBenefitReviewService, ManagementStatutoryBenefitReviewService>();
     builder.Services.AddOptions<ManagementDashboardReportingOptions>()
         .Bind(builder.Configuration.GetSection(ManagementDashboardReportingOptions.SectionName))
         .Validate(

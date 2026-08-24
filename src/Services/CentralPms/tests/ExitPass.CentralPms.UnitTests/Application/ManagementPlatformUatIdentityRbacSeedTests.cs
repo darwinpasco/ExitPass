@@ -11,6 +11,7 @@ public sealed class ManagementPlatformUatIdentityRbacSeedTests
         "SYSTEM_RBAC_ADMINISTRATOR",
         "PLATFORM_ADMINISTRATOR",
         "OPERATIONS_SUPERVISOR",
+        "HEAD_OFFICE_STATUTORY_BENEFIT_REVIEWER",
         "OPERATOR_SUPPORT_STAFF",
         "FINANCE_RECONCILIATION_ANALYST",
         "COMPLIANCE_POLICY_ADMINISTRATOR",
@@ -53,7 +54,16 @@ public sealed class ManagementPlatformUatIdentityRbacSeedTests
         var sql = ReadRepoFile("scripts", "management-platform", "Seed-ManagementPlatformUatIdentityRbac.sql");
         var rolePermissions = ExtractRolePermissions(sql);
 
-        rolePermissions.Should().HaveCount(7);
+        rolePermissions.Should().HaveCount(8);
+
+        rolePermissions["HEAD_OFFICE_STATUTORY_BENEFIT_REVIEWER"].Should().BeEquivalentTo(
+            [
+                "statutory-discounts.review.queue.read",
+                "statutory-discounts.review.detail.read",
+                "statutory-discounts.evidence.review.view",
+                "statutory-discounts.decision.approve",
+                "statutory-discounts.decision.reject"
+            ]);
 
         rolePermissions["SYSTEM_RBAC_ADMINISTRATOR"].Should().Contain("management-platform.identity-rbac.inventory.read");
         rolePermissions["SYSTEM_RBAC_ADMINISTRATOR"].Should().Contain("rbac.manage");
