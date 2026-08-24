@@ -788,11 +788,14 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
       const search = new URLSearchParams({
         status: input.status,
         page: String(input.page),
-        pageSize: String(input.pageSize)
+        pageSize: String(input.pageSize),
+        correlationId
       });
       if (input.siteId) search.set("siteId", input.siteId);
       if (input.sourceChannel) search.set("sourceChannel", input.sourceChannel);
       if (input.entitlementType) search.set("entitlementType", input.entitlementType);
+      if (input.submittedFrom) search.set("submittedFrom", input.submittedFrom);
+      if (input.submittedTo) search.set("submittedTo", input.submittedTo);
       if (input.search?.trim()) search.set("search", input.search.trim());
       const response = await fetch(`${baseUrl}/v1/ops/operator-console/statutory-discounts/reviews?${search}`, {
         method: "GET",
@@ -804,9 +807,10 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
     },
 
     async getCanonicalStatutoryReview(decisionId, signal) {
+      const correlationId = newCorrelationId();
       const response = await fetch(
-        `${baseUrl}/v1/ops/operator-console/statutory-discounts/reviews/${encodeURIComponent(decisionId)}`,
-        { method: "GET", headers: operatorConsoleHeaders(newCorrelationId()), cache: "no-store", signal }
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/reviews/${encodeURIComponent(decisionId)}?correlationId=${correlationId}`,
+        { method: "GET", headers: operatorConsoleHeaders(correlationId), cache: "no-store", signal }
       );
       const detail = await parseResponse<CanonicalStatutoryReviewDetail>(response);
       detail.currency = requirePhpCurrencyForAmounts(

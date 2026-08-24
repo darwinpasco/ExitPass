@@ -132,6 +132,8 @@ export interface CanonicalStatutoryReviewFilters {
   siteId?: string;
   sourceChannel?: "WEBPAY" | "ASSISTED_PAYMENT_TERMINAL";
   entitlementType?: string;
+  submittedFrom?: string;
+  submittedTo?: string;
   search?: string;
   page: number;
   pageSize: number;

@@ -93,6 +93,9 @@ const fixturePermissions = [
   "statutory-discounts.request.create",
   "statutory-discounts.review.queue.view",
   "statutory-discounts.review.detail.view",
+  "statutory-discounts.review.queue.read",
+  "statutory-discounts.review.detail.read",
+  "statutory-discounts.decision.review",
   "statutory-discounts.decision.approve",
   "statutory-discounts.decision.reject",
   "statutory-discounts.evidence.review.view",
@@ -619,6 +622,43 @@ function reviewEvidence(draft) {
   };
 }
 
+function canonicalReviewItem(draft) {
+  return {
+    statutoryDiscountDecisionCommandId: draft.statutoryDiscountDecisionCommandId,
+    requestReference: `STAT-${draft.statutoryDiscountDecisionCommandId.slice(0, 8)}`,
+    parkingSessionId: draft.parkingSessionId,
+    sourceChannel: "WEBPAY",
+    siteId: draft.siteId,
+    siteGroupId: draft.siteGroupId,
+    ticketReference: draft.ticketReference,
+    entitlementType: draft.entitlementType === "PWD" ? "PWD" : "SENIOR_CITIZEN",
+    commandStatus: "AWAITING_REVIEW",
+    decisionResultStatus: "NOT_DECIDED",
+    reviewStatus: "PENDING_REVIEW",
+    evidenceRequired: true,
+    evidenceRecorded: true,
+    submittedAt: draft.requestedAt
+  };
+}
+
+function canonicalReviewDetail(draft) {
+  return {
+    ...canonicalReviewItem(draft),
+    evidenceReferences: [{
+      evidenceType: draft.entitlementType === "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID",
+      captureMethod: "UPLOAD",
+      referenceNumberMasked: "***1234",
+      verificationStatus: "RECORDED"
+    }],
+    requesterAttestation: true,
+    originalAmountMinorUnits: draft.originalAmountMinorUnits,
+    finalPayableAmountMinorUnits: draft.finalPayableAmountMinorUnits,
+    currency: "PHP",
+    payableBasisApplicationStatus: "PENDING_DECISION",
+    correlationId: "65000000-0000-0000-0000-000000000001"
+  };
+}
+
 function reviewEvidenceItem(scenario) {
   const item = {
     evidenceItemReference: "64000000-0000-0000-0000-000000000001",
@@ -803,6 +843,58 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname === "/v1/ops/operator-console/statutory-discounts/drafts" && request.method === "GET") {
       writeJson(response, 200, { items: Array.from(drafts.values()) });
+      return;
+    }
+
+    if (url.pathname === "/v1/ops/operator-console/statutory-discounts/reviews" && request.method === "GET") {
+      const requestedOrigin = url.searchParams.get("sourceChannel");
+      const requestedSearch = url.searchParams.get("search")?.trim().toUpperCase();
+      const candidates = Array.from(drafts.values()).filter((draft) => draft.statutoryDiscountDecisionCommandId);
+      const items = candidates
+        .map(canonicalReviewItem)
+        .filter((item) => (!requestedOrigin || item.sourceChannel === requestedOrigin) &&
+          (!requestedSearch || JSON.stringify(item).toUpperCase().includes(requestedSearch)));
+      writeJson(response, 200, {
+        items: items.slice(0, 25), totalCount: items.length, page: 1, pageSize: 25,
+        hasMore: items.length > 25, correlationId: "65000000-0000-0000-0000-000000000002"
+      });
+      return;
+    }
+
+    const canonicalDecisionMatch = url.pathname.match(
+      /^\/v1\/ops\/operator-console\/statutory-discounts\/reviews\/([^/]+)\/decision$/
+    );
+    if (canonicalDecisionMatch && request.method === "POST") {
+      const decisionId = decodeURIComponent(canonicalDecisionMatch[1]);
+      const draft = Array.from(drafts.values()).find((item) => item.statutoryDiscountDecisionCommandId === decisionId);
+      const body = await readJson(request);
+      if (!draft) {
+        writeJson(response, 404, { errorCode: "NOT_FOUND", message: "Fixture review not found." });
+        return;
+      }
+      writeJson(response, 200, {
+        decisionAccepted: true,
+        decisionPersisted: true,
+        currentDecisionResultStatus: body.decision === "REJECT" ? "REJECTED" : "APPROVED",
+        decision: body.decision,
+        alreadyDecided: false,
+        decisionChanged: true,
+        correlationId: "65000000-0000-0000-0000-000000000003"
+      });
+      return;
+    }
+
+    const canonicalDetailMatch = url.pathname.match(
+      /^\/v1\/ops\/operator-console\/statutory-discounts\/reviews\/([^/]+)$/
+    );
+    if (canonicalDetailMatch && request.method === "GET") {
+      const decisionId = decodeURIComponent(canonicalDetailMatch[1]);
+      const draft = Array.from(drafts.values()).find((item) => item.statutoryDiscountDecisionCommandId === decisionId);
+      if (!draft) {
+        writeJson(response, 404, { errorCode: "NOT_FOUND", message: "Fixture review not found." });
+        return;
+      }
+      writeJson(response, 200, canonicalReviewDetail(draft));
       return;
     }
 

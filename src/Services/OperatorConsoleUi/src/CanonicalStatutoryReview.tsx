@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { OperatorConsoleApiClient } from "./apiClient";
 import { mapApiError } from "./apiClient";
 import type { OperatorConsoleHumanSession } from "./humanAuthentication";
@@ -12,7 +12,7 @@ import type {
 
 type QueueState =
   | { status: "loading" }
-  | { status: "ready"; data: CanonicalStatutoryReviewQueueResult; staleMessage?: string }
+  | { status: "ready"; data: CanonicalStatutoryReviewQueueResult; loadedAt: string; staleMessage?: string }
   | { status: "empty" }
   | { status: "denied"; message: string }
   | { status: "unavailable"; message: string }
@@ -61,13 +61,18 @@ export function CanonicalStatutoryReviewQueuePage({
     void client.listCanonicalStatutoryReviews(filters, controller.signal)
       .then((data) => {
         if (controller.signal.aborted || sequence !== requestSequence.current) return;
-        setState(data.items.length ? { status: "ready", data } : { status: "empty" });
+        setState(data.items.length ? { status: "ready", data, loadedAt: new Date().toISOString() } : { status: "empty" });
       })
       .catch((error) => {
         if (controller.signal.aborted || sequence !== requestSequence.current) return;
         const mapped = mapApiError(error);
         if (prior) {
-          setState({ status: "ready", data: prior, staleMessage: "Refresh failed. Showing the last successfully loaded queue." });
+          setState({
+            status: "ready",
+            data: prior,
+            loadedAt: state.status === "ready" ? state.loadedAt : new Date().toISOString(),
+            staleMessage: "Refresh failed. Showing retained results from the last successful load."
+          });
         } else if (mapped.status === "access-denied") {
           setState({ status: "denied", message: mapped.message });
         } else if (isUnavailable(error, mapped.errorCode)) {
@@ -103,7 +108,7 @@ export function CanonicalStatutoryReviewQueuePage({
             <option value="PENDING_REVIEW">Pending</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option><option value="REVIEW_FACTS_UNAVAILABLE">Unavailable facts</option><option value="ALL">All</option>
           </select></label>
           {showSiteFilter && <label>Site<select value={draftFilters.siteId ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, siteId: event.target.value || undefined })}>
-            <option value="">All authorized Sites</option>{session?.siteReferences.map((site) => <option key={site} value={site}>{site}</option>)}
+            <option value="">All authorized Sites</option>{session?.siteReferences.map((site) => <option key={site} value={site}>{siteLabel(site)}</option>)}
           </select></label>}
           <label>Benefit<select value={draftFilters.entitlementType ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, entitlementType: event.target.value || undefined })}>
             <option value="">All types</option><option value="SENIOR_CITIZEN">Senior Citizen</option><option value="PWD">PWD</option>
@@ -111,6 +116,8 @@ export function CanonicalStatutoryReviewQueuePage({
           <label>Origin<select value={draftFilters.sourceChannel ?? ""} onChange={(event) => setDraftFilters({ ...draftFilters, sourceChannel: (event.target.value || undefined) as CanonicalStatutoryReviewFilters["sourceChannel"] })}>
             <option value="">All channels</option><option value="WEBPAY">WebPay</option><option value="ASSISTED_PAYMENT_TERMINAL">APT</option>
           </select></label>
+          <label>Submitted from<input type="datetime-local" value={toLocalDateTimeInput(draftFilters.submittedFrom)} onChange={(event) => setDraftFilters({ ...draftFilters, submittedFrom: fromLocalDateTimeInput(event.target.value) })} /></label>
+          <label>Submitted to<input type="datetime-local" value={toLocalDateTimeInput(draftFilters.submittedTo)} onChange={(event) => setDraftFilters({ ...draftFilters, submittedTo: fromLocalDateTimeInput(event.target.value) })} /></label>
           <label className="canonicalReviewSearch">Safe search<input aria-describedby="canonical-search-help" value={draftFilters.search ?? ""} maxLength={100} onChange={(event) => setDraftFilters({ ...draftFilters, search: event.target.value })} /></label>
           <span id="canonical-search-help" className="fieldHint">Request, parking session, ticket, or plate reference.</span>
           <button type="submit">Apply filters</button>
@@ -125,10 +132,10 @@ export function CanonicalStatutoryReviewQueuePage({
         {state.status === "unavailable" && <ReviewState title="Central PMS unavailable" message={state.message} />}
         {state.status === "failed" && <ReviewState title="Queue failed" message={state.message} />}
         {state.status === "ready" && <>
-          {state.staleMessage && <p className="notice" role="status">{state.staleMessage}</p>}
+          {state.staleMessage && <p className="notice" role="status">{state.staleMessage} Loaded {formatDate(state.loadedAt)}.</p>}
           <div className="tableScroller"><table><thead><tr><th>Request</th><th>Site</th><th>Origin</th><th>Benefit</th><th>Submitted</th><th>Status</th><th>Parking / ticket</th><th>Action</th></tr></thead>
             <tbody>{state.data.items.map((item) => <tr key={item.statutoryDiscountDecisionCommandId}>
-              <td><code>{shortReference(item.requestReference)}</code></td><td>{item.siteId ?? "—"}</td><td>{originLabel(item.sourceChannel)}</td><td>{benefitLabel(item.entitlementType)}</td><td>{formatDate(item.submittedAt)}</td><td><span className="statusPill">{statusLabel(item.reviewStatus)}</span></td><td>{item.ticketReference ?? shortReference(item.parkingSessionId)}</td><td><button type="button" onClick={() => onOpen(item.statutoryDiscountDecisionCommandId)}>Review</button></td>
+              <td><code>{shortReference(item.requestReference)}</code></td><td>{siteLabel(item.siteId)}</td><td>{originLabel(item.sourceChannel)}</td><td>{benefitLabel(item.entitlementType)}</td><td>{formatDate(item.submittedAt)}</td><td><span className="statusPill">{statusLabel(item.reviewStatus)}</span></td><td>{item.ticketReference ?? shortReference(item.parkingSessionId)}</td><td><button type="button" onClick={() => onOpen(item.statutoryDiscountDecisionCommandId)}>Review</button></td>
             </tr>)}</tbody></table></div>
           <div className="paginationBar"><button type="button" disabled={filters.page <= 1} onClick={() => onFiltersChange({ ...filters, page: filters.page - 1 })}>Previous</button><span>Page {state.data.page}</span><button type="button" disabled={!state.data.hasMore} onClick={() => onFiltersChange({ ...filters, page: filters.page + 1 })}>Next</button></div>
         </>}
@@ -148,6 +155,10 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
   const [error, setError] = useState<string>();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const requestSequence = useRef(0);
+  const approveButtonRef = useRef<HTMLButtonElement>(null);
+  const rejectButtonRef = useRef<HTMLButtonElement>(null);
+  const confirmButtonRef = useRef<HTMLButtonElement>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => headingRef.current?.focus(), []);
   useEffect(() => {
@@ -171,6 +182,35 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
   const terminal = detail ? detail.reviewStatus !== "PENDING_REVIEW" : true;
   const canApprove = client.canApproveStatutoryDiscount?.() ?? false;
   const canReject = client.canRejectStatutoryDiscount?.() ?? false;
+
+  useEffect(() => {
+    if (confirming) (attested ? confirmButtonRef.current : cancelButtonRef.current)?.focus();
+  }, [confirming, attested]);
+
+  function closeConfirmation() {
+    const action = confirming;
+    setConfirming(null);
+    queueMicrotask(() => (action === "APPROVE" ? approveButtonRef.current : rejectButtonRef.current)?.focus());
+  }
+
+  function containConfirmationFocus(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape" && !submitting) {
+      event.preventDefault();
+      closeConfirmation();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const first = confirmButtonRef.current;
+    const last = cancelButtonRef.current;
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   async function decide() {
     if (!detail || !confirming || submitting) return;
@@ -208,7 +248,7 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
     {detail && <>
       <section className="pageTitle"><div><p className="eyebrow">Central PMS statutory review</p><h2 ref={headingRef} tabIndex={-1}>{benefitLabel(detail.entitlementType)}</h2><p>Request {shortReference(detail.requestReference)}</p></div><span className="statusPill">{statusLabel(detail.reviewStatus)}</span></section>
       <section className="panel canonicalReviewSummary" aria-labelledby="review-request-facts"><h3 id="review-request-facts">Request facts</h3><dl>
-        <dt>Request reference</dt><dd>{detail.requestReference}</dd><dt>Site</dt><dd>{detail.siteId ?? "—"}</dd><dt>Originating channel</dt><dd>{originLabel(detail.sourceChannel)}</dd><dt>Parking session / ticket</dt><dd>{detail.ticketReference ?? detail.parkingSessionId}</dd><dt>Benefit</dt><dd>{benefitLabel(detail.entitlementType)}</dd><dt>Submitted</dt><dd>{formatDate(detail.submittedAt)}</dd><dt>Workflow status</dt><dd>{statusLabel(detail.reviewStatus)}</dd>
+        <dt>Request reference</dt><dd>{detail.requestReference}</dd><dt>Site</dt><dd>{siteLabel(detail.siteId)}</dd><dt>Originating channel</dt><dd>{originLabel(detail.sourceChannel)}</dd><dt>Parking session / ticket</dt><dd>{detail.ticketReference ?? detail.parkingSessionId}</dd><dt>Benefit</dt><dd>{benefitLabel(detail.entitlementType)}</dd><dt>Submitted</dt><dd>{formatDate(detail.submittedAt)}</dd><dt>Workflow status</dt><dd>{statusLabel(detail.reviewStatus)}</dd>
         {detail.reviewedAt && <><dt>Decided</dt><dd>{formatDate(detail.reviewedAt)}</dd></>}{detail.reviewerUserId && <><dt>Reviewer</dt><dd>{detail.reviewerUserId}</dd></>}{detail.reviewerDecision && <><dt>Decision</dt><dd>{detail.reviewerDecision}</dd></>}{detail.reviewerReasonCode && <><dt>Reason</dt><dd>{detail.reviewerReasonCode}</dd></>}{detail.payableBasisApplicationStatus && <><dt>Payable-basis status (read-only)</dt><dd>{detail.payableBasisApplicationStatus}</dd></>}
       </dl></section>
       {(detail.originalAmountMinorUnits !== undefined || detail.finalPayableAmountMinorUnits !== undefined) && <section className="panel" aria-labelledby="review-amounts"><h3 id="review-amounts">Amounts (read-only)</h3><p>Original: {formatPhpMoney(detail.originalAmountMinorUnits, detail.currency)}</p><p>Final payable: {formatPhpMoney(detail.finalPayableAmountMinorUnits, detail.currency)}</p></section>}
@@ -216,9 +256,11 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
       <section className="panel" aria-labelledby="canonical-decision"><div className="panelHeader"><h3 id="canonical-decision">Decision</h3><span className="statusPill">{terminal ? "Final" : "Pending"}</span></div>
         {message && <p className="successMessage" role="status">{message}</p>}{error && <p className="errorMessage" role="alert">{error}</p>}
         {terminal ? <p>The Central PMS decision is final and cannot be changed in Operator Console.</p> : <>
-          <label className="attestationField"><input type="checkbox" checked={attested} onChange={(event) => setAttested(event.target.checked)} />I reviewed the required evidence and authoritative request facts.</label>
-          {canReject && <label className="reasonField">Rejection reason<select value={reason} onChange={(event) => setReason(event.target.value)}><option value="">Select a reason</option><option value="EVIDENCE_INCOMPLETE">Evidence incomplete</option><option value="EVIDENCE_INVALID">Evidence invalid</option><option value="ENTITLEMENT_NOT_ESTABLISHED">Entitlement not established</option><option value="REQUEST_FACTS_MISMATCH">Request facts mismatch</option></select></label>}
-          {!confirming ? <div className="actionBar">{canApprove && <button type="button" disabled={submitting} onClick={() => setConfirming("APPROVE")}>Approve</button>}{canReject && <button type="button" disabled={submitting || !reason} onClick={() => setConfirming("REJECT")}>Reject</button>}</div> : <div className="decisionConfirmation" role="alertdialog" aria-labelledby="decision-confirm-title"><h4 id="decision-confirm-title">Confirm {confirming === "APPROVE" ? "approval" : "rejection"}</h4><p>Central PMS will record this as an immutable final decision.</p><div className="actionBar"><button type="button" disabled={submitting || !attested} onClick={() => void decide()}>{submitting ? "Submitting" : "Confirm decision"}</button><button type="button" className="secondaryButton" disabled={submitting} onClick={() => setConfirming(null)}>Cancel</button></div></div>}
+          <label className="attestationField"><input type="checkbox" aria-describedby="canonical-attestation-help" checked={attested} onChange={(event) => setAttested(event.target.checked)} />I reviewed the required evidence and authoritative request facts.</label>
+          <p id="canonical-attestation-help" className="fieldHint">Required before Central PMS can record a decision.</p>
+          {canReject && <label className="reasonField">Rejection reason<select aria-describedby="canonical-rejection-help" value={reason} onChange={(event) => setReason(event.target.value)}><option value="">Select a reason</option><option value="EVIDENCE_INCOMPLETE">Evidence incomplete</option><option value="EVIDENCE_INVALID">Evidence invalid</option><option value="ENTITLEMENT_NOT_ESTABLISHED">Entitlement not established</option><option value="REQUEST_FACTS_MISMATCH">Request facts mismatch</option></select></label>}
+          {canReject && <p id="canonical-rejection-help" className="fieldHint">Required for rejection.</p>}
+          {!confirming ? <div className="actionBar">{canApprove && <button ref={approveButtonRef} type="button" disabled={submitting} onClick={() => setConfirming("APPROVE")}>Approve</button>}{canReject && <button ref={rejectButtonRef} type="button" disabled={submitting || !reason} onClick={() => setConfirming("REJECT")}>Reject</button>}</div> : <div className="decisionConfirmation" role="alertdialog" aria-modal="true" aria-labelledby="decision-confirm-title" aria-describedby="decision-confirm-description" onKeyDown={containConfirmationFocus}><h4 id="decision-confirm-title">Confirm {confirming === "APPROVE" ? "approval" : "rejection"}</h4><p id="decision-confirm-description">Central PMS will record this as an immutable final decision.</p><div className="actionBar"><button ref={confirmButtonRef} type="button" disabled={submitting || !attested} onClick={() => void decide()}>{submitting ? "Submitting" : "Confirm decision"}</button><button ref={cancelButtonRef} type="button" className="secondaryButton" disabled={submitting} onClick={closeConfirmation}>Cancel</button></div></div>}
         </>}
       </section>
     </>}
@@ -228,7 +270,10 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
 function ReviewState({ title, message }: { title: string; message: string }) { return <div className="stateMessage" role="status"><h3>{title}</h3><p>{message}</p></div>; }
 function isUnavailable(error: unknown, code?: string) { return error instanceof TypeError || Boolean(code?.includes("UNAVAILABLE")); }
 function shortReference(value: string) { return value.length > 12 ? `${value.slice(0, 8)}…` : value; }
+function siteLabel(value?: string) { return value ? `Site ${shortReference(value)}` : "—"; }
 function formatDate(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-PH", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Manila" }).format(date); }
+function toLocalDateTimeInput(value?: string) { if (!value) return ""; const date = new Date(value); if (Number.isNaN(date.getTime())) return ""; const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000); return local.toISOString().slice(0, 16); }
+function fromLocalDateTimeInput(value: string) { if (!value) return undefined; const date = new Date(value); return Number.isNaN(date.getTime()) ? undefined : date.toISOString(); }
 function originLabel(value: string) { return value === "ASSISTED_PAYMENT_TERMINAL" ? "APT" : value === "WEBPAY" ? "WebPay" : value; }
 function benefitLabel(value: string) { return value === "SENIOR_CITIZEN" ? "Senior Citizen" : value === "PWD" ? "Person with Disability" : value; }
 function statusLabel(value: string) { return value.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase()); }

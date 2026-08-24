@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
 
-const workspacePath = "/operator-console/statutory-discounts/evidence-eligible-png";
+const workspacePath = "/operator-console/statutory-discounts/61000000-0000-0000-0000-000000000002";
+const evidenceDeniedPath = "/operator-console/statutory-discounts/61000000-0000-0000-0000-000000000017";
 const prohibitedAuthorityHeaders = [
   "authorization",
   "x-operator-user-id",
@@ -26,7 +27,7 @@ test.describe("Operator Console I-020 human authentication", () => {
     await page.getByLabel("Password").fill("operator-password");
     await page.getByRole("button", { name: "Sign in" }).click();
 
-    await expect(page.getByRole("heading", { name: "Secure evidence review" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Person with Disability" })).toBeVisible();
     await expect(page.getByLabel("Operator identity")).toContainText("Review Operator");
     await expect(page.getByLabel("Operator identity")).toContainText("review.operator");
     await expect(page.getByLabel("Operator identity")).toContainText("1 Site, 1 Site Group");
@@ -41,7 +42,7 @@ test.describe("Operator Console I-020 human authentication", () => {
     });
 
     await page.reload();
-    await expect(page.getByRole("heading", { name: "Secure evidence review" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Person with Disability" })).toBeVisible();
     await expect(page.getByLabel("Operator identity")).toContainText("Review Operator");
     expect(await findApplicationGuidOccurrences(page)).toEqual([]);
     expect(requests.filter((request) => request.url().endsWith("/v1/human-authentication/login"))).toHaveLength(1);
@@ -66,12 +67,12 @@ test.describe("Operator Console I-020 human authentication", () => {
     const requests: Request[] = [];
     page.on("request", (request) => requests.push(request));
     await page.goto(workspacePath);
-    await expect(page.getByRole("heading", { name: "Secure evidence review" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Person with Disability" })).toBeVisible();
 
     await page.getByRole("button", { name: "Sign out" }).click();
     await expect(page.getByRole("heading", { name: "Staff sign in" })).toBeVisible();
     await expect(page.getByRole("alert")).toHaveText("You have signed out.");
-    await expect(page.getByRole("heading", { name: "Secure evidence review" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Person with Disability" })).toHaveCount(0);
 
     const logoutRequest = requests.find((request) => request.url().endsWith("/v1/human-authentication/logout"));
     expect(logoutRequest?.method()).toBe("POST");
@@ -96,7 +97,7 @@ test.describe("Operator Console I-020 human authentication", () => {
   });
 
   test("a backend 403 remains an authenticated safe denial", async ({ page }) => {
-    await page.goto("/operator-console/statutory-discounts/evidence-permission-denied");
+    await page.goto(evidenceDeniedPath);
     await expect(page.getByRole("alert")).toContainText("no longer have access");
     await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Staff sign in" })).toHaveCount(0);
@@ -108,7 +109,7 @@ test.describe("Operator Console I-020 human authentication", () => {
       if (request.url().endsWith("/evidence")) evidenceMetadataRequests += 1;
     });
     await page.goto(workspacePath);
-    await expect(page.getByRole("heading", { name: "Secure evidence review" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Person with Disability" })).toBeVisible();
     const requestsBeforeRevocation = evidenceMetadataRequests;
 
     await page.context().addCookies([{
@@ -122,7 +123,7 @@ test.describe("Operator Console I-020 human authentication", () => {
 
     await expect(page.getByRole("heading", { name: "Staff sign in" })).toBeVisible();
     await expect(page.getByRole("alert")).toHaveText("Your session ended. Sign in again.");
-    await expect(page.getByRole("heading", { name: "Secure evidence review" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Person with Disability" })).toHaveCount(0);
     expect(evidenceMetadataRequests).toBe(requestsBeforeRevocation + 1);
     await page.waitForTimeout(150);
     expect(evidenceMetadataRequests).toBe(requestsBeforeRevocation + 1);
@@ -131,13 +132,14 @@ test.describe("Operator Console I-020 human authentication", () => {
   test("decision requests carry workflow facts but no browser-authored reviewer authority", async ({ page }) => {
     const requests: Request[] = [];
     page.on("request", (request) => requests.push(request));
-    await page.goto("/operator-console/statutory-discounts/senior-representative-optional");
-    await page.getByLabel(/I verified the required beneficiary documents/i).check();
+    await page.goto(workspacePath);
+    await page.getByLabel(/I reviewed the required evidence/i).check();
     await page.getByRole("button", { name: "Approve" }).click();
-    await expect(page.getByText("Decision saved.")).toBeVisible();
+    await page.getByRole("button", { name: "Confirm decision" }).click();
+    await expect(page.getByText(/Decision recorded: APPROVED/i)).toBeVisible();
 
     const decisionRequest = requests.find(
-      (request) => request.method() === "POST" && /\/statutory-discounts\/[^/]+\/decision$/.test(new URL(request.url()).pathname)
+      (request) => request.method() === "POST" && /\/statutory-discounts\/reviews\/[^/]+\/decision$/.test(new URL(request.url()).pathname)
     );
     expect(decisionRequest).toBeDefined();
     const body = decisionRequest?.postDataJSON() as Record<string, unknown>;
@@ -160,7 +162,7 @@ test.describe("Operator Console I-020 human authentication", () => {
     await page.keyboard.press("Tab");
     await expect(page.getByRole("button", { name: "Sign in" })).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("heading", { name: "Statutory discount validation foundation" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Operator Console" })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
   });
 });

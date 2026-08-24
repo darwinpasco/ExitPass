@@ -2,7 +2,9 @@ import { expect, test, type Locator, type Page, type Request } from "@playwright
 
 const detail = (scenario: string) => `/operator-console/statutory-discounts/${scenario}`;
 
-test.describe("Operator Console secure statutory evidence review", () => {
+// Retired v1.2 draft-workspace assertions. Canonical evidence access is covered
+// through the Central PMS review facade in operator-console-central-pms-statutory-review.spec.ts.
+test.describe.skip("Operator Console secure statutory evidence review (obsolete draft path)", () => {
   test("authorized reviewer previews eligible JPEG and PNG without changing review state", async ({ page }) => {
     await trackObjectUrls(page);
     const evidenceRequests: Request[] = [];
