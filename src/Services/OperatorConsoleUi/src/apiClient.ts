@@ -5,8 +5,6 @@ import type {
   AuditReportResponse,
   DraftStatus,
   EntitlementType,
-  FiscalIssuanceVoidInput,
-  FiscalIssuanceVoidResult,
   FiscalIssuanceStatus,
   FiscalVoidActionAuditReportQuery,
   FiscalVoidActionAuditReportResponse,
@@ -50,13 +48,13 @@ import type {
   VendorSessionProjectionHealthTargetsResponse,
   VendorSessionProjectionHealthSummary
 } from "./types";
+import { formatPhpMoney, requirePhpCurrencyForAmounts } from "./phpCurrency";
 
 export interface OperatorConsoleApiClient {
   evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
   lookupSessionByTicket(input: OperatorTicketLookupInput): Promise<OperatorTicketLookupResult>;
   getFiscalIssuanceStatus(fiscalIssuanceReferenceId: string): Promise<FiscalIssuanceStatus>;
   lookupFiscalIssuanceStatus(query: string): Promise<FiscalIssuanceStatus>;
-  voidFiscalIssuanceReference(input: FiscalIssuanceVoidInput): Promise<FiscalIssuanceVoidResult>;
   listFiscalVoidActionAuditReport(input?: FiscalVoidActionAuditReportQuery): Promise<FiscalVoidActionAuditReportResponse>;
   listFiscalStatusViewAuditReport(input?: FiscalStatusViewAuditReportQuery): Promise<FiscalStatusViewAuditReportResponse>;
   listAuditReport(input?: AuditReportQuery): Promise<AuditReportResponse>;
@@ -86,7 +84,6 @@ export interface OperatorConsoleApiClient {
   canRejectStatutoryDiscount?(): boolean;
   canReviewStatutoryEvidence?(): boolean;
   canDecideProductionPolicyImportReview?(): boolean;
-  canVoidFiscalDocument?(): boolean;
 }
 
 interface QueueResponse {
@@ -547,7 +544,6 @@ const reviewDecisionPermissions = new Set([
 const statutoryDiscountApprovePermission = "statutory-discounts.decision.approve";
 const statutoryDiscountRejectPermission = "statutory-discounts.decision.reject";
 export const statutoryEvidenceReviewPermission = "statutory-discounts.evidence.review.view";
-const fiscalVoidPermissions = new Set(["fiscal-issuance.void.command", "reconciliation.manage"]);
 
 export interface OperatorConsoleApiClientOptions {
   baseUrl?: string;
@@ -593,10 +589,6 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
 
     canDecideProductionPolicyImportReview() {
       return permissions.some((permission) => reviewDecisionPermissions.has(permission));
-    },
-
-    canVoidFiscalDocument() {
-      return permissions.some((permission) => fiscalVoidPermissions.has(permission));
     },
 
     async evaluateAccessReadiness(input) {
@@ -665,26 +657,6 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
       );
 
       return parseResponse<FiscalIssuanceStatus>(response);
-    },
-
-    async voidFiscalIssuanceReference(input) {
-      const correlationId = input.correlationId ?? newCorrelationId();
-      const response = await fetch(
-        `${baseUrl}/v1/ops/operator-console/fiscal-issuance/references/${encodeURIComponent(input.fiscalIssuanceReferenceId)}/void`,
-        {
-          method: "POST",
-          headers: operatorConsoleHeaders(correlationId, { json: true }),
-          body: JSON.stringify({
-            operatorActionRequestId: input.operatorActionRequestId,
-            reasonCode: input.reasonCode,
-            reasonText: input.reasonText,
-            confirmationText: input.confirmationText,
-            correlationId
-          })
-        }
-      );
-
-      return parseCommandResponse<FiscalIssuanceVoidResult>(response);
     },
 
     async listFiscalVoidActionAuditReport(input = {}) {
@@ -1137,9 +1109,6 @@ export function createMockOperatorConsoleApiClient(
     ticketLookupResults?: OperatorTicketLookupResult[];
     fiscalStatusError?: OperatorConsoleApiError;
     fiscalStatuses?: FiscalIssuanceStatus[];
-    fiscalVoidError?: OperatorConsoleApiError;
-    fiscalVoidResult?: FiscalIssuanceVoidResult;
-    fiscalVoidAuthorized?: boolean;
     fiscalVoidActionAuditReportError?: OperatorConsoleApiError;
     fiscalVoidActionAuditReport?: FiscalVoidActionAuditReportResponse;
     fiscalStatusViewAuditReportError?: OperatorConsoleApiError;
@@ -1148,7 +1117,6 @@ export function createMockOperatorConsoleApiClient(
     onTicketLookup?: (input: OperatorTicketLookupInput) => void;
     onDraftCreate?: (input: StatutoryDiscountDraftCreateInput) => void;
     onFiscalStatusLookup?: (query: string) => void;
-    onFiscalVoid?: (input: FiscalIssuanceVoidInput) => void;
     onFiscalVoidActionAuditReport?: (input: FiscalVoidActionAuditReportQuery) => void;
     onFiscalStatusViewAuditReport?: (input: FiscalStatusViewAuditReportQuery) => void;
     onDecision?: (input: StatutoryDiscountDecisionInput) => void;
@@ -1198,10 +1166,6 @@ export function createMockOperatorConsoleApiClient(
 
     canDecideProductionPolicyImportReview() {
       return options.productionPolicyReviewDecisionAuthorized ?? true;
-    },
-
-    canVoidFiscalDocument() {
-      return options.fiscalVoidAuthorized ?? true;
     },
 
     async evaluateAccessReadiness(input) {
@@ -1324,26 +1288,6 @@ export function createMockOperatorConsoleApiClient(
       }
 
       return { ...match };
-    },
-
-    async voidFiscalIssuanceReference(input) {
-      await delay();
-      options.onFiscalVoid?.(input);
-      if (options.fiscalVoidError) {
-        throw options.fiscalVoidError;
-      }
-
-      const result = options.fiscalVoidResult ?? mockFiscalVoidResult(input.fiscalIssuanceReferenceId);
-      const match = fiscalStatuses.find((item) => item.fiscalIssuanceReferenceId === input.fiscalIssuanceReferenceId);
-      if (match && ["pos_server_void_recorded", "pos_server_void_idempotent_replay", "pos_server_already_voided"].includes(result.status)) {
-        match.posServerFiscalDocumentReadStatus = "AVAILABLE";
-        match.posServerFiscalDocumentStatusCodeKey = "voided";
-        match.posServerVoidStatus = "recorded";
-        match.posServerVoidReasonCode = result.voidReasonCode ?? input.reasonCode;
-        match.posServerVoidedAt = result.voidedAt ?? new Date("2026-07-10T00:00:00Z").toISOString();
-      }
-
-      return { ...result };
     },
 
     async listFiscalVoidActionAuditReport(input = {}) {
@@ -1839,6 +1783,8 @@ async function parseTicketLookupResponse(response: Response): Promise<OperatorTi
 }
 
 function toTicketLookupResult(body: OperatorTicketLookupResponseDto): OperatorTicketLookupResult {
+  const feeMinorUnits = body.currentPayableAmountMinorUnits ?? body.feeMinorUnits ?? undefined;
+  const currencyCode = requirePhpCurrencyForAmounts(body.currencyCode, feeMinorUnits);
   return {
     sessionFound: body.sessionFound ?? true,
     accessAllowed: body.accessAllowed ?? undefined,
@@ -1851,8 +1797,8 @@ function toTicketLookupResult(body: OperatorTicketLookupResponseDto): OperatorTi
     plateLicense: body.plateNumber ?? body.plateLicense ?? undefined,
     parkingInTime: body.entryTime ?? body.parkingInTime ?? undefined,
     parkingDurationSeconds: body.parkingDurationSeconds ?? undefined,
-    feeMinorUnits: body.currentPayableAmountMinorUnits ?? body.feeMinorUnits ?? undefined,
-    currencyCode: body.currencyCode ?? undefined,
+    feeMinorUnits,
+    currencyCode,
     feeRuleType: body.feeRuleType ?? undefined,
     feeRuleIndexCode: body.feeRuleIndexCode ?? undefined,
     feeRuleName: body.feeRuleName ?? undefined,
@@ -1920,6 +1866,13 @@ function toVendorPaymentAcknowledgmentDetail(
 }
 
 function toVendorPaymentAcknowledgmentSummary(dto: VendorPaymentAcknowledgmentDto): VendorPaymentAcknowledgmentSummary {
+  const requestFeeMinorUnits = dto.requestFeeMinorUnits ?? undefined;
+  const confirmedFeeMinorUnits = dto.confirmedFeeMinorUnits ?? undefined;
+  const requestCurrencyCode = requirePhpCurrencyForAmounts(
+    dto.requestCurrencyCode,
+    requestFeeMinorUnits,
+    confirmedFeeMinorUnits
+  );
   return {
     vendorPaymentAcknowledgmentId: dto.vendorPaymentAcknowledgmentId,
     paymentAttemptId: dto.paymentAttemptId,
@@ -1933,9 +1886,9 @@ function toVendorPaymentAcknowledgmentSummary(dto: VendorPaymentAcknowledgmentDt
     statusBucket: dto.statusBucket ?? undefined,
     vendorCode: dto.vendorCode ?? undefined,
     vendorMessage: dto.vendorMessage ?? undefined,
-    requestFeeMinorUnits: dto.requestFeeMinorUnits ?? undefined,
-    requestCurrencyCode: dto.requestCurrencyCode ?? undefined,
-    confirmedFeeMinorUnits: dto.confirmedFeeMinorUnits ?? undefined,
+    requestFeeMinorUnits,
+    requestCurrencyCode,
+    confirmedFeeMinorUnits,
     vendorConfirmedAt: dto.vendorConfirmedAt ?? undefined,
     attemptCount: dto.attemptCount,
     lastAttemptedAt: dto.lastAttemptedAt ?? undefined,
@@ -1960,6 +1913,13 @@ function toVendorPaymentAcknowledgmentDiagnostic(
 
 function toQueueItem(item: QueueItemDto): StatutoryDiscountQueueItem {
   const policyContext = toPolicyContext(item);
+  const originalAmountMinorUnits = item.originalAmountMinorUnits ?? undefined;
+  const payableAmountMinorUnits = item.payableAmountMinorUnits ?? undefined;
+  const currencyCode = requirePhpCurrencyForAmounts(
+    item.currencyCode,
+    originalAmountMinorUnits,
+    payableAmountMinorUnits
+  );
   return {
     draftId: item.draftId,
     parkingSessionId: item.parkingSessionId,
@@ -1975,9 +1935,9 @@ function toQueueItem(item: QueueItemDto): StatutoryDiscountQueueItem {
     evidenceRequiredSatisfied: item.evidenceRequiredSatisfied ?? false,
     evidenceCount: item.evidenceCount ?? 0,
     latestEvidenceStatus: item.latestEvidenceStatus ?? undefined,
-    originalAmountMinorUnits: item.originalAmountMinorUnits ?? undefined,
-    payableAmountMinorUnits: item.payableAmountMinorUnits ?? undefined,
-    currencyCode: item.currencyCode ?? undefined
+    originalAmountMinorUnits,
+    payableAmountMinorUnits,
+    currencyCode
   };
 }
 
@@ -1989,7 +1949,7 @@ function toDraftDetail(item: DetailDto): StatutoryDiscountDraftDetail {
     siteGroupId: item.siteGroupId,
     laneName: "Not available",
     parkingStartedAt: item.requestedAt,
-    originalTariffAmount: formatMoney(item.originalAmountMinorUnits, item.currencyCode),
+    originalTariffAmount: formatPhpMoney(item.originalAmountMinorUnits, item.currencyCode),
     payableBasisPreview: payableBasisPreview(item),
     currentPaymentStatus: "Read-only in this module",
     maskedIdReference: "Evidence metadata only",
@@ -2478,11 +2438,11 @@ function policyReadinessMessage(classification: string) {
 
 function payableBasisPreview(item: DetailDto) {
   if (item.payableBasisApplicationStatus) {
-    return `${item.payableBasisApplicationStatus} - ${formatMoney(item.payableAmountMinorUnits, item.currencyCode)}`;
+    return `${item.payableBasisApplicationStatus} - ${formatPhpMoney(item.payableAmountMinorUnits, item.currencyCode)}`;
   }
 
   if (item.payableAmountMinorUnits !== undefined && item.payableAmountMinorUnits !== null) {
-    return `Preview ${formatMoney(item.payableAmountMinorUnits, item.currencyCode)}`;
+    return `Preview ${formatPhpMoney(item.payableAmountMinorUnits, item.currencyCode)}`;
   }
 
   return item.evidenceRequired && !item.evidenceCaptured ? "Evidence metadata pending" : "Not available";
@@ -2866,14 +2826,6 @@ function mockProductionPolicyReview(): ProductionPolicyImportReviewResult {
   };
 }
 
-function formatMoney(minorUnits?: number | null, currencyCode?: string | null) {
-  if (minorUnits === undefined || minorUnits === null) {
-    return "Not available";
-  }
-
-  return `${currencyCode ?? "PHP"} ${(minorUnits / 100).toFixed(2)}`;
-}
-
 function toQueueFromDetail(draft: StatutoryDiscountDraftDetail): StatutoryDiscountQueueItem {
   return {
     draftId: draft.draftId,
@@ -2903,6 +2855,15 @@ function toAuditReport(dto: AuditReportResponseDto): AuditReportResponse {
       const verificationStatus = item.verificationStatus ?? undefined;
       const policyReadinessClassification =
         item.policyReadinessClassification ?? inferPolicyReadiness(item, verificationStatus);
+      const originalAmountMinorUnits = item.originalAmountMinorUnits ?? undefined;
+      const statutoryDiscountAmountMinorUnits = item.statutoryDiscountAmountMinorUnits ?? undefined;
+      const finalPayableAmountMinorUnits = item.finalPayableAmountMinorUnits ?? undefined;
+      const currencyCode = requirePhpCurrencyForAmounts(
+        item.currencyCode,
+        originalAmountMinorUnits,
+        statutoryDiscountAmountMinorUnits,
+        finalPayableAmountMinorUnits
+      );
       return {
         statutoryDiscountValidationId: item.statutoryDiscountValidationId,
         draftId: item.draftId,
@@ -2919,10 +2880,10 @@ function toAuditReport(dto: AuditReportResponseDto): AuditReportResponse {
         evidenceCount: item.evidenceCount,
         latestEvidenceStatus: item.latestEvidenceStatus ?? undefined,
         payableBasisApplicationStatus: item.payableBasisApplicationStatus ?? undefined,
-        originalAmountMinorUnits: item.originalAmountMinorUnits ?? undefined,
-        statutoryDiscountAmountMinorUnits: item.statutoryDiscountAmountMinorUnits ?? undefined,
-        finalPayableAmountMinorUnits: item.finalPayableAmountMinorUnits ?? undefined,
-        currencyCode: item.currencyCode ?? undefined,
+        originalAmountMinorUnits,
+        statutoryDiscountAmountMinorUnits,
+        finalPayableAmountMinorUnits,
+        currencyCode,
         requestedByUserId: item.requestedByUserId ?? undefined,
         validatedByUserId: item.validatedByUserId ?? undefined,
         requestedAt: item.requestedAt,
@@ -3224,41 +3185,6 @@ function mockFiscalIssuanceStatuses(): FiscalIssuanceStatus[] {
   ];
 }
 
-function mockFiscalVoidResult(fiscalIssuanceReferenceId: string): FiscalIssuanceVoidResult {
-  return {
-    accessAllowed: true,
-    accessDecision: "ALLOWED",
-    accessDenialReasons: [],
-    accessPersisted: true,
-    accepted: true,
-    status: "pos_server_void_recorded",
-    httpStatusCode: 200,
-    errors: [],
-    fiscalIssuanceReferenceId,
-    posServerFiscalDocumentId: "5f000000-0000-0000-0000-000000000014",
-    fiscalDocumentNumber: "SI-00000001-UAT",
-    fiscalSequenceValue: 1,
-    fiscalDocumentStatusPosture: "voided",
-    voidStatus: "recorded",
-    voidReasonCode: "operator_error",
-    voidedAt: "2026-07-10T00:00:00Z",
-    posServerResultClassification: "newly_voided",
-    correlationId: newCorrelationId(),
-    errorPosture: undefined,
-    newFiscalNumberAllocated: false,
-    paymentFinalityChanged: false,
-    exitAuthorizationIssued: false,
-    gateBehaviorTriggered: false,
-    refundOrReversalCreated: false,
-    hikCentralCalled: false,
-    paymentProviderCalled: false,
-    renderingGenerated: false,
-    replacementFiscalDocumentCreated: false,
-    fiscalSequenceChangedByCentralPms: false,
-    idempotentReplay: false
-  };
-}
-
 function mockFiscalVoidActionAuditReport(): FiscalVoidActionAuditReportResponse {
   return {
     items: [
@@ -3464,8 +3390,8 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     requestedAt: "2026-06-01T08:15:00+08:00",
     requestedBy: "operator.shift-a",
     parkingStartedAt: "2026-06-01T06:55:00+08:00",
-    originalTariffAmount: "PHP 180.00",
-    payableBasisPreview: "Preview PHP 144.00",
+    originalTariffAmount: "₱180.00",
+    payableBasisPreview: "Preview ₱144.00",
     currentPaymentStatus: "Read-only in this module",
     maskedIdReference: "Evidence metadata only",
     issuingAuthority: "OSCA",
@@ -3496,7 +3422,7 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     requestedAt: "2026-06-01T08:42:00+08:00",
     requestedBy: "operator.shift-a",
     parkingStartedAt: "2026-06-01T07:10:00+08:00",
-    originalTariffAmount: "PHP 220.00",
+    originalTariffAmount: "₱220.00",
     payableBasisPreview: "Evidence metadata pending",
     currentPaymentStatus: "Read-only in this module",
     maskedIdReference: "Evidence metadata only",
@@ -3545,7 +3471,7 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     requestedAt: "2026-06-01T09:05:00+08:00",
     requestedBy: "operator.shift-b",
     parkingStartedAt: "2026-06-01T08:01:00+08:00",
-    originalTariffAmount: "PHP 90.00",
+    originalTariffAmount: "₱90.00",
     payableBasisPreview: "Blocked",
     currentPaymentStatus: "Read-only in this module",
     maskedIdReference: "Evidence metadata only",

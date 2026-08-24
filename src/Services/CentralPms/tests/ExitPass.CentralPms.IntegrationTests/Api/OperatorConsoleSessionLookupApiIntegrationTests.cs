@@ -110,6 +110,24 @@ public sealed class OperatorConsoleSessionLookupApiIntegrationTests
         body.CurrencyCode.Should().Be("PHP");
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("USD")]
+    [InlineData("EUR")]
+    public async Task Lookup_WhenMonetaryCurrencyIsMissingOrNotPhp_FailsClosed(string? currencyCode)
+    {
+        using var factory = CreateFactory(AllowedFoundResult(currencyCode));
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(Endpoint, Request());
+
+        response.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be("OPERATOR_CONSOLE_SESSION_LOOKUP_FAILED");
+    }
+
     /// <summary>
     /// Verifies allowed access with no matching session maps to 404.
     /// </summary>
@@ -185,7 +203,7 @@ public sealed class OperatorConsoleSessionLookupApiIntegrationTests
             Alerts: Array.Empty<string>(),
             CorrelationId);
 
-    private static OperatorConsoleSessionLookupResult AllowedFoundResult() =>
+    private static OperatorConsoleSessionLookupResult AllowedFoundResult(string? currencyCode = "PHP") =>
         new(
             EvaluationId,
             AccessAllowed: true,
@@ -201,7 +219,7 @@ public sealed class OperatorConsoleSessionLookupApiIntegrationTests
                 "ACTIVE",
                 DateTimeOffset.Parse("2026-05-29T04:00:00Z"),
                 CurrentPayableAmountMinorUnits: 12500,
-                CurrencyCode: "PHP",
+                CurrencyCode: currencyCode,
                 PaymentStatus: null,
                 DiscountStatus: "NOT_APPLIED",
                 ExitAuthorizationStatus: null),

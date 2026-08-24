@@ -21,7 +21,6 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("EventCheckpointOperator", "event.checkpoint.operate")]
     [InlineData("VendorPaymentAcknowledgmentViewer", "reconciliation.view")]
     [InlineData("FiscalIssuanceStatusRead", "fiscal-issuance.status.read")]
-    [InlineData("FiscalIssuanceVoidCommand", "fiscal-issuance.void.command")]
     [InlineData("FiscalVoidActionAuditReview", "fiscal-issuance.void.audit.read")]
     [InlineData("ManagementPlatformIdentityRbacInventoryRead", "management-platform.identity-rbac.inventory.read")]
     [InlineData("ManagementPlatformPaymentReconciliationSummaryRead", "reconciliation.view")]
@@ -139,6 +138,17 @@ public sealed class CentralPmsRbacPolicyCatalogTests
         mappings.Values.SelectMany(permissions => permissions)
             .Should()
             .NotContain("statutory-discounts.payable-basis.apply");
+    }
+
+    [Fact]
+    public void ListPolicyMappings_DoesNotExposeOperatorConsoleFiscalVoidCommandPolicy()
+    {
+        var mappings = CentralPmsRbacPolicyCatalog.ListPolicyMappings();
+
+        mappings.Should().NotContainKey("FiscalIssuanceVoidCommand");
+        mappings.Values.SelectMany(permissions => permissions)
+            .Should()
+            .NotContain("fiscal-issuance.void.command");
     }
 
     [Fact]

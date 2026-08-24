@@ -7,13 +7,13 @@ import {
   type OperatorConsoleApiClient
 } from "./apiClient";
 import type { OperatorConsoleHumanSession } from "./humanAuthentication";
+import { formatPhpMoney } from "./phpCurrency";
 import type {
   AccessReadinessResponse,
   AuditReportItem,
   AuditReportQuery,
   AuditReportResponse,
   FiscalIssuanceStatus,
-  FiscalIssuanceVoidResult,
   FiscalVoidActionAuditReportItem,
   FiscalVoidActionAuditReportQuery,
   FiscalVoidActionAuditReportResponse,
@@ -444,9 +444,9 @@ function AuditReportPage({ client }: { client: OperatorConsoleApiClient }) {
                       <td>{item.latestEvidenceStatus ?? (item.evidenceRequired ? "Pending" : "Not required")}</td>
                       <td>{item.evidenceRequiredSatisfied ? "Yes" : "No"}</td>
                       <td>{item.payableBasisApplicationStatus ?? "Not applied"}</td>
-                      <td>{formatMoney(item.originalAmountMinorUnits, item.currencyCode)}</td>
-                      <td>{formatMoney(item.statutoryDiscountAmountMinorUnits, item.currencyCode)}</td>
-                      <td>{formatMoney(item.finalPayableAmountMinorUnits, item.currencyCode)}</td>
+                      <td>{formatPhpMoney(item.originalAmountMinorUnits, item.currencyCode)}</td>
+                      <td>{formatPhpMoney(item.statutoryDiscountAmountMinorUnits, item.currencyCode)}</td>
+                      <td>{formatPhpMoney(item.finalPayableAmountMinorUnits, item.currencyCode)}</td>
                       <td>{item.currencyCode ?? "Not available"}</td>
                       <td>{formatDateTime(item.requestedAt)}</td>
                       <td>{item.validatedAt ? formatDateTime(item.validatedAt) : "Not validated"}</td>
@@ -1179,12 +1179,12 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
       <div className="panelHeader">
         <div>
           <p className="eyebrow">Fiscal visibility</p>
-          <h2 id="fiscal-status-title">Fiscal issuance status and controlled fiscal actions</h2>
+          <h2 id="fiscal-status-title">Fiscal issuance status</h2>
           <p className="panelCopy">
-            Search by Sales Invoice number or Sales Invoice reference ID. Controlled Sales Invoice actions remain guarded and audited.
+            Search by Sales Invoice number or Sales Invoice reference ID. This view is read-only.
           </p>
         </div>
-        <span className="statusPill pending-review">Controlled actions</span>
+        <span className="statusPill">Read only</span>
       </div>
 
       <form className="filterForm" onSubmit={submitLookup}>
@@ -1218,27 +1218,15 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
       {statusState.status === "access-denied" && <StateMessage title="Access denied" message={statusState.message} />}
       {statusState.status === "error" && <StateMessage title="Unable to load fiscal status" message={statusState.message} />}
       {statusState.status === "loaded" && (
-        <FiscalIssuanceStatusPanel
-          status={statusState.data}
-          requestedReferenceId={submittedLookupQuery}
-          client={client}
-          onRefresh={() => loadFiscalStatus(submittedLookupQuery, false)}
-        />
+        <FiscalIssuanceStatusPanel status={statusState.data} requestedReferenceId={submittedLookupQuery} />
       )}
     </section>
   );
 }
 
-function FiscalIssuanceStatusPanel({
-  status,
-  requestedReferenceId,
-  client,
-  onRefresh
-}: {
+function FiscalIssuanceStatusPanel({ status, requestedReferenceId }: {
   status: FiscalIssuanceStatus;
   requestedReferenceId: string;
-  client: OperatorConsoleApiClient;
-  onRefresh: () => void;
 }) {
   const presentation = fiscalStatusPresentation(status);
   const mainItems: Array<[string, string]> = [
@@ -1287,8 +1275,6 @@ function FiscalIssuanceStatusPanel({
 
       <DescriptionList items={mainItems} />
 
-      <FiscalVoidActionPanel status={status} client={client} onRefresh={onRefresh} />
-
       <details className="diagnosticsPanel">
         <summary>Support/audit details</summary>
         <DescriptionList
@@ -1327,203 +1313,6 @@ function FiscalIssuanceStatusPanel({
         />
       </details>
     </section>
-  );
-}
-
-const fiscalVoidConfirmationPhrase = "VOID FISCAL DOCUMENT";
-
-function FiscalVoidActionPanel({
-  status,
-  client,
-  onRefresh
-}: {
-  status: FiscalIssuanceStatus;
-  client: OperatorConsoleApiClient;
-  onRefresh: () => void;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [operatorActionRequestId, setOperatorActionRequestId] = useState("");
-  const [reasonCode, setReasonCode] = useState("operator_error");
-  const [reasonText, setReasonText] = useState("");
-  const [confirmationText, setConfirmationText] = useState("");
-  const [submitState, setSubmitState] = useState<LoadState<FiscalIssuanceVoidResult>>({ status: "idle" });
-  const eligibility = fiscalVoidEligibility(status, Boolean(client.canVoidFiscalDocument?.()));
-  const canSubmit =
-    eligibility.voidable &&
-    reasonCode.trim().length > 0 &&
-    reasonText.trim().length > 0 &&
-    confirmationText.trim() === fiscalVoidConfirmationPhrase &&
-    submitState.status !== "loading";
-
-  function openVoidForm() {
-    setOperatorActionRequestId(newUiRequestId());
-    setIsOpen(true);
-    setSubmitState({ status: "idle" });
-  }
-
-  function submitVoid(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canSubmit) {
-      return;
-    }
-
-    setSubmitState({ status: "loading" });
-    void client
-      .voidFiscalIssuanceReference({
-        fiscalIssuanceReferenceId: status.fiscalIssuanceReferenceId,
-        operatorActionRequestId,
-        reasonCode: reasonCode.trim(),
-        reasonText: reasonText.trim(),
-        confirmationText: confirmationText.trim(),
-        correlationId: status.correlationId
-      })
-      .then((result) => {
-        setSubmitState({ status: "loaded", data: result });
-        if (isFiscalVoidSuccess(result.status)) {
-          onRefresh();
-        }
-      })
-      .catch((error) => {
-        const mapped = mapApiError(error);
-        setSubmitState({ status: mapped.status === "access-denied" ? "access-denied" : "error", message: mapped.message });
-      });
-  }
-
-  return (
-    <section className="diagnosticsPanel" aria-labelledby="fiscal-void-action-title">
-      <div className="panelHeader">
-        <div>
-          <p className="eyebrow">Fiscal action</p>
-          <h4 id="fiscal-void-action-title">Sales Invoice void request</h4>
-          <p className="panelCopy">
-            This only requests Sales Invoice void/cancellation in POS Server.
-          </p>
-        </div>
-        <span className={`statusPill ${eligibility.voidable ? "pending-review" : ""}`}>
-          {eligibility.voidable ? "Available" : "Not voidable"}
-        </span>
-      </div>
-
-      {!eligibility.voidable && <p className="notice">{eligibility.reason}</p>}
-
-      {eligibility.voidable && !isOpen && (
-        <button type="button" onClick={openVoidForm}>
-          Void Sales Invoice
-        </button>
-      )}
-
-      {eligibility.voidable && isOpen && (
-        <form className="detailForm" onSubmit={submitVoid}>
-          <div className="warningPanel">
-            <p>This does not refund payment.</p>
-            <p>This does not open gate.</p>
-            <p>This does not call HikCentral.</p>
-            <p>This does not create a replacement Sales Invoice.</p>
-            <p>This does not render final BIR receipt/report.</p>
-            <p>This only requests Sales Invoice void/cancellation in POS Server.</p>
-          </div>
-
-          <label>
-            Reason code
-            <select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}>
-              <option value="operator_error">operator_error</option>
-            </select>
-          </label>
-
-          <label>
-            Reason text
-            <textarea
-              value={reasonText}
-              maxLength={500}
-              placeholder="Brief operator reason"
-              onChange={(event) => setReasonText(event.target.value)}
-            />
-          </label>
-
-          <label>
-            Confirmation text
-            <input
-              value={confirmationText}
-              placeholder={fiscalVoidConfirmationPhrase}
-              onChange={(event) => setConfirmationText(event.target.value)}
-            />
-          </label>
-
-          <p className="notice">Type {fiscalVoidConfirmationPhrase} to enable submit.</p>
-          <button type="submit" disabled={!canSubmit}>
-            Submit Sales Invoice void request
-          </button>
-
-          {submitState.status === "loading" && (
-            <StateMessage title="Submitting Sales Invoice void request" message="Requesting POS Server Sales Invoice void through Central PMS." />
-          )}
-          {submitState.status === "loaded" && <FiscalVoidResultMessage result={submitState.data} />}
-          {submitState.status === "access-denied" && <StateMessage title="Access denied" message={submitState.message} />}
-          {submitState.status === "error" && <StateMessage title="Sales Invoice void request failed safely" message={submitState.message} />}
-        </form>
-      )}
-    </section>
-  );
-}
-
-function FiscalVoidResultMessage({ result }: { result: FiscalIssuanceVoidResult }) {
-  if (isFiscalVoidSuccess(result.status)) {
-    return (
-      <StateMessage
-        title="Sales Invoice void recorded"
-        message={`${displayStatusValue(result.status)}. Status will refresh to show the POS Server read-after-void posture.`}
-      />
-    );
-  }
-
-  if (normalizeStatus(result.status) === "POS_SERVER_VOID_CONFLICT") {
-    return (
-      <StateMessage
-        title="Sales Invoice void failed closed"
-        message="POS Server reported a semantic conflict. Do not retry automatically; escalate for support review."
-      />
-    );
-  }
-
-  return (
-    <StateMessage
-      title="Sales Invoice void failed safely"
-      message={result.errorPosture ?? result.errors[0] ?? "Central PMS did not accept the Sales Invoice void request."}
-    />
-  );
-}
-
-function fiscalVoidEligibility(status: FiscalIssuanceStatus, hasPermission: boolean) {
-  if (!hasPermission) {
-    return { voidable: false, reason: "Sales Invoice void permission is required." };
-  }
-
-  const fiscalState = normalizeStatus(status.fiscalIssuanceState);
-  if (fiscalState !== "FISCAL_ISSUANCE_RECORDED" && fiscalState !== "FISCAL_ISSUANCE_REPLAYED") {
-    return { voidable: false, reason: "Only recorded Sales Invoice references with POS Server evidence can be voided." };
-  }
-
-  if (!status.posServerFiscalDocumentId) {
-    return { voidable: false, reason: "POS Server Sales Invoice ID is not available." };
-  }
-
-  if (normalizeStatus(status.posServerFiscalDocumentReadStatus) !== "AVAILABLE") {
-    return { voidable: false, reason: "POS Server Sales Invoice read status is not available." };
-  }
-
-  if (normalizeStatus(status.posServerFiscalDocumentStatusCodeKey) === "VOIDED" || normalizeStatus(status.posServerVoidStatus) === "RECORDED") {
-    return { voidable: false, reason: "Sales Invoice is already voided or has a recorded void status." };
-  }
-
-  return { voidable: true, reason: "Sales Invoice can be voided through the controlled Operator Console workflow." };
-}
-
-function isFiscalVoidSuccess(status: string) {
-  const normalized = normalizeStatus(status);
-  return (
-    normalized === "POS_SERVER_VOID_RECORDED" ||
-    normalized === "POS_SERVER_VOID_IDEMPOTENT_REPLAY" ||
-    normalized === "POS_SERVER_ALREADY_VOIDED"
   );
 }
 
@@ -2006,9 +1795,8 @@ function VendorPaymentAcknowledgmentDetailPanel({ state }: { state: LoadState<Ve
           <h4 id="vendor-ack-fees-heading">Fees and attempts</h4>
           <DescriptionList
             items={[
-              ["Request fee minor units", formatOptionalNumber(detail.requestFeeMinorUnits)],
-              ["Request currency code", displayValue(detail.requestCurrencyCode)],
-              ["Confirmed fee minor units", formatOptionalNumber(detail.confirmedFeeMinorUnits)],
+              ["Request fee", formatPhpMoney(detail.requestFeeMinorUnits, detail.requestCurrencyCode)],
+              ["Confirmed fee", formatPhpMoney(detail.confirmedFeeMinorUnits, detail.requestCurrencyCode)],
               ["Vendor confirmed at", formatOptionalDateTime(detail.vendorConfirmedAt)],
               ["Attempt count", String(detail.attemptCount)],
               ["Last attempted at", formatOptionalDateTime(detail.lastAttemptedAt)],
@@ -2774,8 +2562,7 @@ function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult })
           <h4 id="ticket-tariff-heading">Tariff Information</h4>
           <DescriptionList
             items={[
-              ["Current payable minor units", formatMinorUnits(result.feeMinorUnits)],
-              ["Currency code", displayValue(result.currencyCode)],
+              ["Current payable amount", formatPhpMoney(result.feeMinorUnits, result.currencyCode)],
               ["Fee rule type", displayValue(result.feeRuleType)],
               ["Fee rule index code", displayValue(result.feeRuleIndexCode)],
               ["Fee rule name", displayValue(result.feeRuleName)]
@@ -3938,7 +3725,7 @@ function StatutoryReviewEligibilityPanel({ detail }: { detail: StatutoryDiscount
         </div>
         <div className="reviewerSummaryItem">
           <span>Parking amount</span>
-          <strong>{formatMoney(detail.originalAmountMinorUnits ?? detail.payableAmountMinorUnits, detail.currencyCode)}</strong>
+          <strong>{formatPhpMoney(detail.originalAmountMinorUnits ?? detail.payableAmountMinorUnits, detail.currencyCode)}</strong>
         </div>
         <div className="reviewerSummaryItem">
           <span>Benefit</span>
@@ -4457,7 +4244,7 @@ function StatutoryDecisionReadOnlySummary({
     return (
       <div className="readOnlyDecisionSummary">
         <p className="successMessage">Parking privilege approved</p>
-        <p>The approved privilege will be applied when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal.</p>
+        <p>Central PMS will apply the approved privilege when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal.</p>
       </div>
     );
   }
@@ -4682,10 +4469,6 @@ function formatFreshnessAge(value?: number | null) {
   return `${Math.round(hours / 24)} days`;
 }
 
-function formatMinorUnits(value?: number) {
-  return value === undefined ? "Not available" : String(value);
-}
-
 function normalizePath(path: string) {
   if (path === "/" || path === "") {
     return routes.home;
@@ -4798,14 +4581,6 @@ function formatDateTime(value: string) {
     dateStyle: "medium",
     timeStyle: "short"
   }).format(new Date(value));
-}
-
-function formatMoney(minorUnits?: number, currencyCode?: string) {
-  if (minorUnits === undefined) {
-    return "Not available";
-  }
-
-  return `${currencyCode ?? "PHP"} ${(minorUnits / 100).toFixed(2)}`;
 }
 
 function policyBasisLabel(kind: PolicyContextKind) {

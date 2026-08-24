@@ -149,7 +149,9 @@ public static class OperatorConsoleSessionLookupEndpoints
             result.Session?.SessionStatus,
             result.Session?.EntryTime,
             result.Session?.CurrentPayableAmountMinorUnits,
-            result.Session?.CurrencyCode,
+            OperatorConsolePhpCurrency.RequireForAmounts(
+                result.Session?.CurrencyCode,
+                result.Session?.CurrentPayableAmountMinorUnits),
             result.Session?.PaymentStatus,
             result.Session?.DiscountStatus,
             result.Session?.ExitAuthorizationStatus,

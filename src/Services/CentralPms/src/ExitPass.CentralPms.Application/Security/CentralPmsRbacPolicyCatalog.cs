@@ -59,11 +59,6 @@ public static class CentralPmsRbacPolicyCatalog
                 "reconciliation.view",
                 "reconciliation.manage"
             ],
-            ["FiscalIssuanceVoidCommand"] =
-            [
-                "fiscal-issuance.void.command",
-                "reconciliation.manage"
-            ],
             ["FiscalVoidActionAuditReview"] =
             [
                 "fiscal-issuance.void.audit.read",
