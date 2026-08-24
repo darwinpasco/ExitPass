@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Application.Eventing;
+using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Domain.Common;
@@ -39,6 +40,8 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
     private readonly IIssueExitAuthorizationUseCase _issueExitAuthorizationUseCase;
     private readonly IIntegrationEventPublisher _eventPublisher;
     private readonly IVendorPaymentAcknowledgmentWorkflow? _vendorPaymentAcknowledgmentWorkflow;
+    private readonly IDigitalPaymentFiscalIssuanceService? _digitalPaymentFiscalIssuanceService;
+    private readonly FiscalIssuancePosServerIntegrationOptions _posServerOptions;
     private readonly ISystemClock _systemClock;
     private readonly ILogger<ReportVerifiedPaymentOutcomeHandler> _logger;
     private readonly CentralPmsMetrics _metrics;
@@ -62,13 +65,17 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
         ISystemClock systemClock,
         ILogger<ReportVerifiedPaymentOutcomeHandler> logger,
         CentralPmsMetrics? metrics = null,
-        IVendorPaymentAcknowledgmentWorkflow? vendorPaymentAcknowledgmentWorkflow = null)
+        IVendorPaymentAcknowledgmentWorkflow? vendorPaymentAcknowledgmentWorkflow = null,
+        IDigitalPaymentFiscalIssuanceService? digitalPaymentFiscalIssuanceService = null,
+        FiscalIssuancePosServerIntegrationOptions? posServerOptions = null)
     {
         _recordPaymentConfirmationGateway = recordPaymentConfirmationGateway;
         _finalizePaymentAttemptUseCase = finalizePaymentAttemptUseCase;
         _issueExitAuthorizationUseCase = issueExitAuthorizationUseCase;
         _eventPublisher = eventPublisher;
         _vendorPaymentAcknowledgmentWorkflow = vendorPaymentAcknowledgmentWorkflow;
+        _digitalPaymentFiscalIssuanceService = digitalPaymentFiscalIssuanceService;
+        _posServerOptions = posServerOptions ?? new FiscalIssuancePosServerIntegrationOptions();
         _systemClock = systemClock;
         _logger = logger;
         _metrics = metrics ?? new CentralPmsMetrics();
@@ -165,6 +172,8 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
             CreatePaymentAttemptConfirmedEvent(command, finalized),
             cancellationToken);
 
+        await EnsureDigitalFiscalIssuanceAsync(command, confirmation, cancellationToken);
+
         var issued = await _issueExitAuthorizationUseCase.ExecuteAsync(
             new IssueExitAuthorizationCommand(
                 command.ParkingSessionId,
@@ -199,6 +208,38 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
             VerifiedTimestamp: confirmation.VerifiedTimestamp,
             IssuedAt: issued.IssuedAt,
             ExpirationTimestamp: issued.ExpirationTimestamp);
+    }
+
+    private async Task EnsureDigitalFiscalIssuanceAsync(
+        ReportVerifiedPaymentOutcomeCommand command,
+        RecordPaymentConfirmationResult confirmation,
+        CancellationToken cancellationToken)
+    {
+        if (!_posServerOptions.EnableLiveFiscalIssuanceFromPaymentFlow)
+        {
+            return;
+        }
+
+        if (_digitalPaymentFiscalIssuanceService is null)
+        {
+            throw new InvalidOperationException("digital_payment_fiscal_issuance_service_required");
+        }
+
+        var result = await _digitalPaymentFiscalIssuanceService.IssueOrReadAsync(
+            new DigitalPaymentFiscalIssuanceCommand(
+                command.PaymentAttemptId,
+                confirmation.PaymentConfirmationId,
+                command.ParkingSessionId,
+                command.ProviderReference,
+                command.CorrelationId,
+                null),
+            cancellationToken);
+
+        if (!result.ReadyForExitAuthorization)
+        {
+            throw new InvalidOperationException(
+                result.SafeErrorCode ?? "digital_payment_fiscal_issuance_not_ready");
+        }
     }
 
     /// <summary>

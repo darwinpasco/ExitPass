@@ -204,8 +204,6 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
     {
         var baseUrlConfigured = Endpoints.Count > 0;
         var timeoutConfigured = TimeoutSeconds > 0;
-        var liveFlowConfigured = EnableLiveFiscalIssuanceFromPaymentFlow || EnableLiveFiscalIssuanceFromExitFlow;
-
         if (!EnablePosServerFiscalIssuanceLiveCall)
         {
             return new FiscalIssuancePosServerIntegrationReadiness(
@@ -257,11 +255,11 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
                 timeoutConfigured);
         }
 
-        if (liveFlowConfigured)
+        if (EnableLiveFiscalIssuanceFromExitFlow)
         {
             return InvalidReadiness(
                 FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledUnsafeFlowWiring,
-                "payment_exit_live_flow_flags_must_remain_disabled",
+                "exit_live_flow_flag_must_remain_disabled",
                 baseUrlConfigured,
                 timeoutConfigured);
         }
@@ -273,7 +271,7 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
             Reason: "pos_server_fiscal_issuance_live_call_configuration_ready",
             BaseUrlConfigured: true,
             TimeoutConfigured: true,
-            LiveCallsAllowedFromPaymentFlow: false,
+            LiveCallsAllowedFromPaymentFlow: EnableLiveFiscalIssuanceFromPaymentFlow,
             LiveCallsAllowedFromExitFlow: false,
             Errors: Array.Empty<string>());
     }
@@ -309,8 +307,25 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
             errors.Add("site_pos_server_endpoint_ref_duplicate");
         }
 
+        if (EnableLiveFiscalIssuanceFromPaymentFlow)
+        {
+            foreach (var duplicate in Endpoints
+                         .GroupBy(endpoint => endpoint.SiteId)
+                         .Where(group => group.Key == Guid.Empty || group.Count() != 1))
+            {
+                errors.Add(duplicate.Key == Guid.Empty
+                    ? "site_pos_server_site_id_required_for_payment_flow"
+                    : "site_pos_server_site_id_duplicate");
+            }
+        }
+
         foreach (var endpoint in Endpoints)
         {
+            if (EnableLiveFiscalIssuanceFromPaymentFlow && endpoint.SiteId == Guid.Empty)
+            {
+                errors.Add("site_pos_server_site_id_required_for_payment_flow");
+            }
+
             if (string.IsNullOrWhiteSpace(endpoint.SitePosServerRef))
             {
                 errors.Add("site_pos_server_ref_required");
@@ -370,6 +385,8 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
 
 public sealed class SitePosServerEndpointOptions
 {
+    public Guid SiteId { get; set; }
+
     public Guid SitePosServerId { get; set; }
 
     public string? SitePosServerRef { get; set; }
