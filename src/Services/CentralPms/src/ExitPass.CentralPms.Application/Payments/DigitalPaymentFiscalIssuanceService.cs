@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Domain.FiscalIssuance;
 
 namespace ExitPass.CentralPms.Application.Payments;
 
@@ -47,9 +48,15 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
         var existing = await _references.FindByPaymentConfirmationIdAsync(
             command.PaymentConfirmationId,
             cancellationToken);
-        if (existing is not null)
+        if (existing is not null &&
+            FiscalIssuanceOrchestrationService.IsNormalExitAuthorizationGatingReady(existing))
         {
             return ToResult(existing, false, null);
+        }
+
+        if (existing is not null && !CanRetry(existing))
+        {
+            return ToResult(existing, false, existing.LatestErrorCode);
         }
 
         var context = await _contextReader.ReadAsync(
@@ -58,31 +65,40 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             command.ParkingSessionId,
             cancellationToken);
         var upstreamReference = $"PAYMENT_CONFIRMATION:{command.PaymentConfirmationId:D}";
-        var prepared = await _orchestration.PreparePendingAsync(
-            new PrepareFiscalIssuanceCommand(
-                command.PaymentConfirmationId,
-                command.PaymentAttemptId,
-                command.ParkingSessionId,
-                context.TariffSnapshotId,
-                context.SiteId,
-                context.SitePosServerId,
-                context.SitePosServerRef,
-                null,
-                FiscalDocumentTypeCodeKey,
-                context.TariffSnapshotId.ToString("D"),
-                upstreamReference,
-                command.CorrelationId,
-                command.ServiceIdentityId),
-            cancellationToken);
+        FiscalIssuanceReferenceRecord reference;
+        if (existing is null)
+        {
+            reference = await _orchestration.PreparePendingAsync(
+                new PrepareFiscalIssuanceCommand(
+                    command.PaymentConfirmationId,
+                    command.PaymentAttemptId,
+                    command.ParkingSessionId,
+                    context.TariffSnapshotId,
+                    context.SiteId,
+                    context.SitePosServerId,
+                    context.SitePosServerRef,
+                    null,
+                    FiscalDocumentTypeCodeKey,
+                    context.TariffSnapshotId.ToString("D"),
+                    upstreamReference,
+                    command.CorrelationId,
+                    command.ServiceIdentityId),
+                cancellationToken);
+        }
+        else
+        {
+            EnsureExistingReferenceMatches(existing, command, context, upstreamReference);
+            reference = existing;
+        }
 
         var amount = context.AmountMinorUnits;
         var attemptRef = command.PaymentAttemptId.ToString("D");
         var confirmationRef = command.PaymentConfirmationId.ToString("D");
         var mapping = new CentralPmsFiscalDocumentMappingContext(
-            prepared.SitePosServerId,
-            prepared.SitePosServerRef,
-            prepared.FiscalDocumentTypeCodeId,
-            prepared.FiscalDocumentTypeCodeKey,
+            reference.SitePosServerId,
+            reference.SitePosServerRef,
+            reference.FiscalDocumentTypeCodeId,
+            reference.FiscalDocumentTypeCodeKey,
             null,
             DateOnly.FromDateTime(context.ConfirmedAt.UtcDateTime),
             command.ParkingSessionId.ToString("D"),
@@ -105,21 +121,52 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             null);
 
         var issue = await _posServer.TryIssueFiscalDocumentViaPosServerAsync(
-            prepared.FiscalIssuanceReferenceId,
+            reference.FiscalIssuanceReferenceId,
             mapping,
             new PosServerCreateResultRecordingContext(
                 upstreamReference,
-                prepared.SitePosServerId,
-                prepared.FiscalDocumentTypeCodeId,
+                reference.SitePosServerId,
+                reference.FiscalDocumentTypeCodeId,
                 command.CorrelationId,
                 DateTimeOffset.UtcNow,
                 command.ServiceIdentityId),
             cancellationToken);
 
         return ToResult(
-            issue.FiscalIssuanceReference ?? prepared,
+            issue.FiscalIssuanceReference ?? reference,
             issue.MappedRequest is not null && issue.PosServerResult is not null,
             issue.PosServerResult?.Succeeded == false ? issue.PosServerResult.Code : null);
+    }
+
+    private static bool CanRetry(FiscalIssuanceReferenceRecord reference) =>
+        reference.FiscalIssuanceState is
+            FiscalIssuanceIntegrationState.PendingFiscalIssuance or
+            FiscalIssuanceIntegrationState.FiscalIssuanceRequested or
+            FiscalIssuanceIntegrationState.FiscalIssuanceUnknown ||
+        reference.FiscalIssuanceState == FiscalIssuanceIntegrationState.FiscalIssuanceFailedService &&
+            reference.LatestErrorPosture == FiscalIssuanceErrorPosture.RetryAfterServiceRecovery ||
+        reference.FiscalIssuanceState == FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration &&
+            reference.LatestErrorPosture == FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection;
+
+    private static void EnsureExistingReferenceMatches(
+        FiscalIssuanceReferenceRecord reference,
+        DigitalPaymentFiscalIssuanceCommand command,
+        DigitalPaymentFiscalContext context,
+        string upstreamReference)
+    {
+        if (reference.PaymentConfirmationId != command.PaymentConfirmationId ||
+            reference.PaymentAttemptId != command.PaymentAttemptId ||
+            reference.ParkingSessionId != command.ParkingSessionId ||
+            reference.TariffSnapshotId != context.TariffSnapshotId ||
+            reference.SiteId != context.SiteId ||
+            reference.SitePosServerId != context.SitePosServerId ||
+            !string.Equals(reference.SitePosServerRef, context.SitePosServerRef, StringComparison.Ordinal) ||
+            !string.Equals(reference.PayableBasisRef, context.TariffSnapshotId.ToString("D"), StringComparison.Ordinal) ||
+            !string.Equals(reference.UpstreamFinalityReference, upstreamReference, StringComparison.Ordinal) ||
+            !string.Equals(reference.FiscalDocumentTypeCodeKey, FiscalDocumentTypeCodeKey, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("digital_payment_fiscal_routing_context_mismatch");
+        }
     }
 
     private static DigitalPaymentFiscalIssuanceResult ToResult(
