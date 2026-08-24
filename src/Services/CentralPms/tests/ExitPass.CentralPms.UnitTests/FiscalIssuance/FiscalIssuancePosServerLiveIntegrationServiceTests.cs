@@ -463,6 +463,91 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         result.PosServerResult!.Code.Should().Be(code);
     }
 
+    [Theory]
+    [InlineData(false, "pos_server_unavailable", 503)]
+    [InlineData(true, "pos_server_timeout", 504)]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenTransportFails_RecordsRetryableServiceFailure(
+        bool timeout,
+        string expectedCode,
+        int expectedHttpStatusCode)
+    {
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        Exception exception = timeout
+            ? new TaskCanceledException("sensitive timeout detail")
+            : new HttpRequestException("sensitive endpoint detail");
+        client.CreateFiscalDocumentAsync(
+                Arg.Any<PosServerFiscalDocumentCreateRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns<Task<PosServerFiscalDocumentCreateResult>>(_ => throw exception);
+        orchestration.MarkRequestedAsync(
+                FiscalIssuanceReferenceId,
+                Arg.Any<FiscalIssuanceTransitionContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRequested));
+        orchestration.ApplyPosServerFailureResultAsync(
+                FiscalIssuanceReferenceId,
+                Arg.Is<PosServerFiscalDocumentCreateResult>(result =>
+                    result.Outcome == PosServerFiscalDocumentOutcome.FailedService &&
+                    !result.Succeeded &&
+                    result.HttpStatusCode == expectedHttpStatusCode &&
+                    result.Code == expectedCode &&
+                    result.Message == expectedCode &&
+                    result.ErrorPosture == FiscalIssuanceErrorPosture.RetryAfterServiceRecovery),
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceFailedService));
+        var sut = CreateSut(client: client, orchestration: orchestration);
+
+        var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.FiscalIssuanceReference!.FiscalIssuanceState.Should()
+            .Be(FiscalIssuanceIntegrationState.FiscalIssuanceFailedService);
+        result.PosServerResult!.Code.Should().Be(expectedCode);
+        result.PosServerResult.Message.Should().NotContain("sensitive");
+        await orchestration.Received(1).ApplyPosServerFailureResultAsync(
+            FiscalIssuanceReferenceId,
+            Arg.Any<PosServerFiscalDocumentCreateResult>(),
+            Arg.Any<PosServerCreateResultRecordingContext>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenCallerCancels_PropagatesCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        client.CreateFiscalDocumentAsync(
+                Arg.Any<PosServerFiscalDocumentCreateRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns<Task<PosServerFiscalDocumentCreateResult>>(_ => throw new OperationCanceledException(cancellation.Token));
+        orchestration.MarkRequestedAsync(
+                FiscalIssuanceReferenceId,
+                Arg.Any<FiscalIssuanceTransitionContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRequested));
+        var sut = CreateSut(client: client, orchestration: orchestration);
+
+        var act = () => sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            cancellation.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        await orchestration.DidNotReceiveWithAnyArgs().ApplyPosServerFailureResultAsync(
+            default,
+            default!,
+            default!,
+            default);
+    }
+
     [Fact]
     public async Task RunPosServerFiscalIssuanceDiagnosticAsync_WhenLiveCallDisabled_ReturnsDisabledAndDoesNotCallMapperClientOrchestration()
     {

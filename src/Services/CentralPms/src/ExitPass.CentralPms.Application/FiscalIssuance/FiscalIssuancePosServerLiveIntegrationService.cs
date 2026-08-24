@@ -103,7 +103,23 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
                 ServiceIdentityId: recordingContext.ServiceIdentityId),
             cancellationToken);
 
-        var posServerResult = await _client.CreateFiscalDocumentAsync(request, cancellationToken);
+        PosServerFiscalDocumentCreateResult posServerResult;
+        try
+        {
+            posServerResult = await _client.CreateFiscalDocumentAsync(request, cancellationToken);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            posServerResult = CreateRetryableTransportFailure(
+                httpStatusCode: 504,
+                code: "pos_server_timeout");
+        }
+        catch (HttpRequestException)
+        {
+            posServerResult = CreateRetryableTransportFailure(
+                httpStatusCode: 503,
+                code: "pos_server_unavailable");
+        }
 
         var appliedReference = posServerResult.Outcome == PosServerFiscalDocumentOutcome.Accepted &&
             posServerResult.Succeeded
@@ -123,6 +139,31 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
             posServerResult,
             appliedReference);
     }
+
+    private static PosServerFiscalDocumentCreateResult CreateRetryableTransportFailure(
+        int httpStatusCode,
+        string code) =>
+        new(
+            Outcome: PosServerFiscalDocumentOutcome.FailedService,
+            Succeeded: false,
+            HttpStatusCode: httpStatusCode,
+            Code: code,
+            Message: code,
+            FiscalDocumentId: null,
+            ResultClassification: null,
+            FiscalIssuanceEvidenceStatus: null,
+            FiscalNumberAssignmentState: FiscalNumberAssignmentState.NotAssigned,
+            FiscalIdentityId: null,
+            FiscalDocumentStatusCodeId: null,
+            FiscalSequencePolicyId: null,
+            FiscalSequenceValue: null,
+            FiscalDocumentNumber: null,
+            FiscalSeries: null,
+            FiscalNumberPrefixText: null,
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: null,
+            FiscalNumberAssignedByRef: null,
+            ErrorPosture: FiscalIssuanceErrorPosture.RetryAfterServiceRecovery);
 
     public async Task<FiscalIssuancePosServerDiagnosticResult> RunPosServerFiscalIssuanceDiagnosticAsync(
         Guid fiscalIssuanceReferenceId,
