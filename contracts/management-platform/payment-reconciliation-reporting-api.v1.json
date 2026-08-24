@@ -50,7 +50,8 @@
     "availability": ["AVAILABLE", "PARTIAL", "UNAVAILABLE", "NOT_APPLICABLE"],
     "freshness": ["CURRENT", "STALE", "PARTIAL", "UNAVAILABLE", "NOT_APPLICABLE"],
     "sourceAuthority": "CENTRAL_PMS_CANONICAL_PAYMENT_RECORDS",
-    "moneyRepresentation": "exact decimal, grouped by ISO currency, no mixed-currency total"
+    "supportedCurrency": "PHP",
+    "moneyRepresentation": "exact decimal in PHP"
   },
   "canonicalSources": [
     "core.payment_attempts",

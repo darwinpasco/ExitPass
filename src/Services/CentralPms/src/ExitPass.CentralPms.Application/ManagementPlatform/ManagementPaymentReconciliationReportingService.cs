@@ -185,6 +185,24 @@ public sealed class ManagementPaymentReconciliationReportingService : IManagemen
             return SourceUnavailable(query.CorrelationId);
         }
 
+        if (!UsesSupportedCurrency(source.Snapshot))
+        {
+            await AuditAsync(
+                "MANAGEMENT_PAYMENT_RECONCILIATION_SOURCE_FAILURE",
+                "FAILED",
+                "UNSUPPORTED_CURRENCY_SOURCE_DATA",
+                actor,
+                scopeType,
+                query.ScopeReference,
+                periodStart,
+                periodEnd,
+                ManagementDashboardReportingValues.Unavailable,
+                query.CorrelationId,
+                now,
+                cancellationToken);
+            return SourceUnavailable(query.CorrelationId);
+        }
+
         var report = BuildReport(scopeType, query.ScopeReference.Value, scopeResult.Scope, periodStart, periodEnd, now, query.CorrelationId, source.Snapshot);
         await AuditAsync(
             "MANAGEMENT_PAYMENT_RECONCILIATION_REPORT_READ",
@@ -201,6 +219,22 @@ public sealed class ManagementPaymentReconciliationReportingService : IManagemen
             cancellationToken);
         return ManagementPaymentReconciliationResult<ManagementPaymentReconciliationReport>.Success(report, query.CorrelationId);
     }
+
+    private static bool UsesSupportedCurrency(ManagementPaymentReconciliationSourceSnapshot source) =>
+        source.Attempts.All(HasSupportedCurrency) &&
+        source.Confirmations.All(HasSupportedCurrency) &&
+        source.ProviderOutcomes.All(HasSupportedCurrency) &&
+        source.ReconciliationConditions.All(condition =>
+            condition.CurrencyCode is null || HasSupportedCurrency(condition.CurrencyCode));
+
+    private static bool HasSupportedCurrency(ManagementPaymentAggregateRecord record) =>
+        HasSupportedCurrency(record.CurrencyCode);
+
+    private static bool HasSupportedCurrency(string currencyCode) =>
+        string.Equals(
+            currencyCode.Trim(),
+            ManagementPaymentReconciliationReportingValues.SupportedCurrency,
+            StringComparison.OrdinalIgnoreCase);
 
     private static ManagementPaymentReconciliationReport BuildReport(
         string scopeType,

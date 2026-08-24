@@ -15,7 +15,7 @@ public sealed class ManagementPaymentReconciliationReportingServiceTests
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-08-22T08:00:00Z");
 
     [Fact]
-    public async Task Summary_AggregatesExactCurrencyStatusChannelAndProviderValuesWithoutMixedCurrencyTotal()
+    public async Task Summary_AggregatesExactPhpStatusChannelAndProviderValues()
     {
         var repository = new FakeRepository
         {
@@ -24,13 +24,13 @@ public sealed class ManagementPaymentReconciliationReportingServiceTests
                 [
                     Aggregate("PHP", "REQUESTED", "CASH", "CASH", "CASH", 2, 200.20m),
                     Aggregate("PHP", "CONFIRMED", "QRPH", "QRPH", "PAYMONGO", 1, 100.10m),
-                    Aggregate("USD", "FUTURE_STATUS", "CARD", "CARD", "PAYMONGO", 1, 12.34m)
+                    Aggregate("PHP", "FUTURE_STATUS", "CARD", "CARD", "PAYMONGO", 1, 12.34m)
                 ],
                 confirmations:
                 [
                     Aggregate("PHP", "RECORDED", "CASH", "CASH", "CASH", 1, 100.10m),
                     Aggregate("PHP", "RECORDED", "QRPH", "QRPH", "PAYMONGO", 1, 100.10m),
-                    Aggregate("USD", "VOIDED", "CARD", "CARD", "PAYMONGO", 1, 12.34m)
+                    Aggregate("PHP", "VOIDED", "CARD", "CARD", "PAYMONGO", 1, 12.34m)
                 ],
                 outcomes:
                 [Aggregate("PHP", "CONFIRMED", "QRPH", "QRPH", "PAYMONGO", 1, 100.10m)])
@@ -41,12 +41,11 @@ public sealed class ManagementPaymentReconciliationReportingServiceTests
         result.Outcome.Should().Be(ManagementPaymentReconciliationOutcome.Success);
         result.Value!.CurrencySummaries.Should().BeEquivalentTo(
             [
-                new ManagementPaymentCurrencySummary("PHP", 3, 300.30m, 2, 200.20m),
-                new ManagementPaymentCurrencySummary("USD", 1, 12.34m, 0, 0m)
+                new ManagementPaymentCurrencySummary("PHP", 4, 312.64m, 2, 200.20m)
             ],
             options => options.WithStrictOrdering());
         result.Value.PaymentAttemptSummaries.Should().Contain(summary =>
-            summary.Status == "OTHER" && summary.CurrencyCode == "USD" && summary.Amount == 12.34m);
+            summary.Status == "OTHER" && summary.CurrencyCode == "PHP" && summary.Amount == 12.34m);
         result.Value.ChannelSummaries.Should().Contain(summary =>
             summary.ChannelCode == "CASH" && summary.ChannelType == "CASH");
         result.Value.ProviderSummaries.Should().Contain(summary =>
@@ -80,7 +79,7 @@ public sealed class ManagementPaymentReconciliationReportingServiceTests
             Condition(ManagementPaymentReconciliationReportingValues.CurrencyMismatch, null, 1, null),
             Condition(ManagementPaymentReconciliationReportingValues.DuplicateProviderReference, null, 2, null),
             Condition(ManagementPaymentReconciliationReportingValues.ConfirmedOutcomeWithoutConfirmation, "PHP", 1, 75m),
-            Condition(ManagementPaymentReconciliationReportingValues.ConfirmationAttemptStatusInconsistent, "USD", 1, 9.99m)
+            Condition(ManagementPaymentReconciliationReportingValues.ConfirmationAttemptStatusInconsistent, "PHP", 1, 9.99m)
         };
         var repository = new FakeRepository { ReadResult = Resolved(conditions: conditions) };
 
@@ -94,6 +93,22 @@ public sealed class ManagementPaymentReconciliationReportingServiceTests
         report.InternalReconciliationSummaries.Single(summary =>
                 summary.CategoryId == ManagementPaymentReconciliationReportingValues.CurrencyMismatch)
             .Amounts.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Summary_RejectsNonPhpSourceDataAndAuditsSourceFailure()
+    {
+        var repository = new FakeRepository
+        {
+            ReadResult = Resolved(attempts: [Aggregate("USD", "REQUESTED", "CARD", "CARD", "PAYMONGO", 1, 12.34m)])
+        };
+
+        var result = await CreateService(repository).GetSummaryAsync(Actor(), Query(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementPaymentReconciliationOutcome.SourceUnavailable);
+        result.Value.Should().BeNull();
+        repository.Audits.Should().ContainSingle(audit =>
+            audit.Result == "FAILED" && audit.ReasonCode == "UNSUPPORTED_CURRENCY_SOURCE_DATA");
     }
 
     [Theory]

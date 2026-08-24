@@ -81,7 +81,8 @@
   "money": {
     "source": "linked canonical payment confirmation",
     "meaning": "expected issuance amount",
-    "representation": "exact JSON decimal grouped by ISO currency",
+    "supportedCurrency": "PHP",
+    "representation": "exact JSON decimal in PHP",
     "mixedCurrencyTotal": false,
     "issuedDocumentAmountAvailable": false
   },

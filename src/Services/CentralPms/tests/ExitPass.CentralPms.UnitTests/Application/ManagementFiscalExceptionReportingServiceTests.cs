@@ -24,8 +24,8 @@ public sealed class ManagementFiscalExceptionReportingServiceTests
                 Record("PENDING_FISCAL_ISSUANCE", "PHP", 2, 200m),
                 Record("FISCAL_ISSUANCE_RECORDED", "PHP", 1, 100m),
                 Record("FISCAL_ISSUANCE_FAILED_SERVICE", "PHP", 1, 50m),
-                Record("FISCAL_ISSUANCE_CONFLICT", "USD", 1, 12.34m),
-                Record("FISCAL_ISSUANCE_UNKNOWN", "USD", 1, 9.99m),
+                Record("FISCAL_ISSUANCE_CONFLICT", "PHP", 1, 12.34m),
+                Record("FISCAL_ISSUANCE_UNKNOWN", "PHP", 1, 9.99m),
                 Record("FUTURE_STATE", "PHP", 1, 1m)
             ])
         };
@@ -48,7 +48,7 @@ public sealed class ManagementFiscalExceptionReportingServiceTests
     }
 
     [Fact]
-    public async Task Summary_KeepsCurrenciesSeparateAndUsesExactExpectedIssuanceAmounts()
+    public async Task Summary_UsesExactPhpExpectedIssuanceAmounts()
     {
         var repository = new FakeRepository
         {
@@ -56,7 +56,7 @@ public sealed class ManagementFiscalExceptionReportingServiceTests
             [
                 Record("FISCAL_ISSUANCE_RECORDED", "PHP", 2, 200.20m),
                 Record("FISCAL_ISSUANCE_FAILED_REQUEST", "PHP", 1, 50.05m),
-                Record("FISCAL_ISSUANCE_RECORDED", "USD", 1, 999999999999.99m)
+                Record("FISCAL_ISSUANCE_RECORDED", "PHP", 1, 999999999999.99m)
             ])
         };
 
@@ -64,11 +64,26 @@ public sealed class ManagementFiscalExceptionReportingServiceTests
 
         report.CurrencySummaries.Should().BeEquivalentTo(
         [
-            new ManagementFiscalCurrencySummary("PHP", 3, 250.25m, 2, 1),
-            new ManagementFiscalCurrencySummary("USD", 1, 999999999999.99m, 1, 0)
+            new ManagementFiscalCurrencySummary("PHP", 4, 1000000000250.24m, 3, 1)
         ], options => options.WithStrictOrdering());
         report.GetType().GetProperties().Select(property => property.Name)
             .Should().NotContain(name => name.Contains("GrandTotal", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Summary_RejectsNonPhpSourceDataAndAuditsSourceFailure()
+    {
+        var repository = new FakeRepository
+        {
+            ReadResult = Resolved([Record("FISCAL_ISSUANCE_RECORDED", "USD", 1, 12.34m)])
+        };
+
+        var result = await CreateService(repository).GetSummaryAsync(Actor(), Query(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementFiscalExceptionOutcome.SourceUnavailable);
+        result.Value.Should().BeNull();
+        repository.Audits.Should().ContainSingle(audit =>
+            audit.Result == "FAILED" && audit.ReasonCode == "UNSUPPORTED_CURRENCY_SOURCE_DATA");
     }
 
     [Theory]
