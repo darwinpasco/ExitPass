@@ -64,19 +64,32 @@ public static class OperatorConsoleAccessReadinessEndpoints
                     correlationId));
             }
 
+            var humanSession = string.Equals(
+                httpRequest.HttpContext.User.Identity?.AuthenticationType,
+                Security.HumanSessionAuthenticationHandler.SchemeName,
+                StringComparison.Ordinal);
+            var identity = OperatorConsoleIdentityContext.Resolve(
+                httpRequest,
+                humanSession ? null : request.OperatorUserId,
+                humanSession ? null : request.OperatorDeviceBindingId,
+                humanSession ? null : request.OperatorShiftId,
+                humanSession ? null : request.SiteId,
+                humanSession ? null : request.SiteGroupId,
+                request.CorrelationId);
+
             var result = await service.EvaluateAsync(new OperatorConsoleAccessReadinessCommand(
-                request.OperatorUserId,
-                request.OperatorDeviceBindingId,
-                request.OperatorShiftId,
-                request.SiteId,
-                request.SiteGroupId,
+                identity.UserId,
+                identity.OperatorDeviceBindingId,
+                identity.OperatorShiftId,
+                identity.SiteId,
+                identity.SiteGroupId,
                 request.RequestedAction,
                 request.TargetEntityType,
                 request.TargetEntityId,
                 request.WorkflowState,
-                correlationId,
-                request.DevModeContext?.EnvironmentName ?? environment.EnvironmentName,
-                request.DevModeContext?.UsesLocalDevFallbackContext ?? false),
+                identity.CorrelationId,
+                humanSession ? environment.EnvironmentName : request.DevModeContext?.EnvironmentName ?? environment.EnvironmentName,
+                humanSession ? false : request.DevModeContext?.UsesLocalDevFallbackContext ?? false),
                 cancellationToken);
 
             activity?.SetTag("access_readiness_decision", result.AccessDecision);

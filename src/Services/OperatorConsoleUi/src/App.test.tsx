@@ -689,12 +689,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
   });
 
-  it("OperatorConsoleReadiness_RendersPanelDimensionsAndSandboxIndicator", async () => {
+  it("OperatorConsoleReadiness_RendersPanelDimensionsWithoutBrowserFallbackAuthority", async () => {
     render(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/statutory-discounts" />);
 
     expect(await screen.findByRole("heading", { name: "Operator readiness state" })).toBeInTheDocument();
-    expect(await screen.findByText("Sandbox/local validation context is active. This is not production trust.")).toBeInTheDocument();
     expect(await screen.findByText("Overall readiness")).toBeInTheDocument();
+    expect(screen.queryByText("Sandbox/local validation context is active. This is not production trust.")).not.toBeInTheDocument();
     expect(screen.getAllByText("READY").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("Readiness dimensions")).toHaveTextContent("OPERATOR");
     expect(screen.getByLabelText("Readiness dimensions")).toHaveTextContent("DEVICE");

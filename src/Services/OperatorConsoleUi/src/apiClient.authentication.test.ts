@@ -55,7 +55,7 @@ describe("Operator Console authenticated HTTP boundary", () => {
     expect(calls[0][0]).not.toMatch(/^https?:\/\//);
   });
 
-  it("removes browser-authored reviewer identity while retaining revalidated workflow context", async () => {
+  it("sends decision facts without browser-authored reviewer or operating-context authority", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({
       accessAllowed: true,
       accessDecision: "ALLOW",
@@ -77,11 +77,11 @@ describe("Operator Console authenticated HTTP boundary", () => {
     const body = JSON.parse(calls[0][1].body as string);
     expect(body).not.toHaveProperty("userId");
     expect(body).not.toHaveProperty("reviewerUserId");
-    expect(body).toEqual(expect.objectContaining({
-      siteId: "site-target",
-      siteGroupId: "site-group-target",
-      decision: "APPROVE"
-    }));
+    expect(body).not.toHaveProperty("operatorDeviceBindingId");
+    expect(body).not.toHaveProperty("operatorShiftId");
+    expect(body).not.toHaveProperty("siteId");
+    expect(body).not.toHaveProperty("siteGroupId");
+    expect(body).toEqual(expect.objectContaining({ decision: "APPROVE" }));
   });
 
   it("locks the client boundary on 401 but keeps the session on 403", async () => {

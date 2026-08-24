@@ -1,4 +1,7 @@
+using System.Text.Json;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.HumanAuthentication;
+using ExitPass.CentralPms.Contracts.HumanAuthentication;
 using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
 using FluentAssertions;
 using Microsoft.Extensions.Options;
@@ -9,6 +12,48 @@ namespace ExitPass.CentralPms.UnitTests.HumanAuthentication;
 
 public sealed class HumanAuthenticationServiceTests
 {
+    [Fact]
+    public void Principal_EmitsDeviceAndShiftClaimsOnlyFromServerOwnedSessionFields()
+    {
+        var deviceId = Guid.NewGuid();
+        var shiftId = Guid.NewGuid();
+        var siteId = Guid.NewGuid();
+        var groupId = Guid.NewGuid();
+        var session = new HumanSessionDto(
+            Guid.NewGuid(), Guid.NewGuid(), "operator", "Operator", HumanSessionAudiences.OperatorConsole,
+            "PASSWORD", false, false, false, false, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow.AddMinutes(30), DateTimeOffset.UtcNow.AddHours(8), [], [siteId], [groupId],
+            false, null, Guid.NewGuid(), deviceId, shiftId, siteId, groupId, 3, 5);
+
+        var principal = HumanSessionAuthenticationHandler.CreatePrincipal(session, Guid.NewGuid());
+
+        principal.FindFirst("operator_device_binding_id")!.Value.Should().Be(deviceId.ToString("D"));
+        principal.FindFirst("operator_shift_id")!.Value.Should().Be(shiftId.ToString("D"));
+        principal.FindFirst("operator_effective_site_id")!.Value.Should().Be(siteId.ToString("D"));
+        principal.FindFirst("operator_effective_site_group_id")!.Value.Should().Be(groupId.ToString("D"));
+        principal.FindFirst("authorization_epoch")!.Value.Should().Be("3");
+        principal.FindFirst("credential_version")!.Value.Should().Be("5");
+    }
+
+    [Fact]
+    public void SessionResponse_DoesNotSerializeCanonicalOperatingContextStorageReferences()
+    {
+        var session = new HumanSessionDto(
+            Guid.NewGuid(), Guid.NewGuid(), "operator", "Operator", HumanSessionAudiences.OperatorConsole,
+            "PASSWORD", false, false, false, false, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow.AddMinutes(30), DateTimeOffset.UtcNow.AddHours(8), [], [], [],
+            false, null, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 3, 5);
+
+        var json = JsonSerializer.Serialize(session);
+
+        json.Should().NotContain("OperatorDeviceBindingReference")
+            .And.NotContain("OperatorShiftReference")
+            .And.NotContain("EffectiveSiteReference")
+            .And.NotContain("EffectiveSiteGroupReference")
+            .And.NotContain("AuthorizationEpoch")
+            .And.NotContain("CredentialVersion");
+    }
+
     [Theory]
     [InlineData(HumanSessionAudiences.ManagementPlatform)]
     [InlineData(HumanSessionAudiences.OperatorConsole)]
@@ -147,6 +192,40 @@ public sealed class HumanAuthenticationServiceTests
         result.Response.ErrorCode.Should().Be("CURRENT_PASSWORD_INVALID");
         await fixture.Repository.Received(1).ApplyAuthenticationLockoutAsync(fixture.Login.UserId,
             Arg.Any<DateTimeOffset>(), Arg.Any<DateTimeOffset>(), "AUTHENTICATION_FAILURE", Arg.Any<Guid>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ResolveSession_WhenAuthorizationEpochChanges_RevokesTheStaleSession()
+    {
+        var fixture = new Fixture();
+        var token = fixture.Tokens.Create();
+        var now = DateTimeOffset.UtcNow;
+        var session = Fixture.Session(Guid.NewGuid(), token.SessionReference,
+            HumanSessionAudiences.OperatorConsole, null, false, null, null, "PASSWORD",
+            now, now.AddMinutes(15), now.AddHours(8), Guid.NewGuid(), false) with
+        {
+            SessionSecretHash = fixture.Tokens.HashSecret(token.Secret),
+            AuthorizationEpochSnapshot = 4,
+            CurrentAuthorizationEpoch = 5
+        };
+        fixture.Repository.FindSessionAsync(token.SessionReference, Arg.Any<CancellationToken>()).Returns(session);
+
+        var result = await fixture.Service.ResolveSessionAsync(
+            token.SerializedToken,
+            HumanSessionAudiences.OperatorConsole,
+            null,
+            fixture.Context(),
+            false,
+            CancellationToken.None);
+
+        result.Response.Authenticated.Should().BeFalse();
+        result.Response.ErrorCode.Should().Be("SESSION_REVOKED");
+        await fixture.Repository.Received(1).RevokeSessionAsync(
+            session.HumanSessionId,
+            session.UserId,
+            "IDENTITY_OR_CREDENTIAL_CHANGED",
+            Arg.Any<DateTimeOffset>(),
             Arg.Any<CancellationToken>());
     }
 

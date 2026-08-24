@@ -7,6 +7,7 @@ using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.HumanAuthentication;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.HumanAuthentication;
+using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
@@ -43,6 +44,7 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         using var review = WebClient(factory);
 
         var managementLogin = await LoginWebAsync(management, seed.Username, HumanSessionAudiences.ManagementPlatform);
+        await EstablishOperatorDeviceAsync(review, seed);
         var reviewLogin = await LoginWebAsync(review, seed.Username, HumanSessionAudiences.OperatorConsole);
 
         managementLogin.Session!.Permissions.Should().Contain("user.view");
@@ -51,6 +53,15 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         managementLogin.Session.HasGlobalScope.Should().BeFalse();
         reviewLogin.Session!.Audience.Should().Be(HumanSessionAudiences.OperatorConsole);
         reviewLogin.Session.SessionReference.Should().NotBe(managementLogin.Session.SessionReference);
+        reviewLogin.Session.OperatorDeviceBindingReference.Should().BeNull();
+        reviewLogin.Session.OperatorShiftReference.Should().BeNull();
+        (await ScalarAsync<int>("""
+            SELECT count(*)::integer
+            FROM operator_console.operator_session_contexts
+            WHERE operator_user_id=@user_id AND site_id=@site_id AND site_group_id=@site_group_id
+              AND context_status='ACTIVE';
+            """, ("user_id", seed.UserId), ("site_id", seed.SiteId), ("site_group_id", seed.SiteGroupId)))
+            .Should().Be(1);
 
         (await management.GetAsync($"/v1/operator-console/statutory-discounts/review-requests/{Guid.NewGuid():D}/evidence"))
             .StatusCode.Should().BeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden, HttpStatusCode.NotFound);
@@ -74,11 +85,8 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
             """, ("role_id", seed.RoleId), ("user_role_id", seed.UserRoleId), ("user_id", seed.UserId),
             ("service_id", CentralPmsServiceIdentityId));
 
-        var refreshed = await ReadCurrentSessionAsync(review);
-        refreshed.Session!.Permissions.Should().NotContain("user.view");
-        refreshed.Session.SiteReferences.Should().NotContain(seed.SiteId);
-        refreshed.Session.SiteGroupReferences.Should().Contain(seed.SiteGroupId);
-        refreshed.Session.HasGlobalScope.Should().BeFalse();
+        (await review.GetAsync("/v1/human-authentication/session")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await management.GetAsync("/v1/human-authentication/session")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
@@ -132,12 +140,162 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
 
         apt.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("ExitPass-HumanSession", login.AptSessionToken);
-        var refreshed = await apt.GetFromJsonAsync<HumanAuthenticationResponse>(
-            $"/v1/apt/human-sessions/{login.Session.SessionReference:D}");
-        refreshed!.Authenticated.Should().BeTrue();
-        refreshed.Session!.SiteReferences.Should().BeEmpty();
-        refreshed.Session.SiteGroupReferences.Should().BeEmpty();
-        refreshed.Session.HasGlobalScope.Should().BeFalse();
+        var refreshed = await apt.GetAsync($"/v1/apt/human-sessions/{login.Session.SessionReference:D}");
+        refreshed.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+            "authorization-epoch changes revoke every affected H-006 audience without imposing Operator Console device/shift requirements");
+    }
+
+    [Fact]
+    public async Task Production_operator_login_requiresServerIssuedDeviceCookie_and_liveRevocationBlocksQueue()
+    {
+        var seed = await SeedScopedUserAsync(
+            [
+                "statutory-discounts.review.queue.read",
+                "statutory-discounts.review.detail.read",
+                "statutory-discounts.decision.approve",
+                "statutory-discounts.decision.reject"
+            ],
+            true,
+            true);
+        await InsertScopeAsync(seed.UserRoleId, "GLOBAL", null, null);
+        var webPayReview = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            nameof(Production_operator_login_requiresServerIssuedDeviceCookie_and_liveRevocationBlocksQueue) + "WebPay",
+            "WEBPAY",
+            seed.SiteId,
+            seed.SiteGroupId);
+        await using var factory = ProductionFactory();
+        using var operatorClient = WebClient(factory);
+        using var managementClient = WebClient(factory);
+
+        using (var missingProofLogin = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
+        {
+            Content = JsonContent.Create(new HumanLoginRequest(seed.Username, Password, HumanSessionAudiences.OperatorConsole))
+        })
+        {
+            missingProofLogin.Headers.Add("Origin", "https://localhost");
+            var response = await operatorClient.SendAsync(missingProofLogin);
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            (await response.Content.ReadFromJsonAsync<HumanAuthenticationResponse>())!.ErrorCode
+                .Should().Be("OPERATOR_DEVICE_BINDING_REQUIRED");
+        }
+
+        var managementLogin = await LoginWebAsync(managementClient, seed.Username, HumanSessionAudiences.ManagementPlatform);
+        managementLogin.Authenticated.Should().BeTrue("Management Platform has no Operator Console device or shift requirement");
+        managementLogin.Session!.OperatorDeviceBindingReference.Should().BeNull();
+        managementLogin.Session.OperatorShiftReference.Should().BeNull();
+        var managementQueue = await managementClient.GetAsync("/v1/management-platform/statutory-benefit-requests?page=1&pageSize=1");
+        managementQueue.StatusCode.Should().Be(HttpStatusCode.OK,
+            "a GLOBAL Management Platform reviewer remains authorized without an Operator Console device or shift");
+
+        var device = await EstablishOperatorDeviceAsync(operatorClient, seed);
+        var operatorLogin = await LoginWebWithCsrfAsync(operatorClient, seed.Username, HumanSessionAudiences.OperatorConsole);
+        var login = operatorLogin.Response;
+        login.Session!.OperatorDeviceBindingReference.Should().BeNull("canonical storage references are not serialized to the browser");
+        login.Session.OperatorShiftReference.Should().BeNull("canonical storage references are not serialized to the browser");
+        (await ScalarAsync<Guid>("""
+            SELECT operator_device_binding_id
+            FROM operator_console.operator_session_contexts
+            WHERE operator_user_id=@user_id AND context_status='ACTIVE'
+            ORDER BY bound_at DESC LIMIT 1;
+            """, ("user_id", seed.UserId))).Should().Be(device.DeviceId);
+        (await ScalarAsync<Guid>("""
+            SELECT operator_shift_id
+            FROM operator_console.operator_session_contexts
+            WHERE operator_user_id=@user_id AND context_status='ACTIVE'
+            ORDER BY bound_at DESC LIMIT 1;
+            """, ("user_id", seed.UserId))).Should().Be(device.ShiftId);
+
+        var forgedReadiness = await operatorClient.PostAsJsonAsync(
+            "/v1/ops/operator-console/access/readiness/evaluate",
+            new OperatorConsoleAccessReadinessRequest(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                "SESSION_LOOKUP",
+                null,
+                null,
+                null,
+                Guid.NewGuid(),
+                null,
+                new OperatorConsoleAccessReadinessClientContextDto("forged-browser", "forged-browser"),
+                new OperatorConsoleAccessReadinessDevModeContextDto(true, "Development")));
+        forgedReadiness.StatusCode.Should().Be(HttpStatusCode.OK, await forgedReadiness.Content.ReadAsStringAsync());
+        var serverReadiness = await forgedReadiness.Content.ReadFromJsonAsync<OperatorConsoleAccessReadinessResponse>();
+        serverReadiness!.OperatorReadiness.OperatorUserId.Should().Be(seed.UserId);
+        serverReadiness.DeviceReadiness.OperatorDeviceBindingId.Should().Be(device.DeviceId);
+        serverReadiness.ShiftReadiness.OperatorShiftId.Should().Be(device.ShiftId);
+        serverReadiness.SiteReadiness.SiteId.Should().Be(seed.SiteId);
+        serverReadiness.SiteReadiness.SiteGroupId.Should().Be(seed.SiteGroupId);
+
+        var queue = await operatorClient.GetAsync(
+            $"/v1/ops/operator-console/statutory-discounts/reviews?parkingSessionId={webPayReview.Context.ParkingSessionId:D}&page=1&pageSize=1");
+        queue.StatusCode.Should().Be(HttpStatusCode.OK, await queue.Content.ReadAsStringAsync());
+        var queueBody = await queue.Content.ReadFromJsonAsync<OperatorConsoleServiceChannelStatutoryDiscountReviewQueueResponse>();
+        queueBody!.Items.Should().Contain(item => item.StatutoryDiscountDecisionCommandId == webPayReview.Decision.StatutoryDiscountDecisionCommandId);
+
+        var detail = await operatorClient.GetAsync(
+            $"/v1/ops/operator-console/statutory-discounts/reviews/{webPayReview.Decision.StatutoryDiscountDecisionCommandId:D}");
+        detail.StatusCode.Should().Be(HttpStatusCode.OK, await detail.Content.ReadAsStringAsync());
+        (await detail.Content.ReadFromJsonAsync<OperatorConsoleServiceChannelStatutoryDiscountReviewDetailResponse>())!
+            .EvidenceReferences.Should().NotBeEmpty();
+
+        var approved = await DecideAsync(
+            operatorClient,
+            webPayReview.Decision.StatutoryDiscountDecisionCommandId,
+            "APPROVE",
+            "ELIGIBLE",
+            "i022-h006-approve",
+            operatorLogin.Csrf);
+        approved.CurrentValidationStatus.Should().Be("APPROVED");
+        await AssertReviewAttributionAsync(webPayReview, seed.UserId, device.DeviceId, device.ShiftId);
+        await StatutoryDiscountReviewIntegrationTestSupport.RemoveReviewOnlyAsync(webPayReview.Context);
+
+        var aptReview = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            webPayReview.Context,
+            "ASSISTED_PAYMENT_TERMINAL",
+            "SENIOR_CITIZEN");
+        var rejected = await DecideAsync(
+            operatorClient,
+            aptReview.Decision.StatutoryDiscountDecisionCommandId,
+            "REJECT",
+            "DOCUMENT_INVALID",
+            "i022-h006-reject",
+            operatorLogin.Csrf);
+        rejected.CurrentValidationStatus.Should().Be("REJECTED");
+        await AssertReviewAttributionAsync(aptReview, seed.UserId, device.DeviceId, device.ShiftId);
+
+        using var forged = new HttpRequestMessage(HttpMethod.Get, "/v1/ops/operator-console/statutory-discounts/reviews?limit=1&offset=0");
+        forged.Headers.Add("X-Operator-Device-Binding-Id", Guid.NewGuid().ToString("D"));
+        var forgedResponse = await operatorClient.SendAsync(forged);
+        forgedResponse.StatusCode.Should().NotBe(HttpStatusCode.OK);
+
+        await ExecuteAsync("""
+            UPDATE operator_console.operator_shifts
+            SET operational_status='ENDED', active_to=now()-interval '1 second', row_version=row_version+1
+            WHERE operator_shift_id=@shift_id;
+            """, ("shift_id", device.ShiftId));
+        var closedShift = await operatorClient.GetAsync("/v1/ops/operator-console/statutory-discounts/reviews?limit=1&offset=0");
+        closedShift.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await closedShift.Content.ReadAsStringAsync()).Should().Contain("OPERATOR_SHIFT_CLOSED_OR_EXPIRED");
+
+        await ExecuteAsync("""
+            UPDATE operator_console.operator_shifts
+            SET operational_status='ACTIVE', active_to=now()+interval '8 hours', row_version=row_version+1
+            WHERE operator_shift_id=@shift_id;
+            """, ("shift_id", device.ShiftId));
+        (await LoginWebAsync(operatorClient, seed.Username, HumanSessionAudiences.OperatorConsole)).Authenticated.Should().BeTrue();
+
+        await ExecuteAsync("""
+            UPDATE operator_console.operator_device_bindings
+            SET device_status='REVOKED', revoked_at=now(), revocation_reason_code='I022_PROOF', row_version=row_version+1
+            WHERE operator_device_binding_id=@device_id;
+            """, ("device_id", device.DeviceId));
+        var revoked = await operatorClient.GetAsync("/v1/ops/operator-console/statutory-discounts/reviews?limit=1&offset=0");
+        revoked.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await revoked.Content.ReadAsStringAsync()).Should().Contain("OPERATOR_DEVICE_BINDING_REVOKED");
+
     }
 
     [Fact]
@@ -150,6 +308,7 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         using var management = WebClient(factory);
         using var review = WebClient(factory);
         var managementLogin = await LoginWebWithCsrfAsync(management, seed.Username, HumanSessionAudiences.ManagementPlatform);
+        await EstablishOperatorDeviceAsync(review, seed);
         await LoginWebAsync(review, seed.Username, HumanSessionAudiences.OperatorConsole);
         using var apt = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -260,6 +419,59 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         return (await response.Content.ReadFromJsonAsync<HumanAuthenticationResponse>())!;
     }
 
+    private static async Task<OperatorConsoleStatutoryDiscountDecisionResponse> DecideAsync(
+        HttpClient client,
+        Guid decisionCommandId,
+        string decision,
+        string reasonCode,
+        string idempotencyKey,
+        string csrf)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/v1/ops/operator-console/statutory-discounts/reviews/{decisionCommandId:D}/decision")
+        {
+            Content = JsonContent.Create(new OperatorConsoleCanonicalStatutoryReviewDecisionRequest(
+                decision,
+                reasonCode,
+                ReviewerAttestation: true,
+                idempotencyKey))
+        };
+        request.Headers.Add("Origin", "https://localhost");
+        request.Headers.Add("X-CSRF-Token", csrf);
+        var response = await client.SendAsync(request);
+        response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        return (await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDecisionResponse>())!;
+    }
+
+    private async Task AssertReviewAttributionAsync(
+        SeededServiceChannelReview review,
+        Guid reviewerUserId,
+        Guid deviceBindingId,
+        Guid shiftId)
+    {
+        (await ScalarAsync<Guid>("""
+            SELECT reviewer_user_id
+            FROM operator_console.statutory_discount_service_channel_reviews
+            WHERE statutory_discount_decision_command_id=@decision_id;
+            """, ("decision_id", review.Decision.StatutoryDiscountDecisionCommandId))).Should().Be(reviewerUserId);
+        (await ScalarAsync<Guid>("""
+            SELECT reviewer_operator_device_binding_id
+            FROM operator_console.statutory_discount_service_channel_reviews
+            WHERE statutory_discount_decision_command_id=@decision_id;
+            """, ("decision_id", review.Decision.StatutoryDiscountDecisionCommandId))).Should().Be(deviceBindingId);
+        (await ScalarAsync<Guid>("""
+            SELECT reviewer_operator_shift_id
+            FROM operator_console.statutory_discount_service_channel_reviews
+            WHERE statutory_discount_decision_command_id=@decision_id;
+            """, ("decision_id", review.Decision.StatutoryDiscountDecisionCommandId))).Should().Be(shiftId);
+        (await ScalarAsync<int>("""
+            SELECT count(*)::integer
+            FROM operator_console.statutory_discount_service_channel_reviews
+            WHERE statutory_discount_decision_command_id=@decision_id AND reviewed_at IS NOT NULL;
+            """, ("decision_id", review.Decision.StatutoryDiscountDecisionCommandId))).Should().Be(1);
+    }
+
     private async Task<Seed> SeedScopedUserAsync(
         IReadOnlyCollection<string> permissions,
         bool includeSiteScope,
@@ -300,6 +512,13 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
                 assigned_by_service_identity_id,effective_from,created_by_service_identity_id,updated_by_service_identity_id)
             VALUES (@user_role_id,@user_id,@role_id,'ACTIVE','I022_PROOF',@service_id,
                 now()-interval '1 minute',@service_id,@service_id);
+            INSERT INTO identity.permissions (permission_id,permission_code,permission_name,permission_description,
+                permission_domain,permission_action,permission_status,is_sensitive,requires_audit,
+                created_by_service_identity_id,updated_by_service_identity_id)
+            SELECT gen_random_uuid(),code,code,'I-022 disposable canonical permission binding proof.',
+                'OPERATOR_CONSOLE','AUTHORIZE','ACTIVE',true,true,@service_id,@service_id
+            FROM unnest(@permissions::varchar[]) AS code
+            ON CONFLICT (permission_code) DO NOTHING;
             INSERT INTO identity.role_permissions (role_permission_id,role_id,permission_id,binding_status,
                 binding_reason_code,assigned_by_service_identity_id,effective_from,
                 created_by_service_identity_id,updated_by_service_identity_id)
@@ -354,6 +573,58 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         return deviceId;
     }
 
+    private async Task<OperatorDeviceSeed> EstablishOperatorDeviceAsync(HttpClient client, Seed seed)
+    {
+        var deviceId = Guid.NewGuid();
+        var shiftId = Guid.NewGuid();
+        var mappingId = Guid.NewGuid();
+        var proof = $"i022-provisioning-proof-{Guid.NewGuid():N}";
+        var proofHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(proof))).ToLowerInvariant();
+        await ExecuteAsync("""
+            INSERT INTO operator_console.hr_identity_mappings (
+                hr_identity_mapping_id,user_id,hr_provider_code,external_person_id_hash,mapping_status,
+                effective_from,correlation_id,created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (@mapping_id,@user_id,'I022',@person_hash,'ACTIVE',now()-interval '1 minute',gen_random_uuid(),@service_id,@service_id);
+            INSERT INTO operator_console.operator_device_bindings (
+                operator_device_binding_id,device_binding_code,device_name,site_group_id,site_id,
+                browser_key_thumbprint,device_status,trust_level,binding_source,correlation_id,
+                created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (@device_id,@device_code,'I-022 browser',@site_group_id,@site_id,@proof_hash,
+                'ACTIVE','BROWSER_KEY_ONLY','I022_PROOF',gen_random_uuid(),@service_id,@service_id);
+            INSERT INTO operator_console.operator_device_assignment_history (
+                operator_device_assignment_history_id,operator_device_binding_id,site_group_id,site_id,
+                assignment_status_code,assignment_source_code,assigned_at,effective_from,correlation_id,
+                assigned_by_service_identity_id,created_by_service_identity_id)
+            VALUES (gen_random_uuid(),@device_id,@site_group_id,@site_id,'ACTIVE','I022_PROOF',now(),
+                now()-interval '1 minute',gen_random_uuid(),@service_id,@service_id);
+            INSERT INTO operator_console.operator_shifts (
+                operator_shift_id,hr_provider_code,external_shift_id_hash,hr_identity_mapping_id,operator_user_id,
+                site_group_id,site_id,scheduled_start_at,scheduled_end_at,source_imported_at,import_status_code,
+                source_system_code,operational_status,active_from,active_to,correlation_id,
+                created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (@shift_id,'I022',@shift_hash,@mapping_id,@user_id,@site_group_id,@site_id,
+                now()-interval '1 hour',now()+interval '8 hours',now(),'IMPORTED','I022','ACTIVE',
+                now()-interval '1 hour',now()+interval '8 hours',gen_random_uuid(),@service_id,@service_id);
+            """,
+            ("mapping_id", mappingId), ("user_id", seed.UserId),
+            ("person_hash", Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant()),
+            ("device_id", deviceId), ("device_code", $"I022_OC_{deviceId:N}"[..32]),
+            ("site_group_id", seed.SiteGroupId), ("site_id", seed.SiteId), ("proof_hash", proofHash),
+            ("shift_id", shiftId), ("shift_hash", Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant()),
+            ("service_id", CentralPmsServiceIdentityId));
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/operator-console/device-binding/establish")
+        {
+            Content = JsonContent.Create(new { proof })
+        };
+        request.Headers.Add("Origin", "https://localhost");
+        var response = await client.SendAsync(request);
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent, await response.Content.ReadAsStringAsync());
+        response.Headers.GetValues("Set-Cookie").Single().ToLowerInvariant().Should()
+            .Contain("httponly").And.Contain("secure").And.Contain("samesite=strict");
+        return new OperatorDeviceSeed(deviceId, shiftId);
+    }
+
     private async Task ExecuteAsync(string sql, params (string Name, object Value)[] parameters)
     {
         await using var connection = new NpgsqlConnection(_database.ConnectionString);
@@ -393,4 +664,5 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
     }
 
     private sealed record Seed(Guid UserId, string Username, Guid RoleId, Guid UserRoleId, Guid SiteId, Guid SiteGroupId);
+    private sealed record OperatorDeviceSeed(Guid DeviceId, Guid ShiftId);
 }

@@ -67,6 +67,30 @@ public sealed class HumanSessionAuthenticationHandler : AuthenticationHandler<Au
         {
             claims.Add(new Claim("device_service_identity_id", session.DeviceServiceIdentityReference.Value.ToString("D")));
         }
+        if (session.OperatorDeviceBindingReference.HasValue)
+        {
+            claims.Add(new Claim("operator_device_binding_id", session.OperatorDeviceBindingReference.Value.ToString("D")));
+        }
+        if (session.OperatorShiftReference.HasValue)
+        {
+            claims.Add(new Claim("operator_shift_id", session.OperatorShiftReference.Value.ToString("D")));
+        }
+        if (session.EffectiveSiteReference.HasValue)
+        {
+            claims.Add(new Claim("operator_effective_site_id", session.EffectiveSiteReference.Value.ToString("D")));
+        }
+        if (session.EffectiveSiteGroupReference.HasValue)
+        {
+            claims.Add(new Claim("operator_effective_site_group_id", session.EffectiveSiteGroupReference.Value.ToString("D")));
+        }
+        if (session.AuthorizationEpoch.HasValue)
+        {
+            claims.Add(new Claim("authorization_epoch", session.AuthorizationEpoch.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        }
+        if (session.CredentialVersion.HasValue)
+        {
+            claims.Add(new Claim("credential_version", session.CredentialVersion.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        }
         if (internalHumanSessionId.HasValue)
         {
             claims.Add(new Claim(InternalHumanSessionIdClaimType, internalHumanSessionId.Value.ToString("D")));

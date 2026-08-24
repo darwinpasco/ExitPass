@@ -29,9 +29,18 @@ internal sealed record OperatorConsoleIdentityContext(
         Guid? fallbackSiteGroupId = null,
         Guid? fallbackCorrelationId = null)
     {
+        var humanSession = string.Equals(
+            request.HttpContext.User.Identity?.AuthenticationType,
+            Security.HumanSessionAuthenticationHandler.SchemeName,
+            StringComparison.Ordinal);
+        if (humanSession)
+        {
+            RejectClientAuthorityHeaders(request);
+        }
+
         var userId = ResolveGuid(
             request,
-            UserIdHeader,
+            humanSession ? null : UserIdHeader,
             fallbackUserId,
             ClaimTypes.NameIdentifier,
             "sub",
@@ -44,27 +53,27 @@ internal sealed record OperatorConsoleIdentityContext(
 
         var deviceBindingId = ResolveGuid(
             request,
-            DeviceBindingIdHeader,
+            humanSession ? null : DeviceBindingIdHeader,
             fallbackOperatorDeviceBindingId,
             "operator_device_binding_id");
 
         var shiftId = ResolveGuid(
             request,
-            ShiftIdHeader,
+            humanSession ? null : ShiftIdHeader,
             fallbackOperatorShiftId,
             "operator_shift_id");
 
         var siteId = ResolveGuid(
             request,
-            SiteIdHeader,
+            humanSession ? null : SiteIdHeader,
             fallbackSiteId,
-            "site_id");
+            humanSession ? "operator_effective_site_id" : "site_id");
 
         var siteGroupId = ResolveGuid(
             request,
-            SiteGroupIdHeader,
+            humanSession ? null : SiteGroupIdHeader,
             fallbackSiteGroupId,
-            "site_group_id");
+            humanSession ? "operator_effective_site_group_id" : "site_group_id");
 
         var correlationId = ResolveGuid(
             request,
@@ -83,7 +92,7 @@ internal sealed record OperatorConsoleIdentityContext(
 
     private static Guid? ResolveGuid(
         HttpRequest request,
-        string headerName,
+        string? headerName,
         Guid? fallback,
         params string[] claimTypes)
     {
@@ -101,7 +110,7 @@ internal sealed record OperatorConsoleIdentityContext(
             }
         }
 
-        if (request.Headers.TryGetValue(headerName, out var headerValue) &&
+        if (headerName is not null && request.Headers.TryGetValue(headerName, out var headerValue) &&
             !string.IsNullOrWhiteSpace(headerValue.ToString()))
         {
             if (!Guid.TryParse(headerValue.ToString(), out var headerGuid) || headerGuid == Guid.Empty)
@@ -129,5 +138,14 @@ internal sealed record OperatorConsoleIdentityContext(
         }
 
         return resolved;
+    }
+
+    private static void RejectClientAuthorityHeaders(HttpRequest request)
+    {
+        string[] names = [UserIdHeader, DeviceBindingIdHeader, ShiftIdHeader, SiteIdHeader, SiteGroupIdHeader];
+        if (names.Any(name => request.Headers.ContainsKey(name)))
+        {
+            throw new ArgumentException("Client-authored Operator Console authority headers are prohibited.");
+        }
     }
 }

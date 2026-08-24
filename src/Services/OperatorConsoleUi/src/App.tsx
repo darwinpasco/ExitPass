@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   createOperatorConsoleApiClient,
   defaultDevModeContext,
-  getDefaultOperatorConsoleOperatingContext,
   mapApiError,
   type OperatorConsoleApiClient
 } from "./apiClient";
@@ -80,7 +79,6 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
   const [path, setPath] = useState(initialPath ?? normalizePath(window.location.pathname));
   const [readinessState, setReadinessState] = useState<LoadState<AccessReadinessResponse>>({ status: "idle" });
   const [statutoryReviewFilters, setStatutoryReviewFilters] = useState<CanonicalStatutoryReviewFilters>(defaultCanonicalStatutoryReviewFilters);
-  const operatorContext = useMemo(() => getDefaultOperatorConsoleOperatingContext(), []);
   const devModeContext = useMemo(() => defaultDevModeContext(), []);
   const mountedRef = useRef(true);
 
@@ -112,7 +110,6 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
     setReadinessState({ status: "loading" });
     void client
       .evaluateAccessReadiness({
-        ...operatorContext,
         requestedAction,
         clientContext: {
           uiModule: "OperatorConsoleUi",

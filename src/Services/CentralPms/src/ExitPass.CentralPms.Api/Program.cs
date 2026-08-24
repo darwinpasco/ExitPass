@@ -123,6 +123,7 @@ if (IsLocalDevelopment(app.Environment))
 
 app.UseMiddleware<ProductionFixtureIdentityHeaderGuardMiddleware>();
 app.UseAuthentication();
+app.UseMiddleware<OperatorConsoleOperatingContextMiddleware>();
 app.UseMiddleware<InternalMtlsMiddleware>();
 app.UseMiddleware<CentralPmsRbacMiddleware>();
 app.UseAuthorization();
@@ -162,6 +163,7 @@ app.MapReconciliationExceptionLifecycleEndpoints();
 app.MapReconciliationEvaluationEndpoints();
 app.MapOperatorConsoleAccessEvaluationEndpoints();
 app.MapOperatorConsoleAccessReadinessEndpoints();
+app.MapOperatorConsoleDeviceBindingEndpoints();
 app.MapOperatorConsoleSessionLookupEndpoints();
 app.MapOperatorConsoleFiscalIssuanceStatusEndpoints();
 app.MapOperatorConsoleFiscalStatusViewAuditReportEndpoints();
@@ -718,6 +720,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleAccessReadinessRepository>(_ =>
         new OperatorConsoleAccessReadinessRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<OperatorConsoleAccessReadinessService>();
+    builder.Services.AddScoped<IOperatorConsoleOperatingContextRepository>(_ =>
+        new PostgresOperatorConsoleOperatingContextRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleOperatingContextService, OperatorConsoleOperatingContextService>();
     builder.Services.AddScoped<IOperatorConsoleSessionLookupReadRepository>(_ =>
         new OperatorConsoleSessionLookupReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleSessionLookupService, OperatorConsoleSessionLookupService>();
