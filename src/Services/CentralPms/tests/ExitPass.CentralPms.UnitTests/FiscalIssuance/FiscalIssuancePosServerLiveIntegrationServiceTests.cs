@@ -92,23 +92,33 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         readiness.Errors.Should().BeEmpty();
     }
 
-    [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public void EvaluateReadiness_WhenPaymentOrExitLiveFlowFlagIsEnabled_ReportsUnsafeFlowWiring(
-        bool paymentFlowEnabled,
-        bool exitFlowEnabled)
+    [Fact]
+    public void EvaluateReadiness_WhenPaymentLiveFlowFlagIsEnabled_ReportsReady()
     {
         var readiness = new FiscalIssuancePosServerIntegrationOptions
         {
             EnablePosServerFiscalIssuanceLiveCall = true,
-            EnableLiveFiscalIssuanceFromPaymentFlow = paymentFlowEnabled,
-            EnableLiveFiscalIssuanceFromExitFlow = exitFlowEnabled
+            EnableLiveFiscalIssuanceFromPaymentFlow = true
+        }.AddEndpoint().EvaluateReadiness();
+
+        readiness.Status.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledReady);
+        readiness.IsReady.Should().BeTrue();
+        readiness.LiveCallsAllowedFromPaymentFlow.Should().BeTrue();
+        readiness.Errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EvaluateReadiness_WhenExitLiveFlowFlagIsEnabled_ReportsUnsafeFlowWiring()
+    {
+        var readiness = new FiscalIssuancePosServerIntegrationOptions
+        {
+            EnablePosServerFiscalIssuanceLiveCall = true,
+            EnableLiveFiscalIssuanceFromExitFlow = true
         }.AddEndpoint().EvaluateReadiness();
 
         readiness.Status.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledUnsafeFlowWiring);
         readiness.IsReady.Should().BeFalse();
-        readiness.Errors.Should().Contain("payment_exit_live_flow_flags_must_remain_disabled");
+        readiness.Errors.Should().Contain("exit_live_flow_flag_must_remain_disabled");
     }
 
     [Fact]
@@ -192,7 +202,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
     }
 
     [Fact]
-    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenUnsafeFlowFlagsAreEnabled_DoesNotCallClient()
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenExitFlowFlagIsEnabled_DoesNotCallClient()
     {
         var mapper = Substitute.For<IPosServerFiscalDocumentRequestMapper>();
         var client = Substitute.For<IPosServerFiscalDocumentClient>();
@@ -201,7 +211,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
             new FiscalIssuancePosServerIntegrationOptions
             {
                 EnablePosServerFiscalIssuanceLiveCall = true,
-                EnableLiveFiscalIssuanceFromPaymentFlow = true
+                EnableLiveFiscalIssuanceFromExitFlow = true
             }.AddEndpoint(),
             mapper,
             client: client,
@@ -214,7 +224,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
             CancellationToken.None);
 
         result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.ConfigurationInvalid);
-        result.Errors.Should().Contain("payment_exit_live_flow_flags_must_remain_disabled");
+        result.Errors.Should().Contain("exit_live_flow_flag_must_remain_disabled");
         await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
         mapper.DidNotReceiveWithAnyArgs().Map(default!);
     }

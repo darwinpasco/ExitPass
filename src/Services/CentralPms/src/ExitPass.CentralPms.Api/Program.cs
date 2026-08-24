@@ -464,6 +464,10 @@ static void ConfigureApplicationServices(
 
     builder.Services.AddScoped<IRecordPaymentConfirmationGateway>(_ =>
         new RecordPaymentConfirmationGateway(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IDigitalPaymentFiscalContextReader>(serviceProvider =>
+        new PostgresDigitalPaymentFiscalContextReader(
+            mainDatabaseConnectionString,
+            serviceProvider.GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>()));
     builder.Services.AddScoped<IFiscalIssuanceReferenceRepository>(_ =>
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalIssuanceStatusReadService, FiscalIssuanceStatusReadService>();
@@ -551,6 +555,8 @@ static void ConfigureApplicationServices(
             options => !options.EnablePosServerFiscalIssuanceLiveCall || options.EvaluateReadiness().IsReady,
             "Enabled Site POS Server integration configuration is invalid.")
         .ValidateOnStart();
+    builder.Services.AddSingleton(serviceProvider =>
+        serviceProvider.GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>().Value);
     builder.Services.AddScoped<IPosServerFiscalDocumentRequestMapper, PosServerFiscalDocumentRequestMapper>();
     builder.Services.AddScoped<IFiscalIssuancePosServerLiveIntegrationService>(serviceProvider =>
         new FiscalIssuancePosServerLiveIntegrationService(
@@ -617,6 +623,8 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentWorkflow, VendorPaymentAcknowledgmentWorkflow>();
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentRetryDispatcherService, VendorPaymentAcknowledgmentRetryDispatcherService>();
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentOpsService, VendorPaymentAcknowledgmentOpsService>();
+
+    builder.Services.AddScoped<IDigitalPaymentFiscalIssuanceService, DigitalPaymentFiscalIssuanceService>();
 
     builder.Services.AddScoped<IReportVerifiedPaymentOutcomeUseCase, ReportVerifiedPaymentOutcomeHandler>();
 

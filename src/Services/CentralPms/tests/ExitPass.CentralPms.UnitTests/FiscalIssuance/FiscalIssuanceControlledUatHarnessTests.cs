@@ -197,12 +197,13 @@ public sealed class FiscalIssuanceControlledUatHarnessTests
     }
 
     [Theory]
-    [InlineData(true, false, "payment_flow_live_call_guard_must_remain_disabled")]
-    [InlineData(false, true, "exit_flow_live_call_guard_must_remain_disabled")]
+    [InlineData(true, false, "payment_flow_live_call_guard_must_remain_disabled", FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledReady)]
+    [InlineData(false, true, "exit_flow_live_call_guard_must_remain_disabled", FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledUnsafeFlowWiring)]
     public async Task ExecuteAsync_WhenPaymentOrExitFlowGuardEnabled_Rejects(
         bool paymentFlowEnabled,
         bool exitFlowEnabled,
-        string expectedError)
+        string expectedError,
+        string expectedReadinessStatus)
     {
         var options = new FiscalIssuancePosServerIntegrationOptions
         {
@@ -216,7 +217,7 @@ public sealed class FiscalIssuanceControlledUatHarnessTests
         var result = await CreateSut(options).ExecuteAsync(ValidRequest(), CancellationToken.None);
 
         result.Status.Should().Be(FiscalIssuanceControlledUatHarnessStatuses.RejectedConfigNotReady);
-        result.ReadinessStatus.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledUnsafeFlowWiring);
+        result.ReadinessStatus.Should().Be(expectedReadinessStatus);
         result.Errors.Should().Contain(expectedError);
         result.DiagnosticInvoked.Should().BeFalse();
     }

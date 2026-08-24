@@ -4,6 +4,9 @@ namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
 
 internal static class SitePosServerTestOptions
 {
+    internal static readonly Guid SiteId =
+        Guid.Parse("22222222-2222-2222-2222-222222222222");
+
     internal static readonly Guid SitePosServerId =
         Guid.Parse("11111111-1111-1111-1111-111111111111");
 
@@ -19,6 +22,7 @@ internal static class SitePosServerTestOptions
         [
             new SitePosServerEndpointOptions
             {
+                SiteId = SiteId,
                 SitePosServerId = SitePosServerId,
                 SitePosServerRef = SitePosServerRef,
                 BaseUrl = baseUrl,
