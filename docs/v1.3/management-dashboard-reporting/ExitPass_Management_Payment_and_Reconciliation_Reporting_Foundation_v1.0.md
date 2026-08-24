@@ -28,7 +28,7 @@ Null, empty, GLOBAL, inferred, local-time, reversed, or overlong requests fail c
 | `core.parking_sessions` | Central PMS session control | Site and Site Group links | canonical session lifecycle | Not used as payment currency | Joins payment records to authorized scope | No plate, ticket, vehicle, or session detail is returned |
 | `sites.sites`, `sites.site_groups` | Central PMS Site registry | safe scope identity and lifecycle | canonical Site lifecycle | Latest scope update | Server-side scope resolution | Missing scope never means GLOBAL |
 
-All money is PostgreSQL `numeric` and .NET `decimal`. Aggregates remain separated by three-letter currency code. There is no mixed-currency grand total.
+All money is PostgreSQL `numeric` and .NET `decimal`. ExitPass accepts and reports PHP only. A non-PHP source record causes the report to fail closed instead of exposing an unsupported currency.
 
 ## Status Normalization
 
@@ -45,7 +45,7 @@ Unknown values are retained in aggregate counts as `OTHER`; they are never disca
 | Stable category | Definition | Source requirement | Counting and monetary treatment | Limitation |
 | --- | --- | --- | --- | --- |
 | `ATTEMPT_CONFIRMATION_AMOUNT_MISMATCH` | A recorded confirmation differs from its attempt amount while currency matches | attempt plus recorded confirmation | Count mismatched confirmations; sum absolute differences by currency | Does not repair either record |
-| `ATTEMPT_CONFIRMATION_CURRENCY_MISMATCH` | A recorded confirmation currency differs from its attempt currency | attempt plus recorded confirmation | Count records; no monetary total because currencies differ | No currency conversion is attempted |
+| `ATTEMPT_CONFIRMATION_CURRENCY_MISMATCH` | A recorded confirmation currency differs from its attempt currency | attempt plus recorded confirmation | The stable category remains present; valid PHP-only records produce zero findings | Non-PHP source data fails the report closed and no conversion is attempted |
 | `DUPLICATE_AUTHORITATIVE_PROVIDER_REFERENCE` | Multiple recorded confirmations use the same non-empty reference for the same canonical provider | confirmations plus rail/provider metadata | Count involved confirmation records; no monetary total | Reference values are never returned |
 | `CONFIRMED_OUTCOME_WITHOUT_CONFIRMATION` | A verified `CONFIRMED` provider outcome has no confirmation linked by outcome ID | outcome, attempt, optional confirmation | Count outcomes and sum outcome amount by currency, separately from confirmed revenue | Does not create payment confirmation |
 | `CONFIRMATION_ATTEMPT_STATUS_INCONSISTENT` | A recorded confirmation links to an attempt whose current status is not `CONFIRMED` | attempt plus recorded confirmation | Count confirmations and sum confirmation amount by currency | Does not change attempt status |
@@ -64,6 +64,6 @@ Safe audits cover success, invalid request, feature denial, permission/scope den
 
 ## Validation And Deferred Scope
 
-Unit, hosted API, live-session, and PostgreSQL-backed tests cover contract shape, explicit scope/period validation, exact decimal/currency aggregation, half-open boundaries, known/unknown status handling, internal conditions, no-activity posture, feature gates, current session/epoch/account checks, permission/scope denial, safe audits, GET-only behavior, and sensitive-field exclusion.
+Unit, hosted API, live-session, and PostgreSQL-backed tests cover contract shape, explicit scope/period validation, exact PHP decimal aggregation, non-PHP fail-closed behavior, half-open boundaries, known/unknown status handling, internal conditions, no-activity posture, feature gates, current session/epoch/account checks, permission/scope denial, safe audits, GET-only behavior, and sensitive-field exclusion.
 
 Deferred work includes the Management Platform UI, exports, schedules, delivery, drill-down, external settlement/payout/bank/custody facts, fees, refunds, chargebacks/disputes, fiscal reporting, and reconciliation mutation. The v1.3 dashboard capability remains partial and not accepted end to end.

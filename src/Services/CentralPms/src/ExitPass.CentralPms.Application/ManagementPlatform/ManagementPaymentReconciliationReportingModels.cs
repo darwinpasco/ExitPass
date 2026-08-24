@@ -17,6 +17,7 @@ public static class ManagementPaymentReconciliationReportingValues
     public const string UnexpectedFailure = "MANAGEMENT_PAYMENT_RECONCILIATION_UNEXPECTED_FAILURE";
     public const string NoActivity = "NO_PAYMENT_ACTIVITY_IN_PERIOD";
     public const string SourceAuthority = "CENTRAL_PMS_CANONICAL_PAYMENT_RECORDS";
+    public const string SupportedCurrency = "PHP";
     public const int MaximumPeriodDays = 31;
 
     public const string AmountMismatch = "ATTEMPT_CONFIRMATION_AMOUNT_MISMATCH";

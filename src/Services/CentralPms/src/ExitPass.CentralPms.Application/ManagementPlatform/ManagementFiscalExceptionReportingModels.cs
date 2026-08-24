@@ -18,6 +18,7 @@ public static class ManagementFiscalExceptionReportingValues
     public const string NoActivity = "NO_SALES_INVOICE_ISSUANCE_ACTIVITY_IN_PERIOD";
     public const string SourceAuthority = "CENTRAL_PMS_FISCAL_ISSUANCE_REFERENCES";
     public const string TimeBasis = "FISCAL_ISSUANCE_REFERENCE_FIRST_RECORDED_AT";
+    public const string SupportedCurrency = "PHP";
     public const string NoActivityAvailability = "NO_ACTIVITY";
     public const int MaximumPeriodDays = 31;
 

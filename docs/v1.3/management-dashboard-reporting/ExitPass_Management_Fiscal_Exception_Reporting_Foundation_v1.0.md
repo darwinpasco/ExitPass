@@ -46,9 +46,9 @@ Pending work is a lifecycle state, not automatically an exception. The current a
 
 | Stable ID | Condition and sources | Counting and currency | Terminal and resolution boundary |
 | --- | --- | --- | --- |
-| `SALES_INVOICE_ISSUANCE_FAILED` | Latest state is one of the three canonical failed states. Requires a coordination reference and linked confirmation. | One count per reference; affected expected amount is summed separately by confirmation currency. | Not declared permanently terminal; a later authoritative retry may resolve it. |
-| `SALES_INVOICE_REFERENCE_CONFLICT` | Latest state is `FISCAL_ISSUANCE_CONFLICT`. | One count per reference; affected expected amount remains currency-separated. | Not declared permanently terminal; authoritative conflict handling may resolve it. |
-| `SALES_INVOICE_OUTCOME_UNAVAILABLE` | Latest state is `FISCAL_ISSUANCE_UNKNOWN` or `FISCAL_ISSUANCE_MANUAL_REVIEW`. | One count per reference; affected expected amount remains currency-separated. | Can resolve when a conclusive outcome is persisted. It does not mean issuance failed. |
+| `SALES_INVOICE_ISSUANCE_FAILED` | Latest state is one of the three canonical failed states. Requires a coordination reference and linked confirmation. | One count per reference; affected expected amount is summed in PHP. | Not declared permanently terminal; a later authoritative retry may resolve it. |
+| `SALES_INVOICE_REFERENCE_CONFLICT` | Latest state is `FISCAL_ISSUANCE_CONFLICT`. | One count per reference; affected expected amount remains in PHP. | Not declared permanently terminal; authoritative conflict handling may resolve it. |
+| `SALES_INVOICE_OUTCOME_UNAVAILABLE` | Latest state is `FISCAL_ISSUANCE_UNKNOWN` or `FISCAL_ISSUANCE_MANUAL_REVIEW`. | One count per reference; affected expected amount remains in PHP. | Can resolve when a conclusive outcome is persisted. It does not mean issuance failed. |
 
 The current source does not support deterministic document amount mismatch, currency mismatch, duplicate Sales Invoice reference, missing expectation, retry exhausted, or overdue exception categories without an unacceptable false-positive risk. Those categories are not advertised.
 
@@ -56,7 +56,7 @@ The current source does not support deterministic document amount mismatch, curr
 
 `GET /v1/management-platform/dashboard/fiscal-exception-summary` requires explicit `SITE` or `SITE_GROUP` scope and an explicit authorized reference. Missing, empty, GLOBAL, and cross-scope requests fail closed. Site Group queries include only current member Sites resolved by Central PMS. The required UTC period has no default, uses half-open bounds, and may not exceed 31 days.
 
-Money uses exact database decimal values and ISO currency. Expected issuance amounts are derived from linked payment confirmations, grouped by currency, and never combined across currencies. No settled amount, deposited revenue, net proceeds, or funds-received claim is made.
+Money uses exact database decimal values in PHP. Expected issuance amounts are derived from linked payment confirmations. A non-PHP source record causes the report to fail closed. No settled amount, deposited revenue, net proceeds, or funds-received claim is made.
 
 ## Authorization And Feature Control
 
@@ -82,7 +82,7 @@ The established Management Platform problem-details envelope covers unauthentica
 
 ## Test Evidence
 
-Coverage includes contract determinism; explicit Site and Site Group scope; missing/GLOBAL/cross-scope denial; live hosted-session authorization; current authorization epoch; active account; UTC and 31-day period validation; half-open boundaries; no activity; every supported lifecycle and exception category; pending-not-exception behavior; unknown-state preservation; exact multi-currency aggregation; source failure; audit outcomes; sensitive-field exclusion; GET-only routing; and PostgreSQL-backed query behavior.
+Coverage includes contract determinism; explicit Site and Site Group scope; missing/GLOBAL/cross-scope denial; live hosted-session authorization; current authorization epoch; active account; UTC and 31-day period validation; half-open boundaries; no activity; every supported lifecycle and exception category; pending-not-exception behavior; unknown-state preservation; exact PHP aggregation; non-PHP fail-closed behavior; source failure; audit outcomes; sensitive-field exclusion; GET-only routing; and PostgreSQL-backed query behavior.
 
 ## Unavailable And Deferred Scope
 

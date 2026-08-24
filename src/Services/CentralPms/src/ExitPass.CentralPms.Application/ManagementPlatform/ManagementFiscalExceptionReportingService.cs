@@ -137,6 +137,17 @@ public sealed class ManagementFiscalExceptionReportingService : IManagementFisca
             return SourceUnavailable(query.CorrelationId);
         }
 
+        if (source.Snapshot.Records.Any(record => !string.Equals(
+                record.CurrencyCode.Trim(),
+                ManagementFiscalExceptionReportingValues.SupportedCurrency,
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            await AuditAsync("MANAGEMENT_FISCAL_EXCEPTION_SOURCE_FAILURE", "FAILED", "UNSUPPORTED_CURRENCY_SOURCE_DATA",
+                actor, scopeType, query.ScopeReference, periodStart, periodEnd,
+                ManagementDashboardReportingValues.Unavailable, 0, query.CorrelationId, now, cancellationToken);
+            return SourceUnavailable(query.CorrelationId);
+        }
+
         var report = BuildReport(scopeType, query.ScopeReference.Value, scopeResult.Scope, periodStart, periodEnd,
             now, query.CorrelationId, source.Snapshot);
         await AuditAsync("MANAGEMENT_FISCAL_EXCEPTION_REPORT_READ", "SUCCESS", "REPORT_RETURNED",
