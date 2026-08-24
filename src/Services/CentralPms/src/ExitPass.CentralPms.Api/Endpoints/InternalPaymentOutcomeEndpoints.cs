@@ -52,6 +52,7 @@ public static class InternalPaymentOutcomeEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+            .Produces<ErrorResponse>(StatusCodes.Status503ServiceUnavailable)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError);
 
         group.MapGet("/outcome/{paymentAttemptId:guid}", HandleReadAsync)
@@ -227,6 +228,26 @@ public static class InternalPaymentOutcomeEndpoints
                 ex.Message,
                 correlationId,
                 retryable: false));
+        }
+        catch (RetryableFiscalIssuanceUnavailableException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, RetryableFiscalIssuanceUnavailableException.StableErrorCode);
+            activity?.SetTag("failure_class", "RETRYABLE_DEPENDENCY_FAILURE");
+            activity?.SetTag("error_code", RetryableFiscalIssuanceUnavailableException.StableErrorCode);
+            activity?.SetTag("fiscal_issuance_reference_id", ex.FiscalIssuanceReferenceId);
+
+            logger.LogWarning(
+                "Fiscal issuance is temporarily unavailable. fiscal_issuance_reference_id={FiscalIssuanceReferenceId} correlation_id={CorrelationId}",
+                ex.FiscalIssuanceReferenceId,
+                correlationId);
+
+            return Results.Json(
+                BuildError(
+                    RetryableFiscalIssuanceUnavailableException.StableErrorCode,
+                    RetryableFiscalIssuanceUnavailableException.SafeMessage,
+                    correlationId,
+                    retryable: true),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
         }
         catch (InvalidOperationException ex)
         {

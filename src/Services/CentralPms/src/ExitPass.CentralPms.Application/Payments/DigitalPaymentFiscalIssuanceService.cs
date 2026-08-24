@@ -448,7 +448,9 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             posServerCallAttempted,
             safeErrorCode,
             reference.SitePosServerId,
-            reference.SitePosServerRef);
+            reference.SitePosServerRef,
+            reference.FiscalIssuanceState == FiscalIssuanceIntegrationState.FiscalIssuanceFailedService &&
+            reference.LatestErrorPosture == FiscalIssuanceErrorPosture.RetryAfterServiceRecovery);
 }
 
 public sealed record DigitalPaymentFiscalIssuanceCommand(
@@ -476,4 +478,5 @@ public sealed record DigitalPaymentFiscalIssuanceResult(
     bool PosServerCallAttempted,
     string? SafeErrorCode,
     Guid? SitePosServerId,
-    string? SitePosServerRef);
+    string? SitePosServerRef,
+    bool RetryableAfterServiceRecovery = false);

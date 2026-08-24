@@ -41,6 +41,7 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
     private readonly IIntegrationEventPublisher _eventPublisher;
     private readonly IVendorPaymentAcknowledgmentWorkflow? _vendorPaymentAcknowledgmentWorkflow;
     private readonly IDigitalPaymentFiscalIssuanceService? _digitalPaymentFiscalIssuanceService;
+    private readonly IDigitalPaymentFiscalRecoveryContextReader? _digitalPaymentFiscalRecoveryContextReader;
     private readonly FiscalIssuancePosServerIntegrationOptions _posServerOptions;
     private readonly ISystemClock _systemClock;
     private readonly ILogger<ReportVerifiedPaymentOutcomeHandler> _logger;
@@ -67,7 +68,8 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
         CentralPmsMetrics? metrics = null,
         IVendorPaymentAcknowledgmentWorkflow? vendorPaymentAcknowledgmentWorkflow = null,
         IDigitalPaymentFiscalIssuanceService? digitalPaymentFiscalIssuanceService = null,
-        FiscalIssuancePosServerIntegrationOptions? posServerOptions = null)
+        FiscalIssuancePosServerIntegrationOptions? posServerOptions = null,
+        IDigitalPaymentFiscalRecoveryContextReader? digitalPaymentFiscalRecoveryContextReader = null)
     {
         _recordPaymentConfirmationGateway = recordPaymentConfirmationGateway;
         _finalizePaymentAttemptUseCase = finalizePaymentAttemptUseCase;
@@ -75,6 +77,7 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
         _eventPublisher = eventPublisher;
         _vendorPaymentAcknowledgmentWorkflow = vendorPaymentAcknowledgmentWorkflow;
         _digitalPaymentFiscalIssuanceService = digitalPaymentFiscalIssuanceService;
+        _digitalPaymentFiscalRecoveryContextReader = digitalPaymentFiscalRecoveryContextReader;
         _posServerOptions = posServerOptions ?? new FiscalIssuancePosServerIntegrationOptions();
         _systemClock = systemClock;
         _logger = logger;
@@ -114,6 +117,17 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
             command.PaymentAttemptId,
             command.ProviderReference,
             command.FinalAttemptStatus);
+
+        var recovered = await TryResumeFiscalProcessingAsync(command, cancellationToken);
+        if (recovered is not null)
+        {
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            activity?.SetTag("attempt_status", recovered.AttemptStatus);
+            activity?.SetTag("exit_authorization_id", recovered.ExitAuthorizationId);
+            activity?.SetTag("authorization_status", recovered.AuthorizationStatus);
+            activity?.SetTag("outcome", "fiscal_recovery_resumed");
+            return recovered;
+        }
 
         var confirmation = await _recordPaymentConfirmationGateway.RecordAsync(
             new RecordPaymentConfirmationCommand(
@@ -237,8 +251,108 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
 
         if (!result.ReadyForExitAuthorization)
         {
+            if (result.RetryableAfterServiceRecovery)
+            {
+                throw new RetryableFiscalIssuanceUnavailableException(
+                    result.FiscalIssuanceReferenceId);
+            }
+
             throw new InvalidOperationException(
                 result.SafeErrorCode ?? "digital_payment_fiscal_issuance_not_ready");
+        }
+    }
+
+    private async Task<ReportVerifiedPaymentOutcomeResult?> TryResumeFiscalProcessingAsync(
+        ReportVerifiedPaymentOutcomeCommand command,
+        CancellationToken cancellationToken)
+    {
+        if (!_posServerOptions.EnableLiveFiscalIssuanceFromPaymentFlow ||
+            _digitalPaymentFiscalRecoveryContextReader is null ||
+            _digitalPaymentFiscalIssuanceService is null)
+        {
+            return null;
+        }
+
+        var recovery = await _digitalPaymentFiscalRecoveryContextReader.FindByPaymentAttemptIdAsync(
+            command.PaymentAttemptId,
+            cancellationToken);
+        if (recovery is null)
+        {
+            return null;
+        }
+
+        EnsureRecoveryRequestMatches(command, recovery);
+        if (!recovery.PermitsServiceRecovery && !recovery.IsCompleted)
+        {
+            throw new InvalidOperationException("payment_attempt_has_no_retryable_fiscal_recovery_context");
+        }
+
+        _logger.LogInformation(
+            "Resuming post-payment fiscal processing. payment_attempt_id={PaymentAttemptId} payment_confirmation_id={PaymentConfirmationId} fiscal_issuance_reference_id={FiscalIssuanceReferenceId} correlation_id={CorrelationId}",
+            recovery.PaymentAttemptId,
+            recovery.PaymentConfirmationId,
+            recovery.FiscalIssuanceReferenceId,
+            command.CorrelationId);
+
+        var confirmation = new RecordPaymentConfirmationResult(
+            recovery.PaymentConfirmationId,
+            recovery.PaymentAttemptId,
+            recovery.ProviderReference,
+            command.ProviderStatus,
+            recovery.ConfirmationStatus,
+            recovery.VerifiedTimestamp);
+        var finalized = new FinalizePaymentAttemptResult(recovery.PaymentAttemptId, recovery.AttemptStatus);
+
+        await EnsureDigitalFiscalIssuanceAsync(command, confirmation, cancellationToken);
+
+        var issued = await _issueExitAuthorizationUseCase.ExecuteAsync(
+            new IssueExitAuthorizationCommand(
+                command.ParkingSessionId,
+                command.PaymentAttemptId,
+                command.RequestedByUserId,
+                command.CorrelationId),
+            cancellationToken);
+
+        if (!recovery.IsCompleted)
+        {
+            await PublishBestEffortAsync(
+                CreatePaymentFinalityReportedEvent(command, confirmation, finalized),
+                cancellationToken);
+        }
+
+        await ProcessVendorPaymentAcknowledgmentBestEffortAsync(
+            command,
+            confirmation,
+            finalized,
+            cancellationToken);
+
+        return new ReportVerifiedPaymentOutcomeResult(
+            confirmation.PaymentConfirmationId,
+            finalized.PaymentAttemptId,
+            finalized.AttemptStatus,
+            issued.ExitAuthorizationId,
+            issued.AuthorizationToken,
+            issued.AuthorizationStatus,
+            confirmation.VerifiedTimestamp,
+            issued.IssuedAt,
+            issued.ExpirationTimestamp);
+    }
+
+    private static void EnsureRecoveryRequestMatches(
+        ReportVerifiedPaymentOutcomeCommand command,
+        DigitalPaymentFiscalRecoveryContext recovery)
+    {
+        if (recovery.PaymentAttemptId != command.PaymentAttemptId ||
+            recovery.ParkingSessionId != command.ParkingSessionId ||
+            !string.Equals(recovery.ProviderReference, command.ProviderReference, StringComparison.Ordinal) ||
+            !string.Equals(recovery.AttemptStatus, "CONFIRMED", StringComparison.Ordinal) ||
+            !string.Equals(recovery.ConfirmationStatus, "RECORDED", StringComparison.Ordinal) ||
+            !string.Equals(command.ProviderStatus, "SUCCESS", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(command.FinalAttemptStatus, "CONFIRMED", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new PaymentFinalityConflictException(
+                "PAYMENT_ATTEMPT_ALREADY_FINAL",
+                "The final payment request does not match its persisted fiscal recovery context.");
         }
     }
 
