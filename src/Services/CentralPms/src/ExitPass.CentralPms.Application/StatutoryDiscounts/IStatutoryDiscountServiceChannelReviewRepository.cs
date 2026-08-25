@@ -25,7 +25,7 @@ public interface IStatutoryDiscountServiceChannelReviewRepository
         Guid correlationId,
         CancellationToken cancellationToken);
 
-    Task<Guid?> GetValidationReviewerUserIdAsync(
+    Task<StatutoryDiscountServiceChannelReviewerAuthority?> GetValidationReviewerAuthorityAsync(
         Guid statutoryDiscountValidationId,
         CancellationToken cancellationToken);
 

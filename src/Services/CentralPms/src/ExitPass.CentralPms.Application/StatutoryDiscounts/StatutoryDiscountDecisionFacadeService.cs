@@ -915,24 +915,34 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         CancellationToken cancellationToken)
     {
         var appliedByUserId = command.ReviewerUserId ?? command.ActorUserId;
+        var operatorDeviceBindingId = command.OperatorDeviceBindingId;
+        var siteId = command.SiteId;
+        var siteGroupId = command.SiteGroupId;
+        var operatorShiftId = command.OperatorShiftId;
         if (IsServiceChannel(command.SourceChannel))
         {
-            appliedByUserId = await _serviceChannelReviewRepository.GetValidationReviewerUserIdAsync(
+            var reviewerAuthority = await _serviceChannelReviewRepository.GetValidationReviewerAuthorityAsync(
                     validationId,
                     cancellationToken)
                 .ConfigureAwait(false)
                 ?? throw new StatutoryDiscountDecisionRejectedException(
                     "STATUTORY_DISCOUNT_VALIDATION_REVIEWER_REFERENCE_REQUIRED",
                     "Approved statutory-discount validation reviewer linkage is required before payable-basis application can be requested.");
+
+            appliedByUserId = reviewerAuthority.ReviewerUserId;
+            operatorDeviceBindingId = reviewerAuthority.OperatorDeviceBindingId;
+            siteId = reviewerAuthority.SiteId;
+            siteGroupId = reviewerAuthority.SiteGroupId;
+            operatorShiftId = reviewerAuthority.OperatorShiftId;
         }
 
         return new OperatorConsoleStatutoryDiscountApplyPayableBasisCommand(
             validationId,
             appliedByUserId,
-            command.OperatorDeviceBindingId,
-            command.SiteId,
-            command.SiteGroupId,
-            command.OperatorShiftId,
+            operatorDeviceBindingId,
+            siteId,
+            siteGroupId,
+            operatorShiftId,
             command.OriginalTariffSnapshotId,
             $"{applicationStageIdempotencyKey}:apply",
             command.CorrelationId,
