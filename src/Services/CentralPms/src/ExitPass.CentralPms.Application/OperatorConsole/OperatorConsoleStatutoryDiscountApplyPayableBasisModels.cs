@@ -1,3 +1,5 @@
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
+
 namespace ExitPass.CentralPms.Application.OperatorConsole;
 
 /// <summary>
@@ -13,7 +15,8 @@ public sealed record OperatorConsoleStatutoryDiscountApplyPayableBasisCommand(
     Guid? OriginalTariffSnapshotId,
     string IdempotencyKey,
     Guid CorrelationId,
-    bool AllowProcessingApplicationCompletion = false);
+    bool AllowProcessingApplicationCompletion = false,
+    StatutoryDiscountServiceChannelCallerContext? ServiceChannelCaller = null);
 
 /// <summary>
 /// Result for an access-gated statutory discount payable-basis application.
@@ -59,9 +62,11 @@ public sealed record OperatorConsoleStatutoryDiscountApplyPayableBasisResult(
 public sealed record OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand(
     Guid ValidationId,
     Guid? OriginalTariffSnapshotId,
-    Guid AppliedByUserId,
+    Guid? AppliedByUserId,
     string IdempotencyKey,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    Guid? AppliedByServiceIdentityId = null,
+    string ApplicationChannel = "OPERATOR_CONSOLE");
 
 /// <summary>
 /// Persistence result for statutory discount payable-basis application.

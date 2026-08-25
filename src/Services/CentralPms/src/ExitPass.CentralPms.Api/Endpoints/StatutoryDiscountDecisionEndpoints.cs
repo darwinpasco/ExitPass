@@ -134,6 +134,7 @@ public static class StatutoryDiscountDecisionEndpoints
                 rbacOptions.Value,
                 out var effectiveSourceChannel,
                 out var actorId,
+                out var serviceIdentityId,
                 out var channelError))
         {
             activity?.SetStatus(ActivityStatusCode.Error, "Source channel permission is missing or ambiguous.");
@@ -162,7 +163,7 @@ public static class StatutoryDiscountDecisionEndpoints
         try
         {
             var result = await service.SubmitAsync(
-                    ToCommand(body, effectiveSourceChannel, actorId, idempotencyKey!, correlationId),
+                    ToCommand(body, effectiveSourceChannel, actorId, serviceIdentityId, idempotencyKey!, correlationId),
                     cancellationToken)
                 .ConfigureAwait(false);
             var response = ToResponse(result);
@@ -247,6 +248,7 @@ public static class StatutoryDiscountDecisionEndpoints
         StatutoryDiscountDecisionRequest body,
         string effectiveSourceChannel,
         Guid actorId,
+        Guid? serviceIdentityId,
         string idempotencyKey,
         Guid correlationId) =>
         new(
@@ -288,7 +290,14 @@ public static class StatutoryDiscountDecisionEndpoints
             body.OriginalTariffSnapshotId,
             body.BeneficiaryResidencySatisfied,
             idempotencyKey,
-            correlationId);
+            correlationId,
+            serviceIdentityId.HasValue
+                ? new StatutoryDiscountServiceChannelCallerContext(
+                    serviceIdentityId.Value,
+                    effectiveSourceChannel,
+                    effectiveSourceChannel,
+                    ChannelPermissions[effectiveSourceChannel])
+                : null);
 
     private static StatutoryDiscountDecisionResponse ToResponse(StatutoryDiscountDecisionResult result) =>
         new(
@@ -436,6 +445,7 @@ public static class StatutoryDiscountDecisionEndpoints
         CentralPmsRbacOptions options,
         out string sourceChannel,
         out Guid actorId,
+        out Guid? serviceIdentityId,
         out ErrorResponse? error)
     {
         var permissions = ReadPermissions(context, options);
@@ -444,7 +454,9 @@ public static class StatutoryDiscountDecisionEndpoints
             .Select(pair => pair.Key)
             .ToArray();
 
-        actorId = ResolveActorId(context);
+        var userId = ResolveUserId(context);
+        serviceIdentityId = ResolveServiceIdentityId(context);
+        actorId = userId ?? serviceIdentityId ?? Guid.Empty;
         if (actorId == Guid.Empty)
         {
             sourceChannel = string.Empty;
@@ -482,7 +494,22 @@ public static class StatutoryDiscountDecisionEndpoints
             return false;
         }
 
-        sourceChannel = channels[0];
+        var resolvedChannel = channels[0];
+        var serviceChannel = resolvedChannel is StatutoryDiscountSourceChannels.WebPay
+            or StatutoryDiscountSourceChannels.AssistedPaymentTerminal;
+        if ((serviceChannel && (!serviceIdentityId.HasValue || userId.HasValue)) ||
+            (!serviceChannel && !userId.HasValue))
+        {
+            sourceChannel = string.Empty;
+            error = new ErrorResponse
+            {
+                ErrorCode = "CENTRAL_PMS_AUTHENTICATED_ACTOR_TYPE_MISMATCH",
+                Message = "The authenticated actor type is not valid for the requested statutory-discount channel."
+            };
+            return false;
+        }
+
+        sourceChannel = resolvedChannel;
         error = null;
         return true;
     }
@@ -552,23 +579,16 @@ public static class StatutoryDiscountDecisionEndpoints
         return true;
     }
 
-    private static Guid ResolveActorId(HttpContext context)
-    {
-        var userId = ResolveGuid(context.Request.Headers[CentralPmsRbacPolicyCatalog.UserIdHeaderName].FirstOrDefault()) ??
-                     ResolveGuid(context.User.FindFirstValue(ClaimTypes.NameIdentifier)) ??
-                     ResolveGuid(context.User.FindFirstValue("sub")) ??
-                     ResolveGuid(context.User.FindFirstValue("user_id"));
+    private static Guid? ResolveUserId(HttpContext context) =>
+        ResolveGuid(context.Request.Headers[CentralPmsRbacPolicyCatalog.UserIdHeaderName].FirstOrDefault()) ??
+        ResolveGuid(context.User.FindFirstValue(ClaimTypes.NameIdentifier)) ??
+        ResolveGuid(context.User.FindFirstValue("sub")) ??
+        ResolveGuid(context.User.FindFirstValue("user_id"));
 
-        if (userId is not null && userId != Guid.Empty)
-        {
-            return userId.Value;
-        }
-
-        return ResolveGuid(context.Request.Headers[CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName].FirstOrDefault()) ??
-               ResolveGuid(context.User.FindFirstValue("service_identity_id")) ??
-               ResolveGuid(context.User.FindFirstValue("client_id")) ??
-               Guid.Empty;
-    }
+    private static Guid? ResolveServiceIdentityId(HttpContext context) =>
+        ResolveGuid(context.Request.Headers[CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName].FirstOrDefault()) ??
+        ResolveGuid(context.User.FindFirstValue("service_identity_id")) ??
+        ResolveGuid(context.User.FindFirstValue("client_id"));
 
     private static Guid? ResolveGuid(string? value) =>
         Guid.TryParse(value, out var guid) ? guid : null;

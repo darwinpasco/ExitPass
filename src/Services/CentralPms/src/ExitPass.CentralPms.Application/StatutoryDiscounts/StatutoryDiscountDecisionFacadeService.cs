@@ -506,6 +506,14 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                 isNotFound: true);
         }
 
+        if (!string.Equals(decision.SourceChannel, normalized.SourceChannel, StringComparison.Ordinal))
+        {
+            throw new StatutoryDiscountDecisionRejectedException(
+                "STATUTORY_DISCOUNT_DECISION_NOT_FOUND",
+                "An approved statutory-discount decision must exist before payable-basis application can be requested.",
+                isNotFound: true);
+        }
+
         var authority = await _parkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(
                 decision.StatutoryDiscountDecisionCommandId,
                 cancellationToken)
@@ -571,9 +579,15 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
         if (!apply.ApplicationAccepted || apply.ErrorCode is not null)
         {
+            var errorCode = apply.ErrorCode ?? apply.IneligibilityReason ??
+                "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_REJECTED";
             throw new StatutoryDiscountDecisionRejectedException(
-                apply.ErrorCode ?? apply.IneligibilityReason ?? "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_REJECTED",
-                "Central PMS could not create the statutory-discount payable basis.");
+                errorCode,
+                "Central PMS could not create the statutory-discount payable basis.",
+                isNotFound: string.Equals(
+                    errorCode,
+                    "STATUTORY_DISCOUNT_DECISION_NOT_FOUND",
+                    StringComparison.Ordinal));
         }
 
         return await _stagedCommandService.GetApplicationByDecisionAsync(
@@ -946,7 +960,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             command.OriginalTariffSnapshotId,
             $"{applicationStageIdempotencyKey}:apply",
             command.CorrelationId,
-            AllowProcessingApplicationCompletion: true);
+            AllowProcessingApplicationCompletion: true,
+            command.ServiceChannelCaller);
     }
 
     private static StatutoryDiscountDecisionV2TariffFacts? ToTariffFacts(

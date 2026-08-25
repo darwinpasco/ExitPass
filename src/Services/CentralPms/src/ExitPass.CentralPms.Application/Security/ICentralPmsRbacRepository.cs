@@ -21,6 +21,15 @@ public interface ICentralPmsRbacRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Resolves the canonical lifecycle, application ownership, and Site assignment for a service identity.
+    /// </summary>
+    Task<CentralPmsServiceIdentityAuthorizationRecord?> GetServiceIdentityAuthorizationAsync(
+        Guid serviceIdentityId,
+        Guid siteId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<CentralPmsServiceIdentityAuthorizationRecord?>(null);
+
+    /// <summary>
     /// Records denied privileged access where the audit schema supports it.
     /// </summary>
     Task RecordDeniedAsync(
@@ -46,3 +55,13 @@ public interface ICentralPmsRbacRepository
         string summary,
         CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Server-owned service-identity facts used by application-layer authorization policies.
+/// </summary>
+public sealed record CentralPmsServiceIdentityAuthorizationRecord(
+    Guid ServiceIdentityId,
+    string IdentityType,
+    string OwningServiceName,
+    bool Active,
+    bool SiteAssigned);

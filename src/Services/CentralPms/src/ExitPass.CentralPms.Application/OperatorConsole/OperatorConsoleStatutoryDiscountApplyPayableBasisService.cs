@@ -24,6 +24,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
     private readonly IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter _writer;
     private readonly IOperatorConsoleStatutoryDiscountReadService _readService;
     private readonly IStatutoryDiscountStagedCommandService _stagedCommandService;
+    private readonly IStatutoryDiscountServiceChannelAuthorizationService _serviceChannelAuthorizationService;
 
     /// <summary>
     /// Creates an Operator Console statutory discount payable-basis application service.
@@ -33,13 +34,16 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
         IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter writer,
         IOperatorConsoleStatutoryDiscountReadService readService,
-        IStatutoryDiscountStagedCommandService stagedCommandService)
+        IStatutoryDiscountStagedCommandService stagedCommandService,
+        IStatutoryDiscountServiceChannelAuthorizationService serviceChannelAuthorizationService)
     {
         _accessEvaluationService = accessEvaluationService ?? throw new ArgumentNullException(nameof(accessEvaluationService));
         _accessEvaluationWriter = accessEvaluationWriter ?? throw new ArgumentNullException(nameof(accessEvaluationWriter));
         _writer = writer ?? throw new ArgumentNullException(nameof(writer));
         _readService = readService ?? throw new ArgumentNullException(nameof(readService));
         _stagedCommandService = stagedCommandService ?? throw new ArgumentNullException(nameof(stagedCommandService));
+        _serviceChannelAuthorizationService = serviceChannelAuthorizationService ??
+            throw new ArgumentNullException(nameof(serviceChannelAuthorizationService));
     }
 
     /// <inheritdoc />
@@ -50,25 +54,55 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         ArgumentNullException.ThrowIfNull(command);
         Validate(command);
 
-        var evaluation = await _accessEvaluationService.EvaluateAsync(
-            new OperatorConsoleAccessEvaluationCommand(
-                command.UserId,
-                command.OperatorDeviceBindingId,
-                command.SiteId,
-                command.SiteGroupId,
-                command.OperatorShiftId,
-                WorkflowCode,
-                ControlledActionCode,
-                ParkingSessionId: null,
-                EvidenceAccessIntent: null,
-                command.IdempotencyKey,
-                command.CorrelationId),
-            cancellationToken);
-
-        var persistedEvaluation = await _accessEvaluationWriter.PersistAsync(evaluation, cancellationToken);
-        if (!persistedEvaluation.Allowed)
+        ApplyAuthorization authorization;
+        if (command.ServiceChannelCaller is not null)
         {
-            return DeniedResult(command, persistedEvaluation);
+            var serviceAuthorization = await _serviceChannelAuthorizationService.AuthorizeAsync(
+                    command.ServiceChannelCaller,
+                    command.SiteId,
+                    command.CorrelationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            authorization = new ApplyAuthorization(
+                command.CorrelationId,
+                serviceAuthorization.Allowed,
+                serviceAuthorization.Decision,
+                serviceAuthorization.DenialReasons,
+                serviceAuthorization.AuditPersisted,
+                serviceAuthorization.ErrorCode,
+                serviceAuthorization.CorrelationId);
+        }
+        else
+        {
+            var evaluation = await _accessEvaluationService.EvaluateAsync(
+                new OperatorConsoleAccessEvaluationCommand(
+                    command.UserId,
+                    command.OperatorDeviceBindingId,
+                    command.SiteId,
+                    command.SiteGroupId,
+                    command.OperatorShiftId,
+                    WorkflowCode,
+                    ControlledActionCode,
+                    ParkingSessionId: null,
+                    EvidenceAccessIntent: null,
+                    command.IdempotencyKey,
+                    command.CorrelationId),
+                cancellationToken);
+
+            var persistedEvaluation = await _accessEvaluationWriter.PersistAsync(evaluation, cancellationToken);
+            authorization = new ApplyAuthorization(
+                persistedEvaluation.EvaluationId,
+                persistedEvaluation.Allowed,
+                persistedEvaluation.Decision,
+                persistedEvaluation.DenialReasons,
+                persistedEvaluation.Persisted,
+                ErrorCode: null,
+                persistedEvaluation.CorrelationId);
+        }
+
+        if (!authorization.Allowed)
+        {
+            return DeniedResult(command, authorization);
         }
 
         var detail = await _readService.GetDraftAsync(
@@ -79,16 +113,25 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         {
             return NotAcceptedResult(
                 command,
-                persistedEvaluation,
+                authorization,
                 "STATUTORY_DISCOUNT_VALIDATION_NOT_FOUND",
                 "STATUTORY_DISCOUNT_VALIDATION_NOT_FOUND");
+        }
+
+        if (command.ServiceChannelCaller is not null && detail.SiteId != command.SiteId)
+        {
+            return NotAcceptedResult(
+                command,
+                authorization,
+                "STATUTORY_DISCOUNT_DECISION_NOT_FOUND",
+                "STATUTORY_DISCOUNT_DECISION_NOT_FOUND");
         }
 
         if (!string.Equals(detail.ValidationStatus, "APPROVED", StringComparison.Ordinal))
         {
             return NotAcceptedResult(
                 command,
-                persistedEvaluation,
+                authorization,
                 "STATUTORY_DISCOUNT_NOT_APPROVED",
                 "STATUTORY_DISCOUNT_NOT_APPROVED",
                 detail);
@@ -98,7 +141,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         {
             return NotAcceptedResult(
                 command,
-                persistedEvaluation,
+                authorization,
                 "STATUTORY_DISCOUNT_DECISION_NOT_FOUND",
                 "STATUTORY_DISCOUNT_DECISION_NOT_FOUND",
                 detail);
@@ -112,10 +155,26 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         {
             return NotAcceptedResult(
                 command,
-                persistedEvaluation,
+                authorization,
                 "STATUTORY_DISCOUNT_DECISION_NOT_FOUND",
                 "STATUTORY_DISCOUNT_DECISION_NOT_FOUND",
                 detail);
+        }
+
+
+        if (command.ServiceChannelCaller is not null &&
+            !string.Equals(
+                decision.SourceChannel,
+                command.ServiceChannelCaller.SourceChannel,
+                StringComparison.Ordinal))
+        {
+            return NotAcceptedResult(
+                command,
+                authorization,
+                "STATUTORY_DISCOUNT_DECISION_NOT_FOUND",
+                "STATUTORY_DISCOUNT_DECISION_NOT_FOUND",
+                detail,
+                decision.StatutoryDiscountDecisionCommandId);
         }
 
         if (decision.CommandStatus is not StatutoryDiscountDecisionV2CommandStates.Completed ||
@@ -123,7 +182,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         {
             return NotAcceptedResult(
                 command,
-                persistedEvaluation,
+                authorization,
                 "STATUTORY_DISCOUNT_DECISION_NOT_APPROVED",
                 "STATUTORY_DISCOUNT_DECISION_NOT_APPROVED",
                 detail,
@@ -156,11 +215,11 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         }
 
         return new OperatorConsoleStatutoryDiscountApplyPayableBasisResult(
-            persistedEvaluation.EvaluationId,
+            authorization.EvaluationId,
             AccessAllowed: true,
-            persistedEvaluation.Decision,
-            persistedEvaluation.DenialReasons,
-            persistedEvaluation.Persisted,
+            authorization.Decision,
+            authorization.DenialReasons,
+            authorization.Persisted,
             persistedApplication.ApplicationAccepted,
             persistedApplication.ApplicationPersisted,
             persistedApplication.PayableBasisApplicationId,
@@ -186,7 +245,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
             persistedApplication.PolicySnapshotUsed,
             persistedApplication.IneligibilityReason,
             persistedApplication.ErrorCode,
-            persistedEvaluation.CorrelationId,
+            authorization.CorrelationId,
             decision.StatutoryDiscountDecisionCommandId,
             persistedApplication.StatutoryDiscountPayableBasisApplicationCommandId);
     }
@@ -264,12 +323,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         try
         {
             persisted = await _writer.ApplyAsync(
-                    new OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand(
-                        command.ValidationId,
-                        command.OriginalTariffSnapshotId,
-                        command.UserId,
-                        stageKey,
-                        command.CorrelationId),
+                    ToPersistenceCommand(command, stageKey),
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -394,12 +448,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         try
         {
             var persisted = await _writer.ApplyAsync(
-                    new OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand(
-                        command.ValidationId,
-                        command.OriginalTariffSnapshotId,
-                        command.UserId,
-                        stageKey,
-                        command.CorrelationId),
+                    ToPersistenceCommand(command, stageKey),
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -512,13 +561,13 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
 
     private static OperatorConsoleStatutoryDiscountApplyPayableBasisResult DeniedResult(
         OperatorConsoleStatutoryDiscountApplyPayableBasisCommand command,
-        OperatorConsoleAccessEvaluationResult persistedEvaluation) =>
+        ApplyAuthorization authorization) =>
         new(
-            persistedEvaluation.EvaluationId,
+            authorization.EvaluationId,
             AccessAllowed: false,
-            persistedEvaluation.Decision,
-            persistedEvaluation.DenialReasons,
-            persistedEvaluation.Persisted,
+            authorization.Decision,
+            authorization.DenialReasons,
+            authorization.Persisted,
             ApplicationAccepted: false,
             ApplicationPersisted: false,
             PayableBasisApplicationId: null,
@@ -542,24 +591,24 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
             NationalLawReference: null,
             OrdinanceReference: null,
             PolicySnapshotUsed: false,
-            IneligibilityReason: "ACCESS_DENIED",
-            ErrorCode: null,
-            persistedEvaluation.CorrelationId);
+            IneligibilityReason: authorization.ErrorCode ?? "ACCESS_DENIED",
+            ErrorCode: authorization.ErrorCode,
+            authorization.CorrelationId);
 
     private static OperatorConsoleStatutoryDiscountApplyPayableBasisResult NotAcceptedResult(
         OperatorConsoleStatutoryDiscountApplyPayableBasisCommand command,
-        OperatorConsoleAccessEvaluationResult persistedEvaluation,
+        ApplyAuthorization authorization,
         string ineligibilityReason,
         string errorCode,
         OperatorConsoleStatutoryDiscountDraftDetailResult? detail = null,
         Guid? statutoryDiscountDecisionCommandId = null,
         Guid? statutoryDiscountPayableBasisApplicationCommandId = null) =>
         new(
-            persistedEvaluation.EvaluationId,
+            authorization.EvaluationId,
             AccessAllowed: true,
-            persistedEvaluation.Decision,
-            persistedEvaluation.DenialReasons,
-            persistedEvaluation.Persisted,
+            authorization.Decision,
+            authorization.DenialReasons,
+            authorization.Persisted,
             ApplicationAccepted: false,
             ApplicationPersisted: false,
             PayableBasisApplicationId: detail?.PayableBasisApplicationId,
@@ -585,7 +634,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
             PolicySnapshotUsed: detail?.PolicySnapshot is not null,
             ineligibilityReason,
             errorCode,
-            persistedEvaluation.CorrelationId,
+            authorization.CorrelationId,
             statutoryDiscountDecisionCommandId ?? detail?.StatutoryDiscountDecisionCommandId,
             statutoryDiscountPayableBasisApplicationCommandId);
 
@@ -665,6 +714,27 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
             throw new ArgumentException("IdempotencyKey is required.", nameof(command.IdempotencyKey));
         }
     }
+
+    private static OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand ToPersistenceCommand(
+        OperatorConsoleStatutoryDiscountApplyPayableBasisCommand command,
+        string stageKey) =>
+        new(
+            command.ValidationId,
+            command.OriginalTariffSnapshotId,
+            command.ServiceChannelCaller is null ? command.UserId : null,
+            stageKey,
+            command.CorrelationId,
+            command.ServiceChannelCaller?.ServiceIdentityId,
+            command.ServiceChannelCaller is null ? "OPERATOR_CONSOLE" : "SYSTEM");
+
+    private sealed record ApplyAuthorization(
+        Guid EvaluationId,
+        bool Allowed,
+        string Decision,
+        IReadOnlyList<string> DenialReasons,
+        bool Persisted,
+        string? ErrorCode,
+        Guid CorrelationId);
 
     private static void ValidateGuid(Guid value, string parameterName)
     {

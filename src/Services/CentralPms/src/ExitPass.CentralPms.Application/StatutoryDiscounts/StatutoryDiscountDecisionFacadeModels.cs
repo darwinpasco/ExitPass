@@ -159,7 +159,8 @@ public sealed record StatutoryDiscountDecisionCommand(
     Guid? OriginalTariffSnapshotId,
     bool? BeneficiaryResidencySatisfied,
     string IdempotencyKey,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    StatutoryDiscountServiceChannelCallerContext? ServiceChannelCaller = null);
 
 /// <summary>
 /// Metadata-only evidence reference for the shared statutory-discount command.

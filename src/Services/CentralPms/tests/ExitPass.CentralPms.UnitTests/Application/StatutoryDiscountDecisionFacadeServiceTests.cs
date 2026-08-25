@@ -533,13 +533,13 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
-    public async Task SubmitAsync_WhenServiceChannelApplicationIntentCrossesChannels_ReplaysApplication()
+    public async Task SubmitAsync_WhenServiceChannelApplicationIntentCrossesChannels_IsConcealed()
     {
         var fixture = CreateFixture();
         await CreateApprovedServiceChannelDecisionAsync(fixture, "WEBPAY");
-        var first = await fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: true), CancellationToken.None);
+        await fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: true), CancellationToken.None);
 
-        var replay = await fixture.Sut.SubmitAsync(
+        var action = () => fixture.Sut.SubmitAsync(
             Command(sourceChannel: "ASSISTED_PAYMENT_TERMINAL", applyPayableBasis: true) with
             {
                 RequestReference = Guid.Parse("6d000000-0000-0000-0000-000000000209"),
@@ -547,30 +547,28 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             },
             CancellationToken.None);
 
-        replay.StatutoryDiscountDecisionCommandId.Should().Be(first.StatutoryDiscountDecisionCommandId);
-        replay.StatutoryDiscountPayableBasisApplicationCommandId.Should().Be(first.StatutoryDiscountPayableBasisApplicationCommandId);
-        replay.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.Applied);
+        await action.Should().ThrowAsync<StatutoryDiscountDecisionRejectedException>()
+            .Where(exception => exception.ErrorCode == "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" && exception.IsNotFound);
         fixture.Repository.ApplicationCount.Should().Be(1);
         await fixture.ApplyService.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task SubmitAsync_WhenConcurrentWebPayAndAptApplicationIntentArrives_CreatesOneApplication()
+    public async Task SubmitAsync_WhenConcurrentSameChannelApplicationIntentArrives_CreatesOneApplication()
     {
         var fixture = CreateFixture();
         fixture.Repository.DelayInsideLock = TimeSpan.FromMilliseconds(25);
         await CreateApprovedServiceChannelDecisionAsync(fixture, "WEBPAY");
         var webPay = Command(sourceChannel: "WEBPAY", applyPayableBasis: true);
-        var apt = webPay with
+        var replay = webPay with
         {
-            SourceChannel = "ASSISTED_PAYMENT_TERMINAL",
             RequestReference = Guid.Parse("6d000000-0000-0000-0000-000000000210"),
-            IdempotencyKey = "statutory-discount-idempotency-key-apt-application"
+            IdempotencyKey = "statutory-discount-idempotency-key-webpay-application-replay"
         };
 
         var results = await Task.WhenAll(
             fixture.Sut.SubmitAsync(webPay, CancellationToken.None),
-            fixture.Sut.SubmitAsync(apt, CancellationToken.None));
+            fixture.Sut.SubmitAsync(replay, CancellationToken.None));
 
         results.Select(result => result.StatutoryDiscountPayableBasisApplicationCommandId).Distinct().Should().ContainSingle();
         var allowedStatuses = new[]
