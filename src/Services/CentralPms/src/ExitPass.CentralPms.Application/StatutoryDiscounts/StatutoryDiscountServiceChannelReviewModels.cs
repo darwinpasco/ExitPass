@@ -175,13 +175,13 @@ public sealed record StatutoryDiscountServiceChannelValidationLinkage(
     Guid StatutoryDiscountValidationId,
     Guid ParkingSessionId,
     string EntitlementType,
-    Guid OriginalTariffSnapshotId,
+    Guid? OriginalTariffSnapshotId,
     Guid? AppliedPolicyReferenceId,
     Guid? FallbackPolicyReferenceId,
     string PolicyResolutionBasis,
     bool LocalOrdinanceApplied,
-    long GrossAmountMinorUnits,
-    string Currency,
+    long? GrossAmountMinorUnits,
+    string? Currency,
     string BenefitType,
     string DiscountBaseScope);
 

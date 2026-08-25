@@ -39,6 +39,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     {
         var scenarioName = nameof(ServiceChannel_RealReviewMediatedApplicationFlow_AppliesOnceReplaysAndPaymentInitiationUsesAppliedSnapshot) + sourceChannel;
         var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(scenarioName);
+        await StatutoryDiscountReviewIntegrationTestSupport.RemoveOriginalPayableBasisAsync(context);
 
         try
         {
@@ -50,13 +51,14 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
 
             var intake = await PostSharedDecisionAsync(
                 serviceClient,
-                Request(context, sourceChannel, applyPayableBasis: false),
+                Request(context, sourceChannel, applyPayableBasis: false, includePayableBasis: false),
                 $"svc-intake-{sourceChannel}-{context.ParkingSessionId:N}",
                 context.CorrelationId,
                 expectedStatus: HttpStatusCode.Created);
             intake.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionV2CommandStates.AwaitingReview);
             intake.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.NotDecided);
             intake.ApplicationRequested.Should().BeFalse();
+            (await StatutoryDiscountReviewIntegrationTestSupport.OriginalPayableBasisRowCountAsync(context)).Should().Be(0);
 
             var approved = await CompleteReviewAsync(operatorClient, context, intake.StatutoryDiscountDecisionCommandId, "APPROVE");
             approved.CurrentValidationStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.Approved);
@@ -65,6 +67,23 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             var reviewDetail = await GetReviewDetailAsync(operatorClient, intake.StatutoryDiscountDecisionCommandId);
             reviewDetail.StatutoryDiscountValidationId.Should().NotBeNull();
             reviewDetail.SourceChannel.Should().Be(sourceChannel);
+            reviewDetail.SessionEligibilityStatus.Should().Be("ELIGIBLE");
+            reviewDetail.PayableBasisStatus.Should().Be("NOT_YET_CREATED");
+            reviewDetail.PayableBasisApplicationStatus.Should().BeNull();
+            reviewDetail.OriginalAmountMinorUnits.Should().BeNull();
+            reviewDetail.StatutoryDiscountAmountMinorUnits.Should().BeNull();
+            reviewDetail.FinalPayableAmountMinorUnits.Should().BeNull();
+
+            var eligibilityFacts = await StatutoryDiscountReviewIntegrationTestSupport
+                .ApprovedEligibilityFactsForDecisionAsync(intake.StatutoryDiscountDecisionCommandId);
+            eligibilityFacts.TariffSnapshotId.Should().BeNull();
+            eligibilityFacts.Currency.Should().BeNull();
+            eligibilityFacts.GrossAmount.Should().BeNull();
+            eligibilityFacts.StatutoryDiscountAmount.Should().BeNull();
+            eligibilityFacts.NetAmountAfterDiscount.Should().BeNull();
+
+            await StatutoryDiscountReviewIntegrationTestSupport.CreateOriginalPayableBasisAsync(context);
+            (await StatutoryDiscountReviewIntegrationTestSupport.OriginalPayableBasisRowCountAsync(context)).Should().Be(1);
 
             var validationId = await StatutoryDiscountReviewIntegrationTestSupport.ValidationIdForDecisionAsync(intake.StatutoryDiscountDecisionCommandId);
             validationId.Should().Be(reviewDetail.StatutoryDiscountValidationId);
@@ -98,6 +117,15 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             application.PayableBasisReady.Should().BeTrue();
             application.PayableBasisReadinessStatus.Should().Be(StatutoryDiscountPayableBasisReadinessStatuses.PayableBasisReady);
             application.PayableBasisReadinessAction.Should().BeNull();
+
+            var appliedReviewDetail = await GetReviewDetailAsync(operatorClient, intake.StatutoryDiscountDecisionCommandId);
+            appliedReviewDetail.SessionEligibilityStatus.Should().Be("ELIGIBLE");
+            appliedReviewDetail.PayableBasisStatus.Should().Be("CREATED");
+            appliedReviewDetail.PayableBasisApplicationStatus.Should().Be("APPLIED");
+            appliedReviewDetail.OriginalAmountMinorUnits.Should().Be(application.GrossAmountMinorUnits);
+            appliedReviewDetail.StatutoryDiscountAmountMinorUnits.Should().Be(application.StatutoryDiscountAmountMinorUnits);
+            appliedReviewDetail.FinalPayableAmountMinorUnits.Should().Be(application.NetPayableAmountMinorUnits);
+            appliedReviewDetail.Currency.Should().Be("PHP");
 
             (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(intake.StatutoryDiscountDecisionCommandId)).Should().Be(1);
             (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(context.ParkingSessionId)).Should().Be(1);
@@ -368,6 +396,9 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         var missingLinkageContext = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
             nameof(ServiceChannelApplicationIntent_WhenDecisionNotApprovedOrLinkageMissing_DoesNotCreateApplication) + "MissingLinkage");
 
+        await StatutoryDiscountReviewIntegrationTestSupport.RemoveOriginalPayableBasisAsync(awaitingContext);
+        await StatutoryDiscountReviewIntegrationTestSupport.RemoveOriginalPayableBasisAsync(rejectedContext);
+
         try
         {
             using var factory = CreateFactory(awaitingContext);
@@ -378,10 +409,12 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
 
             var awaiting = await PostSharedDecisionAsync(
                 serviceClient,
-                Request(awaitingContext, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: false),
+                Request(awaitingContext, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: false, includePayableBasis: false),
                 $"negative-awaiting-intake-{awaitingContext.ParkingSessionId:N}",
                 awaitingContext.CorrelationId,
                 HttpStatusCode.Created);
+            (await StatutoryDiscountReviewIntegrationTestSupport.OriginalPayableBasisRowCountAsync(awaitingContext)).Should().Be(0);
+            await StatutoryDiscountReviewIntegrationTestSupport.CreateOriginalPayableBasisAsync(awaitingContext);
             var awaitingApply = await PostSharedDecisionAsync(
                 serviceClient,
                 Request(awaitingContext, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
@@ -394,12 +427,14 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
 
             var rejectedIntake = await PostSharedDecisionAsync(
                 serviceClient,
-                Request(rejectedContext, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: false),
+                Request(rejectedContext, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: false, includePayableBasis: false),
                 $"negative-rejected-intake-{rejectedContext.ParkingSessionId:N}",
                 rejectedContext.CorrelationId,
                 HttpStatusCode.Created);
             AddOperatorHeaders(operatorClient, rejectedContext);
             await CompleteReviewAsync(operatorClient, rejectedContext, rejectedIntake.StatutoryDiscountDecisionCommandId, "REJECT");
+            (await StatutoryDiscountReviewIntegrationTestSupport.OriginalPayableBasisRowCountAsync(rejectedContext)).Should().Be(0);
+            await StatutoryDiscountReviewIntegrationTestSupport.CreateOriginalPayableBasisAsync(rejectedContext);
             using var rejectedResponse = await SendSharedDecisionAsync(
                 serviceClient,
                 Request(rejectedContext, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
@@ -632,7 +667,8 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     private static StatutoryDiscountDecisionRequest Request(
         PaymentTestContext context,
         string sourceChannel,
-        bool applyPayableBasis) =>
+        bool applyPayableBasis,
+        bool includePayableBasis = true) =>
         new(
             Guid.NewGuid(),
             sourceChannel,
@@ -670,7 +706,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             ReviewerUserId: null,
             ReviewerAttestation: false,
             applyPayableBasis,
-            context.TariffSnapshotId);
+            includePayableBasis ? context.TariffSnapshotId : null);
 
     private static void AddServiceHeaders(HttpClient client, string sourceChannel)
     {

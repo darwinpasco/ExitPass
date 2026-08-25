@@ -148,11 +148,23 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             await RequireDecisionPolicyAuthorityAsync(decision.StatutoryDiscountDecisionCommandId, cancellationToken)
                 .ConfigureAwait(false);
 
-            var applicationStart = await CreateOrResolveApplicationStageAsync(normalized, decision, cancellationToken)
-                .ConfigureAwait(false);
-            applicationResultClassification = applicationStart.ResultClassification;
-            application = await ResolveApplicationStageAsync(normalized, applicationStart, cancellationToken)
-                .ConfigureAwait(false);
+            if (serviceChannelApplicationIntent && !HasPayableBasisFacts(decision))
+            {
+                application = await ApplyDeferredServiceChannelPayableBasisAsync(
+                        normalized,
+                        decision,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                applicationResultClassification = application.ResultClassification;
+            }
+            else
+            {
+                var applicationStart = await CreateOrResolveApplicationStageAsync(normalized, decision, cancellationToken)
+                    .ConfigureAwait(false);
+                applicationResultClassification = applicationStart.ResultClassification;
+                application = await ResolveApplicationStageAsync(normalized, applicationStart, cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
 
         var overall = ResolveOverallClassification(decisionStart, decision, application, applicationResultClassification, applicationRequested);
@@ -505,7 +517,17 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                 "Frozen local-ordinance policy authority is required before payable-basis application can be requested.");
         }
 
-        var comparisonCommand = BindFrozenPolicyAuthority(decisionCommand, authority);
+        // A later service-channel payable-basis request supplies the newly created tariff
+        // snapshot. That server-validated application input is not part of the immutable
+        // eligibility-decision semantics established before a payable basis existed.
+        var comparisonCommand = BindFrozenPolicyAuthority(decisionCommand, authority) with
+        {
+            OriginalTariffSnapshotId = decision.OriginalTariffSnapshotId,
+            // Service-channel intake never accepts calculated tariff facts. Values added
+            // to the decision readback after older approvals are results, not request
+            // semantics, and must not make the later basis-creation request conflict.
+            OriginalTariffFacts = null
+        };
         var expectedSemanticHash = StatutoryDiscountDecisionV2SemanticHash.Compute(comparisonCommand);
 
         if (!string.Equals(decision.SemanticHashSourceVersion, StatutoryDiscountDecisionV2SemanticHash.SourceVersion, StringComparison.Ordinal) ||
@@ -527,6 +549,46 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
         return decision;
     }
+
+    private async Task<StatutoryDiscountPayableBasisApplicationV1Record> ApplyDeferredServiceChannelPayableBasisAsync(
+        StatutoryDiscountDecisionCommand normalized,
+        StatutoryDiscountDecisionV2Record decision,
+        CancellationToken cancellationToken)
+    {
+        var applicationStageKey = DeriveStageIdempotencyKey(
+            normalized.IdempotencyKey,
+            "payable-basis-application-v1",
+            decision.StatutoryDiscountDecisionCommandId);
+        var apply = await _applyService.ApplyAsync(
+                await ToApplyCommandAsync(
+                        normalized,
+                        decision.StatutoryDiscountValidationId!.Value,
+                        applicationStageKey,
+                        cancellationToken)
+                    .ConfigureAwait(false),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!apply.ApplicationAccepted || apply.ErrorCode is not null)
+        {
+            throw new StatutoryDiscountDecisionRejectedException(
+                apply.ErrorCode ?? apply.IneligibilityReason ?? "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_REJECTED",
+                "Central PMS could not create the statutory-discount payable basis.");
+        }
+
+        return await _stagedCommandService.GetApplicationByDecisionAsync(
+                decision.StatutoryDiscountDecisionCommandId,
+                cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new StatutoryDiscountDecisionRejectedException(
+                "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_NOT_AVAILABLE",
+                "The canonical statutory-discount payable-basis application is unavailable after persistence.");
+    }
+
+    private static bool HasPayableBasisFacts(StatutoryDiscountDecisionV2Record decision) =>
+        decision.StatutoryDiscountAmountMinorUnits.HasValue &&
+        decision.NetPayableAmountMinorUnits.HasValue &&
+        !string.IsNullOrWhiteSpace(decision.Currency);
 
     private static StatutoryDiscountDecisionV2Command BindFrozenPolicyAuthority(
         StatutoryDiscountDecisionV2Command command,

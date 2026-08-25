@@ -173,6 +173,8 @@ export interface CanonicalStatutoryReviewEvidenceReference {
 }
 
 export interface CanonicalStatutoryReviewDetail extends CanonicalStatutoryReviewQueueItem {
+  sessionEligibilityStatus: "ELIGIBLE" | "NOT_ELIGIBLE" | "PENDING_REVIEW";
+  payableBasisStatus: "NOT_YET_CREATED" | "CREATED";
   statutoryDiscountValidationId?: string;
   plateNumber?: string;
   idDocumentType?: string;

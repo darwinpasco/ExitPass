@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { CanonicalStatutoryReviewDetailPage } from "./CanonicalStatutoryReview";
 import { createHttpOperatorConsoleApiClient, createMockOperatorConsoleApiClient } from "./apiClient";
 import type { OperatorConsoleHumanSession } from "./humanAuthentication";
 import type { CanonicalStatutoryReviewFilters } from "./types";
@@ -28,7 +29,8 @@ describe("canonical Central PMS statutory review", () => {
     await userEvent.click(screen.getByRole("button", { name: "Apply filters" }));
     await userEvent.click((await screen.findAllByRole("button", { name: "Review" }))[0]);
     expect(await screen.findByRole("heading", { name: "Request facts" })).toBeInTheDocument();
-    expect(screen.getByText((_, element) => element?.textContent === "Original: ₱180.00")).toBeInTheDocument();
+    expect(screen.getByText("Not yet created")).toBeInTheDocument();
+    expect(screen.queryByText(/Original:/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /void sales invoice|refund|open gate/i })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Back to filtered queue" }));
     expect(await screen.findByRole("heading", { name: "Review queue" })).toBeInTheDocument();
@@ -145,6 +147,56 @@ describe("canonical Central PMS statutory review", () => {
     const headers = init?.headers as Record<string, string>;
     expect(url.searchParams.get("correlationId")).toBe(headers["X-Correlation-Id"]);
   });
+
+  it("presents approved eligibility without fabricating a payable-basis application or monetary result", async () => {
+    const client = createMockOperatorConsoleApiClient();
+    client.getCanonicalStatutoryReview = vi.fn(async () => ({
+      ...detailResponse(null),
+      commandStatus: "COMPLETED",
+      decisionResultStatus: "APPROVED",
+      reviewStatus: "APPROVED" as const,
+      sessionEligibilityStatus: "ELIGIBLE" as const,
+      payableBasisStatus: "NOT_YET_CREATED" as const,
+      reviewerDecision: "APPROVE",
+      reviewedAt: "2026-08-24T08:05:00+08:00",
+      originalAmountMinorUnits: undefined,
+      finalPayableAmountMinorUnits: undefined,
+      currency: undefined
+    }));
+
+    render(<CanonicalStatutoryReviewDetailPage client={client} decisionId={decisionId} onBack={() => undefined} />);
+
+    expect((await screen.findAllByText("Approved")).length).toBeGreaterThan(0);
+    expect(screen.getByText("Eligible")).toBeInTheDocument();
+    expect(screen.getByText("Not yet created")).toBeInTheDocument();
+    expect(screen.getByText("Pending payable-basis creation")).toBeInTheDocument();
+    expect(screen.getByText(/Central PMS will calculate and apply the benefit when the payable basis is created/)).toBeInTheDocument();
+    expect(screen.queryByText(/Final payable:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Not applied/i)).not.toBeInTheDocument();
+  });
+
+  it("preserves the explicit Central PMS application status and monetary result after basis creation", async () => {
+    const client = createMockOperatorConsoleApiClient();
+    client.getCanonicalStatutoryReview = vi.fn(async () => ({
+      ...detailResponse("PHP"),
+      commandStatus: "COMPLETED",
+      decisionResultStatus: "APPROVED",
+      reviewStatus: "APPROVED" as const,
+      sessionEligibilityStatus: "ELIGIBLE" as const,
+      payableBasisStatus: "CREATED" as const,
+      payableBasisApplicationStatus: "APPLIED",
+      statutoryDiscountAmountMinorUnits: 2000,
+      currency: "PHP",
+      reviewerDecision: "APPROVE",
+      reviewedAt: "2026-08-24T08:05:00+08:00"
+    }));
+
+    render(<CanonicalStatutoryReviewDetailPage client={client} decisionId={decisionId} onBack={() => undefined} />);
+
+    expect(await screen.findByText("Applied")).toBeInTheDocument();
+    expect(screen.getByText(/Statutory benefit:/)).toHaveTextContent("Statutory benefit: \u20B120.00");
+    expect(screen.getByText(/Final payable:/)).toHaveTextContent("Final payable: \u20B180.00");
+  });
 });
 
 function session(): OperatorConsoleHumanSession {
@@ -181,6 +233,8 @@ function detailResponse(currency: string | null) {
     commandStatus: "AWAITING_REVIEW",
     decisionResultStatus: "NOT_DECIDED",
     reviewStatus: "PENDING_REVIEW",
+    sessionEligibilityStatus: "PENDING_REVIEW" as const,
+    payableBasisStatus: "CREATED" as const,
     evidenceRequired: true,
     evidenceRecorded: true,
     submittedAt: "2026-08-24T08:00:00+08:00",

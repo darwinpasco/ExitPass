@@ -167,7 +167,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             Arg.Any<Guid?>(),
             Arg.Any<string?>(),
             Arg.Any<bool>(),
-            Arg.Any<StatutoryDiscountDecisionV2TariffFacts?>(),
+            null,
             Arg.Any<string?>(),
             Arg.Any<Guid>(),
             Arg.Any<CancellationToken>());
@@ -428,13 +428,13 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             Guid.Parse("8a000000-0000-0000-0000-00000000000c"),
             ParkingSessionId,
             "SENIOR_CITIZEN",
-            TariffSnapshotId,
+            OriginalTariffSnapshotId: null,
             AppliedPolicyReferenceId: null,
             FallbackPolicyReferenceId: null,
             "NATIONAL_LAW_FALLBACK",
             LocalOrdinanceApplied: false,
-            12500,
-            "PHP",
+            GrossAmountMinorUnits: null,
+            Currency: null,
             "STATUTORY_DISCOUNT_VAT_EXEMPT",
             "VAT_EXCLUSIVE");
 

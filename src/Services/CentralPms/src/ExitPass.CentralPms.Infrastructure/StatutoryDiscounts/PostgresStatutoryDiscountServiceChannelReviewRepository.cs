@@ -192,13 +192,13 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 d.decision_result_status,
                 d.evidence_required,
                 d.evidence_recorded,
-                d.gross_amount_minor_units,
-                d.vat_exclusive_amount_minor_units,
-                d.vat_amount_minor_units,
-                d.statutory_discount_amount_minor_units,
-                d.net_payable_amount_minor_units,
-                d.currency_code,
-                COALESCE(d.original_tariff_snapshot_id, r.original_tariff_snapshot_id) AS effective_original_tariff_snapshot_id,
+                payable.gross_amount_minor_units,
+                payable.vat_exclusive_amount_minor_units,
+                payable.vat_amount_minor_units,
+                payable.statutory_discount_amount_minor_units,
+                payable.final_payable_amount_minor_units AS net_payable_amount_minor_units,
+                payable.currency_code,
+                payable.original_tariff_snapshot_id AS effective_original_tariff_snapshot_id,
                 dpa.statutory_discount_policy_version_id AS governing_policy_version_id,
                 dpa.jurisdiction_id AS governing_jurisdiction_id,
                 dpa.jurisdiction_code AS governing_jurisdiction_code,
@@ -240,7 +240,15 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                   AND req.requirement_status IN ('REQUIRED', 'OPTIONAL')
             ) AS evidence ON TRUE
             LEFT JOIN LATERAL (
-                SELECT app.application_status::text AS application_status
+                SELECT
+                    app.application_status::text AS application_status,
+                    app.original_tariff_snapshot_id,
+                    app.gross_amount_minor_units,
+                    app.vat_exclusive_amount_minor_units,
+                    app.vat_amount_minor_units,
+                    app.statutory_discount_amount_minor_units,
+                    app.final_payable_amount_minor_units,
+                    app.currency_code::text AS currency_code
                 FROM discounts.statutory_discount_payable_basis_applications AS app
                 WHERE app.statutory_discount_validation_id = r.statutory_discount_validation_id
                 ORDER BY app.updated_at DESC, app.statutory_discount_payable_basis_application_id DESC
@@ -297,11 +305,8 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
 
         var policy = await ResolvePolicyAsync(connection, transaction, source, cancellationToken)
             .ConfigureAwait(false);
-        var tariff = await ResolveOriginalTariffAsync(connection, transaction, source, cancellationToken)
-            .ConfigureAwait(false);
         var evidence = source.EvidenceReferences ?? [];
         if (policy is null ||
-            tariff is null ||
             (policy.RequiresEvidence && evidence.Count == 0))
         {
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -313,7 +318,6 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 transaction,
                 source,
                 policy,
-                tariff,
                 reviewerUserId,
                 decisionReasonCode,
                 correlationId,
@@ -687,54 +691,11 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             reader.GetBoolean(reader.GetOrdinal("local_ordinance_applied")));
     }
 
-    private static async Task<TariffSnapshotRow?> ResolveOriginalTariffAsync(
-        NpgsqlConnection connection,
-        NpgsqlTransaction transaction,
-        ReviewSourceRow source,
-        CancellationToken cancellationToken)
-    {
-        var sql = source.OriginalTariffSnapshotId.HasValue
-            ? """
-                SELECT tariff_snapshot_id, parking_session_id, currency_code, gross_amount
-                FROM core.tariff_snapshots
-                WHERE tariff_snapshot_id = @tariff_snapshot_id
-                  AND parking_session_id = @parking_session_id
-                LIMIT 1;
-                """
-            : """
-                SELECT tariff_snapshot_id, parking_session_id, currency_code, gross_amount
-                FROM core.tariff_snapshots
-                WHERE parking_session_id = @parking_session_id
-                  AND snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
-                ORDER BY calculated_at DESC, tariff_snapshot_id DESC
-                LIMIT 1;
-                """;
-
-        await using var command = new NpgsqlCommand(sql, connection, transaction) { CommandTimeout = 30 };
-        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = source.ParkingSessionId;
-        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value =
-            source.OriginalTariffSnapshotId ?? Guid.Empty;
-
-        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken)
-            .ConfigureAwait(false);
-        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            return null;
-        }
-
-        return new TariffSnapshotRow(
-            reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
-            reader.GetGuid(reader.GetOrdinal("parking_session_id")),
-            reader.GetString(reader.GetOrdinal("currency_code")),
-            reader.GetDecimal(reader.GetOrdinal("gross_amount")));
-    }
-
     private static async Task<Guid> InsertApprovedValidationAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         ReviewSourceRow source,
         PolicyReferenceRow policy,
-        TariffSnapshotRow tariff,
         Guid reviewerUserId,
         string? decisionReasonCode,
         Guid correlationId,
@@ -806,7 +767,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
 
         await using var command = new NpgsqlCommand(sql, connection, transaction) { CommandTimeout = 30 };
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = source.ParkingSessionId;
-        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = tariff.TariffSnapshotId;
+        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = DBNull.Value;
         command.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = NormalizeRequired(source.EntitlementType);
         AddNullable(command, "id_document_type", NpgsqlDbType.Varchar, NormalizeOptional(source.IdDocumentType));
         AddNullable(command, "issuing_authority", NpgsqlDbType.Varchar, NormalizeOptional(source.IssuingAuthority));
@@ -815,7 +776,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         command.Parameters.Add("policy_resolution_basis", NpgsqlDbType.Text).Value = policy.PolicyResolutionBasis;
         command.Parameters.Add("local_ordinance_applied", NpgsqlDbType.Boolean).Value = policy.LocalOrdinanceApplied;
         command.Parameters.Add("national_law_fallback_applied", NpgsqlDbType.Boolean).Value = !policy.LocalOrdinanceApplied;
-        command.Parameters.Add("currency_code", NpgsqlDbType.Varchar).Value = tariff.CurrencyCode;
+        command.Parameters.Add("currency_code", NpgsqlDbType.Varchar).Value = DBNull.Value;
         command.Parameters.Add("evidence_required", NpgsqlDbType.Boolean).Value = policy.RequiresEvidence;
         command.Parameters.Add("evidence_captured", NpgsqlDbType.Boolean).Value = policy.RequiresEvidence;
         AddNullable(command, "decision_reason_code", NpgsqlDbType.Varchar, NormalizeOptional(decisionReasonCode));
@@ -925,20 +886,18 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 sdv.statutory_discount_validation_id,
                 sdv.parking_session_id,
                 sdv.entitlement_type::text,
-                COALESCE(sdv.tariff_snapshot_id, r.original_tariff_snapshot_id, ts.tariff_snapshot_id) AS original_tariff_snapshot_id,
+                sdv.tariff_snapshot_id AS original_tariff_snapshot_id,
                 COALESCE(sdv.applied_policy_reference_id, sdv.evaluated_policy_reference_id) AS applied_policy_reference_id,
                 sdv.fallback_policy_reference_id,
                 sdv.policy_resolution_basis::text,
                 sdv.local_ordinance_applied,
-                ROUND(ts.gross_amount * 100)::bigint AS gross_amount_minor_units,
-                ts.currency_code,
+                NULL::bigint AS gross_amount_minor_units,
+                NULL::text AS currency_code,
                 'STATUTORY_DISCOUNT_VAT_EXEMPT' AS benefit_type,
                 'VAT_EXCLUSIVE' AS discount_base_scope
             FROM operator_console.statutory_discount_service_channel_reviews AS r
             JOIN discounts.statutory_discount_validations AS sdv
               ON sdv.statutory_discount_validation_id = @statutory_discount_validation_id
-            JOIN core.tariff_snapshots AS ts
-              ON ts.tariff_snapshot_id = COALESCE(sdv.tariff_snapshot_id, r.original_tariff_snapshot_id)
             WHERE r.statutory_discount_decision_command_id = @statutory_discount_decision_command_id
               AND r.statutory_discount_validation_id = sdv.statutory_discount_validation_id
             LIMIT 1;
@@ -961,13 +920,13 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             reader.GetGuid(reader.GetOrdinal("statutory_discount_validation_id")),
             reader.GetGuid(reader.GetOrdinal("parking_session_id")),
             reader.GetString(reader.GetOrdinal("entitlement_type")),
-            reader.GetGuid(reader.GetOrdinal("original_tariff_snapshot_id")),
+            GetNullableGuid(reader, "original_tariff_snapshot_id"),
             GetNullableGuid(reader, "applied_policy_reference_id"),
             GetNullableGuid(reader, "fallback_policy_reference_id"),
             reader.GetString(reader.GetOrdinal("policy_resolution_basis")),
             reader.GetBoolean(reader.GetOrdinal("local_ordinance_applied")),
-            reader.GetInt64(reader.GetOrdinal("gross_amount_minor_units")),
-            reader.GetString(reader.GetOrdinal("currency_code")),
+            GetNullableInt64(reader, "gross_amount_minor_units"),
+            GetNullableString(reader, "currency_code"),
             reader.GetString(reader.GetOrdinal("benefit_type")),
             reader.GetString(reader.GetOrdinal("discount_base_scope")));
     }
@@ -1098,9 +1057,4 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         string PolicyResolutionBasis,
         bool LocalOrdinanceApplied);
 
-    private sealed record TariffSnapshotRow(
-        Guid TariffSnapshotId,
-        Guid ParkingSessionId,
-        string CurrencyCode,
-        decimal GrossAmount);
 }

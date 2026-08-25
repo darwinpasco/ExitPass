@@ -2989,6 +2989,8 @@ function toMockCanonicalQueueItem(draft: StatutoryDiscountDraftDetail) {
 function toMockCanonicalDetail(draft: StatutoryDiscountDraftDetail): CanonicalStatutoryReviewDetail {
   return {
     ...toMockCanonicalQueueItem(draft),
+    sessionEligibilityStatus: draft.status === "Approved" ? "ELIGIBLE" : draft.status === "Rejected" ? "NOT_ELIGIBLE" : "PENDING_REVIEW",
+    payableBasisStatus: draft.payableBasisApplicationStatus ? "CREATED" : "NOT_YET_CREATED",
     plateNumber: draft.plateNumber,
     evidenceReferences: [],
     requesterAttestation: true,

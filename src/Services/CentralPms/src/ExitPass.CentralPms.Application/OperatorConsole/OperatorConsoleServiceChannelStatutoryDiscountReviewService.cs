@@ -203,7 +203,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
                 command,
                 access,
                 requestedDecision,
-                "STATUTORY_DISCOUNT_PAYABLE_BASIS_FACTS_UNAVAILABLE",
+                "STATUTORY_DISCOUNT_ELIGIBILITY_LINKAGE_UNAVAILABLE",
                 detail);
         }
 
@@ -216,7 +216,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
                     validationLinkage.FallbackPolicyReferenceId,
                     validationLinkage.PolicyResolutionBasis,
                     validationLinkage.LocalOrdinanceApplied,
-                    ToTariffFacts(validationLinkage),
+                    tariffFacts: null,
                     NormalizeOptional(command.DecisionReasonCode),
                     command.CorrelationId,
                     cancellationToken)
@@ -370,7 +370,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
             : null;
         if (requestedDecision == "APPROVE" && linkage is null)
         {
-            return RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_PAYABLE_BASIS_FACTS_UNAVAILABLE", detail.ReviewStatus);
+            return RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_ELIGIBILITY_LINKAGE_UNAVAILABLE", detail.ReviewStatus);
         }
 
         var completed = requestedDecision == "APPROVE"
@@ -382,7 +382,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
                 linkage.FallbackPolicyReferenceId,
                 linkage.PolicyResolutionBasis,
                 linkage.LocalOrdinanceApplied,
-                ToTariffFacts(linkage),
+                tariffFacts: null,
                 NormalizeOptional(command.Reason),
                 command.CorrelationId,
                 cancellationToken).ConfigureAwait(false)
@@ -644,30 +644,6 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
-
-    private static StatutoryDiscountDecisionV2TariffFacts ToTariffFacts(
-        StatutoryDiscountServiceChannelValidationLinkage linkage)
-    {
-        var computation = OperatorConsoleStatutoryDiscountComputationContract.Compute(
-            new OperatorConsoleStatutoryDiscountComputationRequest(
-                linkage.GrossAmountMinorUnits,
-                linkage.EntitlementType,
-                linkage.BenefitType,
-                linkage.DiscountBaseScope));
-
-        if (!computation.Accepted)
-        {
-            throw new InvalidOperationException("Reviewed service-channel statutory-discount payable-basis facts are not computable.");
-        }
-
-        return new StatutoryDiscountDecisionV2TariffFacts(
-            computation.GrossAmountMinorUnits,
-            computation.VatExclusiveAmountMinorUnits,
-            computation.VatAmountMinorUnits,
-            computation.StatutoryDiscountAmountMinorUnits,
-            computation.FinalPayableAmountMinorUnits,
-            linkage.Currency);
-    }
 
     private static void ValidateGuid(Guid value, string parameterName)
     {

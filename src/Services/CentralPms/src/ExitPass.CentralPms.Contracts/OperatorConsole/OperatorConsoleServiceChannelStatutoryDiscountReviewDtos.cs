@@ -44,6 +44,8 @@ public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewDetailR
     string CommandStatus,
     string DecisionResultStatus,
     string ReviewStatus,
+    string SessionEligibilityStatus,
+    string PayableBasisStatus,
     string? IdDocumentType,
     string? IssuingAuthority,
     DateOnly? ExpiryDate,

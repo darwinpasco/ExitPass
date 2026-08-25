@@ -651,10 +651,9 @@ function canonicalReviewDetail(draft) {
       verificationStatus: "RECORDED"
     }],
     requesterAttestation: true,
-    originalAmountMinorUnits: draft.originalAmountMinorUnits,
-    finalPayableAmountMinorUnits: draft.finalPayableAmountMinorUnits,
-    currency: "PHP",
-    payableBasisApplicationStatus: "PENDING_DECISION",
+    sessionEligibilityStatus: "PENDING_REVIEW",
+    payableBasisStatus: "NOT_YET_CREATED",
+    payableBasisApplicationStatus: null,
     correlationId: "65000000-0000-0000-0000-000000000001"
   };
 }

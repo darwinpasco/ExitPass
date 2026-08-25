@@ -25,6 +25,13 @@ internal sealed record StatutoryDiscountWorkflowBoundaryRowCounts(
     long FiscalIssuanceReferenceCount,
     long ParkingSessionCount);
 
+internal sealed record ApprovedStatutoryEligibilityFacts(
+    Guid? TariffSnapshotId,
+    string? Currency,
+    decimal? GrossAmount,
+    decimal? StatutoryDiscountAmount,
+    decimal? NetAmountAfterDiscount);
+
 internal static class StatutoryDiscountReviewIntegrationTestSupport
 {
     private static readonly SemaphoreSlim PatchLock = new(1, 1);
@@ -140,6 +147,110 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         await SeedSupportedLocalOrdinancePolicyAsync(context);
         await SeedReviewerUserAsync(context, context.RequestedByUserId);
         return context;
+    }
+
+    public static async Task RemoveOriginalPayableBasisAsync(PaymentTestContext context)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            DELETE FROM core.tariff_snapshots
+            WHERE tariff_snapshot_id = @tariff_snapshot_id
+              AND parking_session_id = @parking_session_id;
+            """,
+            connection);
+        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = context.TariffSnapshotId;
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = context.ParkingSessionId;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    public static async Task CreateOriginalPayableBasisAsync(PaymentTestContext context)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO core.tariff_snapshots (
+                tariff_snapshot_id,
+                parking_session_id,
+                superseded_by_tariff_snapshot_id,
+                vendor_system_id,
+                vendor_tariff_ref,
+                tariff_version_reference,
+                currency_code,
+                gross_amount,
+                statutory_discount_amount,
+                coupon_discount_amount,
+                net_amount,
+                statutory_discount_validation_id,
+                coupon_application_id,
+                snapshot_status,
+                calculated_at,
+                expires_at,
+                consumed_at,
+                correlation_id,
+                created_at,
+                created_by_service_identity_id,
+                updated_at,
+                updated_by_service_identity_id,
+                row_version)
+            VALUES (
+                @tariff_snapshot_id,
+                @parking_session_id,
+                NULL,
+                (
+                    SELECT vendor_system_id
+                    FROM integration.vendor_systems
+                    WHERE vendor_code = @vendor_system_code
+                      AND environment_code = 'TEST'
+                ),
+                @vendor_tariff_ref,
+                @tariff_version_reference,
+                'PHP',
+                100.00,
+                0.00,
+                0.00,
+                100.00,
+                NULL,
+                NULL,
+                'ACTIVE',
+                NOW(),
+                NOW() + INTERVAL '1 hour',
+                NULL,
+                @correlation_id,
+                NOW(),
+                @requested_by_service_identity_id,
+                NOW(),
+                @requested_by_service_identity_id,
+                1);
+            """,
+            connection);
+        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = context.TariffSnapshotId;
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = context.ParkingSessionId;
+        command.Parameters.AddWithValue("vendor_system_code", context.VendorSystemCode);
+        command.Parameters.AddWithValue("vendor_tariff_ref", $"VTAR-{context.TariffSnapshotId:N}");
+        command.Parameters.AddWithValue("tariff_version_reference", $"TVR-{context.TariffSnapshotId:N}");
+        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = Guid.NewGuid();
+        command.Parameters.Add("requested_by_service_identity_id", NpgsqlDbType.Uuid).Value = context.RequestedByUserId;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    public static async Task<long> OriginalPayableBasisRowCountAsync(PaymentTestContext context)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT COUNT(*)
+            FROM core.tariff_snapshots
+            WHERE tariff_snapshot_id = @tariff_snapshot_id
+              AND parking_session_id = @parking_session_id;
+            """,
+            connection);
+        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = context.TariffSnapshotId;
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = context.ParkingSessionId;
+        return (long)(await command.ExecuteScalarAsync() ?? 0L);
     }
 
     public static IStatutoryDiscountStagedCommandService CreateStagedService() =>
@@ -323,6 +434,40 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
             WHERE parking_session_id = @id;
             """,
             parkingSessionId);
+
+    public static async Task<ApprovedStatutoryEligibilityFacts> ApprovedEligibilityFactsForDecisionAsync(
+        Guid statutoryDiscountDecisionCommandId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT
+                validation.tariff_snapshot_id,
+                validation.currency_code,
+                validation.gross_amount_at_validation,
+                validation.statutory_discount_amount,
+                validation.net_amount_after_discount
+            FROM operator_console.statutory_discount_service_channel_reviews AS review
+            JOIN discounts.statutory_discount_validations AS validation
+              ON validation.statutory_discount_validation_id = review.statutory_discount_validation_id
+            WHERE review.statutory_discount_decision_command_id = @statutory_discount_decision_command_id;
+            """,
+            connection);
+        command.Parameters.AddWithValue("statutory_discount_decision_command_id", statutoryDiscountDecisionCommandId);
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            throw new InvalidOperationException("Expected an approved statutory eligibility record.");
+        }
+
+        return new ApprovedStatutoryEligibilityFacts(
+            reader.IsDBNull(0) ? null : reader.GetGuid(0),
+            reader.IsDBNull(1) ? null : reader.GetString(1).Trim(),
+            reader.IsDBNull(2) ? null : reader.GetDecimal(2),
+            reader.IsDBNull(3) ? null : reader.GetDecimal(3),
+            reader.IsDBNull(4) ? null : reader.GetDecimal(4));
+    }
 
     public static async Task<int> ApplicationCommandRowCountAsync(Guid decisionCommandId) =>
         await CountAsync(
