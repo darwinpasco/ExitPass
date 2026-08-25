@@ -477,9 +477,15 @@ internal static class StatutoryDiscountDecisionMappings
         {
             SiteId = review.SiteId ?? result.SiteId,
             SiteGroupId = review.SiteGroupId ?? result.SiteGroupId,
+            OriginalTariffSnapshotId = result.OriginalTariffSnapshotId ?? review.OriginalTariffSnapshotId,
+            GrossAmountMinorUnits = result.GrossAmountMinorUnits ?? review.OriginalAmountMinorUnits,
             VatExclusiveBasisAmountMinorUnits =
                 result.VatExclusiveBasisAmountMinorUnits ?? review.VatExclusiveAmountMinorUnits,
-            VatAmountMinorUnits = result.VatAmountMinorUnits ?? review.VatAmountMinorUnits
+            VatAmountMinorUnits = result.VatAmountMinorUnits ?? review.VatAmountMinorUnits,
+            StatutoryDiscountAmountMinorUnits =
+                result.StatutoryDiscountAmountMinorUnits ?? review.StatutoryDiscountAmountMinorUnits,
+            NetPayableAmountMinorUnits = result.NetPayableAmountMinorUnits ?? review.FinalPayableAmountMinorUnits,
+            Currency = result.Currency ?? review.Currency
         };
 
         return enriched with

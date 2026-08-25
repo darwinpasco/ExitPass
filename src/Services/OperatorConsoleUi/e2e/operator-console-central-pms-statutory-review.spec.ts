@@ -10,7 +10,7 @@ test.describe("Operator Console canonical Central PMS statutory review", () => {
     { name: "tablet", width: 768, height: 1024 },
     { name: "mobile", width: 390, height: 844 }
   ]) {
-    test(`${viewport.name} queue and detail remain usable without client-to-client requests`, async ({ page }) => {
+    test(`${viewport.name} queue and detail remain usable without client-to-client requests`, async ({ page }, testInfo) => {
       await page.setViewportSize(viewport);
       const observedRequests: string[] = [];
       page.on("request", (request) => observedRequests.push(request.url()));
@@ -28,22 +28,36 @@ test.describe("Operator Console canonical Central PMS statutory review", () => {
       await page.keyboard.press("Enter");
       await expect(page.getByRole("heading", { name: "Senior Citizen" })).toBeVisible();
       await expect(page.getByText(/Evidence is sensitive personal information/i)).toBeVisible();
-      await expect(page.getByText("Payable-basis status (read-only)")).toBeVisible();
-      await expect(page.getByText("₱500.00")).toBeVisible();
+      await expect(page.getByText("Not yet created")).toBeVisible();
+      await expect(page.getByText("Pending Review").first()).toBeVisible();
+      await expect(page.getByText(/Central PMS will calculate and apply/i)).toHaveCount(0);
+      await expect(page.getByText(/Final payable:/i)).toHaveCount(0);
       await expect(page.getByRole("button", { name: /^(void|issue|reverse) sales invoice$|^retry fiscal issuance$/i })).toHaveCount(0);
 
       const documentWidth = await page.evaluate(() => document.documentElement.scrollWidth);
       expect(documentWidth).toBeLessThanOrEqual(viewport.width);
       expect(observedRequests.some((url) => /webpay|assisted-payment|management-platform/i.test(new URL(url).hostname))).toBe(false);
+      expect(observedRequests.every((url) => new URL(url).origin === new URL(page.url()).origin)).toBe(true);
+      const storage = await page.evaluate(async () => ({
+        localStorageItems: window.localStorage.length,
+        sessionStorageItems: window.sessionStorage.length,
+        indexedDbDatabases: "databases" in window.indexedDB
+          ? (await window.indexedDB.databases()).length
+          : 0
+      }));
+      expect(storage).toEqual({ localStorageItems: 0, sessionStorageItems: 0, indexedDbDatabases: 0 });
+      await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-pending-pre-basis.png`), fullPage: true });
     });
   }
 
-  test("approval sends only decision data with CSRF and refreshes canonical state", async ({ page }) => {
+  test("approval sends only decision data with CSRF and refreshes canonical state", async ({ page }, testInfo) => {
     let decisionBody: Record<string, unknown> | undefined;
     let decisionCsrf: string | undefined;
+    let approved = false;
     await installCanonicalRoutes(page, async (route) => {
       decisionBody = route.request().postDataJSON() as Record<string, unknown>;
       decisionCsrf = route.request().headers()["x-csrf-token"];
+      approved = true;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -57,7 +71,14 @@ test.describe("Operator Console canonical Central PMS statutory review", () => {
           correlationId: "85000000-0000-0000-0000-000000000001"
         })
       });
-    });
+    }, () => approved ? detail({
+      commandStatus: "COMPLETED",
+      decisionResultStatus: "APPROVED",
+      reviewStatus: "APPROVED",
+      reviewedAt: "2026-08-25T08:30:00+08:00",
+      reviewerDecision: "APPROVE",
+      sessionEligibilityStatus: "ELIGIBLE"
+    }) : detail());
 
     await page.goto(`/operator-console/statutory-discounts/${decisionId}`);
     await expect(page.getByRole("heading", { name: "Senior Citizen" })).toBeVisible();
@@ -71,12 +92,19 @@ test.describe("Operator Console canonical Central PMS statutory review", () => {
     expect(decisionBody).not.toHaveProperty("siteId");
     expect(decisionBody).not.toHaveProperty("siteGroupId");
     expect(decisionBody).not.toHaveProperty("decisionTimestamp");
+    await expect(page.getByText("Decision recorded: APPROVED.", { exact: true })).toHaveAttribute("role", "status");
+    await expect(page.getByText("Approved eligibility")).toBeVisible();
+    await expect(page.getByText("Not yet created")).toBeVisible();
+    await expect(page.getByText("Pending payable-basis creation")).toBeVisible();
+    await expect(page.getByText(/Final payable:/i)).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("desktop-approved-pre-basis.png"), fullPage: true });
   });
 });
 
 async function installCanonicalRoutes(
   page: Page,
-  decide?: Parameters<Page["route"]>[1]
+  decide?: Parameters<Page["route"]>[1],
+  detailResponse?: () => ReturnType<typeof detail>
 ) {
   await page.route("**/v1/ops/operator-console/statutory-discounts/reviews?**", async (route) => {
     await route.fulfill({
@@ -93,7 +121,7 @@ async function installCanonicalRoutes(
     });
   });
   await page.route(`**/v1/ops/operator-console/statutory-discounts/reviews/${decisionId}?**`, async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(detail()) });
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(detailResponse?.() ?? detail()) });
   });
   await page.route(`**/v1/ops/operator-console/statutory-discounts/reviews/${decisionId}/evidence`, async (route) => {
     await route.fulfill({
@@ -156,15 +184,15 @@ function queueItem() {
   };
 }
 
-function detail() {
+function detail(overrides: Record<string, unknown> = {}) {
   return {
     ...queueItem(),
     evidenceReferences: [{ evidenceType: "SENIOR_CITIZEN_ID", captureMethod: "UPLOAD", referenceNumberMasked: "***1234", verificationStatus: "RECORDED" }],
     requesterAttestation: true,
-    originalAmountMinorUnits: 50000,
-    finalPayableAmountMinorUnits: 40000,
-    currency: "PHP",
-    payableBasisApplicationStatus: "PENDING_DECISION",
-    correlationId: "87000000-0000-0000-0000-000000000001"
+    sessionEligibilityStatus: "PENDING_REVIEW",
+    payableBasisStatus: "NOT_YET_CREATED",
+    payableBasisApplicationStatus: null,
+    correlationId: "87000000-0000-0000-0000-000000000001",
+    ...overrides
   };
 }

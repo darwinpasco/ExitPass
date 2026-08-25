@@ -713,7 +713,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
             persisted.VatAmountMinorUnits,
             persisted.FinalPayableAmountMinorUnits.Value,
             persisted.CurrencyCode,
-            StatutoryDiscountSourceChannels.OperatorConsole,
+            decision.SourceChannel,
             idempotencyKey,
             command.CorrelationId);
     }
@@ -754,7 +754,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
             decision.VatAmountMinorUnits ?? detail.VatAmountMinorUnits,
             finalPayableAmountMinorUnits.Value,
             currency,
-            StatutoryDiscountSourceChannels.OperatorConsole,
+            decision.SourceChannel,
             idempotencyKey,
             command.CorrelationId);
     }

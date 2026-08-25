@@ -127,17 +127,20 @@ function client() {
 function runtimeFetch(decisionBody: unknown, decisionStatus = 200) {
   let detailCallCount = 0;
   let queueCallCount = 0;
-  let decided = false;
+  let canonicalStatus: "APPROVED" | "REJECTED" | undefined;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/evidence")) return jsonResponse({ errorCode: "EVIDENCE_NOT_AVAILABLE" }, 403);
     if (url.includes("/decision") && init?.method === "POST") {
-      if (decisionStatus === 200) decided = true;
+      if (decisionStatus === 200 && decisionBody && typeof decisionBody === "object") {
+        const candidate = (decisionBody as { currentValidationStatus?: unknown }).currentValidationStatus;
+        canonicalStatus = candidate === "APPROVED" || candidate === "REJECTED" ? candidate : undefined;
+      }
       return jsonResponse(decisionBody, decisionStatus);
     }
     if (url.includes(`/reviews/${decisionId}`)) {
       detailCallCount += 1;
-      return jsonResponse(detailResponse(decided));
+      return jsonResponse(detailResponse(canonicalStatus));
     }
     if (url.includes("/reviews?")) {
       queueCallCount += 1;
@@ -160,7 +163,8 @@ function decisionResponse(decision: "APPROVE" | "REJECT", currentValidationStatu
   };
 }
 
-function detailResponse(decided: boolean) {
+function detailResponse(canonicalStatus?: "APPROVED" | "REJECTED") {
+  const decided = canonicalStatus !== undefined;
   return {
     statutoryDiscountDecisionCommandId: decisionId,
     requestReference: decisionId,
@@ -168,16 +172,20 @@ function detailResponse(decided: boolean) {
     sourceChannel: "WEBPAY",
     entitlementType: "PWD",
     commandStatus: decided ? "COMPLETED" : "AWAITING_REVIEW",
-    decisionResultStatus: decided ? "APPROVED" : "NOT_DECIDED",
-    reviewStatus: decided ? "APPROVED" : "PENDING_REVIEW",
+    decisionResultStatus: canonicalStatus ?? "NOT_DECIDED",
+    reviewStatus: canonicalStatus ?? "PENDING_REVIEW",
     evidenceRequired: true,
     evidenceRecorded: true,
     submittedAt: "2026-08-24T08:00:00+08:00",
     evidenceReferences: [],
     requesterAttestation: true,
-    originalAmountMinorUnits: 10000,
-    finalPayableAmountMinorUnits: 8000,
-    currency: "PHP",
+    sessionEligibilityStatus: canonicalStatus === "APPROVED"
+      ? "ELIGIBLE"
+      : canonicalStatus === "REJECTED"
+        ? "NOT_ELIGIBLE"
+        : "PENDING_REVIEW",
+    payableBasisStatus: "NOT_YET_CREATED",
+    payableBasisApplicationStatus: null,
     correlationId
   };
 }

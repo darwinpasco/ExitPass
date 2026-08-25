@@ -971,6 +971,13 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.CommandStatus,
             result.DecisionResultStatus,
             result.ReviewStatus,
+            result.ReviewStatus switch
+            {
+                StatutoryDiscountServiceChannelReviewStatuses.Approved => "ELIGIBLE",
+                StatutoryDiscountServiceChannelReviewStatuses.Rejected => "NOT_ELIGIBLE",
+                _ => "PENDING_REVIEW"
+            },
+            result.PayableBasisApplicationStatus is null ? "NOT_YET_CREATED" : "CREATED",
             result.IdDocumentType,
             result.IssuingAuthority,
             result.ExpiryDate,

@@ -585,9 +585,14 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
-    public async Task SubmitAsync_WhenApprovedDecisionLacksPayableBasisFacts_DoesNotApply()
+    public async Task SubmitAsync_WhenApprovedDecisionLacksPayableBasisFacts_CreatesBasisThroughCentralPms()
     {
         var fixture = CreateFixture();
+        fixture.ServiceChannelReviewRepository.GetAsync(
+                CommandId,
+                Arg.Any<Guid>(),
+                Arg.Any<CancellationToken>())
+            .Returns(AppliedServiceChannelReviewDetail());
         var pending = await fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: false), CancellationToken.None);
         await fixture.Repository.CompleteDecisionApprovedAsync(
             pending.StatutoryDiscountDecisionCommandId,
@@ -602,13 +607,65 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             CorrelationId,
             CancellationToken.None);
 
-        var action = () => fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: true), CancellationToken.None);
+        fixture.Repository.SeedDeferredAppliedApplication();
 
-        await action.Should().ThrowAsync<StatutoryDiscountDecisionRejectedException>()
-            .Where(ex => ex.ErrorCode == "STATUTORY_DISCOUNT_PAYABLE_BASIS_FACTS_UNAVAILABLE");
-        fixture.Repository.ApplicationCount.Should().Be(0);
-        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+        var result = await fixture.Sut.SubmitAsync(
+            Command(sourceChannel: "WEBPAY", applyPayableBasis: true),
+            CancellationToken.None);
+
+        result.ApplicationCommandStatus.Should().Be(StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied);
+        result.GrossAmountMinorUnits.Should().Be(12500);
+        result.StatutoryDiscountAmountMinorUnits.Should().Be(2232);
+        result.NetPayableAmountMinorUnits.Should().Be(8929);
+        result.Currency.Should().Be("PHP");
+        await fixture.ApplyService.Received(1).ApplyAsync(
+            Arg.Is<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(command =>
+                command.ValidationId == ValidationId &&
+                command.OriginalTariffSnapshotId == OriginalTariffSnapshotId),
+            Arg.Any<CancellationToken>());
     }
+
+    private static StatutoryDiscountServiceChannelReviewDetail AppliedServiceChannelReviewDetail() =>
+        new(
+            CommandId,
+            ValidationId,
+            RequestReference,
+            ParkingSessionId,
+            "WEBPAY",
+            SiteId,
+            SiteGroupId,
+            "TICKET-001",
+            "ABC1234",
+            "SENIOR_CITIZEN",
+            StatutoryDiscountDecisionV2CommandStates.Completed,
+            StatutoryDiscountDecisionV2ResultStates.Approved,
+            StatutoryDiscountServiceChannelReviewStatuses.Approved,
+            "SENIOR_CITIZEN_ID",
+            "OSCA",
+            DateOnly.Parse("2030-01-01"),
+            "SC-****-1234",
+            [],
+            RequesterAttestation: true,
+            AttestationNotes: null,
+            ReasonCode: "CUSTOMER_REQUEST",
+            EvidenceRequired: true,
+            EvidenceRecorded: true,
+            OriginalTariffSnapshotId,
+            OriginalAmountMinorUnits: 12500,
+            VatExclusiveAmountMinorUnits: 11161,
+            VatAmountMinorUnits: 1339,
+            StatutoryDiscountAmountMinorUnits: 2232,
+            FinalPayableAmountMinorUnits: 8929,
+            Currency: "PHP",
+            GoverningPolicy: null,
+            ReviewerUserId,
+            ReviewerAccessEvaluationId: null,
+            ReviewerDecision: "APPROVE",
+            ReviewerReasonCode: "ELIGIBLE",
+            SubmittedAt: Now,
+            ReviewedAt: Now,
+            PayableBasisApplicationStatus: "APPLIED",
+            CorrelationId);
 
     [Fact]
     public async Task SubmitAsync_WhenApprovedDecisionLacksFrozenPolicyAuthority_DoesNotApply()
@@ -1187,6 +1244,41 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         public StatutoryDiscountDecisionV2Command? LastDecisionCommand { get; private set; }
 
         public int ApplicationCount => _application is null ? 0 : 1;
+
+        public void SeedDeferredAppliedApplication()
+        {
+            var command = new StatutoryDiscountPayableBasisApplicationV1Command(
+                RequestReference,
+                _decision!.StatutoryDiscountDecisionCommandId,
+                ParkingSessionId,
+                SiteId,
+                "SENIOR_CITIZEN",
+                ValidationId,
+                OriginalTariffSnapshotId,
+                TargetTariffSnapshotId: null,
+                AppliedTariffSnapshotId,
+                PolicyId,
+                "NATIONAL_LAW_FALLBACK",
+                ApprovedDiscountAmountMinorUnits: 2232,
+                ApprovedVatExclusiveAmountMinorUnits: 11161,
+                ApprovedVatAmountMinorUnits: 1339,
+                ApprovedFinalPayableAmountMinorUnits: 8929,
+                "PHP",
+                "WEBPAY",
+                "deferred-payable-basis-test",
+                CorrelationId);
+            _application = CreateApplicationRecord(
+                command,
+                StatutoryDiscountPayableBasisApplicationV1SemanticHash.Compute(command)) with
+            {
+                CommandStatus = StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied,
+                ResultClassification = StatutoryDiscountPayableBasisApplicationV1ResultClassifications.Applied,
+                StatutoryDiscountPayableBasisApplicationId = PayableBasisApplicationId,
+                AppliedTariffSnapshotId = AppliedTariffSnapshotId,
+                AppliedAt = Now,
+                CompletedAt = Now
+            };
+        }
 
         public TimeSpan DelayInsideLock { get; set; }
 
