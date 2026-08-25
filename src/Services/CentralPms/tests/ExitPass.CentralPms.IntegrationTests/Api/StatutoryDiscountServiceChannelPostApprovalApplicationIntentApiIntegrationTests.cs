@@ -39,6 +39,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     {
         var scenarioName = nameof(ServiceChannel_RealReviewMediatedApplicationFlow_AppliesOnceReplaysAndPaymentInitiationUsesAppliedSnapshot) + sourceChannel;
         var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(scenarioName);
+        await SeedServiceAuthorizationAsync(context);
         await StatutoryDiscountReviewIntegrationTestSupport.RemoveOriginalPayableBasisAsync(context);
 
         try
@@ -131,6 +132,23 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(context.ParkingSessionId)).Should().Be(1);
             (await StatutoryDiscountReviewIntegrationTestSupport.AppliedTariffSnapshotRowCountAsync(context.ParkingSessionId)).Should().Be(1);
 
+            var expectedServiceIdentityId = sourceChannel == StatutoryDiscountSourceChannels.WebPay
+                ? WebPayServiceIdentityId
+                : AptServiceIdentityId;
+            var attribution = await ReadApplicationAttributionAsync(validationId!.Value);
+            attribution.ValidatedByUserId.Should().Be(
+                context.RequestedByUserId,
+                "the human reviewer remains the eligibility-decision authority");
+            attribution.ValidationUpdatedByServiceIdentityId.Should().Be(expectedServiceIdentityId);
+            attribution.ApplicationChannel.Should().Be("SYSTEM");
+            attribution.AppliedByUserId.Should().BeNull();
+            attribution.AppliedByServiceIdentityId.Should().Be(expectedServiceIdentityId);
+            attribution.CreatedByUserId.Should().BeNull();
+            attribution.CreatedByServiceIdentityId.Should().Be(expectedServiceIdentityId);
+            attribution.UpdatedByUserId.Should().BeNull();
+            attribution.UpdatedByServiceIdentityId.Should().Be(expectedServiceIdentityId);
+            attribution.AppliedTariffCreatedByServiceIdentityId.Should().Be(expectedServiceIdentityId);
+
             var replay = await PostSharedDecisionAsync(
                 serviceClient,
                 Request(context, sourceChannel, applyPayableBasis: true),
@@ -218,6 +236,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         }
         finally
         {
+            await CleanupServiceAssignmentsAsync(context);
             await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
         }
     }
@@ -225,12 +244,13 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     [Theory]
     [InlineData(StatutoryDiscountSourceChannels.WebPay, StatutoryDiscountSourceChannels.AssistedPaymentTerminal)]
     [InlineData(StatutoryDiscountSourceChannels.AssistedPaymentTerminal, StatutoryDiscountSourceChannels.WebPay)]
-    public async Task ServiceChannel_CrossChannelApplicationIntent_ConvergesOnSameCanonicalApplication(
+    public async Task ServiceChannel_CrossChannelApplicationIntent_IsDeniedWithoutCreatingApplication(
         string intakeChannel,
         string applyChannel)
     {
-        var scenarioName = nameof(ServiceChannel_CrossChannelApplicationIntent_ConvergesOnSameCanonicalApplication) + intakeChannel + applyChannel;
+        var scenarioName = nameof(ServiceChannel_CrossChannelApplicationIntent_IsDeniedWithoutCreatingApplication) + intakeChannel + applyChannel;
         var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(scenarioName);
+        await SeedServiceAuthorizationAsync(context);
 
         try
         {
@@ -250,12 +270,15 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 HttpStatusCode.Created);
             await CompleteReviewAsync(operatorClient, context, intake.StatutoryDiscountDecisionCommandId, "APPROVE");
 
-            var first = await PostSharedDecisionAsync(
+            using var crossChannel = await SendSharedDecisionAsync(
                 applyClient,
                 Request(context, applyChannel, applyPayableBasis: true),
                 $"cross-apply-{context.ParkingSessionId:N}",
-                Guid.NewGuid(),
-                HttpStatusCode.OK);
+                Guid.NewGuid());
+            crossChannel.StatusCode.Should().Be(HttpStatusCode.NotFound);
+            (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(intake.StatutoryDiscountDecisionCommandId)).Should().Be(0);
+            (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(context.ParkingSessionId)).Should().Be(0);
+
             var replay = await PostSharedDecisionAsync(
                 intakeClient,
                 Request(context, intakeChannel, applyPayableBasis: true),
@@ -264,14 +287,65 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 HttpStatusCode.OK);
 
             replay.StatutoryDiscountDecisionCommandId.Should().Be(intake.StatutoryDiscountDecisionCommandId);
-            replay.StatutoryDiscountPayableBasisApplicationCommandId.Should().Be(first.StatutoryDiscountPayableBasisApplicationCommandId);
-            replay.AppliedTariffSnapshotId.Should().Be(first.AppliedTariffSnapshotId);
+            replay.StatutoryDiscountPayableBasisApplicationCommandId.Should().NotBeNull();
+            replay.AppliedTariffSnapshotId.Should().NotBeNull();
             (await StatutoryDiscountReviewIntegrationTestSupport.DecisionRowCountAsync(context.ParkingSessionId)).Should().Be(1);
             (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(intake.StatutoryDiscountDecisionCommandId)).Should().Be(1);
             (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(context.ParkingSessionId)).Should().Be(1);
         }
         finally
         {
+            await CleanupServiceAssignmentsAsync(context);
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
+        }
+    }
+
+    [Theory]
+    [InlineData("WRONG_SITE", HttpStatusCode.NotFound, "STATUTORY_DISCOUNT_DECISION_NOT_FOUND")]
+    [InlineData("WRONG_AUDIENCE", HttpStatusCode.BadRequest, "ACCESS_DENIED")]
+    [InlineData("INACTIVE_IDENTITY", HttpStatusCode.BadRequest, "ACCESS_DENIED")]
+    public async Task ServiceChannel_ProductionAuthorizationRejectsInvalidIdentityOrSiteScope(
+        string invalidation,
+        HttpStatusCode expectedStatus,
+        string expectedErrorCode)
+    {
+        var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
+            nameof(ServiceChannel_ProductionAuthorizationRejectsInvalidIdentityOrSiteScope) + invalidation);
+        await SeedServiceAuthorizationAsync(context);
+
+        try
+        {
+            using var factory = CreateFactory(context);
+            using var serviceClient = factory.CreateClient();
+            using var operatorClient = factory.CreateClient();
+            AddServiceHeaders(serviceClient, StatutoryDiscountSourceChannels.WebPay);
+            AddOperatorHeaders(operatorClient, context);
+
+            var intake = await PostSharedDecisionAsync(
+                serviceClient,
+                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: false),
+                $"authorization-intake-{context.ParkingSessionId:N}",
+                context.CorrelationId,
+                HttpStatusCode.Created);
+            await CompleteReviewAsync(operatorClient, context, intake.StatutoryDiscountDecisionCommandId, "APPROVE");
+            await InvalidateServiceAuthorizationAsync(context, invalidation);
+
+            using var response = await SendSharedDecisionAsync(
+                serviceClient,
+                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
+                $"authorization-apply-{context.ParkingSessionId:N}",
+                Guid.NewGuid());
+            response.StatusCode.Should().Be(expectedStatus, await response.Content.ReadAsStringAsync());
+            var error = await response.Content.ReadFromJsonAsync<ExitPass.CentralPms.Contracts.Common.ErrorResponse>();
+            error!.ErrorCode.Should().Be(expectedErrorCode);
+            (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(
+                intake.StatutoryDiscountDecisionCommandId)).Should().Be(0);
+            (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(
+                context.ParkingSessionId)).Should().Be(0);
+        }
+        finally
+        {
+            await CleanupServiceAssignmentsAsync(context);
             await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
         }
     }
@@ -284,6 +358,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     {
         var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
             nameof(LegacyOperatorConsoleApplyRoute_IsRemoved_AndServiceChannelApplicationIntent_RemainsAuthoritative) + attemptLegacyRouteBeforeServiceApplication);
+        await SeedServiceAuthorizationAsync(context);
 
         try
         {
@@ -328,6 +403,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         }
         finally
         {
+            await CleanupServiceAssignmentsAsync(context);
             await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
         }
     }
@@ -337,6 +413,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     {
         var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
             nameof(RemovedLegacyOperatorConsoleApplyRoute_DoesNotWriteWorkflowPaymentCashFiscalOrParkingRows));
+        await SeedServiceAuthorizationAsync(context);
 
         try
         {
@@ -382,6 +459,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         }
         finally
         {
+            await CleanupServiceAssignmentsAsync(context);
             await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
         }
     }
@@ -395,6 +473,9 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             nameof(ServiceChannelApplicationIntent_WhenDecisionNotApprovedOrLinkageMissing_DoesNotCreateApplication) + "Rejected");
         var missingLinkageContext = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
             nameof(ServiceChannelApplicationIntent_WhenDecisionNotApprovedOrLinkageMissing_DoesNotCreateApplication) + "MissingLinkage");
+        await SeedServiceAuthorizationAsync(awaitingContext);
+        await SeedServiceAuthorizationAsync(rejectedContext);
+        await SeedServiceAuthorizationAsync(missingLinkageContext);
 
         await StatutoryDiscountReviewIntegrationTestSupport.RemoveOriginalPayableBasisAsync(awaitingContext);
         await StatutoryDiscountReviewIntegrationTestSupport.RemoveOriginalPayableBasisAsync(rejectedContext);
@@ -473,6 +554,9 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         }
         finally
         {
+            await CleanupServiceAssignmentsAsync(awaitingContext);
+            await CleanupServiceAssignmentsAsync(rejectedContext);
+            await CleanupServiceAssignmentsAsync(missingLinkageContext);
             await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(awaitingContext);
             await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(rejectedContext);
             await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(missingLinkageContext);
@@ -484,15 +568,16 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     {
         var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
             nameof(ConcurrentServiceChannelAndOperatorConsoleApplicationIntent_CreatesOneApplicationAndOneAppliedSnapshot));
+        await SeedServiceAuthorizationAsync(context);
 
         try
         {
             using var factory = CreateFactory(context);
             using var webPayClient = factory.CreateClient();
-            using var aptClient = factory.CreateClient();
+            using var webPayReplayClient = factory.CreateClient();
             using var operatorClient = factory.CreateClient();
             AddServiceHeaders(webPayClient, StatutoryDiscountSourceChannels.WebPay);
-            AddServiceHeaders(aptClient, StatutoryDiscountSourceChannels.AssistedPaymentTerminal);
+            AddServiceHeaders(webPayReplayClient, StatutoryDiscountSourceChannels.WebPay);
             AddOperatorHeaders(operatorClient, context);
 
             var intake = await PostSharedDecisionAsync(
@@ -510,25 +595,25 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 $"concurrent-webpay-apply-{context.ParkingSessionId:N}",
                 Guid.NewGuid(),
                 expectedStatus: null);
-            var aptApply = PostSharedDecisionAsync(
-                aptClient,
-                Request(context, StatutoryDiscountSourceChannels.AssistedPaymentTerminal, applyPayableBasis: true),
-                $"concurrent-apt-apply-{context.ParkingSessionId:N}",
+            var replayApply = PostSharedDecisionAsync(
+                webPayReplayClient,
+                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
+                $"concurrent-webpay-replay-{context.ParkingSessionId:N}",
                 Guid.NewGuid(),
                 expectedStatus: null);
             var operatorApply = ApplyWithOperatorConsoleAsync(operatorClient, context, validationId);
 
             var serviceResult = await serviceApply;
-            var aptResult = await aptApply;
+            var replayResult = await replayApply;
             await operatorApply;
 
             var readback = await GetSharedReadbackAsync(webPayClient, intake.StatutoryDiscountDecisionCommandId);
             readback.ApplicationCommandStatus.Should().Be(
                 StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied,
-                "concurrent service-channel application intent must converge while the legacy Operator Console route is absent instead of leaving status {0}; service result {1}, APT result {2}",
+                "concurrent service-channel application intent must converge while the legacy Operator Console route is absent instead of leaving status {0}; service result {1}, replay result {2}",
                 readback.ApplicationCommandStatus,
                 serviceResult.ApplicationCommandStatus,
-                aptResult.ApplicationCommandStatus);
+                replayResult.ApplicationCommandStatus);
 
             (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(intake.StatutoryDiscountDecisionCommandId)).Should().Be(1);
             (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(context.ParkingSessionId)).Should().Be(1);
@@ -539,6 +624,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         }
         finally
         {
+            await CleanupServiceAssignmentsAsync(context);
             await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
         }
     }
@@ -708,6 +794,128 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             applyPayableBasis,
             includePayableBasis ? context.TariffSnapshotId : null);
 
+    private static async Task SeedServiceAuthorizationAsync(PaymentTestContext context)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new Npgsql.NpgsqlCommand(
+            """
+            INSERT INTO identity.service_identities (
+                service_identity_id, service_identity_code, service_identity_name,
+                identity_type, identity_status, owning_service_name,
+                effective_from, created_at, updated_at, row_version)
+            VALUES
+                (@webpay_id, 'IST_WEBPAY_STATUTORY_APPLICATION', 'IST WebPay statutory application',
+                 'INTERNAL_SERVICE', 'ACTIVE', 'PAYMENT_ORCHESTRATOR', now() - interval '1 hour', now(), now(), 1),
+                (@apt_id, 'IST_APT_STATUTORY_APPLICATION', 'IST APT statutory application',
+                 'INTERNAL_SERVICE', 'ACTIVE', 'ASSISTED_PAYMENT_TERMINAL', now() - interval '1 hour', now(), now(), 1)
+            ON CONFLICT (service_identity_id) DO UPDATE
+            SET identity_status = 'ACTIVE',
+                owning_service_name = EXCLUDED.owning_service_name,
+                effective_from = EXCLUDED.effective_from,
+                effective_to = NULL,
+                revoked_at = NULL,
+                credential_expires_at = NULL,
+                updated_at = now(),
+                row_version = identity.service_identities.row_version + 1;
+
+            DELETE FROM sites.device_assignments
+            WHERE service_identity_id IN (@webpay_id, @apt_id);
+
+            INSERT INTO sites.device_assignments (
+                device_assignment_id, site_id, service_identity_id,
+                assignment_type, assignment_status, assigned_at,
+                created_at, updated_at, row_version)
+            VALUES
+                (gen_random_uuid(), @site_id, @webpay_id, 'SERVICE_PRINCIPAL', 'ACTIVE', now() - interval '1 hour', now(), now(), 1),
+                (gen_random_uuid(), @site_id, @apt_id, 'SERVICE_PRINCIPAL', 'ACTIVE', now() - interval '1 hour', now(), now(), 1);
+            """,
+            connection);
+        command.Parameters.AddWithValue("webpay_id", WebPayServiceIdentityId);
+        command.Parameters.AddWithValue("apt_id", AptServiceIdentityId);
+        command.Parameters.AddWithValue("site_id", context.SiteId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task CleanupServiceAssignmentsAsync(PaymentTestContext context)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new Npgsql.NpgsqlCommand(
+            """
+            DELETE FROM sites.device_assignments
+            WHERE site_id = @site_id
+              AND service_identity_id IN (@webpay_id, @apt_id);
+            """,
+            connection);
+        command.Parameters.AddWithValue("site_id", context.SiteId);
+        command.Parameters.AddWithValue("webpay_id", WebPayServiceIdentityId);
+        command.Parameters.AddWithValue("apt_id", AptServiceIdentityId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InvalidateServiceAuthorizationAsync(PaymentTestContext context, string invalidation)
+    {
+        var sql = invalidation switch
+        {
+            "WRONG_SITE" =>
+                "DELETE FROM sites.device_assignments WHERE site_id = @site_id AND service_identity_id = @service_identity_id;",
+            "WRONG_AUDIENCE" =>
+                "UPDATE identity.service_identities SET owning_service_name = 'ASSISTED_PAYMENT_TERMINAL', updated_at = now(), row_version = row_version + 1 WHERE service_identity_id = @service_identity_id;",
+            "INACTIVE_IDENTITY" =>
+                "UPDATE identity.service_identities SET identity_status = 'REVOKED', revoked_at = now(), updated_at = now(), row_version = row_version + 1 WHERE service_identity_id = @service_identity_id;",
+            _ => throw new ArgumentOutOfRangeException(nameof(invalidation), invalidation, "Unsupported authorization invalidation.")
+        };
+
+        await using var connection = new Npgsql.NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new Npgsql.NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("site_id", context.SiteId);
+        command.Parameters.AddWithValue("service_identity_id", WebPayServiceIdentityId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<ApplicationAttribution> ReadApplicationAttributionAsync(Guid validationId)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new Npgsql.NpgsqlCommand(
+            """
+            SELECT
+                validation.validated_by_user_id,
+                validation.updated_by_service_identity_id,
+                application.application_channel::text,
+                application.applied_by_user_id,
+                application.applied_by_service_identity_id,
+                application.created_by_user_id,
+                application.created_by_service_identity_id,
+                application.updated_by_user_id,
+                application.updated_by_service_identity_id,
+                applied_tariff.created_by_service_identity_id AS applied_tariff_created_by_service_identity_id
+            FROM discounts.statutory_discount_validations validation
+            INNER JOIN discounts.statutory_discount_payable_basis_applications application
+                ON application.statutory_discount_validation_id = validation.statutory_discount_validation_id
+            INNER JOIN core.tariff_snapshots applied_tariff
+                ON applied_tariff.tariff_snapshot_id = application.applied_tariff_snapshot_id
+            WHERE validation.statutory_discount_validation_id = @validation_id;
+            """,
+            connection);
+        command.Parameters.AddWithValue("validation_id", validationId);
+        await using var reader = await command.ExecuteReaderAsync();
+        (await reader.ReadAsync()).Should().BeTrue();
+        return new ApplicationAttribution(
+            reader.GetGuid(0),
+            reader.IsDBNull(1) ? null : reader.GetGuid(1),
+            reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetGuid(3),
+            reader.IsDBNull(4) ? null : reader.GetGuid(4),
+            reader.IsDBNull(5) ? null : reader.GetGuid(5),
+            reader.IsDBNull(6) ? null : reader.GetGuid(6),
+            reader.IsDBNull(7) ? null : reader.GetGuid(7),
+            reader.IsDBNull(8) ? null : reader.GetGuid(8),
+            reader.IsDBNull(9) ? null : reader.GetGuid(9));
+    }
+
     private static void AddServiceHeaders(HttpClient client, string sourceChannel)
     {
         var serviceIdentityId = sourceChannel == StatutoryDiscountSourceChannels.WebPay
@@ -817,6 +1025,18 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             CancellationToken cancellationToken) =>
             Task.FromResult(result with { EvaluationId = _result.EvaluationId, Persisted = true });
     }
+
+    private sealed record ApplicationAttribution(
+        Guid ValidatedByUserId,
+        Guid? ValidationUpdatedByServiceIdentityId,
+        string ApplicationChannel,
+        Guid? AppliedByUserId,
+        Guid? AppliedByServiceIdentityId,
+        Guid? CreatedByUserId,
+        Guid? CreatedByServiceIdentityId,
+        Guid? UpdatedByUserId,
+        Guid? UpdatedByServiceIdentityId,
+        Guid? AppliedTariffCreatedByServiceIdentityId);
 }
 
 internal static class StatutoryDiscountDecisionResponseAssertions

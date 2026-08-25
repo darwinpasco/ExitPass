@@ -100,6 +100,56 @@ public sealed class CentralPmsRbacRepository : ICentralPmsRbacRepository
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
 
+    public async Task<CentralPmsServiceIdentityAuthorizationRecord?> GetServiceIdentityAuthorizationAsync(
+        Guid serviceIdentityId,
+        Guid siteId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                si.service_identity_id,
+                si.identity_type::text,
+                COALESCE(si.owning_service_name, ''),
+                (
+                    si.identity_status = 'ACTIVE'
+                    AND si.effective_from <= now()
+                    AND (si.effective_to IS NULL OR si.effective_to > now())
+                    AND si.revoked_at IS NULL
+                    AND (si.credential_expires_at IS NULL OR si.credential_expires_at > now())
+                ) AS active,
+                EXISTS (
+                    SELECT 1
+                    FROM sites.device_assignments da
+                    WHERE da.service_identity_id = si.service_identity_id
+                      AND da.site_id = @site_id
+                      AND da.assignment_type = 'SERVICE_PRINCIPAL'
+                      AND da.assignment_status = 'ACTIVE'
+                      AND da.assigned_at <= now()
+                      AND da.unassigned_at IS NULL
+                ) AS site_assigned
+            FROM identity.service_identities si
+            WHERE si.service_identity_id = @service_identity_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("service_identity_id", serviceIdentityId);
+        command.Parameters.AddWithValue("site_id", siteId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new CentralPmsServiceIdentityAuthorizationRecord(
+            reader.GetGuid(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetBoolean(3),
+            reader.GetBoolean(4));
+    }
+
     public async Task RecordDeniedAsync(
         string policyName,
         Guid? userId,

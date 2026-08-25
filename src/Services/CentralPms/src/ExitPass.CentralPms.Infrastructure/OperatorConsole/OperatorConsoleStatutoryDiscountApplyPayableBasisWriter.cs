@@ -35,6 +35,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+        ValidateActor(command);
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -479,6 +480,18 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 finalized.FailureCode ?? finalized.OutcomeCode);
         }
 
+        if (command.AppliedByServiceIdentityId.HasValue && finalized.AppliedTariffSnapshotId.HasValue)
+        {
+            await AttributeServiceApplicationAsync(
+                connection,
+                transaction,
+                validation.ValidationId,
+                applicationId,
+                finalized.AppliedTariffSnapshotId.Value,
+                command.AppliedByServiceIdentityId.Value,
+                cancellationToken);
+        }
+
         return new OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceResult(
             ApplicationAccepted: true,
             ApplicationPersisted: true,
@@ -535,12 +548,15 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 rounding_mode,
                 applied_at,
                 applied_by_user_id,
+                applied_by_service_identity_id,
                 idempotency_key,
                 correlation_id,
                 created_at,
                 created_by_user_id,
+                created_by_service_identity_id,
                 updated_at,
                 updated_by_user_id,
+                updated_by_service_identity_id,
                 row_version
             )
             VALUES (
@@ -549,7 +565,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 @original_tariff_snapshot_id,
                 NULL,
                 'REQUESTED'::discounts.statutory_discount_payable_application_status_enum,
-                'OPERATOR_CONSOLE'::discounts.statutory_discount_payable_application_channel_enum,
+                @application_channel::discounts.statutory_discount_payable_application_channel_enum,
                 @gross_amount_minor_units,
                 @vat_amount_minor_units,
                 @vat_exclusive_amount_minor_units,
@@ -560,12 +576,15 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 @rounding_mode,
                 NULL,
                 NULL,
+                @applied_by_service_identity_id,
                 @idempotency_key,
                 @correlation_id,
                 now(),
                 @created_by_user_id,
+                @created_by_service_identity_id,
                 now(),
                 @updated_by_user_id,
+                @updated_by_service_identity_id,
                 1
             )
             RETURNING statutory_discount_payable_basis_application_id;
@@ -585,8 +604,12 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         npgsqlCommand.Parameters.Add("rounding_mode", NpgsqlDbType.Varchar).Value = OperatorConsoleStatutoryDiscountComputationContract.RoundingMode;
         npgsqlCommand.Parameters.Add("idempotency_key", NpgsqlDbType.Varchar).Value = command.IdempotencyKey;
         npgsqlCommand.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = command.CorrelationId;
-        npgsqlCommand.Parameters.Add("created_by_user_id", NpgsqlDbType.Uuid).Value = command.AppliedByUserId;
-        npgsqlCommand.Parameters.Add("updated_by_user_id", NpgsqlDbType.Uuid).Value = command.AppliedByUserId;
+        npgsqlCommand.Parameters.AddWithValue("application_channel", command.ApplicationChannel);
+        AddNullableGuid(npgsqlCommand, "applied_by_service_identity_id", command.AppliedByServiceIdentityId);
+        AddNullableGuid(npgsqlCommand, "created_by_user_id", command.AppliedByUserId);
+        AddNullableGuid(npgsqlCommand, "created_by_service_identity_id", command.AppliedByServiceIdentityId);
+        AddNullableGuid(npgsqlCommand, "updated_by_user_id", command.AppliedByUserId);
+        AddNullableGuid(npgsqlCommand, "updated_by_service_identity_id", command.AppliedByServiceIdentityId);
 
         return (Guid)(await npgsqlCommand.ExecuteScalarAsync(cancellationToken)
             ?? throw new InvalidOperationException("Expected statutory discount payable-basis application id."));
@@ -596,7 +619,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Guid applicationId,
-        Guid actorUserId,
+        Guid? actorUserId,
         Guid correlationId,
         CancellationToken cancellationToken)
     {
@@ -621,7 +644,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
 
         await using var npgsqlCommand = new NpgsqlCommand(sql, connection, transaction);
         npgsqlCommand.Parameters.Add("statutory_discount_payable_basis_application_id", NpgsqlDbType.Uuid).Value = applicationId;
-        npgsqlCommand.Parameters.Add("actor_user_id", NpgsqlDbType.Uuid).Value = actorUserId;
+        AddNullableGuid(npgsqlCommand, "actor_user_id", actorUserId);
         npgsqlCommand.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = correlationId;
 
         await using var reader = await npgsqlCommand.ExecuteReaderAsync(cancellationToken);
@@ -643,6 +666,62 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             reader.GetString(9),
             reader.IsDBNull(10) ? null : reader.GetString(10));
     }
+
+    private static async Task AttributeServiceApplicationAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid validationId,
+        Guid applicationId,
+        Guid appliedTariffSnapshotId,
+        Guid serviceIdentityId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE discounts.statutory_discount_validations
+            SET updated_by_user_id = NULL,
+                updated_by_service_identity_id = @service_identity_id
+            WHERE statutory_discount_validation_id = @validation_id;
+
+            UPDATE discounts.statutory_discount_payable_basis_applications
+            SET application_channel = 'SYSTEM'::discounts.statutory_discount_payable_application_channel_enum,
+                applied_by_user_id = NULL,
+                applied_by_service_identity_id = @service_identity_id,
+                created_by_user_id = NULL,
+                created_by_service_identity_id = @service_identity_id,
+                updated_by_user_id = NULL,
+                updated_by_service_identity_id = @service_identity_id
+            WHERE statutory_discount_payable_basis_application_id = @application_id;
+
+            UPDATE core.tariff_snapshots
+            SET created_by_service_identity_id = @service_identity_id,
+                updated_by_service_identity_id = @service_identity_id
+            WHERE tariff_snapshot_id = @applied_tariff_snapshot_id;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = serviceIdentityId;
+        command.Parameters.Add("validation_id", NpgsqlDbType.Uuid).Value = validationId;
+        command.Parameters.Add("application_id", NpgsqlDbType.Uuid).Value = applicationId;
+        command.Parameters.Add("applied_tariff_snapshot_id", NpgsqlDbType.Uuid).Value = appliedTariffSnapshotId;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static void ValidateActor(OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand command)
+    {
+        if (command.AppliedByUserId.HasValue == command.AppliedByServiceIdentityId.HasValue)
+        {
+            throw new ArgumentException("Exactly one payable-basis application actor is required.", nameof(command));
+        }
+
+        var expectedChannel = command.AppliedByServiceIdentityId.HasValue ? "SYSTEM" : "OPERATOR_CONSOLE";
+        if (!string.Equals(command.ApplicationChannel, expectedChannel, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("Payable-basis application channel does not match the authenticated actor.", nameof(command));
+        }
+    }
+
+    private static void AddNullableGuid(NpgsqlCommand command, string parameterName, Guid? value) =>
+        command.Parameters.Add(parameterName, NpgsqlDbType.Uuid).Value = (object?)value ?? DBNull.Value;
 
     private static async Task DeleteRequestedApplicationAsync(
         NpgsqlConnection connection,

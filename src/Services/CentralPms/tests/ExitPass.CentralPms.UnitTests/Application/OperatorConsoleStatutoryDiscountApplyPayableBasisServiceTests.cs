@@ -242,13 +242,69 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
             .WithMessage("*ValidationId is required*");
     }
 
+    [Fact]
+    public async Task ApplyAsync_ServiceChannelCaller_UsesServiceAuthorizationWithoutOperatorDeviceOrShiftEvaluation()
+    {
+        var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
+        var serviceAuthorization = Substitute.For<IStatutoryDiscountServiceChannelAuthorizationService>();
+        serviceAuthorization.AuthorizeAsync(
+                Arg.Any<StatutoryDiscountServiceChannelCallerContext>(),
+                SiteId,
+                CorrelationId,
+                Arg.Any<CancellationToken>())
+            .Returns(new StatutoryDiscountServiceChannelAuthorizationResult(
+                Allowed: true,
+                "SERVICE_CHANNEL_ALLOW",
+                [],
+                ErrorCode: null,
+                AuditPersisted: true,
+                CorrelationId));
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter>();
+        writer.ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(PersistedApplication(alreadyApplied: false));
+        var sut = CreateSut(
+            AccessResult(allowed: false, ["DEVICE_BINDING_REQUIRED", "ACTIVE_SHIFT_REQUIRED"]),
+            writer,
+            accessService: accessService,
+            serviceAuthorization: serviceAuthorization,
+            decisionSourceChannel: StatutoryDiscountSourceChannels.WebPay);
+        var caller = new StatutoryDiscountServiceChannelCallerContext(
+            Guid.Parse("4b000000-0000-0000-0000-000000000020"),
+            StatutoryDiscountSourceChannels.WebPay,
+            StatutoryDiscountSourceChannels.WebPay,
+            "statutory-discounts.decision.submit.webpay");
+
+        var result = await sut.ApplyAsync(
+            Command() with
+            {
+                OperatorDeviceBindingId = null,
+                OperatorShiftId = null,
+                ServiceChannelCaller = caller
+            },
+            CancellationToken.None);
+
+        result.AccessAllowed.Should().BeTrue();
+        result.ApplicationAccepted.Should().BeTrue();
+        await accessService.DidNotReceiveWithAnyArgs().EvaluateAsync(default!, default);
+        await serviceAuthorization.Received(1).AuthorizeAsync(caller, SiteId, CorrelationId, Arg.Any<CancellationToken>());
+        await writer.Received(1).ApplyAsync(
+            Arg.Is<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand>(command =>
+                command.AppliedByUserId == null &&
+                command.AppliedByServiceIdentityId == caller.ServiceIdentityId &&
+                command.ApplicationChannel == "SYSTEM"),
+            Arg.Any<CancellationToken>());
+    }
+
     private static OperatorConsoleStatutoryDiscountApplyPayableBasisService CreateSut(
         OperatorConsoleAccessEvaluationResult accessResult,
         IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter? writer = null,
         IOperatorConsoleStatutoryDiscountReadService? readService = null,
-        IStatutoryDiscountStagedCommandService? staged = null)
+        IStatutoryDiscountStagedCommandService? staged = null,
+        IOperatorConsoleAccessEvaluationService? accessService = null,
+        IStatutoryDiscountServiceChannelAuthorizationService? serviceAuthorization = null,
+        string? decisionSourceChannel = null)
     {
-        var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
+        accessService ??= Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
             .Returns(accessResult with { EvaluationId = Guid.Empty, Persisted = false });
 
@@ -268,7 +324,10 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         {
             staged = Substitute.For<IStatutoryDiscountStagedCommandService>();
             staged.GetDecisionAsync(DecisionCommandId, Arg.Any<CancellationToken>())
-                .Returns(ApprovedDecision());
+                .Returns(ApprovedDecision() with
+                {
+                    SourceChannel = decisionSourceChannel ?? StatutoryDiscountSourceChannels.OperatorConsole
+                });
             staged.GetApplicationAsync(ApplicationCommandId, Arg.Any<CancellationToken>())
                 .Returns(ApplicationRecord());
             staged.CreateOrResolveApplicationAsync(Arg.Any<StatutoryDiscountPayableBasisApplicationV1Command>(), Arg.Any<CancellationToken>())
@@ -287,13 +346,15 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         }
 
         ConfigureApplicationLock(staged);
+        serviceAuthorization ??= Substitute.For<IStatutoryDiscountServiceChannelAuthorizationService>();
 
         return new OperatorConsoleStatutoryDiscountApplyPayableBasisService(
             accessService,
             accessWriter,
             writer,
             readService,
-            staged);
+            staged,
+            serviceAuthorization);
     }
 
     private static void ConfigureApplicationLock(IStatutoryDiscountStagedCommandService staged) =>
