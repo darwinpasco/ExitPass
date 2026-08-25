@@ -103,15 +103,23 @@ public sealed class VendorPaymentAcknowledgmentWorkflow : IVendorPaymentAcknowle
             return;
         }
 
-        var ticketReference = Normalize(acknowledgment.CardNum) ??
-            Normalize(acknowledgment.TicketNumber) ??
-            Normalize(acknowledgment.VendorSessionRef);
-        if (ticketReference is null)
+        var plateNumber = Normalize(acknowledgment.TicketNumber) is null
+            ? Normalize(basis.PlateNumber)
+            : null;
+        string? ticketReference = null;
+        if (plateNumber is null)
+        {
+            ticketReference = Normalize(acknowledgment.CardNum) ??
+                Normalize(acknowledgment.TicketNumber) ??
+                Normalize(acknowledgment.VendorSessionRef);
+        }
+
+        if (ticketReference is null && plateNumber is null)
         {
             await MarkFailureAsync(
                 acknowledgment,
                 "VENDOR_CONFIRMATION_IDENTIFIER_MISSING",
-                "Vendor PMS confirmation requires a ticket or card reference.",
+                "Vendor PMS confirmation requires a ticket, plate, or card reference.",
                 retryable: false,
                 cancellationToken);
             return;
@@ -122,7 +130,7 @@ public sealed class VendorPaymentAcknowledgmentWorkflow : IVendorPaymentAcknowle
         {
             response = await _vendorClient.ConfirmParkingFeeAsync(
                 new VendorParkingFeeConfirmationRequest(
-                    PlateNumber: null,
+                    PlateNumber: plateNumber,
                     TicketReference: ticketReference,
                     ImmediatelyLeave: 0,
                     AmountMinor: acknowledgment.RequestFeeMinorUnits,

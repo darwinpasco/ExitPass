@@ -64,6 +64,7 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
                 ps.source_adapter_identity_id,
                 vs.vendor_code AS vendor_system_code,
                 ps.vendor_session_ref,
+                ps.plate_number_masked AS plate_number,
                 ps.ticket_number_masked AS ticket_number,
                 COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS card_num,
                 FLOOR(pa.amount * 100)::bigint AS request_fee_minor_units,
@@ -108,6 +109,7 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
             RequestFeeMinorUnits: reader.GetInt64(reader.GetOrdinal("request_fee_minor_units")),
             RequestCurrencyCode: reader.GetString(reader.GetOrdinal("request_currency_code")).Trim())
         {
+            PlateNumber = GetNullableString(reader, "plate_number"),
             SiteId = reader.GetGuid(reader.GetOrdinal("site_id")),
             SiteGroupId = reader.GetGuid(reader.GetOrdinal("site_group_id")),
             VendorSystemId = reader.GetGuid(reader.GetOrdinal("vendor_system_id")),
