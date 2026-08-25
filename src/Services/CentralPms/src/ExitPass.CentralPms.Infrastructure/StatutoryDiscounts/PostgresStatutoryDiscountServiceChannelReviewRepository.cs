@@ -357,7 +357,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         return linkage;
     }
 
-    public async Task<Guid?> GetValidationReviewerUserIdAsync(
+    public async Task<StatutoryDiscountServiceChannelReviewerAuthority?> GetValidationReviewerAuthorityAsync(
         Guid statutoryDiscountValidationId,
         CancellationToken cancellationToken)
     {
@@ -366,9 +366,20 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
 
         await using var command = new NpgsqlCommand(
             """
-            SELECT validated_by_user_id
-            FROM discounts.statutory_discount_validations
-            WHERE statutory_discount_validation_id = @statutory_discount_validation_id;
+            SELECT
+                validation.validated_by_user_id,
+                review.reviewer_operator_device_binding_id,
+                review.reviewer_operator_shift_id,
+                review.site_id,
+                review.site_group_id
+            FROM discounts.statutory_discount_validations AS validation
+            JOIN operator_console.statutory_discount_service_channel_reviews AS review
+              ON review.statutory_discount_validation_id = validation.statutory_discount_validation_id
+            WHERE validation.statutory_discount_validation_id = @statutory_discount_validation_id
+              AND validation.validation_status = 'APPROVED'
+              AND review.review_status = 'APPROVED'
+              AND review.reviewer_decision = 'APPROVE'
+              AND review.reviewer_user_id = validation.validated_by_user_id;
             """,
             connection)
         {
@@ -377,10 +388,26 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         command.Parameters.Add("statutory_discount_validation_id", NpgsqlDbType.Uuid).Value =
             statutoryDiscountValidationId;
 
-        var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-        return value is Guid reviewerUserId
-            ? reviewerUserId
-            : null;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        var authority = new StatutoryDiscountServiceChannelReviewerAuthority(
+            reader.GetGuid(reader.GetOrdinal("validated_by_user_id")),
+            GetNullableGuid(reader, "reviewer_operator_device_binding_id"),
+            GetNullableGuid(reader, "reviewer_operator_shift_id"),
+            GetNullableGuid(reader, "site_id"),
+            GetNullableGuid(reader, "site_group_id"));
+
+        if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(
+                "Multiple approved service-channel reviewer authorities exist for one statutory-discount validation.");
+        }
+
+        return authority;
     }
 
     public async Task<StatutoryDiscountServiceChannelReviewDetail> RecordReviewCompletionAsync(

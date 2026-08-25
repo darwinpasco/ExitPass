@@ -203,7 +203,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         public Task UpsertIntakeAsync(StatutoryDiscountServiceChannelReviewIntakeCommand command, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task<StatutoryDiscountServiceChannelReviewQueueResult> ListAsync(StatutoryDiscountServiceChannelReviewQueueQuery query, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<StatutoryDiscountServiceChannelValidationLinkage?> EnsureApprovedValidationLinkageAsync(Guid statutoryDiscountDecisionCommandId, Guid reviewerUserId, string? decisionReasonCode, Guid correlationId, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<Guid?> GetValidationReviewerUserIdAsync(Guid statutoryDiscountValidationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<StatutoryDiscountServiceChannelReviewerAuthority?> GetValidationReviewerAuthorityAsync(Guid statutoryDiscountValidationId, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<StatutoryDiscountServiceChannelReviewDetail> RecordReviewCompletionAsync(Guid statutoryDiscountDecisionCommandId, Guid reviewerUserId, Guid? operatorDeviceBindingId, Guid? operatorShiftId, Guid accessEvaluationId, string decision, string? decisionReasonCode, Guid correlationId, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 

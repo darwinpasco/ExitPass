@@ -188,4 +188,53 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
             await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
         }
     }
+
+    [Fact]
+    public async Task ApprovedValidationReviewerAuthority_ReturnsCanonicalReviewOperatingContext()
+    {
+        var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            nameof(ApprovedValidationReviewerAuthority_ReturnsCanonicalReviewOperatingContext),
+            StatutoryDiscountSourceChannels.WebPay);
+
+        try
+        {
+            var reviewerUserId = Guid.NewGuid();
+            var deviceBindingId = Guid.NewGuid();
+            var shiftId = Guid.NewGuid();
+            var repository = StatutoryDiscountReviewIntegrationTestSupport.CreateReviewRepository();
+
+            await repository.RecordReviewCompletionAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                reviewerUserId,
+                deviceBindingId,
+                shiftId,
+                Guid.NewGuid(),
+                "APPROVE",
+                "ELIGIBLE",
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+            var linkage = await repository.EnsureApprovedValidationLinkageAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                reviewerUserId,
+                "ELIGIBLE",
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+
+            linkage.Should().NotBeNull();
+            var authority = await repository.GetValidationReviewerAuthorityAsync(
+                linkage!.StatutoryDiscountValidationId,
+                CancellationToken.None);
+
+            authority.Should().Be(new StatutoryDiscountServiceChannelReviewerAuthority(
+                reviewerUserId,
+                deviceBindingId,
+                shiftId,
+                seeded.Context.SiteId,
+                seeded.Context.SiteGroupId));
+        }
+        finally
+        {
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
+        }
+    }
 }

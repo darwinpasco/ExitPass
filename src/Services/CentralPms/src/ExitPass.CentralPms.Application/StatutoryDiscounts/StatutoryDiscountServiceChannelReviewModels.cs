@@ -186,6 +186,16 @@ public sealed record StatutoryDiscountServiceChannelValidationLinkage(
     string DiscountBaseScope);
 
 /// <summary>
+/// Trusted reviewer operating context retained with an approved service-channel review.
+/// </summary>
+public sealed record StatutoryDiscountServiceChannelReviewerAuthority(
+    Guid ReviewerUserId,
+    Guid? OperatorDeviceBindingId,
+    Guid? OperatorShiftId,
+    Guid? SiteId,
+    Guid? SiteGroupId);
+
+/// <summary>
 /// Command for completing a service-channel-originated canonical decision from Operator Console.
 /// </summary>
 public sealed record StatutoryDiscountServiceChannelReviewDecisionCommand(

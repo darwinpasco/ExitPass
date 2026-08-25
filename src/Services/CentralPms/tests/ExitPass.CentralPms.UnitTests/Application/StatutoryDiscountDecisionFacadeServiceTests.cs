@@ -625,6 +625,40 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task SubmitAsync_WhenServiceChannelAppliesDeferredBasis_UsesPersistedReviewerAuthority()
+    {
+        var fixture = CreateFixture();
+        var pending = await fixture.Sut.SubmitAsync(
+            Command(sourceChannel: "WEBPAY", applyPayableBasis: false),
+            CancellationToken.None);
+        await fixture.Repository.CompleteDecisionApprovedAsync(
+            pending.StatutoryDiscountDecisionCommandId,
+            ValidationId,
+            OriginalTariffSnapshotId,
+            PolicyId,
+            fallbackPolicyReferenceId: null,
+            "NATIONAL_LAW_FALLBACK",
+            localOrdinanceApplied: false,
+            new StatutoryDiscountDecisionV2TariffFacts(12500, 11161, 1339, 2232, 8929, "PHP"),
+            "ELIGIBLE",
+            CorrelationId,
+            CancellationToken.None);
+
+        await fixture.Sut.SubmitAsync(
+            Command(sourceChannel: "WEBPAY", applyPayableBasis: true),
+            CancellationToken.None);
+
+        await fixture.ApplyService.Received(1).ApplyAsync(
+            Arg.Is<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(command =>
+                command.UserId == ReviewerUserId &&
+                command.OperatorDeviceBindingId == DeviceBindingId &&
+                command.SiteId == SiteId &&
+                command.SiteGroupId == SiteGroupId &&
+                command.OperatorShiftId == ShiftId),
+            Arg.Any<CancellationToken>());
+    }
+
     private static StatutoryDiscountServiceChannelReviewDetail AppliedServiceChannelReviewDetail() =>
         new(
             CommandId,
@@ -831,8 +865,13 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         var clock = Substitute.For<ISystemClock>();
         clock.UtcNow.Returns(Now);
         var serviceChannelReviewRepository = Substitute.For<IStatutoryDiscountServiceChannelReviewRepository>();
-        serviceChannelReviewRepository.GetValidationReviewerUserIdAsync(ValidationId, Arg.Any<CancellationToken>())
-            .Returns(ReviewerUserId);
+        serviceChannelReviewRepository.GetValidationReviewerAuthorityAsync(ValidationId, Arg.Any<CancellationToken>())
+            .Returns(new StatutoryDiscountServiceChannelReviewerAuthority(
+                ReviewerUserId,
+                DeviceBindingId,
+                ShiftId,
+                SiteId,
+                SiteGroupId));
         var parkingEligibilityRepository = new InMemoryParkingEligibilityRepository();
         var parkingEligibilityResolver = Substitute.For<IStatutoryDiscountParkingEligibilityResolver>();
         parkingEligibilityResolver.ResolveAsync(Arg.Any<StatutoryDiscountParkingAvailabilityRequest>(), Arg.Any<CancellationToken>())
