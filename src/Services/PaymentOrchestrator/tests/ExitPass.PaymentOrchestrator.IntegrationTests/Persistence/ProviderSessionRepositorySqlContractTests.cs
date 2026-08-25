@@ -205,6 +205,105 @@ public sealed class ProviderSessionRepositorySqlContractTests
     }
 
     /// <summary>
+    /// Verifies webhook read and update operations locate the provider session by its
+    /// persisted rail instead of selecting an unrelated active rail for the provider.
+    /// </summary>
+    [Fact]
+    public async Task ProviderSessionRepository_WebhookLookup_WhenProviderHasMultipleActiveRails_UsesPersistedSessionRail()
+    {
+        await ApplySqlFileAsync(Path.Combine("infra", "db", "seed", "ExitPass_Reference_Data_v1.2.sql"));
+        await ApplySqlFileAsync(Path.Combine("infra", "db", "patches", "ExitPass_PayMongoPaymentRailReferenceData_v1.2.sql"));
+
+        var serviceIdentityId = await QueryGuidAsync(
+            "select service_identity_id from identity.service_identities where service_identity_code = 'payment-orchestrator';");
+        var vendorSystemId = await QueryGuidAsync(
+            "select vendor_system_id from integration.vendor_systems where vendor_code = 'MOCK_VENDOR_PMS' and environment_code = 'DEV';");
+        var siteGroupId = await QueryGuidAsync(
+            "select site_group_id from sites.site_groups where site_group_code = 'DEV_PROPERTY';");
+        var siteId = await QueryGuidAsync(
+            """
+            select s.site_id
+            from sites.sites s
+            join sites.site_groups sg on sg.site_group_id = s.site_group_id
+            where sg.site_group_code = 'DEV_PROPERTY'
+              and s.site_code = 'DEV_PARKING';
+            """);
+        var parkingSessionId = Guid.NewGuid();
+        var tariffSnapshotId = Guid.NewGuid();
+        var paymentAttemptId = Guid.NewGuid();
+        var providerSessionRecordId = Guid.NewGuid();
+        var competingRailId = Guid.NewGuid();
+        var providerSessionRef = $"cs_multi_rail_{Guid.NewGuid():N}";
+
+        await InsertPaymentAttemptFixtureAsync(
+            parkingSessionId,
+            tariffSnapshotId,
+            paymentAttemptId,
+            vendorSystemId,
+            siteGroupId,
+            siteId,
+            serviceIdentityId);
+
+        try
+        {
+            var repository = new ProviderSessionRepository(
+                CreateConfiguration(),
+                NullLogger<ProviderSessionRepository>.Instance);
+
+            await repository.AddAsync(
+                new ProviderSessionRecord(
+                    providerSessionRecordId,
+                    paymentAttemptId,
+                    "PAYMONGO",
+                    "PAYMONGO_CHECKOUT_SESSION",
+                    providerSessionRef,
+                    providerSessionRef,
+                    "PENDING_PROVIDER",
+                    $"https://checkout.paymongo.test/session/{providerSessionRef}",
+                    null,
+                    DateTimeOffset.UtcNow.AddMinutes(30),
+                    $"multi-rail-{Guid.NewGuid():N}",
+                    Guid.NewGuid(),
+                    "{\"AmountMinor\":12500,\"Currency\":\"PHP\"}",
+                    $"{{\"data\":{{\"id\":\"{providerSessionRef}\"}}}}",
+                    DateTimeOffset.UtcNow,
+                    12500,
+                    "PHP"),
+                CancellationToken.None);
+
+            await InsertCompetingProviderRailAsync(competingRailId, serviceIdentityId);
+
+            var persisted = await repository.FindByProviderSessionIdAsync(
+                "PAYMONGO",
+                providerSessionRef,
+                CancellationToken.None);
+
+            Assert.NotNull(persisted);
+            Assert.Equal(providerSessionRecordId, persisted!.ProviderSessionRecordId);
+
+            await repository.MarkWebhookOutcomeAsync(
+                "PAYMONGO",
+                providerSessionRef,
+                "pay_multi_rail_001",
+                "SUCCEEDED",
+                CancellationToken.None);
+
+            var updated = await repository.FindByProviderSessionIdAsync(
+                "PAYMONGO",
+                providerSessionRef,
+                CancellationToken.None);
+            Assert.NotNull(updated);
+            Assert.Equal("PAID", updated!.SessionStatus);
+            Assert.Equal("pay_multi_rail_001", updated.ProviderReference);
+        }
+        finally
+        {
+            await DeletePaymentAttemptFixtureAsync(providerSessionRecordId, paymentAttemptId, tariffSnapshotId, parkingSessionId);
+            await DeleteProviderRailAsync(competingRailId);
+        }
+    }
+
+    /// <summary>
     /// Verifies provider initiation reservation persists before provider execution and can be completed in place.
     /// </summary>
     [Fact]
@@ -494,6 +593,39 @@ public sealed class ProviderSessionRepositorySqlContractTests
             "delete from payments.provider_sessions where provider_session_id = @provider_session_id;",
             connection);
         command.Parameters.AddWithValue("provider_session_id", providerSessionRecordId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertCompetingProviderRailAsync(Guid paymentRailId, Guid serviceIdentityId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            insert into payments.payment_rails (
+                payment_rail_id, rail_code, rail_name, provider_code, rail_type,
+                supported_currency_code, rail_status, is_primary, is_fallback,
+                effective_from, created_by_service_identity_id, updated_by_service_identity_id)
+            values (
+                @payment_rail_id, @rail_code, 'PayMongo competing active rail', 'PAYMONGO',
+                'HOSTED_CHECKOUT', 'PHP', 'ACTIVE', true, false,
+                now() + interval '1 day', @service_identity_id, @service_identity_id);
+            """,
+            connection);
+        command.Parameters.AddWithValue("payment_rail_id", paymentRailId);
+        command.Parameters.AddWithValue("rail_code", $"PAYMONGO_COMPETING_{paymentRailId:N}");
+        command.Parameters.AddWithValue("service_identity_id", serviceIdentityId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task DeleteProviderRailAsync(Guid paymentRailId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "delete from payments.payment_rails where payment_rail_id = @payment_rail_id;",
+            connection);
+        command.Parameters.AddWithValue("payment_rail_id", paymentRailId);
         await command.ExecuteNonQueryAsync();
     }
 

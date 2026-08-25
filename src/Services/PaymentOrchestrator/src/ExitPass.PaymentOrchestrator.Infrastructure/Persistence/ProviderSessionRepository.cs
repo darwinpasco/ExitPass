@@ -330,10 +330,16 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        var paymentRailId = await ResolvePaymentRailIdByProviderCodeAsync(
+        var providerSessionRecordId = await ResolveProviderSessionRecordIdAsync(
             connection,
             providerCode,
+            providerSessionId,
             cancellationToken);
+
+        if (providerSessionRecordId is null)
+        {
+            return null;
+        }
 
         const string sql = """
             select
@@ -352,14 +358,11 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
                 correlation_id,
                 created_at
             from payments.provider_sessions
-            where payment_rail_id = @payment_rail_id
-              and provider_session_ref = @provider_session_ref
-            limit 1;
+            where provider_session_id = @provider_session_id;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("payment_rail_id", paymentRailId);
-        command.Parameters.AddWithValue("provider_session_ref", providerSessionId);
+        command.Parameters.AddWithValue("provider_session_id", providerSessionRecordId.Value);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
@@ -486,10 +489,17 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        var paymentRailId = await ResolvePaymentRailIdByProviderCodeAsync(
+        var providerSessionRecordId = await ResolveProviderSessionRecordIdAsync(
             connection,
             providerCode,
+            providerSessionId,
             cancellationToken);
+
+        if (providerSessionRecordId is null)
+        {
+            throw new UnknownProviderSessionException(providerSessionId);
+        }
+
         var serviceIdentityId = await ResolvePaymentOrchestratorServiceIdentityIdAsync(
             connection,
             cancellationToken);
@@ -501,16 +511,14 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
                 session_status = cast(@session_status as payments.provider_session_status_enum),
                 updated_at = now(),
                 updated_by_service_identity_id = @updated_by_service_identity_id
-            where payment_rail_id = @payment_rail_id
-              and provider_session_ref = @provider_session_ref;
+            where provider_session_id = @provider_session_id;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("provider_transaction_ref", (object?)providerReference ?? string.Empty);
         command.Parameters.AddWithValue("session_status", NormalizeProviderSessionStatus(sessionStatus));
         command.Parameters.AddWithValue("updated_by_service_identity_id", serviceIdentityId);
-        command.Parameters.AddWithValue("payment_rail_id", paymentRailId);
-        command.Parameters.AddWithValue("provider_session_ref", providerSessionId);
+        command.Parameters.AddWithValue("provider_session_id", providerSessionRecordId.Value);
 
         var rows = await command.ExecuteNonQueryAsync(cancellationToken);
         if (rows == 0)
@@ -675,31 +683,41 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
             $"No active payment rail found for rail_code '{paymentRailCode}'.");
     }
 
-    private static async Task<Guid> ResolvePaymentRailIdByProviderCodeAsync(
+    private static async Task<Guid?> ResolveProviderSessionRecordIdAsync(
         NpgsqlConnection connection,
         string providerCode,
+        string providerSessionId,
         CancellationToken cancellationToken)
     {
         const string sql = """
-            select payment_rail_id
-            from payments.payment_rails
-            where provider_code = @provider_code
-              and rail_status = 'ACTIVE'
-            order by is_primary desc, effective_from desc
-            limit 1;
+            select ps.provider_session_id
+            from payments.provider_sessions ps
+            join payments.payment_rails pr on pr.payment_rail_id = ps.payment_rail_id
+            where pr.provider_code = @provider_code
+              and ps.provider_session_ref = @provider_session_ref
+            order by ps.created_at desc
+            limit 2;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("provider_code", providerCode);
+        command.Parameters.AddWithValue("provider_session_ref", providerSessionId);
 
-        var scalar = await command.ExecuteScalarAsync(cancellationToken);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
-        if (scalar is Guid paymentRailId)
+        if (!await reader.ReadAsync(cancellationToken))
         {
-            return paymentRailId;
+            return null;
         }
 
-        throw new InvalidOperationException(
-            $"No active payment rail found for provider_code '{providerCode}'.");
+        var providerSessionRecordId = reader.GetGuid(0);
+
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            throw new InvalidOperationException(
+                "Provider session reference is ambiguous for the authenticated provider.");
+        }
+
+        return providerSessionRecordId;
     }
 }
