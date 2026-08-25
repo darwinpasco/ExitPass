@@ -72,6 +72,27 @@ public sealed class VendorPaymentAcknowledgmentWorkflowTests
     }
 
     [Fact]
+    public async Task ProcessAsync_WhenSessionWasResolvedByPlate_ConfirmsUsingPlateInsteadOfOpaqueVendorReference()
+    {
+        var repository = new FakeAcknowledgmentRepository
+        {
+            Basis = Basis(cardNum: null, ticketNumber: null) with
+            {
+                PlateNumber = "IST-R12-STAT-PLATE-A"
+            }
+        };
+        var vendorClient = new FakeVendorClient();
+        var sut = CreateSut(repository, vendorClient, enabled: true);
+
+        await sut.ProcessAsync(Command(), CancellationToken.None);
+
+        vendorClient.ConfirmParkingFeeCalls.Should().Be(1);
+        vendorClient.LastConfirmationRequest.Should().NotBeNull();
+        vendorClient.LastConfirmationRequest!.PlateNumber.Should().Be("IST-R12-STAT-PLATE-A");
+        vendorClient.LastConfirmationRequest.TicketReference.Should().BeNull();
+    }
+
+    [Fact]
     public async Task ProcessAsync_WhenVendorFailureIsRetryable_MarksRetryPending()
     {
         var repository = new FakeAcknowledgmentRepository { Basis = Basis() };
@@ -134,14 +155,16 @@ public sealed class VendorPaymentAcknowledgmentWorkflowTests
     private static VendorPaymentAcknowledgmentWorkflowCommand Command() =>
         new(PaymentAttemptId, PaymentConfirmationId, ParkingSessionId, CorrelationId);
 
-    private static VendorPaymentAcknowledgmentBasis Basis(string? cardNum = "CARD-279") =>
+    private static VendorPaymentAcknowledgmentBasis Basis(
+        string? cardNum = "CARD-279",
+        string? ticketNumber = "TICKET-279") =>
         new(
             PaymentAttemptId,
             PaymentConfirmationId,
             ParkingSessionId,
             "HIKCENTRAL",
             "HIK:CARD-279",
-            "TICKET-279",
+            ticketNumber,
             cardNum,
             5000,
             "PHP");

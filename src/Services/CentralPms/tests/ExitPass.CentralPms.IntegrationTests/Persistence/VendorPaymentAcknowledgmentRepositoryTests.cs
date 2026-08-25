@@ -239,6 +239,7 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
             Assert.Equal(attempt.ParkingSessionId, basis.ParkingSessionId);
             Assert.Equal(context.VendorSystemCode, basis.VendorSystemCode);
             Assert.False(string.IsNullOrWhiteSpace(basis.VendorSessionRef));
+            Assert.Equal("ABC1234", basis.PlateNumber);
             Assert.True(
                 !string.IsNullOrWhiteSpace(basis.TicketNumber) ||
                 !string.IsNullOrWhiteSpace(basis.CardNum));
@@ -626,6 +627,7 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
                 site_group_id,
                 site_id,
                 vendor_system_id,
+                source_adapter_identity_id,
                 vendor_session_ref,
                 plate_number_hash,
                 plate_number_masked,
@@ -646,6 +648,7 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
                 site_group_id,
                 site_id,
                 vendor_system_id,
+                COALESCE(source_adapter_identity_id, @requested_by),
                 @vendor_session_ref,
                 plate_number_hash,
                 plate_number_masked,

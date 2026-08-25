@@ -112,6 +112,8 @@ public sealed record VendorPaymentAcknowledgmentBasis(
     long RequestFeeMinorUnits,
     string RequestCurrencyCode)
 {
+    /// <summary>Canonical masked plate retained by the immutable parking session.</summary>
+    public string? PlateNumber { get; init; }
     public Guid SiteId { get; init; }
     public Guid SiteGroupId { get; init; }
     public Guid VendorSystemId { get; init; }
