@@ -100,6 +100,80 @@ public sealed class CentralPmsRbacRepository : ICentralPmsRbacRepository
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
 
+    public async Task<CentralPmsServicePrincipalAuthenticationRecord?> GetServicePrincipalAuthenticationAsync(
+        string credentialReference,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(credentialReference))
+        {
+            return null;
+        }
+
+        const string sql = """
+            SELECT
+                si.service_identity_id,
+                si.identity_type::text,
+                si.identity_status::text,
+                COALESCE(si.owning_service_name, ''),
+                COALESCE(si.credential_type::text, ''),
+                (
+                    si.effective_from <= now()
+                    AND (si.effective_to IS NULL OR si.effective_to > now())
+                    AND si.revoked_at IS NULL
+                ) AS effective,
+                (
+                    si.credential_expires_at IS NULL OR si.credential_expires_at > now()
+                ) AS credential_current,
+                COALESCE(array_agg(DISTINCT da.site_id) FILTER (
+                    WHERE da.assignment_type = 'SERVICE_PRINCIPAL'
+                      AND da.assignment_status = 'ACTIVE'
+                      AND da.assigned_at <= now()
+                      AND da.unassigned_at IS NULL
+                ), ARRAY[]::uuid[]) AS site_ids,
+                COALESCE(array_agg(DISTINCT s.site_group_id) FILTER (
+                    WHERE da.assignment_type = 'SERVICE_PRINCIPAL'
+                      AND da.assignment_status = 'ACTIVE'
+                      AND da.assigned_at <= now()
+                      AND da.unassigned_at IS NULL
+                ), ARRAY[]::uuid[]) AS site_group_ids
+            FROM identity.service_identities si
+            LEFT JOIN sites.device_assignments da
+              ON da.service_identity_id = si.service_identity_id
+            LEFT JOIN sites.sites s ON s.site_id = da.site_id
+            WHERE si.credential_reference = @credential_reference
+            GROUP BY si.service_identity_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("credential_reference", credentialReference.Trim());
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var record = new CentralPmsServicePrincipalAuthenticationRecord(
+            reader.GetGuid(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.GetString(4),
+            reader.GetBoolean(5),
+            reader.GetBoolean(6),
+            reader.GetFieldValue<Guid[]>(7),
+            reader.GetFieldValue<Guid[]>(8));
+
+        // Credential references are canonical and therefore must resolve unambiguously.
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return record;
+    }
+
     public async Task<CentralPmsServiceIdentityAuthorizationRecord?> GetServiceIdentityAuthorizationAsync(
         Guid serviceIdentityId,
         Guid siteId,

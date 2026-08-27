@@ -24,7 +24,8 @@ public static class StatutoryDiscountDecisionEndpoints
     public static IEndpointRouteBuilder MapStatutoryDiscountDecisionEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/statutory-discounts/decisions")
-            .WithTags("StatutoryDiscounts");
+            .WithTags("StatutoryDiscounts")
+            .AcceptAuthenticatedServicePrincipal();
 
         group.MapPost("", SubmitAsync)
             .WithName("SubmitStatutoryDiscountDecision")
@@ -101,6 +102,7 @@ public static class StatutoryDiscountDecisionEndpoints
         StatutoryDiscountDecisionRequest? body,
         IStatutoryDiscountDecisionFacadeService service,
         IOptions<CentralPmsRbacOptions> rbacOptions,
+        IWebHostEnvironment environment,
         CancellationToken cancellationToken)
     {
         using var activity = ActivitySource.StartActivity("SubmitStatutoryDiscountDecision", ActivityKind.Server);
@@ -132,6 +134,7 @@ public static class StatutoryDiscountDecisionEndpoints
         if (!TryResolveAuthenticatedSourceChannel(
                 request.HttpContext,
                 rbacOptions.Value,
+                environment,
                 out var effectiveSourceChannel,
                 out var actorId,
                 out var serviceIdentityId,
@@ -150,6 +153,19 @@ public static class StatutoryDiscountDecisionEndpoints
                 BuildError(
                     "CENTRAL_PMS_SOURCE_CHANNEL_MISMATCH",
                     "The request source channel must match the authenticated channel identity.",
+                    correlationId),
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        if (string.Equals(request.HttpContext.User.Identity?.AuthenticationType, "InternalMtlsServicePrincipal", StringComparison.Ordinal) &&
+            (effectiveSourceChannel is StatutoryDiscountSourceChannels.WebPay or StatutoryDiscountSourceChannels.AssistedPaymentTerminal) &&
+            !ServicePrincipalHasRequestedScope(request.HttpContext.User, body.SiteId, body.SiteGroupId))
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "Authenticated service principal is outside the requested Site scope.");
+            return Results.Json(
+                BuildError(
+                    "CENTRAL_PMS_SERVICE_PRINCIPAL_SCOPE_DENIED",
+                    "The authenticated service principal is not authorized for the requested scope.",
                     correlationId),
                 statusCode: StatusCodes.Status403Forbidden);
         }
@@ -443,19 +459,23 @@ public static class StatutoryDiscountDecisionEndpoints
     private static bool TryResolveAuthenticatedSourceChannel(
         HttpContext context,
         CentralPmsRbacOptions options,
+        IWebHostEnvironment environment,
         out string sourceChannel,
         out Guid actorId,
         out Guid? serviceIdentityId,
         out ErrorResponse? error)
     {
-        var permissions = ReadPermissions(context, options);
+        var fixtureAuthorityAllowed =
+            (environment.IsDevelopment() || environment.IsEnvironment("SecureDevelopment") || environment.IsEnvironment("Test")) &&
+            options.AllowFixtureIdentityHeaders;
+        var permissions = ReadPermissions(context, options, fixtureAuthorityAllowed);
         var channels = ChannelPermissions
             .Where(pair => permissions.Contains(pair.Value))
             .Select(pair => pair.Key)
             .ToArray();
 
-        var userId = ResolveUserId(context);
-        serviceIdentityId = ResolveServiceIdentityId(context);
+        var userId = ResolveUserId(context, fixtureAuthorityAllowed);
+        serviceIdentityId = ResolveServiceIdentityId(context, fixtureAuthorityAllowed);
         actorId = userId ?? serviceIdentityId ?? Guid.Empty;
         if (actorId == Guid.Empty)
         {
@@ -509,12 +529,34 @@ public static class StatutoryDiscountDecisionEndpoints
             return false;
         }
 
+        if (serviceChannel && !fixtureAuthorityAllowed)
+        {
+            var authenticatedAudience = context.User.FindFirstValue("exitpass_audience");
+            var authenticatedSourceChannel = StatutoryDiscountSourceChannels.Normalize(
+                context.User.FindFirstValue("source_channel") ?? string.Empty);
+            if (context.User.Identity?.IsAuthenticated != true ||
+                !string.Equals(authenticatedAudience, "CENTRAL_PMS", StringComparison.Ordinal) ||
+                !string.Equals(authenticatedSourceChannel, resolvedChannel, StringComparison.Ordinal))
+            {
+                sourceChannel = string.Empty;
+                error = new ErrorResponse
+                {
+                    ErrorCode = "CENTRAL_PMS_SERVICE_PRINCIPAL_ADMISSION_DENIED",
+                    Message = "An authenticated service principal with the required audience and source channel is required."
+                };
+                return false;
+            }
+        }
+
         sourceChannel = resolvedChannel;
         error = null;
         return true;
     }
 
-    private static IReadOnlySet<string> ReadPermissions(HttpContext context, CentralPmsRbacOptions options)
+    private static IReadOnlySet<string> ReadPermissions(
+        HttpContext context,
+        CentralPmsRbacOptions options,
+        bool fixtureAuthorityAllowed)
     {
         var permissions = context.User.Claims
             .Where(claim => string.Equals(claim.Type, CentralPmsRbacPolicyCatalog.PermissionClaimType, StringComparison.OrdinalIgnoreCase) ||
@@ -523,7 +565,7 @@ public static class StatutoryDiscountDecisionEndpoints
             .SelectMany(claim => claim.Value.Split([' ', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        if (options.AllowPermissionHeader &&
+        if (fixtureAuthorityAllowed && options.AllowPermissionHeader &&
             context.Request.Headers.TryGetValue(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, out var headerValue))
         {
             foreach (var permission in headerValue.ToString()
@@ -579,19 +621,44 @@ public static class StatutoryDiscountDecisionEndpoints
         return true;
     }
 
-    private static Guid? ResolveUserId(HttpContext context) =>
-        ResolveGuid(context.Request.Headers[CentralPmsRbacPolicyCatalog.UserIdHeaderName].FirstOrDefault()) ??
-        ResolveGuid(context.User.FindFirstValue(ClaimTypes.NameIdentifier)) ??
+    private static Guid? ResolveUserId(HttpContext context, bool fixtureAuthorityAllowed) =>
+        (fixtureAuthorityAllowed
+            ? ResolveGuid(context.Request.Headers[CentralPmsRbacPolicyCatalog.UserIdHeaderName].FirstOrDefault())
+            : null) ?? ResolveGuid(context.User.FindFirstValue(ClaimTypes.NameIdentifier)) ??
         ResolveGuid(context.User.FindFirstValue("sub")) ??
         ResolveGuid(context.User.FindFirstValue("user_id"));
 
-    private static Guid? ResolveServiceIdentityId(HttpContext context) =>
-        ResolveGuid(context.Request.Headers[CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName].FirstOrDefault()) ??
-        ResolveGuid(context.User.FindFirstValue("service_identity_id")) ??
+    private static Guid? ResolveServiceIdentityId(HttpContext context, bool fixtureAuthorityAllowed) =>
+        (fixtureAuthorityAllowed
+            ? ResolveGuid(context.Request.Headers[CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName].FirstOrDefault())
+            : null) ?? ResolveGuid(context.User.FindFirstValue("service_identity_id")) ??
         ResolveGuid(context.User.FindFirstValue("client_id"));
 
     private static Guid? ResolveGuid(string? value) =>
         Guid.TryParse(value, out var guid) ? guid : null;
+
+    private static bool ServicePrincipalHasRequestedScope(
+        ClaimsPrincipal principal,
+        Guid? siteId,
+        Guid? siteGroupId)
+    {
+        if (!siteId.HasValue || siteId == Guid.Empty)
+        {
+            return false;
+        }
+
+        var siteAllowed = principal.FindAll("site_id")
+            .Select(claim => ResolveGuid(claim.Value))
+            .Any(candidate => candidate == siteId);
+        if (!siteAllowed)
+        {
+            return false;
+        }
+
+        return !siteGroupId.HasValue || siteGroupId == Guid.Empty || principal.FindAll("site_group_id")
+            .Select(claim => ResolveGuid(claim.Value))
+            .Any(candidate => candidate == siteGroupId);
+    }
 
     private static readonly IReadOnlyDictionary<string, string> ChannelPermissions =
         new Dictionary<string, string>(StringComparer.Ordinal)

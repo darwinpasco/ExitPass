@@ -49,7 +49,11 @@ public sealed class CentralPmsRbacMiddleware
         var correlationId = ResolveCorrelationId(context);
         var fixtureHeadersAllowed = (environment.IsDevelopment() || environment.IsEnvironment("SecureDevelopment") || environment.IsEnvironment("Test")) && options.Value.AllowFixtureIdentityHeaders;
         var userId = ResolveGuid(context, fixtureHeadersAllowed ? CentralPmsRbacPolicyCatalog.UserIdHeaderName : null, ClaimTypes.NameIdentifier, "sub", "user_id");
-        var serviceIdentityId = ResolveGuid(context, CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName, "service_identity_id", "client_id");
+        var serviceIdentityId = ResolveGuid(
+            context,
+            fixtureHeadersAllowed ? CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName : null,
+            "service_identity_id",
+            "client_id");
 
         var restrictedHumanSession =
             context.User.Identity?.IsAuthenticated == true &&
