@@ -34,6 +34,43 @@ const blockedLocalDraftId = "47000000-0000-0000-0000-000000000010";
 const fiscalReferenceId = "5f000000-0000-0000-0000-000000000001";
 
 describe("ExitPass Operator Console statutory discount foundation", () => {
+  it("OperatorConsoleNavigation_ExposesExactlyOneCurrentRouteAndTransfersItOnSelection", async () => {
+    const user = userEvent.setup();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient()}
+        initialPath="/operator-console/statutory-discounts"
+      />
+    );
+
+    const navigation = screen.getByRole("navigation", { name: "Operator Console routes" });
+    const navigationItems = within(navigation).getAllByRole("button");
+    expect(navigationItems.map((item) => item.textContent)).toEqual([
+      "Overview",
+      "Ticket Lookup",
+      "Fiscal Status",
+      "Statutory Discounts",
+      "Audit / Reporting",
+      "Fiscal View Audit",
+      "Sales Invoice Void Audit",
+      "Vendor Acknowledgments",
+      "Projection Health",
+      "Policy Import Review"
+    ]);
+    expect(navigationItems.every((item) => !item.hasAttribute("disabled"))).toBe(true);
+
+    const statutoryDiscounts = within(navigation).getByRole("button", { name: "Statutory Discounts" });
+    expect(statutoryDiscounts).toHaveAttribute("aria-current", "page");
+    expect(within(navigation).getAllByRole("button", { current: "page" })).toHaveLength(1);
+    expect(within(navigation).getByRole("button", { name: "Ticket Lookup" })).not.toHaveAttribute("aria-current");
+
+    await user.click(within(navigation).getByRole("button", { name: "Ticket Lookup" }));
+
+    expect(within(navigation).getByRole("button", { name: "Ticket Lookup" })).toHaveAttribute("aria-current", "page");
+    expect(statutoryDiscounts).not.toHaveAttribute("aria-current");
+    expect(within(navigation).getAllByRole("button", { current: "page" })).toHaveLength(1);
+  });
+
   it.skip("OperatorConsole_RendersShellAndRoutes", async () => {
     render(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console" />);
 

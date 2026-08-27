@@ -280,7 +280,23 @@ code {
 .navLinkActive {
   background: #e7f2f5;
   border-color: #7ba6b6;
+  border-left: 4px solid #245b74;
   color: #17465c;
+  padding-left: 11px;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.2em;
+}
+
+.navLink:hover:not(:disabled),
+.navLink:focus-visible:not(:disabled) {
+  background: #17465c;
+  border-color: #17465c;
+  color: #ffffff;
+}
+
+.navLink:focus-visible:not(:disabled) {
+  outline-color: #755000;
 }
 
 .statusStack {
