@@ -337,6 +337,32 @@ public sealed class CentralPmsWebPayClientTests
     }
 
     /// <summary>
+    /// Verifies deployment-authenticated calls do not emit legacy caller-authored authority headers.
+    /// </summary>
+    [Fact]
+    public async Task SubmitStatutoryDiscountDecisionAsync_WhenServerDerivedPrincipalEnabled_OmitsLegacyAuthorityHeaders()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.Accepted)
+        {
+            Content = JsonContent(StatutoryDecisionResponse())
+        });
+        var client = CreateClient(handler, useServerDerivedServicePrincipal: true);
+
+        var result = await client.SubmitStatutoryDiscountDecisionAsync(
+            StatutoryDecisionRequest(),
+            "statutory-decision:mtls",
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(handler.LastRequest);
+        Assert.False(handler.LastRequest!.Headers.Contains("X-ExitPass-Service-Identity-Id"));
+        Assert.False(handler.LastRequest.Headers.Contains("X-ExitPass-Permissions"));
+        Assert.Equal(CorrelationId.ToString(), handler.LastRequest.Headers.GetValues("X-Correlation-Id").Single());
+        Assert.Equal("statutory-decision:mtls", handler.LastRequest.Headers.GetValues("Idempotency-Key").Single());
+    }
+
+    /// <summary>
     /// Verifies durable statutory-discount readback uses the shared Central PMS GET route.
     /// </summary>
     [Fact]
@@ -856,7 +882,8 @@ public sealed class CentralPmsWebPayClientTests
 
     private static CentralPmsWebPayClient CreateClient(
         HttpMessageHandler handler,
-        bool configureStatutoryServiceIdentity = true)
+        bool configureStatutoryServiceIdentity = true,
+        bool useServerDerivedServicePrincipal = false)
     {
         var values = new Dictionary<string, string?>
         {
@@ -866,6 +893,8 @@ public sealed class CentralPmsWebPayClientTests
         {
             values["Integrations:CentralPms:StatutoryDiscounts:WebPayServiceIdentityId"] = WebPayServiceIdentityId.ToString("D");
         }
+        values["Integrations:CentralPms:StatutoryDiscounts:UseServerDerivedServicePrincipal"] =
+            useServerDerivedServicePrincipal.ToString();
 
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(values)
