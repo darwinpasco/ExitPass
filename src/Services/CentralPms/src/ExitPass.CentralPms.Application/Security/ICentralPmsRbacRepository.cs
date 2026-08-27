@@ -21,6 +21,16 @@ public interface ICentralPmsRbacRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Resolves the canonical service principal associated with a deployed credential reference.
+    /// The credential material itself remains outside the database; the reference is matched only
+    /// after the transport credential has been cryptographically verified.
+    /// </summary>
+    Task<CentralPmsServicePrincipalAuthenticationRecord?> GetServicePrincipalAuthenticationAsync(
+        string credentialReference,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<CentralPmsServicePrincipalAuthenticationRecord?>(null);
+
+    /// <summary>
     /// Resolves the canonical lifecycle, application ownership, and Site assignment for a service identity.
     /// </summary>
     Task<CentralPmsServiceIdentityAuthorizationRecord?> GetServiceIdentityAuthorizationAsync(
@@ -65,3 +75,17 @@ public sealed record CentralPmsServiceIdentityAuthorizationRecord(
     string OwningServiceName,
     bool Active,
     bool SiteAssigned);
+
+/// <summary>
+/// Server-owned service-principal facts used to construct an authenticated transport principal.
+/// </summary>
+public sealed record CentralPmsServicePrincipalAuthenticationRecord(
+    Guid ServiceIdentityId,
+    string IdentityType,
+    string IdentityStatus,
+    string OwningServiceName,
+    string CredentialType,
+    bool Effective,
+    bool CredentialCurrent,
+    IReadOnlyList<Guid> SiteIds,
+    IReadOnlyList<Guid> SiteGroupIds);
