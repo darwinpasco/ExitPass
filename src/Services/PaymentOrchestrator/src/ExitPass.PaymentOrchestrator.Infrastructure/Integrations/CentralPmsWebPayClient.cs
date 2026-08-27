@@ -29,6 +29,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
     private readonly Uri _statutoryDiscountDecisionsUri;
     private readonly Uri _statutoryDiscountDecisionsBaseUri;
     private readonly Uri _statutoryEvidenceBaseUri;
+    private readonly bool _useServerDerivedStatutoryServicePrincipal;
     private readonly bool _statutoryDiscountServiceIdentityConfigured;
     private readonly Guid _statutoryDiscountWebPayServiceIdentityId;
 
@@ -72,6 +73,12 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         _statutoryDiscountDecisionsUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions");
         _statutoryDiscountDecisionsBaseUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions/");
         _statutoryEvidenceBaseUri = new Uri(normalizedBaseUrl, "v1/webpay/statutory-discounts/evidence/");
+
+        _useServerDerivedStatutoryServicePrincipal =
+            bool.TryParse(
+                configuration["Integrations:CentralPms:StatutoryDiscounts:UseServerDerivedServicePrincipal"],
+                out var useServerDerivedServicePrincipal) &&
+            useServerDerivedServicePrincipal;
 
         var serviceIdentityValue = configuration["Integrations:CentralPms:StatutoryDiscounts:WebPayServiceIdentityId"];
         _statutoryDiscountServiceIdentityConfigured =
@@ -812,6 +819,14 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         Guid correlationId,
         out CentralPmsWebPayError? error)
     {
+        request.Headers.Remove(CentralPmsServiceIdentityIdHeaderName);
+        request.Headers.Remove(CentralPmsPermissionsHeaderName);
+        if (_useServerDerivedStatutoryServicePrincipal)
+        {
+            error = null;
+            return true;
+        }
+
         if (!_statutoryDiscountServiceIdentityConfigured)
         {
             error = new CentralPmsWebPayError(
@@ -823,8 +838,6 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
             return false;
         }
 
-        request.Headers.Remove(CentralPmsServiceIdentityIdHeaderName);
-        request.Headers.Remove(CentralPmsPermissionsHeaderName);
         request.Headers.Add(CentralPmsServiceIdentityIdHeaderName, _statutoryDiscountWebPayServiceIdentityId.ToString("D"));
         request.Headers.Add(CentralPmsPermissionsHeaderName, permission);
         error = null;
