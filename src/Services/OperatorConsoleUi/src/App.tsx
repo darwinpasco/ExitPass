@@ -165,10 +165,16 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
           </div>
 
           <nav aria-label="Operator Console routes">
-            <button className="navLink" type="button" onClick={() => navigate(routes.home)}>
+            <button
+              aria-current={path === routes.home ? "page" : undefined}
+              className={`navLink ${path === routes.home ? "navLinkActive" : ""}`}
+              type="button"
+              onClick={() => navigate(routes.home)}
+            >
               Overview
             </button>
             <button
+              aria-current={path === routes.ticketLookup ? "page" : undefined}
               className={`navLink ${path === routes.ticketLookup ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.ticketLookup)}
@@ -176,6 +182,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
               Ticket Lookup
             </button>
             <button
+              aria-current={path === routes.fiscalStatus ? "page" : undefined}
               className={`navLink ${path === routes.fiscalStatus ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.fiscalStatus)}
@@ -183,6 +190,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
               Fiscal Status
             </button>
             <button
+              aria-current={path.startsWith(routes.queue) ? "page" : undefined}
               className={`navLink ${path.startsWith(routes.queue) ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.queue)}
@@ -190,6 +198,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
               Statutory Discounts
             </button>
             <button
+              aria-current={path === routes.audit ? "page" : undefined}
               className={`navLink ${path === routes.audit ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.audit)}
@@ -197,6 +206,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
               Audit / Reporting
             </button>
             <button
+              aria-current={path === routes.fiscalStatusViewAudit ? "page" : undefined}
               className={`navLink ${path === routes.fiscalStatusViewAudit ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.fiscalStatusViewAudit)}
@@ -204,6 +214,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
               Fiscal View Audit
             </button>
             <button
+              aria-current={path === routes.fiscalVoidActionAudit ? "page" : undefined}
               className={`navLink ${path === routes.fiscalVoidActionAudit ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.fiscalVoidActionAudit)}
@@ -211,6 +222,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
               Sales Invoice Void Audit
             </button>
             <button
+              aria-current={path === routes.vendorAcknowledgments ? "page" : undefined}
               className={`navLink ${path === routes.vendorAcknowledgments ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.vendorAcknowledgments)}
@@ -218,6 +230,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
               Vendor Acknowledgments
             </button>
             <button
+              aria-current={path === routes.vendorProjectionHealth ? "page" : undefined}
               className={`navLink ${path === routes.vendorProjectionHealth ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.vendorProjectionHealth)}
@@ -225,6 +238,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
               Projection Health
             </button>
             <button
+              aria-current={path === routes.policyImportReview ? "page" : undefined}
               className={`navLink ${path === routes.policyImportReview ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.policyImportReview)}
