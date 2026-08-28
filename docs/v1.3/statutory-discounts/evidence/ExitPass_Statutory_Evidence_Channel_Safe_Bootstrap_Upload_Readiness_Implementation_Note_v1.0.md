@@ -52,7 +52,9 @@ Dedicated channel policies were added:
 - `WebPayStatutoryEvidenceCapture` -> `statutory-discounts.evidence.capture.webpay`
 - `AptStatutoryEvidenceCapture` -> `statutory-discounts.evidence.capture.assisted-payment-terminal`
 
-Each route requires an authenticated service identity header and rejects human user headers. The React browser and APT desktop surfaces are not expected to supply privileged headers directly.
+Each route requires a production-authenticated service principal. The shared WebPay and APT route groups carry `ServicePrincipalEndpointMetadata`, so `InternalMtlsMiddleware` validates the presented client certificate, resolves the canonical service credential and identity, and constructs the server-owned `InternalMtlsServicePrincipal`. The endpoint derives the actor identity, `CENTRAL_PMS` audience, and source channel from that principal; raw identity, permission, audience, forwarded-certificate, and human-session headers are not authority. The established RBAC policies remain attached and enforce the channel-specific capture permission before evidence logic runs.
+
+This admission correction is intentionally limited to endpoint authentication and actor resolution. Existing durable Site/Site Group scope grants, channel binding, bootstrap idempotency, upload validation, protected storage, malware scanning, evidence access, and privacy behavior remain unchanged. Human H-006 sessions cannot substitute for WebPay or APT service authentication, and service principals do not acquire Operator Console review authority. Whole-console runtime and visual acceptance remains pending after this focused correction is merged.
 
 The application service also verifies durable evidence scope through the I-012 principal scope grant model:
 

@@ -7,9 +7,12 @@ using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
+using ExitPass.CentralPms.Contracts.StatutoryEvidence;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Xunit;
 
@@ -49,6 +52,157 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
             body.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.NotDecided);
             (await ReadIntakeSourceChannelAsync(body.StatutoryDiscountDecisionCommandId))
                 .Should().Be(sourceChannel);
+        }
+        finally
+        {
+            await CleanupAsync(scenario);
+        }
+    }
+
+    [Theory]
+    [InlineData("/v1/webpay/statutory-discounts/evidence", "WebPayStatutoryEvidenceCapture", 5)]
+    [InlineData("/v1/apt/statutory-discounts/evidence", "AptStatutoryEvidenceCapture", 6)]
+    public void Statutory_evidence_channel_endpoints_accept_authenticated_service_principals_and_retain_rbac_metadata(
+        string routePrefix,
+        string policyName,
+        int expectedEndpointCount)
+    {
+        using var factory = new CustomWebApplicationFactory()
+            .WithConfigurationOverrides(ProductionOverrides())
+            .WithEnvironment("IntegrationTest");
+        using var client = factory.CreateClient();
+
+        var endpoints = factory.Services.GetRequiredService<IEnumerable<EndpointDataSource>>()
+            .SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>()
+            .Where(endpoint => endpoint.RoutePattern.RawText?.StartsWith(routePrefix, StringComparison.Ordinal) == true)
+            .ToArray();
+
+        endpoints.Should().HaveCount(expectedEndpointCount);
+        foreach (var endpoint in endpoints)
+        {
+            endpoint.Metadata.GetMetadata<ServicePrincipalEndpointMetadata>().Should().NotBeNull();
+            var policy = endpoint.Metadata.GetMetadata<ReconciliationPolicyMetadata>();
+            policy.Should().NotBeNull();
+            policy!.PolicyName.Should().Be(policyName);
+        }
+    }
+
+    [Theory]
+    [InlineData(StatutoryDiscountSourceChannels.WebPay, "PAYMENT_ORCHESTRATOR", "statutory-discounts.decision.submit.webpay", "statutory-discounts.evidence.capture.webpay", "/v1/webpay/statutory-discounts/evidence")]
+    [InlineData(StatutoryDiscountSourceChannels.AssistedPaymentTerminal, "ASSISTED_PAYMENT_TERMINAL", "statutory-discounts.decision.submit.assisted-payment-terminal", "statutory-discounts.evidence.capture.assisted-payment-terminal", "/v1/apt/statutory-discounts/evidence")]
+    public async Task Valid_mtls_service_principal_can_bootstrap_evidence_and_replay_without_duplicate_persistence(
+        string sourceChannel,
+        string owningService,
+        string decisionPermission,
+        string evidencePermission,
+        string evidencePrefix)
+    {
+        var scenario = await CreateScenarioAsync(sourceChannel, owningService);
+        try
+        {
+            using var factory = CreateFactory(scenario, "CENTRAL_PMS", sourceChannel, [decisionPermission, evidencePermission]);
+            using var client = factory.CreateClient();
+            using var intakeResponse = await SendAsync(client, scenario, sourceChannel, includeCertificate: true);
+            intakeResponse.StatusCode.Should().Be(HttpStatusCode.Created, await intakeResponse.Content.ReadAsStringAsync());
+            var intake = await intakeResponse.Content.ReadFromJsonAsync<StatutoryDiscountDecisionResponse>();
+
+            var operationKey = $"evidence-admission-{Guid.NewGuid():N}";
+            using var firstResponse = await SendEvidenceBootstrapAsync(
+                client, evidencePrefix, intake!.StatutoryDiscountDecisionCommandId, operationKey, includeCertificate: true);
+            firstResponse.StatusCode.Should().Be(HttpStatusCode.OK, await firstResponse.Content.ReadAsStringAsync());
+            var first = await firstResponse.Content.ReadFromJsonAsync<StatutoryEvidenceChannelResponseDto>();
+            first!.SourceChannel.Should().Be(sourceChannel);
+            first.EvidenceRequired.Should().BeTrue();
+            first.EvidenceSetReference.Should().NotBeNull();
+            first.EvidenceItemReference.Should().NotBeNull();
+
+            using var replayResponse = await SendEvidenceBootstrapAsync(
+                client, evidencePrefix, intake.StatutoryDiscountDecisionCommandId, operationKey, includeCertificate: true);
+            replayResponse.StatusCode.Should().Be(HttpStatusCode.OK, await replayResponse.Content.ReadAsStringAsync());
+            var replay = await replayResponse.Content.ReadFromJsonAsync<StatutoryEvidenceChannelResponseDto>();
+            replay!.EvidenceSetReference.Should().Be(first.EvidenceSetReference);
+            replay.EvidenceItemReference.Should().Be(first.EvidenceItemReference);
+
+            (await ReadEvidencePersistenceAsync(intake.StatutoryDiscountDecisionCommandId))
+                .Should().Be((1L, 1L));
+        }
+        finally
+        {
+            await CleanupAsync(scenario);
+        }
+    }
+
+    [Fact]
+    public async Task Evidence_endpoint_missing_certificate_and_header_spoofing_fail_closed_without_persistence()
+    {
+        var scenario = await CreateScenarioAsync(StatutoryDiscountSourceChannels.WebPay, "PAYMENT_ORCHESTRATOR");
+        try
+        {
+            using var factory = CreateFactory(scenario, "CENTRAL_PMS", StatutoryDiscountSourceChannels.WebPay,
+                ["statutory-discounts.decision.submit.webpay", "statutory-discounts.evidence.capture.webpay"]);
+            using var client = factory.CreateClient();
+            using var intakeResponse = await SendAsync(client, scenario, StatutoryDiscountSourceChannels.WebPay, includeCertificate: true);
+            var intake = await intakeResponse.Content.ReadFromJsonAsync<StatutoryDiscountDecisionResponse>();
+
+            using var missingCertificate = await SendEvidenceBootstrapAsync(
+                client, "/v1/webpay/statutory-discounts/evidence", intake!.StatutoryDiscountDecisionCommandId,
+                $"missing-{Guid.NewGuid():N}", includeCertificate: false);
+            missingCertificate.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            (await missingCertificate.Content.ReadFromJsonAsync<ErrorResponse>())!.ErrorCode
+                .Should().Be("CENTRAL_PMS_RBAC_UNAUTHENTICATED");
+
+            using var spoof = new HttpRequestMessage(HttpMethod.Post, "/v1/webpay/statutory-discounts/evidence/bootstrap")
+            {
+                Content = JsonContent.Create(new StatutoryEvidenceChannelBootstrapRequest(
+                    intake.StatutoryDiscountDecisionCommandId, $"spoof-{Guid.NewGuid():N}"))
+            };
+            spoof.Headers.Add(CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName, scenario.ServiceIdentityId.ToString("D"));
+            spoof.Headers.Add(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, "statutory-discounts.evidence.capture.webpay");
+            using var spoofResponse = await client.SendAsync(spoof);
+            spoofResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            (await spoofResponse.Content.ReadFromJsonAsync<ErrorResponse>())!.ErrorCode
+                .Should().Be("FIXTURE_IDENTITY_HEADER_PROHIBITED");
+
+            (await ReadEvidencePersistenceAsync(intake.StatutoryDiscountDecisionCommandId))
+                .Should().Be((0L, 0L));
+        }
+        finally
+        {
+            await CleanupAsync(scenario);
+        }
+    }
+
+    [Theory]
+    [InlineData("CENTRAL_PMS", "statutory-discounts.decision.submit.webpay", "/v1/webpay/statutory-discounts/evidence", HttpStatusCode.Forbidden, "CENTRAL_PMS_RBAC_FORBIDDEN")]
+    [InlineData("MANAGEMENT_PLATFORM", "statutory-discounts.evidence.capture.webpay", "/v1/webpay/statutory-discounts/evidence", HttpStatusCode.Forbidden, "CENTRAL_PMS_SERVICE_PRINCIPAL_ADMISSION_DENIED")]
+    [InlineData("CENTRAL_PMS", "statutory-discounts.evidence.capture.assisted-payment-terminal", "/v1/apt/statutory-discounts/evidence", HttpStatusCode.Forbidden, "CENTRAL_PMS_SOURCE_CHANNEL_MISMATCH")]
+    public async Task Evidence_endpoint_missing_permission_wrong_audience_or_wrong_channel_is_denied_without_persistence(
+        string audience,
+        string evidencePermission,
+        string evidencePrefix,
+        HttpStatusCode expectedStatus,
+        string expectedError)
+    {
+        var scenario = await CreateScenarioAsync(StatutoryDiscountSourceChannels.WebPay, "PAYMENT_ORCHESTRATOR");
+        try
+        {
+            using var intakeFactory = CreateFactory(scenario, "CENTRAL_PMS", StatutoryDiscountSourceChannels.WebPay,
+                ["statutory-discounts.decision.submit.webpay"]);
+            using var intakeClient = intakeFactory.CreateClient();
+            using var intakeResponse = await SendAsync(intakeClient, scenario, StatutoryDiscountSourceChannels.WebPay, includeCertificate: true);
+            var intake = await intakeResponse.Content.ReadFromJsonAsync<StatutoryDiscountDecisionResponse>();
+
+            using var evidenceFactory = CreateFactory(scenario, audience, StatutoryDiscountSourceChannels.WebPay, [evidencePermission]);
+            using var evidenceClient = evidenceFactory.CreateClient();
+            using var response = await SendEvidenceBootstrapAsync(
+                evidenceClient, evidencePrefix, intake!.StatutoryDiscountDecisionCommandId,
+                $"denied-{Guid.NewGuid():N}", includeCertificate: true);
+
+            response.StatusCode.Should().Be(expectedStatus, await response.Content.ReadAsStringAsync());
+            (await response.Content.ReadFromJsonAsync<ErrorResponse>())!.ErrorCode.Should().Be(expectedError);
+            (await ReadEvidencePersistenceAsync(intake.StatutoryDiscountDecisionCommandId))
+                .Should().Be((0L, 0L));
         }
         finally
         {
@@ -372,6 +526,28 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
         return await client.SendAsync(request);
     }
 
+    private static async Task<HttpResponseMessage> SendEvidenceBootstrapAsync(
+        HttpClient client,
+        string evidencePrefix,
+        Guid statutoryDiscountDecisionCommandId,
+        string operationKey,
+        bool includeCertificate)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{evidencePrefix}/bootstrap")
+        {
+            Content = JsonContent.Create(new StatutoryEvidenceChannelBootstrapRequest(
+                statutoryDiscountDecisionCommandId,
+                operationKey))
+        };
+        request.Headers.Add("X-Correlation-Id", Guid.NewGuid().ToString("D"));
+        if (includeCertificate)
+        {
+            request.Headers.Add(CertificateSelectorHeader, "presented");
+        }
+
+        return await client.SendAsync(request);
+    }
+
     private static StatutoryDiscountDecisionRequest BuildRequest(AdmissionScenario scenario, string sourceChannel) =>
         new(
             Guid.NewGuid(), sourceChannel, scenario.Context.ParkingSessionId,
@@ -403,6 +579,8 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
         var serviceIdentityId = Guid.NewGuid();
         var credentialReference = $"secret://integration/statutory-admission/{Guid.NewGuid():N}";
         var certificate = CreateCertificate($"statutory-{sourceChannel.ToLowerInvariant()}");
+        var retentionClassCode = $"IST_ADMISSION_{Guid.NewGuid():N}";
+        var retentionPolicyVersion = "1.0";
 
         await using var connection = new NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
         await connection.OpenAsync();
@@ -426,6 +604,22 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
                 assignment_type, assignment_status, assigned_at, created_at, updated_at, row_version)
             VALUES (gen_random_uuid(), @site_id, @service_identity_id,
                 'SERVICE_PRINCIPAL', 'ACTIVE', now() - interval '1 hour', now(), now(), 1);
+            INSERT INTO discounts.statutory_evidence_principal_scope_grants (
+                actor_service_identity_id, source_channel, site_id, site_group_id,
+                capture_allowed, view_allowed, review_lock_allowed, hold_allowed,
+                deletion_request_allowed, grant_status, reason_code, effective_from,
+                created_by_service_identity_id, updated_by_service_identity_id)
+            VALUES (
+                @service_identity_id, @source_channel, @site_id, @site_group_id,
+                true, true, false, false, false, 'ACTIVE', 'INTEGRATION_TEST', now() - interval '1 minute',
+                @service_identity_id, @service_identity_id);
+            INSERT INTO discounts.statutory_evidence_retention_policies (
+                retention_class_code, retention_policy_version, policy_status, environment_scope,
+                purpose_code, effective_from, created_by_service_identity_id, updated_by_service_identity_id)
+            VALUES (
+                @retention_class_code, @retention_policy_version, 'APPROVED_ENABLED', 'LOCAL_TEST',
+                'STATUTORY_EVIDENCE_SERVICE_ADMISSION_TEST', now() - interval '1 minute',
+                @service_identity_id, @service_identity_id);
             """, connection);
         command.Parameters.AddWithValue("service_identity_id", serviceIdentityId);
         command.Parameters.AddWithValue("service_identity_code", $"IST_SVC_ADMISSION_{Guid.NewGuid():N}");
@@ -435,6 +629,10 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
         command.Parameters.AddWithValue("expire_credential", expireCredential);
         command.Parameters.AddWithValue("revoke_credential", revokeCredential);
         command.Parameters.AddWithValue("site_id", context.SiteId);
+        command.Parameters.AddWithValue("site_group_id", context.SiteGroupId);
+        command.Parameters.AddWithValue("source_channel", sourceChannel);
+        command.Parameters.AddWithValue("retention_class_code", retentionClassCode);
+        command.Parameters.AddWithValue("retention_policy_version", retentionPolicyVersion);
         await command.ExecuteNonQueryAsync();
 
         return new AdmissionScenario(
@@ -443,7 +641,9 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
             credentialReference,
             certificate,
             context.SiteId,
-            context.SiteGroupId);
+            context.SiteGroupId,
+            retentionClassCode,
+            retentionPolicyVersion);
     }
 
     private static async Task<string> ReadIntakeSourceChannelAsync(Guid commandId)
@@ -457,18 +657,72 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
         return (string)(await command.ExecuteScalarAsync() ?? string.Empty);
     }
 
-    private static async Task CleanupAsync(AdmissionScenario scenario)
+    private static async Task<(long Sets, long Items)> ReadEvidencePersistenceAsync(Guid commandId)
     {
-        await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(scenario.Context);
         await using var connection = new NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(
             """
-            DELETE FROM sites.device_assignments WHERE service_identity_id=@service_identity_id;
-            DELETE FROM identity.service_identities WHERE service_identity_id=@service_identity_id;
+            SELECT
+                (SELECT COUNT(*)
+                 FROM discounts.statutory_evidence_sets evidence_set
+                 WHERE evidence_set.statutory_discount_decision_command_id=@command_id),
+                (SELECT COUNT(*)
+                 FROM discounts.statutory_evidence_items evidence_item
+                 JOIN discounts.statutory_evidence_sets evidence_set
+                   ON evidence_set.statutory_evidence_set_id=evidence_item.statutory_evidence_set_id
+                 WHERE evidence_set.statutory_discount_decision_command_id=@command_id);
             """, connection);
-        command.Parameters.AddWithValue("service_identity_id", scenario.ServiceIdentityId);
-        await command.ExecuteNonQueryAsync();
+        command.Parameters.AddWithValue("command_id", commandId);
+        await using var reader = await command.ExecuteReaderAsync();
+        (await reader.ReadAsync()).Should().BeTrue();
+        return (reader.GetInt64(0), reader.GetInt64(1));
+    }
+
+    private static async Task CleanupAsync(AdmissionScenario scenario)
+    {
+        await using var connection = new NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using (var grantCommand = new NpgsqlCommand(
+                         """
+                         DELETE FROM discounts.statutory_evidence_events
+                         WHERE parking_session_id=@parking_session_id
+                            OR actor_service_identity_id=@service_identity_id;
+                         DELETE FROM discounts.statutory_evidence_operations
+                         WHERE created_by_service_identity_id=@service_identity_id;
+                         DELETE FROM discounts.statutory_evidence_items
+                         WHERE statutory_evidence_set_id IN (
+                             SELECT statutory_evidence_set_id
+                             FROM discounts.statutory_evidence_sets
+                             WHERE parking_session_id=@parking_session_id);
+                         DELETE FROM discounts.statutory_evidence_sets
+                         WHERE parking_session_id=@parking_session_id;
+                         DELETE FROM discounts.statutory_evidence_principal_scope_grants
+                         WHERE actor_service_identity_id=@service_identity_id;
+                         """,
+                         connection))
+        {
+            grantCommand.Parameters.AddWithValue("service_identity_id", scenario.ServiceIdentityId);
+            grantCommand.Parameters.AddWithValue("parking_session_id", scenario.Context.ParkingSessionId);
+            await grantCommand.ExecuteNonQueryAsync();
+        }
+
+        await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(scenario.Context);
+
+        await using (var identityCommand = new NpgsqlCommand(
+                         """
+                         DELETE FROM discounts.statutory_evidence_retention_policies
+                         WHERE retention_class_code=@retention_class_code
+                           AND retention_policy_version=@retention_policy_version;
+                         DELETE FROM sites.device_assignments WHERE service_identity_id=@service_identity_id;
+                         DELETE FROM identity.service_identities WHERE service_identity_id=@service_identity_id;
+                         """, connection))
+        {
+            identityCommand.Parameters.AddWithValue("service_identity_id", scenario.ServiceIdentityId);
+            identityCommand.Parameters.AddWithValue("retention_class_code", scenario.RetentionClassCode);
+            identityCommand.Parameters.AddWithValue("retention_policy_version", scenario.RetentionPolicyVersion);
+            await identityCommand.ExecuteNonQueryAsync();
+        }
         scenario.Certificate.Dispose();
     }
 
@@ -498,5 +752,7 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
         string CredentialReference,
         X509Certificate2 Certificate,
         Guid ClaimedSiteId,
-        Guid ClaimedSiteGroupId);
+        Guid ClaimedSiteGroupId,
+        string RetentionClassCode,
+        string RetentionPolicyVersion);
 }

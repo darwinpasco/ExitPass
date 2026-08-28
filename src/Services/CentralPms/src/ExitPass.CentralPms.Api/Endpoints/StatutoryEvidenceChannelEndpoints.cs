@@ -1,5 +1,4 @@
 using ExitPass.CentralPms.Api.Security;
-using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryEvidence;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.StatutoryEvidence;
@@ -14,13 +13,17 @@ public static class StatutoryEvidenceChannelEndpoints
     public static IEndpointRouteBuilder MapStatutoryEvidenceChannelEndpoints(this IEndpointRouteBuilder app)
     {
         MapChannel(
-            app.MapGroup("/v1/webpay/statutory-discounts/evidence").WithTags("WebPay"),
+            app.MapGroup("/v1/webpay/statutory-discounts/evidence")
+                .WithTags("WebPay")
+                .AcceptAuthenticatedServicePrincipal(),
             StatutoryEvidenceChannelConstants.WebPay,
             WebPayPolicy,
             "WebPay");
 
         MapChannel(
-            app.MapGroup("/v1/apt/statutory-discounts/evidence").WithTags("AssistedPaymentTerminal"),
+            app.MapGroup("/v1/apt/statutory-discounts/evidence")
+                .WithTags("AssistedPaymentTerminal")
+                .AcceptAuthenticatedServicePrincipal(),
             StatutoryEvidenceChannelConstants.AssistedPaymentTerminal,
             AptPolicy,
             "Apt");
@@ -228,13 +231,31 @@ public static class StatutoryEvidenceChannelEndpoints
     {
         denied = null;
         actor = new StatutoryEvidenceActor(null, null, sourceChannel);
-        if (request.Headers.ContainsKey(CentralPmsRbacPolicyCatalog.UserIdHeaderName))
+        var principal = request.HttpContext.User;
+        if (principal.FindFirst("user_id") is not null ||
+            principal.FindFirst("sub") is not null ||
+            principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier) is not null)
         {
             denied = Results.Json(BuildError("FORBIDDEN_HUMAN_ACTOR", "A service identity is required for statutory evidence channel operations.", correlationId, false), statusCode: StatusCodes.Status403Forbidden);
             return false;
         }
 
-        var rawServiceIdentity = request.Headers[CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName].FirstOrDefault();
+        if (principal.Identity?.IsAuthenticated != true ||
+            !string.Equals(principal.Identity.AuthenticationType, "InternalMtlsServicePrincipal", StringComparison.Ordinal) ||
+            !string.Equals(principal.FindFirst("exitpass_audience")?.Value, "CENTRAL_PMS", StringComparison.Ordinal))
+        {
+            denied = Results.Json(BuildError("CENTRAL_PMS_SERVICE_PRINCIPAL_ADMISSION_DENIED", "An authenticated service principal for this statutory evidence channel is required.", correlationId, false), statusCode: StatusCodes.Status403Forbidden);
+            return false;
+        }
+
+        if (!string.Equals(principal.FindFirst("source_channel")?.Value, sourceChannel, StringComparison.Ordinal))
+        {
+            denied = Results.Json(BuildError("CENTRAL_PMS_SOURCE_CHANNEL_MISMATCH", "The authenticated service principal does not match this statutory evidence channel.", correlationId, false), statusCode: StatusCodes.Status403Forbidden);
+            return false;
+        }
+
+        var rawServiceIdentity = principal.FindFirst("service_identity_id")?.Value ??
+                                 principal.FindFirst("client_id")?.Value;
         if (!Guid.TryParse(rawServiceIdentity, out var serviceIdentityId) || serviceIdentityId == Guid.Empty)
         {
             denied = Results.Json(BuildError("SERVICE_IDENTITY_REQUIRED", "A service identity is required for statutory evidence channel operations.", correlationId, false), statusCode: StatusCodes.Status403Forbidden);
