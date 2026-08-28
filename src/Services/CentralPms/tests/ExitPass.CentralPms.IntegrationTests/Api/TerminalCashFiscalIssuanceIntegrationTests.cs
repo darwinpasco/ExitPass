@@ -59,6 +59,36 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     }
 
     [Fact]
+    public async Task TerminalCashFiscalIssuance_ConfirmedCashPayment_UsesConfiguredSitePosRoutingIdentity()
+    {
+        var sitePosServerId = Guid.Parse("21000000-0000-4000-8000-000000000015");
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var options = new FiscalIssuancePosServerIntegrationOptions
+        {
+            RuntimeEnvironment = "IntegrationTest",
+            Endpoints =
+            [
+                new SitePosServerEndpointOptions
+                {
+                    SiteId = CashPayment().SiteId,
+                    SitePosServerId = sitePosServerId,
+                    SitePosServerRef = CashPayment().PosServerId,
+                    Environment = "IntegrationTest",
+                    Enabled = true
+                }
+            ]
+        };
+        var service = CreateService(CashPayment(), repo, posIntegration, posServerOptions: options);
+
+        await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.NotNull(posIntegration.LastFiscalContext);
+        Assert.Equal(sitePosServerId, posIntegration.LastFiscalContext!.SitePosServerId);
+        Assert.Equal("DEV-POS-SERVER-ATC-001", posIntegration.LastFiscalContext.SitePosServerRef);
+    }
+
+    [Fact]
     public async Task TerminalCashFiscalIssuance_AppliedStatutoryPayment_PopulatesPosServerDiscountReferencesAndPrivilegeDetails()
     {
         var repo = new InMemoryFiscalReferenceRepository();
@@ -303,16 +333,35 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         TerminalCashPaymentReadback? cashPayment,
         InMemoryFiscalReferenceRepository? repo = null,
         FakePosServerIntegration? posIntegration = null,
-        ITerminalCashStatutoryFiscalLinkageReader? statutoryFiscalLinkageReader = null)
+        ITerminalCashStatutoryFiscalLinkageReader? statutoryFiscalLinkageReader = null,
+        FiscalIssuancePosServerIntegrationOptions? posServerOptions = null)
     {
         repo ??= new InMemoryFiscalReferenceRepository();
+        posServerOptions ??= new FiscalIssuancePosServerIntegrationOptions
+        {
+            RuntimeEnvironment = "IntegrationTest",
+            Endpoints = cashPayment is null
+                ? []
+                :
+                [
+                    new SitePosServerEndpointOptions
+                    {
+                        SiteId = cashPayment.SiteId,
+                        SitePosServerId = Guid.Parse("21000000-0000-4000-8000-000000000015"),
+                        SitePosServerRef = cashPayment.PosServerId,
+                        Environment = "IntegrationTest",
+                        Enabled = true
+                    }
+                ]
+        };
         return new TerminalCashFiscalIssuanceService(
             new FakeTerminalCashPaymentService(cashPayment),
             repo,
             new FiscalIssuanceOrchestrationService(repo),
             posIntegration ?? new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied),
             statutoryFiscalLinkageReader ?? new FakeStatutoryFiscalLinkageReader(
-                TerminalCashStatutoryFiscalLinkageResult.NotApplicable()));
+                TerminalCashStatutoryFiscalLinkageResult.NotApplicable()),
+            posServerOptions);
     }
 
     private static CustomWebApplicationFactory CreateFactory(ITerminalCashFiscalIssuanceService service) =>

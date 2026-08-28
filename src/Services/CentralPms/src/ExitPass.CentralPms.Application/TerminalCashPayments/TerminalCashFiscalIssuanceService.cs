@@ -18,19 +18,22 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     private readonly IFiscalIssuanceOrchestrationService _orchestrationService;
     private readonly IFiscalIssuancePosServerLiveIntegrationService _posServerIntegration;
     private readonly ITerminalCashStatutoryFiscalLinkageReader _statutoryFiscalLinkageReader;
+    private readonly FiscalIssuancePosServerIntegrationOptions _posServerOptions;
 
     public TerminalCashFiscalIssuanceService(
         ITerminalCashPaymentService terminalCashPayments,
         IFiscalIssuanceReferenceRepository fiscalReferences,
         IFiscalIssuanceOrchestrationService orchestrationService,
         IFiscalIssuancePosServerLiveIntegrationService posServerIntegration,
-        ITerminalCashStatutoryFiscalLinkageReader statutoryFiscalLinkageReader)
+        ITerminalCashStatutoryFiscalLinkageReader statutoryFiscalLinkageReader,
+        FiscalIssuancePosServerIntegrationOptions posServerOptions)
     {
         _terminalCashPayments = terminalCashPayments;
         _fiscalReferences = fiscalReferences;
         _orchestrationService = orchestrationService;
         _posServerIntegration = posServerIntegration;
         _statutoryFiscalLinkageReader = statutoryFiscalLinkageReader;
+        _posServerOptions = posServerOptions;
     }
 
     public async Task<TerminalCashFiscalIssuanceResult> IssueOrReadAsync(
@@ -77,9 +80,10 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             .ReadByAppliedTariffSnapshotAsync(cashPayment, cancellationToken)
             .ConfigureAwait(false);
         EnsureStatutoryFiscalLinkageCanBeFiscalized(statutoryFiscalLinkage);
+        var posServerEndpoint = ResolvePosServerEndpoint(cashPayment);
 
         var prepared = await _orchestrationService.PreparePendingAsync(
-                BuildPrepareCommand(cashPayment, upstreamFinalityReference, command.CorrelationId),
+                BuildPrepareCommand(cashPayment, posServerEndpoint, upstreamFinalityReference, command.CorrelationId),
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -184,6 +188,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
 
     private static PrepareFiscalIssuanceCommand BuildPrepareCommand(
         TerminalCashPaymentReadback cashPayment,
+        SitePosServerEndpointOptions posServerEndpoint,
         string upstreamFinalityReference,
         Guid correlationId) =>
         new(
@@ -192,14 +197,56 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             ParkingSessionId: cashPayment.ParkingSessionId,
             TariffSnapshotId: cashPayment.TariffSnapshotId,
             SiteId: cashPayment.SiteId,
-            SitePosServerId: null,
-            SitePosServerRef: cashPayment.PosServerId.Trim(),
+            SitePosServerId: posServerEndpoint.SitePosServerId,
+            SitePosServerRef: posServerEndpoint.SitePosServerRef!.Trim(),
             FiscalDocumentTypeCodeId: null,
             FiscalDocumentTypeCodeKey: FiscalDocumentTypeCodeKey,
             PayableBasisRef: cashPayment.TariffSnapshotId.ToString("D"),
             UpstreamFinalityReference: upstreamFinalityReference,
             CorrelationId: correlationId,
             ServiceIdentityId: null);
+
+    private SitePosServerEndpointOptions ResolvePosServerEndpoint(TerminalCashPaymentReadback cashPayment)
+    {
+        var persistedPosServerRef = cashPayment.PosServerId.Trim();
+        var matches = _posServerOptions.Endpoints
+            .Where(endpoint =>
+                endpoint.SiteId == cashPayment.SiteId &&
+                string.Equals(
+                    endpoint.SitePosServerRef?.Trim(),
+                    persistedPosServerRef,
+                    StringComparison.Ordinal))
+            .ToArray();
+
+        if (matches.Length == 0)
+        {
+            throw Rejected(
+                "SITE_POS_SERVER_BINDING_MISSING",
+                "The terminal cash payment POS Server binding is not configured for its Site.");
+        }
+
+        if (matches.Length != 1)
+        {
+            throw Rejected(
+                "SITE_POS_SERVER_BINDING_AMBIGUOUS",
+                "The terminal cash payment POS Server binding is ambiguous for its Site.");
+        }
+
+        var endpoint = matches[0];
+        if (endpoint.SitePosServerId == Guid.Empty ||
+            !endpoint.Enabled ||
+            !string.Equals(
+                endpoint.Environment?.Trim(),
+                _posServerOptions.RuntimeEnvironment?.Trim(),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw Rejected(
+                "SITE_POS_SERVER_BINDING_INACTIVE",
+                "The terminal cash payment POS Server binding is not active for this environment.");
+        }
+
+        return endpoint;
+    }
 
     private static CentralPmsFiscalDocumentMappingContext BuildFiscalContext(
         TerminalCashPaymentReadback cashPayment,
