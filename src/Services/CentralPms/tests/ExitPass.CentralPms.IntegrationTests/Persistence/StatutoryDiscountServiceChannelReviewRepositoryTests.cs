@@ -192,6 +192,58 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
     }
 
     [Fact]
+    public async Task PendingReview_UsesFrozenRequiredEvidence_WhenLegacyEvidenceArrayIsEmpty()
+    {
+        var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            nameof(PendingReview_UsesFrozenRequiredEvidence_WhenLegacyEvidenceArrayIsEmpty),
+            StatutoryDiscountSourceChannels.WebPay);
+
+        try
+        {
+            await ClearLegacyEvidenceRequirementAsync(seeded.Decision.StatutoryDiscountDecisionCommandId);
+            var repository = StatutoryDiscountReviewIntegrationTestSupport.CreateReviewRepository();
+
+            var detail = await repository.GetAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+            var queue = await repository.ListAsync(
+                new StatutoryDiscountServiceChannelReviewQueueQuery(
+                    seeded.Context.SiteId,
+                    seeded.Context.SiteGroupId,
+                    StatutoryDiscountSourceChannels.WebPay,
+                    "SENIOR_CITIZEN",
+                    seeded.Context.ParkingSessionId,
+                    StatutoryDiscountServiceChannelReviewStatuses.PendingReview,
+                    null,
+                    null,
+                    null,
+                    1,
+                    25,
+                    seeded.Context.CorrelationId)
+                {
+                    HasGlobalScope = true
+                },
+                CancellationToken.None);
+
+            detail.Should().NotBeNull();
+            detail!.EvidenceReferences.Should().BeEmpty();
+            detail.EvidenceRequired.Should().BeTrue();
+            detail.GoverningPolicy.Should().NotBeNull();
+            detail.GoverningPolicy!.RequiredEvidenceTypes.Should().ContainSingle(requirement =>
+                requirement.EvidenceType == "SENIOR_CITIZEN_ID" &&
+                requirement.RequirementStatus == "REQUIRED");
+            queue.Items.Should().ContainSingle(item =>
+                item.StatutoryDiscountDecisionCommandId == seeded.Decision.StatutoryDiscountDecisionCommandId &&
+                item.EvidenceRequired);
+        }
+        finally
+        {
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
+        }
+    }
+
+    [Fact]
     public async Task ApprovedValidationReviewerAuthority_ReturnsCanonicalReviewOperatingContext()
     {
         var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
@@ -330,6 +382,26 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = seeded.Context.CorrelationId;
         command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = seeded.Context.RequestedByUserId;
         command.Parameters.AddWithValue("retention_class_code", $"R23_{evidenceItemReference:N}");
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task ClearLegacyEvidenceRequirementAsync(Guid decisionCommandId)
+    {
+        const string sql = """
+            UPDATE discounts.statutory_discount_decision_commands
+               SET evidence_required = false,
+                   evidence_recorded = false
+             WHERE statutory_discount_decision_command_id = @decision_command_id;
+
+            UPDATE operator_console.statutory_discount_service_channel_reviews
+               SET evidence_references = '[]'::jsonb
+             WHERE statutory_discount_decision_command_id = @decision_command_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("decision_command_id", NpgsqlDbType.Uuid).Value = decisionCommandId;
         await command.ExecuteNonQueryAsync();
     }
 
