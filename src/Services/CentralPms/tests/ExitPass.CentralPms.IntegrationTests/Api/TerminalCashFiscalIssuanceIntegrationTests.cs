@@ -1,12 +1,15 @@
 using System.Net;
 using System.Net.Http.Json;
 using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
+using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.TerminalCashPayments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
@@ -23,6 +26,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     private static readonly Guid TariffSnapshotId = Guid.Parse("21000000-0000-4000-8000-000000000005");
     private static readonly Guid FiscalIssuanceReferenceId = Guid.Parse("21000000-0000-4000-8000-000000000006");
     private static readonly Guid PosFiscalDocumentId = Guid.Parse("21000000-0000-4000-8000-000000000007");
+    private static readonly Guid CashierUserId = Guid.Parse("21000000-0000-4000-8000-000000000008");
     private static readonly Guid StatutoryDecisionCommandId = Guid.Parse("21000000-0000-4000-8000-000000000030");
     private static readonly Guid StatutoryApplicationCommandId = Guid.Parse("21000000-0000-4000-8000-000000000031");
     private static readonly Guid StatutoryValidationId = Guid.Parse("21000000-0000-4000-8000-000000000032");
@@ -37,7 +41,14 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     {
         var repo = new InMemoryFiscalReferenceRepository();
         var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
-        var service = CreateService(CashPayment(), repo, posIntegration);
+        var exitAuthorization = new FakeIssueExitAuthorizationUseCase();
+        var acknowledgment = new FakeVendorPaymentAcknowledgmentWorkflow();
+        var service = CreateService(
+            CashPayment(),
+            repo,
+            posIntegration,
+            exitAuthorization: exitAuthorization,
+            acknowledgment: acknowledgment);
 
         var result = await service.IssueOrReadAsync(Command(), CancellationToken.None);
 
@@ -48,7 +59,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal(FiscalIssuanceResultClassification.NewlyCreated, result.ResultClassification);
         Assert.Equal(PosFiscalDocumentId, result.PosFiscalDocumentId);
         Assert.True(result.PosServerCallAttempted);
-        Assert.False(result.ExitAuthorizationIssued);
+        Assert.True(result.ExitAuthorizationIssued);
         Assert.False(result.GateBehaviorTriggered);
         Assert.Equal(1, repo.CreateCount);
         Assert.Equal(1, posIntegration.IssueCallCount);
@@ -56,6 +67,29 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal("CASH", posIntegration.LastFiscalContext!.Tenders.Single().ProviderRef);
         Assert.Empty(posIntegration.LastFiscalContext.PayableBasis.DiscountReferences);
         Assert.Empty(posIntegration.LastFiscalContext.DiscountPrivilegeDetails);
+        Assert.Equal(1, exitAuthorization.CallCount);
+        Assert.Equal(1, acknowledgment.CallCount);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_RecordedFiscalEvidence_ContinuesToExitAuthorization()
+    {
+        var exitAuthorization = new FakeIssueExitAuthorizationUseCase();
+        var acknowledgment = new FakeVendorPaymentAcknowledgmentWorkflow();
+        var service = CreateService(
+            CashPayment(),
+            exitAuthorization: exitAuthorization,
+            acknowledgment: acknowledgment);
+
+        var result = await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.ExitAuthorizationIssued);
+        Assert.Equal(1, exitAuthorization.CallCount);
+        Assert.Equal(1, acknowledgment.CallCount);
+        Assert.Equal(ParkingSessionId, exitAuthorization.LastCommand!.ParkingSessionId);
+        Assert.Equal(PaymentAttemptId, exitAuthorization.LastCommand.PaymentAttemptId);
+        Assert.Equal(CashierUserId, exitAuthorization.LastCommand.RequestedByUserId);
+        Assert.Equal(PaymentConfirmationId, acknowledgment.LastCommand!.PaymentConfirmationId);
     }
 
     [Fact]
@@ -216,7 +250,14 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     {
         var repo = new InMemoryFiscalReferenceRepository();
         var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Disabled);
-        var service = CreateService(CashPayment(), repo, posIntegration);
+        var exitAuthorization = new FakeIssueExitAuthorizationUseCase();
+        var acknowledgment = new FakeVendorPaymentAcknowledgmentWorkflow();
+        var service = CreateService(
+            CashPayment(),
+            repo,
+            posIntegration,
+            exitAuthorization: exitAuthorization,
+            acknowledgment: acknowledgment);
 
         var result = await service.IssueOrReadAsync(Command(), CancellationToken.None);
 
@@ -224,6 +265,25 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal("pos_server_fiscal_issuance_live_call_disabled", result.SafeErrorCode);
         Assert.False(result.PosServerCallAttempted);
         Assert.Equal(1, repo.CreateCount);
+        Assert.Equal(0, exitAuthorization.CallCount);
+        Assert.Equal(0, acknowledgment.CallCount);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_AcknowledgmentFailure_DoesNotRollbackIssuedAuthorization()
+    {
+        var exitAuthorization = new FakeIssueExitAuthorizationUseCase();
+        var acknowledgment = new FakeVendorPaymentAcknowledgmentWorkflow(throwOnProcess: true);
+        var service = CreateService(
+            CashPayment(),
+            exitAuthorization: exitAuthorization,
+            acknowledgment: acknowledgment);
+
+        var result = await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.ExitAuthorizationIssued);
+        Assert.Equal(1, exitAuthorization.CallCount);
+        Assert.Equal(1, acknowledgment.CallCount);
     }
 
     [Fact]
@@ -334,7 +394,9 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         InMemoryFiscalReferenceRepository? repo = null,
         FakePosServerIntegration? posIntegration = null,
         ITerminalCashStatutoryFiscalLinkageReader? statutoryFiscalLinkageReader = null,
-        FiscalIssuancePosServerIntegrationOptions? posServerOptions = null)
+        FiscalIssuancePosServerIntegrationOptions? posServerOptions = null,
+        IIssueExitAuthorizationUseCase? exitAuthorization = null,
+        IVendorPaymentAcknowledgmentWorkflow? acknowledgment = null)
     {
         repo ??= new InMemoryFiscalReferenceRepository();
         posServerOptions ??= new FiscalIssuancePosServerIntegrationOptions
@@ -361,7 +423,10 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             posIntegration ?? new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied),
             statutoryFiscalLinkageReader ?? new FakeStatutoryFiscalLinkageReader(
                 TerminalCashStatutoryFiscalLinkageResult.NotApplicable()),
-            posServerOptions);
+            posServerOptions,
+            exitAuthorization ?? new FakeIssueExitAuthorizationUseCase(),
+            NullLogger<TerminalCashFiscalIssuanceService>.Instance,
+            acknowledgment ?? new FakeVendorPaymentAcknowledgmentWorkflow());
     }
 
     private static CustomWebApplicationFactory CreateFactory(ITerminalCashFiscalIssuanceService service) =>
@@ -389,7 +454,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             SiteId: Guid.Parse("21000000-0000-4000-8000-000000000012"),
             SiteGroupId: Guid.Parse("21000000-0000-4000-8000-000000000013"),
             PosServerId: "DEV-POS-SERVER-ATC-001",
-            CashierId: "cashier-001",
+            CashierId: CashierUserId.ToString("D"),
             CashierShiftId: "shift-001",
             Currency: "PHP",
             AmountDueMinorUnits: amountDueMinorUnits,
@@ -489,6 +554,58 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             TerminalCashPaymentReadback cashPayment,
             CancellationToken cancellationToken) =>
             Task.FromResult(_result);
+    }
+
+    private sealed class FakeIssueExitAuthorizationUseCase : IIssueExitAuthorizationUseCase
+    {
+        public int CallCount { get; private set; }
+
+        public IssueExitAuthorizationCommand? LastCommand { get; private set; }
+
+        public Task<IssueExitAuthorizationResult> ExecuteAsync(
+            IssueExitAuthorizationCommand command,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            LastCommand = command;
+            var issuedAt = DateTimeOffset.UtcNow;
+            return Task.FromResult(new IssueExitAuthorizationResult(
+                Guid.Parse("21000000-0000-4000-8000-000000000023"),
+                command.ParkingSessionId,
+                command.PaymentAttemptId,
+                "test-authorization-token",
+                "ISSUED",
+                issuedAt,
+                issuedAt.AddMinutes(15)));
+        }
+    }
+
+    private sealed class FakeVendorPaymentAcknowledgmentWorkflow : IVendorPaymentAcknowledgmentWorkflow
+    {
+        private readonly bool _throwOnProcess;
+
+        public FakeVendorPaymentAcknowledgmentWorkflow(bool throwOnProcess = false)
+        {
+            _throwOnProcess = throwOnProcess;
+        }
+
+        public int CallCount { get; private set; }
+
+        public VendorPaymentAcknowledgmentWorkflowCommand? LastCommand { get; private set; }
+
+        public Task ProcessAsync(
+            VendorPaymentAcknowledgmentWorkflowCommand command,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            LastCommand = command;
+            if (_throwOnProcess)
+            {
+                throw new InvalidOperationException("Simulated acknowledgment outage.");
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakePosServerIntegration : IFiscalIssuancePosServerLiveIntegrationService
