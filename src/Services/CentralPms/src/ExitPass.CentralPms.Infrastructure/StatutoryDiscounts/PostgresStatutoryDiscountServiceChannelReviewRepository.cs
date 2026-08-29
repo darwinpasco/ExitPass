@@ -118,7 +118,15 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 d.command_status,
                 d.decision_result_status,
                 r.review_status,
-                d.evidence_required,
+                (
+                    d.evidence_required
+                    OR EXISTS (
+                        SELECT 1
+                        FROM discounts.statutory_discount_policy_version_evidence_requirements AS evidence_requirement
+                        WHERE evidence_requirement.statutory_discount_policy_version_id = dpa.statutory_discount_policy_version_id
+                          AND evidence_requirement.requirement_status = 'REQUIRED'
+                    )
+                ) AS evidence_required,
                 d.evidence_recorded,
                 COALESCE(d.original_tariff_snapshot_id, r.original_tariff_snapshot_id) AS original_tariff_snapshot_id,
                 r.submitted_at,
@@ -127,6 +135,8 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             FROM operator_console.statutory_discount_service_channel_reviews AS r
             JOIN discounts.statutory_discount_decision_commands AS d
               ON d.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
+            LEFT JOIN discounts.statutory_discount_decision_policy_authorities AS dpa
+              ON dpa.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
             WHERE r.source_channel IN ('WEBPAY', 'ASSISTED_PAYMENT_TERMINAL')
               AND (@has_global_scope OR r.site_id = ANY(@authorized_site_ids) OR r.site_group_id = ANY(@authorized_site_group_ids))
               AND (@site_id IS NULL OR r.site_id = @site_id)
@@ -190,7 +200,15 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 r.*,
                 d.command_status,
                 d.decision_result_status,
-                d.evidence_required,
+                (
+                    d.evidence_required
+                    OR EXISTS (
+                        SELECT 1
+                        FROM discounts.statutory_discount_policy_version_evidence_requirements AS evidence_requirement
+                        WHERE evidence_requirement.statutory_discount_policy_version_id = dpa.statutory_discount_policy_version_id
+                          AND evidence_requirement.requirement_status = 'REQUIRED'
+                    )
+                ) AS evidence_required,
                 d.evidence_recorded,
                 payable.gross_amount_minor_units,
                 payable.vat_exclusive_amount_minor_units,
