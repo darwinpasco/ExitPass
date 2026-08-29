@@ -604,24 +604,58 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
     {
         const string sql = """
             SELECT
-                statutory_discount_decision_command_id,
-                statutory_discount_validation_id,
-                parking_session_id,
-                site_id,
-                site_group_id,
-                entitlement_type,
-                id_document_type,
-                issuing_authority,
-                expiry_date,
-                masked_id_reference,
-                evidence_references::text,
-                requester_attestation,
-                attestation_notes,
-                original_tariff_snapshot_id,
-                submitted_at
-            FROM operator_console.statutory_discount_service_channel_reviews
-            WHERE statutory_discount_decision_command_id = @statutory_discount_decision_command_id
-            FOR UPDATE;
+                review.statutory_discount_decision_command_id,
+                review.statutory_discount_validation_id,
+                review.parking_session_id,
+                review.site_id,
+                review.site_group_id,
+                review.entitlement_type,
+                review.id_document_type,
+                review.issuing_authority,
+                review.expiry_date,
+                review.masked_id_reference,
+                CASE
+                    WHEN review.evidence_references <> '[]'::jsonb THEN review.evidence_references
+                    ELSE COALESCE(canonical_evidence.evidence_references, '[]'::jsonb)
+                END::text AS evidence_references,
+                review.requester_attestation,
+                review.attestation_notes,
+                review.original_tariff_snapshot_id,
+                review.submitted_at
+            FROM operator_console.statutory_discount_service_channel_reviews AS review
+            LEFT JOIN LATERAL (
+                SELECT jsonb_agg(
+                    jsonb_build_object(
+                        'evidenceType', item.document_type::text,
+                        'captureMethod', review.source_channel || '_PROTECTED_UPLOAD',
+                        'storageReference', 'evidence-item:' || item.evidence_item_reference::text,
+                        'referenceNumberMasked', review.masked_id_reference,
+                        'verificationStatus', item.reviewability_status::text
+                    )
+                    ORDER BY item.created_at, item.statutory_evidence_item_id
+                ) AS evidence_references
+                FROM discounts.statutory_evidence_sets AS evidence_set
+                JOIN discounts.statutory_evidence_items AS item
+                  ON item.statutory_evidence_set_id = evidence_set.statutory_evidence_set_id
+                WHERE evidence_set.statutory_discount_decision_command_id = review.statutory_discount_decision_command_id
+                  AND evidence_set.parking_session_id = review.parking_session_id
+                  AND evidence_set.site_id IS NOT DISTINCT FROM review.site_id
+                  AND evidence_set.site_group_id IS NOT DISTINCT FROM review.site_group_id
+                  AND evidence_set.entitlement_type::text = review.entitlement_type
+                  AND evidence_set.source_channel = review.source_channel
+                  AND evidence_set.set_status <> 'TOMBSTONED'
+                  AND evidence_set.retention_status IN ('ACTIVE', 'HELD')
+                  AND evidence_set.deletion_status = 'NOT_REQUESTED'
+                  AND item.upload_status = 'UPLOADED'
+                  AND item.validation_status = 'PASSED'
+                  AND item.scan_status IN ('CLEAN', 'PASSED')
+                  AND item.reviewability_status = 'REVIEWABLE'
+                  AND item.binding_status NOT IN ('REJECTED', 'SUPERSEDED')
+                  AND item.retention_status IN ('ACTIVE', 'HELD')
+                  AND item.deletion_status = 'NOT_REQUESTED'
+            ) AS canonical_evidence ON TRUE
+            WHERE review.statutory_discount_decision_command_id = @statutory_discount_decision_command_id
+            FOR UPDATE OF review;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction) { CommandTimeout = 30 };
