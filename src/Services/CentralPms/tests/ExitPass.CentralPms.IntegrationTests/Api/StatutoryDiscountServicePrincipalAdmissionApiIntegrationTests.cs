@@ -5,9 +5,11 @@ using System.Security.Cryptography.X509Certificates;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.Application.WebPay;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.StatutoryEvidence;
+using ExitPass.CentralPms.Contracts.WebPay;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
@@ -52,6 +54,42 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
             body.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.NotDecided);
             (await ReadIntakeSourceChannelAsync(body.StatutoryDiscountDecisionCommandId))
                 .Should().Be(sourceChannel);
+        }
+        finally
+        {
+            await CleanupAsync(scenario);
+        }
+    }
+
+    [Fact]
+    public async Task Valid_mtls_service_principal_can_rediscover_pending_webpay_lifecycle_without_legacy_authority_headers()
+    {
+        var scenario = await CreateScenarioAsync(StatutoryDiscountSourceChannels.WebPay, "PAYMENT_ORCHESTRATOR");
+        try
+        {
+            using var factory = CreateFactory(
+                scenario,
+                "CENTRAL_PMS",
+                StatutoryDiscountSourceChannels.WebPay,
+                [
+                    "statutory-discounts.decision.submit.webpay",
+                    WebPayStatutoryDiscountPendingLifecycleRediscoveryValues.Permission
+                ]);
+            using var client = factory.CreateClient();
+            using var intakeResponse = await SendAsync(
+                client,
+                scenario,
+                StatutoryDiscountSourceChannels.WebPay,
+                includeCertificate: true);
+            intakeResponse.StatusCode.Should().Be(HttpStatusCode.Created, await intakeResponse.Content.ReadAsStringAsync());
+
+            using var response = await SendPendingLifecycleRediscoveryAsync(client, scenario);
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            var body = await response.Content.ReadFromJsonAsync<WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse>();
+            body!.Classification.Should().Be(WebPayStatutoryDiscountPendingLifecycleRediscoveryValues.Found);
+            response.RequestMessage!.Headers.Contains(CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName).Should().BeFalse();
+            response.RequestMessage.Headers.Contains(CentralPmsRbacPolicyCatalog.PermissionsHeaderName).Should().BeFalse();
         }
         finally
         {
@@ -545,6 +583,29 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
             request.Headers.Add(CertificateSelectorHeader, "presented");
         }
 
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> SendPendingLifecycleRediscoveryAsync(
+        HttpClient client,
+        AdmissionScenario scenario)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/v1/webpay/statutory-discounts/pending-lifecycle/rediscover")
+        {
+            Content = JsonContent.Create(new WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest(
+                WebPayStatutoryDiscountPendingLifecycleRediscoveryValues.LookupModeParkingSessionId,
+                scenario.Context.ParkingSessionId,
+                scenario.ClaimedSiteId,
+                scenario.ClaimedSiteGroupId,
+                TicketReference: null,
+                PlateNumber: null,
+                VendorSystemId: null,
+                EntitlementType: "SENIOR_CITIZEN"))
+        };
+        request.Headers.Add("X-Correlation-Id", Guid.NewGuid().ToString("D"));
+        request.Headers.Add(CertificateSelectorHeader, "presented");
         return await client.SendAsync(request);
     }
 
