@@ -166,6 +166,12 @@ public sealed class VerifyProviderWebhookHandler
 
         if (isDuplicate)
         {
+            await ReplayDuplicateTerminalOutcomeAsync(
+                verification,
+                report,
+                activity,
+                cancellationToken);
+
             _logger.LogInformation(
                 "Accepted duplicate provider webhook before persistence. ProviderCode {ProviderCode}, EventId {EventId}",
                 _adapter.ProviderCode,
@@ -200,6 +206,12 @@ public sealed class VerifyProviderWebhookHandler
         }
         catch (DuplicateProviderWebhookEventException)
         {
+            await ReplayDuplicateTerminalOutcomeAsync(
+                verification,
+                report,
+                activity,
+                cancellationToken);
+
             _logger.LogInformation(
                 "Accepted duplicate provider webhook after unique-constraint detection. ProviderCode {ProviderCode}, EventId {EventId}",
                 _adapter.ProviderCode,
@@ -297,6 +309,48 @@ public sealed class VerifyProviderWebhookHandler
         activity?.SetTag("parking_session_id", resolvedReport.ParkingSessionId);
 
         return VerifyProviderWebhookResult.CreateAccepted(verification.EventId);
+    }
+
+    private async Task ReplayDuplicateTerminalOutcomeAsync(
+        ProviderWebhookVerificationResult verification,
+        VerifiedPaymentOutcomeReport? report,
+        Activity? activity,
+        CancellationToken cancellationToken)
+    {
+        if (!verification.IsTerminal)
+        {
+            return;
+        }
+
+        var resolvedReport = report ?? throw new InvalidOperationException(
+            "Verified payment outcome report must be created before replaying terminal finality to Central PMS.");
+
+        try
+        {
+            await _centralPmsPaymentOutcomeReporter.ReportVerifiedOutcomeAsync(
+                resolvedReport,
+                cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            _metrics.ProviderWebhookFinalizationFailed(
+                _adapter.ProviderCode,
+                _adapter.ProviderProduct,
+                exception.GetType().Name);
+            throw;
+        }
+
+        _logger.LogInformation(
+            "Replayed duplicate verified provider outcome to Central PMS. ProviderCode {ProviderCode}, EventId {EventId}, PaymentAttemptId {PaymentAttemptId}, CanonicalStatus {CanonicalStatus}",
+            _adapter.ProviderCode,
+            verification.EventId,
+            verification.PaymentAttemptId,
+            verification.CanonicalStatus);
+
+        activity?.SetTag("central_pms.reported", true);
+        activity?.SetTag("payment.canonical_status", verification.CanonicalStatus.ToString().ToUpperInvariant());
+        activity?.SetTag("correlation_id", resolvedReport.CorrelationId);
+        activity?.SetTag("parking_session_id", resolvedReport.ParkingSessionId);
     }
 
     private bool ShouldIgnoreAsNonAuthoritativeEvent(string eventType)

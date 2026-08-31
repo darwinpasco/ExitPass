@@ -101,7 +101,7 @@ public sealed class VerifyProviderWebhookHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_WhenDuplicateExistsBeforePersistence_ReturnsAcceptedDuplicate()
+    public async Task HandleAsync_WhenDuplicateTerminalEventExistsBeforePersistence_ReplaysOutcomeThenReturnsAcceptedDuplicate()
     {
         var adapter = new Mock<IPaymentProviderAdapter>(MockBehavior.Strict);
         var repository = new Mock<IProviderWebhookEventRepository>(MockBehavior.Strict);
@@ -117,6 +117,10 @@ public sealed class VerifyProviderWebhookHandlerTests
             .Setup(x => x.ExistsByProviderEventIdAsync("PAYMONGO", "evt_test_009", It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
+        reporter
+            .Setup(x => x.ReportVerifiedOutcomeAsync(It.IsAny<VerifiedPaymentOutcomeReport>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
         var handler = CreateHandler(adapter, repository, reporter);
 
         var result = await handler.HandleAsync(CreateRequest(), CancellationToken.None);
@@ -131,12 +135,48 @@ public sealed class VerifyProviderWebhookHandlerTests
             Times.Never);
 
         reporter.Verify(
-            x => x.ReportVerifiedOutcomeAsync(It.IsAny<VerifiedPaymentOutcomeReport>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+            x => x.ReportVerifiedOutcomeAsync(
+                It.Is<VerifiedPaymentOutcomeReport>(r =>
+                    r.EventId == "evt_test_009" &&
+                    r.IsTerminal &&
+                    r.IsSuccess),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
-    public async Task HandleAsync_WhenDuplicateDetectedDuringPersistence_ReturnsAcceptedDuplicate()
+    public async Task HandleAsync_WhenDuplicateTerminalOutcomeReplayFails_PropagatesFailure()
+    {
+        var adapter = new Mock<IPaymentProviderAdapter>(MockBehavior.Strict);
+        var repository = new Mock<IProviderWebhookEventRepository>(MockBehavior.Strict);
+        var reporter = new Mock<ICentralPmsPaymentOutcomeReporter>(MockBehavior.Strict);
+
+        adapter.SetupGet(x => x.ProviderCode).Returns("PAYMONGO");
+        adapter.SetupGet(x => x.ProviderProduct).Returns("PAYMONGO_CHECKOUT_SESSION");
+        adapter
+            .Setup(x => x.VerifyWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateAuthenticCheckoutSessionPaidVerificationResult());
+
+        repository
+            .Setup(x => x.ExistsByProviderEventIdAsync("PAYMONGO", "evt_test_009", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        reporter
+            .Setup(x => x.ReportVerifiedOutcomeAsync(It.IsAny<VerifiedPaymentOutcomeReport>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("central unavailable"));
+
+        var handler = CreateHandler(adapter, repository, reporter);
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            handler.HandleAsync(CreateRequest(), CancellationToken.None));
+
+        reporter.Verify(
+            x => x.ReportVerifiedOutcomeAsync(It.IsAny<VerifiedPaymentOutcomeReport>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenDuplicateTerminalEventDetectedDuringPersistence_ReplaysOutcomeThenReturnsAcceptedDuplicate()
     {
         var adapter = new Mock<IPaymentProviderAdapter>(MockBehavior.Strict);
         var repository = new Mock<IProviderWebhookEventRepository>(MockBehavior.Strict);
@@ -156,6 +196,10 @@ public sealed class VerifyProviderWebhookHandlerTests
             .Setup(x => x.AddAsync(It.IsAny<ProviderWebhookEventRecord>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new DuplicateProviderWebhookEventException("duplicate"));
 
+        reporter
+            .Setup(x => x.ReportVerifiedOutcomeAsync(It.IsAny<VerifiedPaymentOutcomeReport>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
         var handler = CreateHandler(adapter, repository, reporter);
 
         var result = await handler.HandleAsync(CreateRequest(), CancellationToken.None);
@@ -166,8 +210,13 @@ public sealed class VerifyProviderWebhookHandlerTests
         Assert.Equal("evt_test_009", result.Code);
 
         reporter.Verify(
-            x => x.ReportVerifiedOutcomeAsync(It.IsAny<VerifiedPaymentOutcomeReport>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+            x => x.ReportVerifiedOutcomeAsync(
+                It.Is<VerifiedPaymentOutcomeReport>(r =>
+                    r.EventId == "evt_test_009" &&
+                    r.IsTerminal &&
+                    r.IsSuccess),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
