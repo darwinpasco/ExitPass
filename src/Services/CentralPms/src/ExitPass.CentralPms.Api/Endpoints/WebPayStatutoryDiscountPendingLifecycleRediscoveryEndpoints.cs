@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Security;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.WebPay;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.WebPay;
@@ -20,7 +21,8 @@ public static class WebPayStatutoryDiscountPendingLifecycleRediscoveryEndpoints
         this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/webpay/statutory-discounts")
-            .WithTags("WebPay");
+            .WithTags("WebPay")
+            .AcceptAuthenticatedServicePrincipal();
 
         group.MapPost("/pending-lifecycle/rediscover", RediscoverAsync)
             .WithName("RediscoverWebPayStatutoryDiscountPendingLifecycle")
@@ -45,7 +47,7 @@ public static class WebPayStatutoryDiscountPendingLifecycleRediscoveryEndpoints
         var correlationId = ReadOrCreateCorrelationId(context.Request);
         activity?.SetTag("correlation_id", correlationId);
 
-        if (!TryValidateWebPayServicePrincipal(context.Request, out var principalError))
+        if (!TryValidateWebPayServicePrincipal(context, out var principalError))
         {
             activity?.SetStatus(ActivityStatusCode.Error, "WebPay service principal is required.");
             return Results.Json(
@@ -145,9 +147,31 @@ public static class WebPayStatutoryDiscountPendingLifecycleRediscoveryEndpoints
             : Guid.NewGuid();
     }
 
-    private static bool TryValidateWebPayServicePrincipal(HttpRequest request, out string? error)
+    private static bool TryValidateWebPayServicePrincipal(HttpContext context, out string? error)
     {
         error = null;
+        var principal = context.User;
+        if (principal.Identity?.IsAuthenticated == true)
+        {
+            var serviceIdentity = principal.FindFirst("service_identity_id")?.Value ??
+                                  principal.FindFirst("client_id")?.Value;
+            if (!string.Equals(principal.Identity.AuthenticationType, "InternalMtlsServicePrincipal", StringComparison.Ordinal) ||
+                !string.Equals(principal.FindFirst("exitpass_audience")?.Value, "CENTRAL_PMS", StringComparison.Ordinal) ||
+                !string.Equals(
+                    principal.FindFirst("source_channel")?.Value,
+                    StatutoryDiscountSourceChannels.WebPay,
+                    StringComparison.Ordinal) ||
+                !Guid.TryParse(serviceIdentity, out var authenticatedServiceIdentityId) ||
+                authenticatedServiceIdentityId == Guid.Empty)
+            {
+                error = "An authenticated WebPay service principal is required.";
+                return false;
+            }
+
+            return true;
+        }
+
+        var request = context.Request;
         var rawServiceIdentity = request.Headers[CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName].FirstOrDefault();
         if (!Guid.TryParse(rawServiceIdentity, out var serviceIdentityId) || serviceIdentityId == Guid.Empty)
         {
