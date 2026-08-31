@@ -738,6 +738,38 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
+    public async Task GetAsync_WhenFrozenReviewRequirementExistsBeforeUpload_PropagatesEvidenceRequired()
+    {
+        var fixture = CreateFixture();
+        fixture.ServiceChannelReviewRepository.GetAsync(
+                CommandId,
+                Arg.Any<Guid>(),
+                Arg.Any<CancellationToken>())
+            .Returns(AppliedServiceChannelReviewDetail() with
+            {
+                StatutoryDiscountValidationId = null,
+                CommandStatus = StatutoryDiscountDecisionV2CommandStates.AwaitingReview,
+                DecisionResultStatus = StatutoryDiscountDecisionV2ResultStates.NotDecided,
+                ReviewStatus = StatutoryDiscountServiceChannelReviewStatuses.PendingReview,
+                EvidenceRequired = true,
+                EvidenceRecorded = false,
+                ReviewerUserId = null,
+                ReviewerDecision = null,
+                ReviewedAt = null,
+                PayableBasisApplicationStatus = "NOT_REQUESTED"
+            });
+        await fixture.Sut.SubmitAsync(
+            Command(sourceChannel: "WEBPAY", applyPayableBasis: false) with { EvidenceReferences = [] },
+            CancellationToken.None);
+
+        var readback = await fixture.Sut.GetAsync(CommandId, CorrelationId, CancellationToken.None);
+
+        readback.Should().NotBeNull();
+        readback!.EvidenceRequired.Should().BeTrue();
+        readback.EvidenceRecorded.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task GetAsync_WhenReferenceMissing_ReturnsNull()
     {
         var fixture = CreateFixture();

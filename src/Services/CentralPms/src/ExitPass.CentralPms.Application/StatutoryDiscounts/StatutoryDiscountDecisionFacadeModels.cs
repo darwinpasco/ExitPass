@@ -478,6 +478,7 @@ internal static class StatutoryDiscountDecisionMappings
         {
             SiteId = review.SiteId ?? result.SiteId,
             SiteGroupId = review.SiteGroupId ?? result.SiteGroupId,
+            EvidenceRequired = result.EvidenceRequired || review.EvidenceRequired,
             OriginalTariffSnapshotId = result.OriginalTariffSnapshotId ?? review.OriginalTariffSnapshotId,
             GrossAmountMinorUnits = result.GrossAmountMinorUnits ?? review.OriginalAmountMinorUnits,
             VatExclusiveBasisAmountMinorUnits =
