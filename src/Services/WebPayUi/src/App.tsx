@@ -1843,16 +1843,22 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
   const [receiptMessage, setReceiptMessage] = useState("");
   const [receiptCorrelationId, setReceiptCorrelationId] = useState("");
   const ticketReference = getQueryParam("ticketReference");
+  const plateNumber = getQueryParam("plateNumber");
   const paymentAttemptId = getQueryParam("paymentAttemptId");
   const returnCorrelationId = getQueryParam("correlationId");
   const isCancelled = mode === "cancelled";
   const paymentStatusKind = classifyPaymentStatus(summary?.paymentStatus, isCancelled);
   const isPaid = paymentStatusKind === "confirmed";
+  const retryQuery = ticketReference
+    ? `ticketReference=${encodeURIComponent(ticketReference)}`
+    : plateNumber
+      ? `plateNumber=${encodeURIComponent(plateNumber)}`
+      : "";
 
   async function refreshStatus() {
-    if (!ticketReference) {
+    if (!ticketReference && !plateNumber) {
       setStatus("error");
-      setError("Ticket reference is missing.");
+      setError("Parking reference is missing.");
       return;
     }
 
@@ -1864,7 +1870,10 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
     setReceiptCorrelationId("");
 
     try {
-      const response = await retrievePaymentStatus({ ticketReference });
+      const response = await retrievePaymentStatus({
+        ticketReference: ticketReference || undefined,
+        plateNumber: plateNumber || undefined
+      });
       setSummary(response);
       setStatus("loaded");
     } catch (apiError) {
@@ -1876,7 +1885,7 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
 
   useEffect(() => {
     void refreshStatus();
-  }, [ticketReference]);
+  }, [ticketReference, plateNumber]);
 
   useEffect(() => {
     if (!isPaid || !paymentAttemptId) {
@@ -2005,8 +2014,8 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
           <button type="button" className="primary-button status-button" onClick={() => void refreshStatus()}>
             Check Status
           </button>
-          {(isCancelled || (status === "loaded" && !isPaid)) && ticketReference && (
-            <a className="primary-link" href={`/?ticketReference=${encodeURIComponent(ticketReference)}`}>
+          {(isCancelled || (status === "loaded" && !isPaid)) && retryQuery && (
+            <a className="primary-link" href={`/?${retryQuery}`}>
               Retry Payment
             </a>
           )}
