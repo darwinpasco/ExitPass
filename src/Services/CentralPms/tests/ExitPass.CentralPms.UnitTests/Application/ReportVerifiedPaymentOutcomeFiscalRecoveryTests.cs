@@ -92,6 +92,34 @@ public sealed class ReportVerifiedPaymentOutcomeFiscalRecoveryTests
     }
 
     [Fact]
+    public async Task RetryableFinalPaymentReplay_WithCanonicalSucceededStatus_ResumesOriginalFiscalContext()
+    {
+        var fixture = CreateFixture(RecoveryContext(retryable: true));
+        fixture.FiscalIssuance.IssueOrReadAsync(
+                Arg.Any<DigitalPaymentFiscalIssuanceCommand>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new DigitalPaymentFiscalIssuanceResult(
+                FiscalReferenceId,
+                true,
+                true,
+                null,
+                Guid.NewGuid(),
+                "IST-POS-A"));
+
+        var result = await fixture.Sut.ExecuteAsync(
+            Command(providerStatus: "SUCCEEDED"),
+            CancellationToken.None);
+
+        Assert.Equal(ConfirmationId, result.PaymentConfirmationId);
+        Assert.NotNull(result.ExitAuthorizationId);
+        await fixture.Confirmation.DidNotReceiveWithAnyArgs().RecordAsync(default!, default, default);
+        await fixture.Finalization.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+        await fixture.FiscalIssuance.Received(1).IssueOrReadAsync(
+            Arg.Any<DigitalPaymentFiscalIssuanceCommand>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task CompletedFiscalReplay_ReturnsExistingAuthoritativePathWithoutPaymentMutation()
     {
         var fixture = CreateFixture(RecoveryContext(completed: true));
@@ -231,12 +259,12 @@ public sealed class ReportVerifiedPaymentOutcomeFiscalRecoveryTests
             retryable ? "RETRY_AFTER_SERVICE_RECOVERY" : null,
             completed);
 
-    private static ReportVerifiedPaymentOutcomeCommand Command() =>
+    private static ReportVerifiedPaymentOutcomeCommand Command(string providerStatus = "SUCCESS") =>
         new(
             AttemptId,
             SessionId,
             "IST-PROVIDER-OUTAGE",
-            "SUCCESS",
+            providerStatus,
             "CONFIRMED",
             "payment-orchestrator",
             ActorId,
