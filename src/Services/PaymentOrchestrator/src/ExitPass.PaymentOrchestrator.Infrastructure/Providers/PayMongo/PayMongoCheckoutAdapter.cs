@@ -601,6 +601,11 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter, IProvider
                         ref amountMinor,
                         ref currency);
 
+                    TryApplyPaymentEvidenceFromPaymentIntent(
+                        nestedAttributes,
+                        ref amountMinor,
+                        ref currency);
+
                     if (nestedAttributes.TryGetProperty("metadata", out var metadataProperty) &&
                         metadataProperty.ValueKind == JsonValueKind.Object)
                     {
@@ -697,6 +702,33 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter, IProvider
             }
 
             return;
+        }
+    }
+
+    private static void TryApplyPaymentEvidenceFromPaymentIntent(
+        JsonElement attributes,
+        ref long amountMinor,
+        ref string currency)
+    {
+        if (!attributes.TryGetProperty("payment_intent", out var paymentIntent) ||
+            paymentIntent.ValueKind != JsonValueKind.Object ||
+            !paymentIntent.TryGetProperty("attributes", out var paymentIntentAttributes) ||
+            paymentIntentAttributes.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        if (amountMinor == 0 &&
+            paymentIntentAttributes.TryGetProperty("amount", out var paymentIntentAmount) &&
+            paymentIntentAmount.ValueKind == JsonValueKind.Number &&
+            paymentIntentAmount.TryGetInt64(out var parsedPaymentIntentAmount))
+        {
+            amountMinor = parsedPaymentIntentAmount;
+        }
+
+        if (TryGetOptionalString(paymentIntentAttributes, "currency", out var paymentIntentCurrency))
+        {
+            currency = paymentIntentCurrency;
         }
     }
 

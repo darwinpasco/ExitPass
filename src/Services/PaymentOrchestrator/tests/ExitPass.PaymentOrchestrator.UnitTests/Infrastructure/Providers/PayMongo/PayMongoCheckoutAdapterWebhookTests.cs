@@ -85,6 +85,21 @@ public sealed class PayMongoCheckoutAdapterWebhookTests
         Assert.Equal("PHP", result.Currency);
     }
 
+    [Fact]
+    public async Task VerifyWebhookAsync_WhenCheckoutSessionCarriesPaymentIntent_UsesPaymentIntentAmount()
+    {
+        var adapter = CreateAdapter();
+        var payload = BuildCheckoutSessionWebhookPayloadWithPaymentIntent();
+
+        var result = await adapter.VerifyWebhookAsync(CreateSignedRequest(payload), CancellationToken.None);
+
+        Assert.True(result.IsAuthentic);
+        Assert.Equal(CanonicalPaymentOutcomeStatus.Succeeded, result.CanonicalStatus);
+        Assert.Equal("cs_paid_with_intent_001", result.ProviderSessionId);
+        Assert.Equal(2500, result.AmountMinor);
+        Assert.Equal("PHP", result.Currency);
+    }
+
 
     /// <summary>
     /// Verifies that invalid PayMongo signatures fail closed before the callback is
@@ -357,6 +372,50 @@ public sealed class PayMongoCheckoutAdapterWebhookTests
                                         amount = 10000,
                                         currency = "PHP"
                                     }
+                                }
+                            },
+                            metadata = new Dictionary<string, string>
+                            {
+                                ["payment_attempt_id"] = "be88ff8e-90a7-45a7-bb7d-3505cfce9076",
+                                ["parking_session_id"] = "93e97f33-5849-4b9f-a83f-1080820103d8",
+                                ["correlation_id"] = "6de95bb4-8f5a-4170-9184-e8eb4cb15c57"
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        return JsonSerializer.Serialize(body);
+    }
+
+    private static string BuildCheckoutSessionWebhookPayloadWithPaymentIntent()
+    {
+        var body = new
+        {
+            data = new
+            {
+                id = "evt_paid_intent_001",
+                type = "event",
+                attributes = new
+                {
+                    type = "checkout_session.payment.paid",
+                    created_at = 1_775_470_400,
+                    data = new
+                    {
+                        id = "cs_paid_with_intent_001",
+                        type = "checkout_session",
+                        attributes = new
+                        {
+                            payments = Array.Empty<object>(),
+                            payment_intent = new
+                            {
+                                id = "pi_paid_with_intent_001",
+                                type = "payment_intent",
+                                attributes = new
+                                {
+                                    amount = 2500,
+                                    currency = "PHP"
                                 }
                             },
                             metadata = new Dictionary<string, string>
