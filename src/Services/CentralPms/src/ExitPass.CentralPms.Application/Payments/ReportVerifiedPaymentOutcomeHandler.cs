@@ -347,7 +347,8 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
             !string.Equals(recovery.ProviderReference, command.ProviderReference, StringComparison.Ordinal) ||
             !string.Equals(recovery.AttemptStatus, "CONFIRMED", StringComparison.Ordinal) ||
             !string.Equals(recovery.ConfirmationStatus, "RECORDED", StringComparison.Ordinal) ||
-            !string.Equals(command.ProviderStatus, "SUCCESS", StringComparison.OrdinalIgnoreCase) ||
+            !(string.Equals(command.ProviderStatus, "SUCCESS", StringComparison.OrdinalIgnoreCase) ||
+              string.Equals(command.ProviderStatus, "SUCCEEDED", StringComparison.OrdinalIgnoreCase)) ||
             !string.Equals(command.FinalAttemptStatus, "CONFIRMED", StringComparison.OrdinalIgnoreCase))
         {
             throw new PaymentFinalityConflictException(
