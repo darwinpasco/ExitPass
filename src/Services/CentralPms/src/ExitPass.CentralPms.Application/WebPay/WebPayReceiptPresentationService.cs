@@ -184,3 +184,62 @@ public sealed class WebPayReceiptPresentationService : IWebPayReceiptPresentatio
         bool retryable) =>
         new(errorCode, message, httpStatusCode, retryable);
 }
+
+public sealed class WebPayPaymentAttemptStatusService : IWebPayPaymentAttemptStatusService
+{
+    private readonly IWebPayPaymentAttemptStatusRepository _repository;
+
+    public WebPayPaymentAttemptStatusService(IWebPayPaymentAttemptStatusRepository repository)
+    {
+        _repository = repository;
+    }
+
+    public async Task<WebPayPaymentAttemptStatus> GetAsync(
+        Guid paymentAttemptId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (paymentAttemptId == Guid.Empty)
+        {
+            throw new WebPayPaymentAttemptStatusRejectedException(
+                "PAYMENT_ATTEMPT_ID_REQUIRED", "Payment reference is required.", 400, false);
+        }
+
+        if (correlationId == Guid.Empty)
+        {
+            throw new WebPayPaymentAttemptStatusRejectedException(
+                "CORRELATION_ID_REQUIRED", "X-Correlation-Id header is required.", 400, false);
+        }
+
+        var record = await _repository.FindAsync(paymentAttemptId, cancellationToken).ConfigureAwait(false);
+        if (record is null)
+        {
+            throw new WebPayPaymentAttemptStatusRejectedException(
+                "WEBPAY_PAYMENT_ATTEMPT_NOT_FOUND", "Payment status was not found.", 404, false);
+        }
+
+        return new WebPayPaymentAttemptStatus(
+            record.PaymentAttemptId,
+            record.ParkingSessionId,
+            record.TariffSnapshotId,
+            record.SiteGroupId,
+            record.SiteId,
+            record.SiteGroupName,
+            record.SiteName,
+            record.TicketReference,
+            record.PlateNumber,
+            record.AmountMinorUnits,
+            record.Currency,
+            record.PaymentMethod,
+            record.PaymentProvider,
+            record.PaymentReference,
+            record.EntryTime,
+            record.PaymentTime,
+            record.PaymentStatus,
+            record.ParkingStatus,
+            record.ExitAuthorizationId,
+            record.ExitAuthorizationStatus,
+            record.ExitAuthorizationExpiresAt,
+            correlationId);
+    }
+}

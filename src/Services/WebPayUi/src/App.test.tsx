@@ -5,6 +5,22 @@ import { App } from "./App";
 import { formatCustomerSupportReference } from "./customerSafeReference";
 import { createStatutoryRecoveryRecord, statutoryRecoveryStorageKey } from "./statutoryRecovery";
 
+const documentDownloadMocks = vi.hoisted(() => ({
+  html2canvas: vi.fn(),
+  addImage: vi.fn(),
+  save: vi.fn(),
+  qrToDataUrl: vi.fn()
+}));
+
+vi.mock("html2canvas", () => ({ default: documentDownloadMocks.html2canvas }));
+vi.mock("jspdf", () => ({
+  jsPDF: vi.fn().mockImplementation(() => ({
+    addImage: documentDownloadMocks.addImage,
+    save: documentDownloadMocks.save
+  }))
+}));
+vi.mock("qrcode", () => ({ default: { toDataURL: documentDownloadMocks.qrToDataUrl } }));
+
 vi.mock("@zxing/browser", () => ({
   BrowserQRCodeReader: vi.fn().mockImplementation(() => ({
     decodeFromVideoDevice: vi.fn().mockRejectedValue(new DOMException("Denied", "NotAllowedError"))
@@ -32,6 +48,11 @@ const successResponse = {
   parkingStatus: "PaymentRequired",
   paymentStatus: "Not Started",
   paymentMethod: "QRPH",
+  paymentProvider: "PAYMONGO",
+  paymentReference: "PAYMONGO-R35-CUSTOMER-REFERENCE",
+  paymentTime: "2026-05-18T12:56:30+08:00",
+  exitAuthorizationStatus: "ISSUED",
+  exitAuthorizationExpiresAt: "2026-05-18T13:20:00+08:00",
   selectedProviderCode: "PAYMONGO",
   fallbackProviderCode: null,
   routingReason: "PRIMARY_PROVIDER",
@@ -83,6 +104,7 @@ function stubWebPayFetch(options?: {
   const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
     const isResolve = url.includes("/v1/webpay/parking-session");
     const isReceipt = url.includes("/v1/webpay/payment-attempts/") && url.includes("/receipt-presentation");
+    const isPaymentStatus = url.includes("/v1/webpay/payment-attempts/") && url.endsWith("/status");
     const isStatutoryAvailability = url.endsWith("/v1/webpay/statutory-discounts/availability");
     const isStatutoryRediscovery = url.endsWith("/v1/webpay/statutory-discounts/pending-lifecycle/rediscover");
     const isStatutorySubmit = url.endsWith("/v1/webpay/statutory-discounts/decisions") && _init?.method === "POST";
@@ -97,6 +119,8 @@ function stubWebPayFetch(options?: {
         ? options?.resolveOk ?? true
         : isReceipt
         ? options?.receiptOk ?? true
+        : isPaymentStatus
+        ? options?.resolveOk ?? true
         : isStatutoryAvailability
           ? options?.statutoryAvailabilityOk ?? true
         : isStatutoryRediscovery
@@ -114,6 +138,8 @@ function stubWebPayFetch(options?: {
         ? options?.resolveStatus ?? 200
         : isReceipt
         ? options?.receiptStatus ?? 200
+        : isPaymentStatus
+        ? options?.resolveStatus ?? 200
         : isStatutoryAvailability
           ? options?.statutoryAvailabilityStatus ?? 200
         : isStatutoryRediscovery
@@ -132,6 +158,8 @@ function stubWebPayFetch(options?: {
           ? options?.resolvePayload ?? successResponse
           : isReceipt
             ? options?.receiptPayload ?? salesInvoicePresentationResponse
+          : isPaymentStatus
+            ? options?.resolvePayload ?? successResponse
           : isStatutoryAvailability
             ? options?.statutoryAvailabilityPayload ?? statutoryAvailabilityResponse()
           : isStatutoryRediscovery
@@ -169,11 +197,52 @@ const salesInvoicePresentationResponse = {
       documentTitle: "Sales Invoice",
       sections: [
         {
-          key: "summary",
-          title: "Document Summary",
+          name: "salesInvoiceHeaderSnapshot",
+          title: "Sales Invoice Header Snapshot",
           rows: [
-            { key: "number", label: "Sales Invoice Number", displayValue: "SI-20260523-000001" },
-            { key: "total", label: "Total Amount", displayValue: "PHP 125.00" }
+            { key: "salesInvoiceHeaderSnapshot.registeredBusinessName", label: "Registered Business Name", displayValue: "Pro Parking Management Corp." },
+            { key: "salesInvoiceHeaderSnapshot.tin", label: "TIN", displayValue: "123-456-789-000" },
+            { key: "salesInvoiceHeaderSnapshot.posSerialNumber", label: "POS Serial Number", displayValue: "SN-SITE-A-0001" },
+            { key: "salesInvoiceHeaderSnapshot.machineIdentificationNumber", label: "MIN", displayValue: "MIN-SITE-A-0001" },
+            { key: "salesInvoiceHeaderSnapshot.parkingLocationDisplay", label: "Parking Location", displayValue: "Mactan Newtown Parking" },
+            { key: "salesInvoiceHeaderSnapshot.terminalId", label: "Terminal ID", displayValue: "WEBPAY-01" },
+            { key: "salesInvoiceHeaderSnapshot.birAccreditationNumber", label: "BIR Accreditation Number", displayValue: "ACCR-SITE-A-0001" },
+            { key: "salesInvoiceHeaderSnapshot.birAccreditationIssuedDate", label: "BIR Accreditation Issued Date", displayValue: "2026-01-02" },
+            { key: "salesInvoiceHeaderSnapshot.ptuNumber", label: "PTU Number", displayValue: "PTU-SITE-A-0001" },
+            { key: "salesInvoiceHeaderSnapshot.ptuIssuedDate", label: "PTU Issued Date", displayValue: "2026-01-03" },
+            { key: "salesInvoiceHeaderSnapshot.salesInvoiceLegalStatement", label: "Sales Invoice Legal Statement", displayValue: "THIS SERVES AS YOUR SALES INVOICE" }
+          ]
+        },
+        {
+          name: "fiscalNumbering",
+          rows: [
+            { key: "fiscalNumbering.fiscalNumberAssignedAt", label: "Fiscal Number Assigned At", displayValue: "2026-05-23T13:00:00+08:00" }
+          ]
+        },
+        {
+          name: "lineItems",
+          rows: [
+            { key: "lineItems[0000].description", label: "Description", displayValue: "Parking Fee" },
+            { key: "lineItems[0000].quantity", label: "Quantity", displayValue: "1" },
+            { key: "lineItems[0000].unitAmount", label: "Unit Amount", displayValue: "PHP 125.00" },
+            { key: "lineItems[0000].netAmount", label: "Net Amount", displayValue: "PHP 125.00" }
+          ]
+        },
+        {
+          name: "totals",
+          rows: [
+            { key: "totals.subtotal", label: "Subtotal", displayValue: "PHP 125.00" },
+            { key: "totals.vatableSales", label: "VATable Sales", displayValue: "PHP 111.61" },
+            { key: "totals.vatAmount", label: "VAT Amount", displayValue: "PHP 13.39" },
+            { key: "totals.vatExempt", label: "VAT Exempt", displayValue: "PHP 0.00" },
+            { key: "totals.zeroRated", label: "Zero Rated", displayValue: "PHP 0.00" }
+          ]
+        },
+        {
+          name: "tenders",
+          rows: [
+            { key: "tenders[0000].tenderTypeCodeKey", label: "Tender Type", displayValue: "QRPH" },
+            { key: "tenders[0000].amount", label: "Tender Amount", displayValue: "PHP 125.00" }
           ]
         }
       ]
@@ -304,10 +373,36 @@ function firstRouteCall(fetchMock: ReturnType<typeof vi.fn>, path: string) {
   return routeCalls(fetchMock, path)[0];
 }
 
+function stubClipboard(writeText: ReturnType<typeof vi.fn>) {
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText }
+  });
+
+  return () => {
+    if (originalClipboard) {
+      Object.defineProperty(navigator, "clipboard", originalClipboard);
+    } else {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  };
+}
+
 beforeEach(() => {
   vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "11111111-1111-1111-1111-111111111111");
   vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_ID", "22222222-2222-2222-2222-222222222222");
   vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "HIKCENTRAL");
+  documentDownloadMocks.html2canvas.mockReset();
+  documentDownloadMocks.addImage.mockReset();
+  documentDownloadMocks.save.mockReset();
+  documentDownloadMocks.qrToDataUrl.mockReset();
+  documentDownloadMocks.html2canvas.mockResolvedValue({
+    width: 800,
+    height: 2400,
+    toDataURL: () => "data:image/png;base64,c2FsZXMtaW52b2ljZQ=="
+  });
+  documentDownloadMocks.qrToDataUrl.mockResolvedValue("data:image/png;base64,ZXhpdC1xcg==");
   localStorage.clear();
 });
 
@@ -2299,18 +2394,17 @@ describe("ExitPass WebPay UI", () => {
     expect(body.correlationId).toBeTruthy();
   });
 
-  it("WebPayReturnPage_LoadsStatusByTicketReference", async () => {
+  it("WebPayReturnPage_LoadsStatusByPaymentAttemptAndUsesServerTicketForRetry", async () => {
     const fetchMock = stubWebPayFetch();
-    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-FRESH-008");
+    window.history.pushState({}, "", "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444");
 
     render(<App />);
 
     expect(screen.getAllByText("Checking payment status").length).toBeGreaterThan(0);
-    expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
-    expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(1);
-    const parkingSessionCall = firstRouteCall(fetchMock, "/v1/webpay/parking-session");
-    const body = JSON.parse((parkingSessionCall[1] as RequestInit).body as string);
-    expect(body.ticketReference).toBe("WEBPAY-20260523-FRESH-008");
+    expect(await screen.findByRole("heading", { name: /payment is still being verified/i })).toBeInTheDocument();
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-attempts/44444444-4444-4444-4444-444444444444/status")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: /retry payment/i })).toHaveAttribute("href", "/?ticketReference=TICKET-TEST-023");
+    expect(screen.queryByText("Parking Session Summary")).not.toBeInTheDocument();
   });
 
   it("WebPayReturnPage_DoesNotMarkPaidOnlyBecauseOfRedirect", async () => {
@@ -2321,16 +2415,77 @@ describe("ExitPass WebPay UI", () => {
         parkingStatus: "PaymentRequired"
       }
     });
-    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-FRESH-009&result=success");
+    window.history.pushState({}, "", "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444&result=success");
 
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: /payment is still being verified/i })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /payment confirmed/i })).not.toBeInTheDocument();
-    expect(screen.getByText("PaymentRequired")).toBeInTheDocument();
+    expect(screen.queryByText("Parking Session Summary")).not.toBeInTheDocument();
+  });
+
+  it("WebPayReturnPage_WhenPaymentReferenceIsCopied_CopiesOnlyReferenceAndDoesNotCallApi", async () => {
+    const fetchMock = stubWebPayFetch({
+      resolvePayload: { ...successResponse, paymentStatus: "Paid" }
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const restoreClipboard = stubClipboard(writeText);
+    window.history.pushState(
+      {},
+      "",
+      "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444"
+    );
+
+    try {
+      render(<App />);
+
+      const copyButton = await screen.findByRole("button", { name: "Copy payment reference number" });
+      await screen.findByRole("button", { name: /retrieve sales invoice/i });
+      const requestCountBeforeCopy = fetchMock.mock.calls.length;
+
+      await userEvent.click(copyButton);
+
+      expect(writeText).toHaveBeenCalledOnce();
+      expect(writeText).toHaveBeenCalledWith("PAYMONGO-R35-CUSTOMER-REFERENCE");
+      await waitFor(() => expect(copyButton).toHaveTextContent("Copied"));
+      expect(fetchMock).toHaveBeenCalledTimes(requestCountBeforeCopy);
+      expect(fetchMock.mock.calls.filter((call) => (call[1] as RequestInit | undefined)?.method === "POST")).toHaveLength(0);
+    } finally {
+      restoreClipboard();
+    }
+  });
+
+  it("WebPayReturnPage_WhenClipboardWriteFails_RemainsUsableWithoutCallingApi", async () => {
+    const fetchMock = stubWebPayFetch({
+      resolvePayload: { ...successResponse, paymentStatus: "Paid" }
+    });
+    const writeText = vi.fn().mockRejectedValue(new DOMException("Denied", "NotAllowedError"));
+    const restoreClipboard = stubClipboard(writeText);
+    window.history.pushState(
+      {},
+      "",
+      "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444"
+    );
+
+    try {
+      render(<App />);
+
+      const copyButton = await screen.findByRole("button", { name: "Copy payment reference number" });
+      await screen.findByRole("button", { name: /retrieve sales invoice/i });
+      const requestCountBeforeCopy = fetchMock.mock.calls.length;
+
+      await userEvent.click(copyButton);
+
+      await waitFor(() => expect(copyButton).toHaveTextContent("Copy unavailable"));
+      expect(screen.getByRole("heading", { name: /^payment confirmation$/i })).toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledTimes(requestCountBeforeCopy);
+    } finally {
+      restoreClipboard();
+    }
   });
 
   it("WebPayReturnPage_WhenBackendConfirmsAndReceiptIsAvailable_DisplaysAuthoritativeSalesInvoice", async () => {
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => undefined);
     const fetchMock = stubWebPayFetch({
       resolvePayload: {
         ...successResponse,
@@ -2341,24 +2496,152 @@ describe("ExitPass WebPay UI", () => {
     window.history.pushState(
       {},
       "",
-      "/webpay/payment-return?ticketReference=WEBPAY-20260523-FRESH-010&paymentAttemptId=44444444-4444-4444-4444-444444444444&correlationId=77777777-7777-7777-7777-777777777777"
+      "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444&correlationId=77777777-7777-7777-7777-777777777777"
     );
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: /payment confirmed/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^payment confirmation$/i })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: /^sales invoice$/i })).toBeInTheDocument();
-    expect(screen.getByText("Amount Paid")).toBeInTheDocument();
-    expect(screen.getAllByText("PHP 125.00").length).toBeGreaterThan(0);
-    expect(screen.getByText("Payment Completed")).toBeInTheDocument();
-    expect(screen.getByText("Sales Invoice Number")).toBeInTheDocument();
+    expect(screen.getByText("PAYMONGO-R35-CUSTOMER-REFERENCE")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^exit instruction$/i })).toBeInTheDocument();
+    expect(screen.getByText("Proceed to exit")).toBeInTheDocument();
+    expect(screen.getByText(/^Exit by /)).toBeInTheDocument();
+    expect(screen.getByText("Additional parking charges will apply if you do not exit by the expiry time.")).toBeInTheDocument();
+    expect(screen.getByText("Do not close this page until you have exited the parking lot.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy payment reference number" })).toBeInTheDocument();
+    expect(screen.queryByText("Amount Paid")).not.toBeInTheDocument();
+    expect(screen.queryByText("Payment Status")).not.toBeInTheDocument();
+    expect(screen.queryByText("Payment Completed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Parking Session Summary")).not.toBeInTheDocument();
+    expect(screen.queryByText(/This presentation is retrieved from/i)).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".return-panel > section")).toHaveLength(4);
+    expect(screen.getByText("SI No")).toBeInTheDocument();
     expect(screen.getAllByText("SI-20260523-000001").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Fiscal Document Type")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fiscal Document Status")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recorded At")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tender Type")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not available")).not.toBeInTheDocument();
+    const printableInvoice = screen.getByLabelText("Printable Sales Invoice");
+    expect(printableInvoice).toHaveTextContent("Ticket Number");
+    expect(printableInvoice).toHaveTextContent("TICKET-TEST-023");
+    expect(printableInvoice).toHaveTextContent("QRPH");
+    expect(printableInvoice).toHaveTextContent("PayMongo");
+    expect(printableInvoice).toHaveTextContent("VAT BREAKDOWN");
+    expect(printableInvoice).toHaveTextContent("VATable Sales");
+    expect(printableInvoice).toHaveTextContent("VAT Exempt");
+    expect(printableInvoice).toHaveTextContent("Zero Rated");
+    expect(printableInvoice).toHaveTextContent("Customer Information");
+    expect(printableInvoice).toHaveTextContent("ACCR. NO.");
+    expect(printableInvoice).toHaveTextContent("PTU Date");
+    expect(printableInvoice).toHaveTextContent("===== NOTHING FOLLOWS =====");
+    expect(printableInvoice).not.toHaveTextContent("Total Paid");
+    expect(printableInvoice).not.toHaveTextContent("Tendered Amount");
+    expect(printableInvoice).not.toHaveTextContent("Change");
+    expect(printableInvoice).not.toHaveTextContent("digital_or_cash_tender");
+    expect(printableInvoice).toHaveAttribute("data-paper-width", "80mm");
+    expect(screen.queryByRole("group", { name: /receipt paper width/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "57 mm" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "58 mm" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Presentation Version")).not.toBeInTheDocument();
+    expect(screen.queryByText(/44444444-4444-4444-4444-444444444444/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /payment receipt/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retrieve sales invoice/i })).toBeInTheDocument();
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/receipt-presentation"))).toBe(true);
+    const receiptRequestCount = fetchMock.mock.calls.filter((call) =>
+      String(call[0]).includes("/receipt-presentation")
+    ).length;
+
+    await userEvent.click(screen.getByRole("button", { name: /download sales invoice/i }));
+
+    await waitFor(() => expect(documentDownloadMocks.save).toHaveBeenCalledWith("SI-20260523-000001.pdf"));
+    expect(documentDownloadMocks.html2canvas).toHaveBeenCalledWith(
+      printableInvoice,
+      expect.objectContaining({ backgroundColor: "#ffffff", scale: 2 })
+    );
+    expect(documentDownloadMocks.addImage).toHaveBeenCalledOnce();
+    expect(printSpy).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/receipt-presentation"))).toHaveLength(
+      receiptRequestCount
+    );
+  });
+
+  it("WebPayReturnPage_WhenPaid_RendersDownloadableTicketExitQrWithoutMutation", async () => {
+    const fetchMock = stubWebPayFetch({
+      resolvePayload: { ...successResponse, paymentStatus: "Paid" }
+    });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    window.history.pushState({}, "", "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: /^exit qr code$/i })).toBeInTheDocument();
+    const qrImage = await screen.findByRole("img", { name: /^exit qr code$/i });
+    expect(qrImage).toHaveAttribute("src", "data:image/png;base64,ZXhpdC1xcg==");
+    expect(documentDownloadMocks.qrToDataUrl).toHaveBeenCalledWith(
+      "TICKET-TEST-023",
+      expect.objectContaining({ errorCorrectionLevel: "M" })
+    );
+    expect(documentDownloadMocks.qrToDataUrl).not.toHaveBeenCalledWith(
+      successResponse.paymentAttemptId,
+      expect.anything()
+    );
+    expect(documentDownloadMocks.qrToDataUrl).not.toHaveBeenCalledWith(successResponse.plateNumber, expect.anything());
+    expect(screen.getByText("Present this QR code to the scanner at the exit validator.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /download exit qr code/i }));
+
+    const downloadedLink = document.querySelector<HTMLAnchorElement>('a[download="ExitPass-Ticket-TICKET-TEST-023.png"]');
+    expect(downloadedLink).toBeNull();
+    expect(anchorClick).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls.filter((call) => (call[1] as RequestInit | undefined)?.method === "POST")).toHaveLength(0);
+  });
+
+  it("SalesInvoice_WhenAuthoritativeChannelIsAptCash_ShowsTenderedAmountAndChange", async () => {
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        paymentStatus: "Paid",
+        paymentMethod: "CASH",
+        paymentProvider: null
+      },
+      receiptPayload: {
+        ...salesInvoicePresentationResponse,
+        authoritativePresentation: {
+          presentation: {
+            ...salesInvoicePresentationResponse.authoritativePresentation.presentation,
+            sections: [
+              ...salesInvoicePresentationResponse.authoritativePresentation.presentation.sections.filter((section) => section.name !== "tenders"),
+              {
+                name: "tenders",
+                rows: [
+                  { key: "tenders[0000].tenderTypeCodeKey", label: "Tender Type", displayValue: "CASH" },
+                  { key: "tenders[0000].amount", label: "Tender Amount", displayValue: "PHP 60.00" },
+                  { key: "tenders[0000].cashReceived", label: "Cash Received", displayValue: "PHP 80.00" },
+                  { key: "tenders[0000].change", label: "Change", displayValue: "PHP 20.00" }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    });
+    window.history.pushState({}, "", "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444");
+
+    render(<App />);
+
+    const printableInvoice = await screen.findByLabelText("Printable Sales Invoice");
+    expect(printableInvoice).toHaveTextContent("CASH");
+    expect(printableInvoice).toHaveTextContent("Tendered Amount");
+    expect(printableInvoice).toHaveTextContent("P 80.00");
+    expect(printableInvoice).toHaveTextContent("Change");
+    expect(printableInvoice).toHaveTextContent("P 20.00");
+    expect(printableInvoice).not.toHaveTextContent("Total Paid");
   });
 
   it("WebPayReturnPage_WhenReceiptIsPending_DoesNotFabricateFallbackReceipt", async () => {
-    stubWebPayFetch({
+    const fetchMock = stubWebPayFetch({
       resolvePayload: {
         ...successResponse,
         paymentStatus: "Paid"
@@ -2375,7 +2658,7 @@ describe("ExitPass WebPay UI", () => {
     window.history.pushState(
       {},
       "",
-      "/webpay/payment-return?ticketReference=WEBPAY-20260523-PENDING&paymentAttemptId=44444444-4444-4444-4444-444444444444"
+      "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444"
     );
 
     render(<App />);
@@ -2383,6 +2666,12 @@ describe("ExitPass WebPay UI", () => {
     expect(await screen.findByText("Your payment is recorded. The Sales Invoice is still being prepared.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /payment receipt/i })).not.toBeInTheDocument();
     expect(screen.queryByText("SI-20260523-000001")).not.toBeInTheDocument();
+    const initialReceiptRequests = routeCalls(fetchMock, "/receipt-presentation").length;
+
+    await userEvent.click(screen.getByRole("button", { name: /retrieve sales invoice/i }));
+
+    await waitFor(() => expect(routeCalls(fetchMock, "/receipt-presentation")).toHaveLength(initialReceiptRequests + 1));
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
   });
 
   it("WebPayReturnPage_WhenPaymentFailed_ShowsDeterministicFailure", async () => {
@@ -2392,7 +2681,7 @@ describe("ExitPass WebPay UI", () => {
         paymentStatus: "Failed"
       }
     });
-    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-FAILED");
+    window.history.pushState({}, "", "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444");
 
     render(<App />);
 
@@ -2407,7 +2696,7 @@ describe("ExitPass WebPay UI", () => {
         paymentStatus: "Expired"
       }
     });
-    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-EXPIRED");
+    window.history.pushState({}, "", "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444");
 
     render(<App />);
 
@@ -2431,13 +2720,17 @@ describe("ExitPass WebPay UI", () => {
         }
       }
     });
-    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-PAID");
+    window.history.pushState({}, "", "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444");
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: /proceed to exit/i })).toBeInTheDocument();
-    expect(screen.getByText("Proceed to the exit lane and present your ticket.")).toBeInTheDocument();
-    expect(screen.getByText("Lane: Main Exit")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^exit instruction$/i })).toBeInTheDocument();
+    expect(screen.getByText("Proceed to exit")).toBeInTheDocument();
+    expect(screen.getByText(/^Exit by /)).toBeInTheDocument();
+    expect(screen.getByText("Additional parking charges will apply if you do not exit by the expiry time.")).toBeInTheDocument();
+    expect(screen.getByText("Do not close this page until you have exited the parking lot.")).toBeInTheDocument();
+    expect(screen.queryByText("Proceed to the exit lane and present your ticket.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Lane: Main Exit")).not.toBeInTheDocument();
     expect(screen.queryByText(/do-not-render/i)).not.toBeInTheDocument();
   });
 
@@ -2450,12 +2743,14 @@ describe("ExitPass WebPay UI", () => {
         exitAuthorizationStatus: null
       }
     });
-    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-PREPARING");
+    window.history.pushState({}, "", "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444");
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: /preparing exit authorization/i })).toBeInTheDocument();
-    expect(screen.getByText(/check status again shortly/i)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^exit instruction$/i })).toBeInTheDocument();
+    expect(screen.getByText("Exit authorization is being prepared")).toBeInTheDocument();
+    expect(screen.getByText("Please try again shortly.")).toBeInTheDocument();
+    expect(screen.queryByText("Proceed to exit")).not.toBeInTheDocument();
   });
 
   it("WebPayCancelledPage_AllowsRetryAndStatusRefresh", async () => {
@@ -2467,7 +2762,7 @@ describe("ExitPass WebPay UI", () => {
         parkingStatus: "PaymentRequired"
       }
     });
-    window.history.pushState({}, "", "/webpay/payment-cancelled?ticketReference=WEBPAY-20260523-FRESH-011");
+    window.history.pushState({}, "", "/webpay/payment-cancelled?paymentAttemptId=44444444-4444-4444-4444-444444444444");
 
     render(<App />);
 
@@ -2479,6 +2774,6 @@ describe("ExitPass WebPay UI", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: /check status/i }));
-    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(2));
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-attempts/44444444-4444-4444-4444-444444444444/status")).toHaveLength(2));
   });
 });

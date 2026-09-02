@@ -20,6 +20,12 @@ public static class WebPayReceiptPresentationEndpoints
         var group = app.MapGroup("/v1/webpay/payment-attempts")
             .WithTags("WebPay");
 
+        group.MapGet("/{paymentAttemptId:guid}/status", ReadPaymentAttemptStatusAsync)
+            .WithName("GetWebPayPaymentAttemptStatus")
+            .Produces<WebPayPaymentAttemptStatusResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound);
+
         group.MapGet("/{paymentAttemptId:guid}/receipt-presentation", ReadReceiptPresentationAsync)
             .WithName("GetWebPayReceiptPresentation")
             .Produces<WebPayReceiptPresentationResponse>(StatusCodes.Status200OK)
@@ -29,6 +35,53 @@ public static class WebPayReceiptPresentationEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status503ServiceUnavailable);
 
         return app;
+    }
+
+    private static async Task<IResult> ReadPaymentAttemptStatusAsync(
+        Guid paymentAttemptId,
+        HttpRequest request,
+        IWebPayPaymentAttemptStatusService service,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadCorrelationId(request, out var correlationId, out var headerError))
+        {
+            return Results.BadRequest(headerError);
+        }
+
+        try
+        {
+            var result = await service.GetAsync(paymentAttemptId, correlationId, cancellationToken)
+                .ConfigureAwait(false);
+            return Results.Ok(new WebPayPaymentAttemptStatusResponse(
+                result.PaymentAttemptId,
+                result.ParkingSessionId,
+                result.TariffSnapshotId,
+                result.SiteGroupId,
+                result.SiteId,
+                result.SiteGroupName,
+                result.SiteName,
+                result.TicketReference,
+                result.PlateNumber,
+                result.AmountMinorUnits,
+                result.Currency,
+                result.PaymentMethod,
+                result.PaymentProvider,
+                result.PaymentReference,
+                result.EntryTime,
+                result.PaymentTime,
+                result.PaymentStatus,
+                result.ParkingStatus,
+                result.ExitAuthorizationId,
+                result.ExitAuthorizationStatus,
+                result.ExitAuthorizationExpiresAt,
+                result.CorrelationId));
+        }
+        catch (WebPayPaymentAttemptStatusRejectedException ex)
+        {
+            return Results.Json(
+                BuildError(ex.ErrorCode, ex.Message, correlationId, ex.Retryable),
+                statusCode: ex.HttpStatusCode);
+        }
     }
 
     private static async Task<IResult> ReadReceiptPresentationAsync(

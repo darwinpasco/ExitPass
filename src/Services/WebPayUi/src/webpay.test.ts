@@ -755,7 +755,7 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(result.amountMinorUnits).toBe(12500);
   });
 
-  it("WebPay_WhenRetrievingPaymentStatus_UsesReadOnlyParkingSessionStatusPath", async () => {
+  it("WebPay_WhenRetrievingPaymentStatus_UsesReadOnlyPaymentAttemptStatusPath", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -769,13 +769,35 @@ describe("WebPay QR and payment intent helpers", () => {
     });
 
     const result = await retrievePaymentStatus(
-      { ticketReference: "TICKET-TEST-023", vendorSystemId: "HIKCENTRAL" },
+      "44444444-4444-4444-4444-444444444444",
+      "77777777-7777-7777-7777-777777777777",
       fetchMock as never
     );
 
-    expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/parking-session");
-    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("POST");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/webpay/payment-attempts/44444444-4444-4444-4444-444444444444/status"
+    );
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("GET");
     expect(result.paymentStatus).toBe("Paid");
+  });
+
+  it("WebPay_WhenPaymentAttemptStatusIsUnknown_FailsWithoutParkingIdentifierFallback", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ errorCode: "WEBPAY_PAYMENT_ATTEMPT_NOT_FOUND" })
+    });
+
+    await expect(
+      retrievePaymentStatus(
+        "44444444-4444-4444-4444-444444444444",
+        "77777777-7777-7777-7777-777777777777",
+        fetchMock as never
+      )
+    ).rejects.toThrow("Payment reference was not found.");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain("ticketReference");
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain("plateNumber");
   });
 
   it("WebPay_WhenRetrievingReceiptPresentation_UsesReadOnlyPaymentAttemptPresentationPath", async () => {

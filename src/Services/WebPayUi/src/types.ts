@@ -119,6 +119,10 @@ export type ParkingSessionResolveResponse = {
   statutoryDiscountStatus?: string | null;
   statutoryDiscountValidationStatus?: string | null;
   currency: string;
+  paymentMethod?: string | null;
+  paymentProvider?: string | null;
+  paymentReference?: string | null;
+  paymentTime?: string | null;
   correlationId: string;
   siteName?: string | null;
   ticketReference?: string | null;
@@ -140,17 +144,25 @@ export type ParkingSessionResolveResponse = {
   exitBy?: string | null;
 };
 
+export type WebPayPaymentAttemptStatusResponse = ParkingSessionResolveResponse & {
+  paymentAttemptId: string;
+  exitAuthorizationId?: string | null;
+};
+
 export type SalesInvoicePresentationRow = {
   key?: string | null;
   label?: string | null;
   displayValue?: string | number | null;
   value?: string | number | null;
+  rawValue?: string | number | null;
+  valueKind?: string | null;
   posture?: string | null;
 };
 
 export type SalesInvoicePresentationSection = {
   key?: string | null;
   name?: string | null;
+  label?: string | null;
   title?: string | null;
   rows?: SalesInvoicePresentationRow[] | null;
 };

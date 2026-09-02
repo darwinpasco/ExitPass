@@ -76,6 +76,14 @@ public interface ICentralPmsWebPayClient
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Reads canonical payment and parking context by durable payment-attempt identity.
+    /// </summary>
+    Task<CentralPmsWebPayResult<CentralPmsWebPayPaymentAttemptStatus>> GetPaymentAttemptStatusAsync(
+        Guid paymentAttemptId,
+        Guid correlationId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Resolves Central PMS statutory parking local-ordinance availability for a WebPay parking session.
     /// </summary>
     Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability>> ResolveStatutoryDiscountAvailabilityAsync(

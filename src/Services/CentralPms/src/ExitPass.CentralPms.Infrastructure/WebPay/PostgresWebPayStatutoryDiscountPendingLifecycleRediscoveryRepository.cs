@@ -466,3 +466,117 @@ public sealed class PostgresWebPayStatutoryDiscountPendingLifecycleRediscoveryRe
         return reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<DateTimeOffset>(ordinal);
     }
 }
+
+public sealed class PostgresWebPayPaymentAttemptStatusRepository : IWebPayPaymentAttemptStatusRepository
+{
+    private readonly string _connectionString;
+
+    public PostgresWebPayPaymentAttemptStatusRepository(string connectionString)
+    {
+        _connectionString = connectionString;
+    }
+
+    public async Task<WebPayPaymentAttemptStatusRecord?> FindAsync(
+        Guid paymentAttemptId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                pa.payment_attempt_id,
+                pa.parking_session_id,
+                pa.tariff_snapshot_id,
+                ps.site_group_id,
+                ps.site_id,
+                sg.site_group_name,
+                s.site_name,
+                CASE
+                    WHEN ps.ticket_number_masked IS NOT NULL THEN ps.ticket_number_masked
+                    WHEN ps.plate_number_masked IS NULL THEN ps.vendor_session_ref
+                    ELSE NULL
+                END AS ticket_reference,
+                ps.plate_number_masked AS plate_number,
+                pa.amount,
+                pa.currency_code::text,
+                rail.rail_code AS payment_method,
+                rail.provider_code AS payment_provider,
+                latest_confirmation.provider_transaction_ref AS payment_reference,
+                COALESCE(ps.entry_at, ps.created_at) AS entry_time,
+                latest_confirmation.confirmed_at AS payment_time,
+                pa.attempt_status::text AS payment_status,
+                ps.session_status::text AS parking_status,
+                ea.exit_authorization_id,
+                ea.authorization_status::text AS exit_authorization_status,
+                ea.expires_at AS exit_authorization_expires_at
+            FROM core.payment_attempts AS pa
+            INNER JOIN core.parking_sessions AS ps
+                ON ps.parking_session_id = pa.parking_session_id
+            LEFT JOIN payments.payment_rails AS rail
+                ON rail.payment_rail_id = pa.payment_rail_id
+            LEFT JOIN sites.sites AS s
+                ON s.site_id = ps.site_id
+            LEFT JOIN sites.site_groups AS sg
+                ON sg.site_group_id = ps.site_group_id
+            LEFT JOIN LATERAL (
+                SELECT confirmation.confirmed_at, confirmation.provider_transaction_ref
+                FROM core.payment_confirmations AS confirmation
+                WHERE confirmation.payment_attempt_id = pa.payment_attempt_id
+                ORDER BY confirmation.confirmed_at DESC, confirmation.payment_confirmation_id DESC
+                LIMIT 1
+            ) AS latest_confirmation ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    exit_auth.exit_authorization_id,
+                    exit_auth.authorization_status,
+                    exit_auth.expires_at
+                FROM core.exit_authorizations AS exit_auth
+                WHERE exit_auth.payment_attempt_id = pa.payment_attempt_id
+                ORDER BY exit_auth.issued_at DESC, exit_auth.exit_authorization_id DESC
+                LIMIT 1
+            ) AS ea ON true
+            WHERE pa.payment_attempt_id = @payment_attempt_id
+            LIMIT 1;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 30 };
+        command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new WebPayPaymentAttemptStatusRecord(
+            reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
+            reader.GetGuid(reader.GetOrdinal("parking_session_id")),
+            reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
+            reader.GetGuid(reader.GetOrdinal("site_group_id")),
+            reader.GetGuid(reader.GetOrdinal("site_id")),
+            ReadNullableString(reader, "site_group_name"),
+            ReadNullableString(reader, "site_name"),
+            ReadNullableString(reader, "ticket_reference"),
+            ReadNullableString(reader, "plate_number"),
+            checked((long)decimal.Round(reader.GetDecimal(reader.GetOrdinal("amount")) * 100m, 0, MidpointRounding.AwayFromZero)),
+            reader.GetString(reader.GetOrdinal("currency_code")).Trim().ToUpperInvariant(),
+            ReadNullableString(reader, "payment_method"),
+            ReadNullableString(reader, "payment_provider"),
+            ReadNullableString(reader, "payment_reference"),
+            ReadNullableDateTimeOffset(reader, "entry_time"),
+            ReadNullableDateTimeOffset(reader, "payment_time"),
+            reader.GetString(reader.GetOrdinal("payment_status")),
+            reader.GetString(reader.GetOrdinal("parking_status")),
+            ReadNullableGuid(reader, "exit_authorization_id"),
+            ReadNullableString(reader, "exit_authorization_status"),
+            ReadNullableDateTimeOffset(reader, "exit_authorization_expires_at"));
+    }
+
+    private static string? ReadNullableString(NpgsqlDataReader reader, string name) =>
+        reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetString(reader.GetOrdinal(name));
+
+    private static Guid? ReadNullableGuid(NpgsqlDataReader reader, string name) =>
+        reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetGuid(reader.GetOrdinal(name));
+
+    private static DateTimeOffset? ReadNullableDateTimeOffset(NpgsqlDataReader reader, string name) =>
+        reader.IsDBNull(reader.GetOrdinal(name)) ? null : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal(name));
+}

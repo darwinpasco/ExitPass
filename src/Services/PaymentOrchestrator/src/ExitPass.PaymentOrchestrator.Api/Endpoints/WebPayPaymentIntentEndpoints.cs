@@ -351,6 +351,64 @@ public static class WebPayPaymentIntentEndpoints
         .Produces(StatusCodes.Status502BadGateway)
         .Produces(StatusCodes.Status503ServiceUnavailable);
 
+        app.MapGet("/v1/webpay/payment-attempts/{paymentAttemptId:guid}/status", async (
+            Guid paymentAttemptId,
+            ICentralPmsWebPayClient centralPmsClient,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            var correlationId = ReadOrCreateCorrelationId(httpContext);
+            var result = await centralPmsClient.GetPaymentAttemptStatusAsync(
+                    paymentAttemptId,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (result.Succeeded && result.Value is not null)
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = result.Value.CorrelationId.ToString();
+                var value = result.Value;
+                return Results.Ok(new WebPayPaymentAttemptStatusResponse(
+                    value.PaymentAttemptId,
+                    value.ParkingSessionId,
+                    value.TariffSnapshotId,
+                    value.SiteGroupId,
+                    value.SiteId,
+                    value.SiteGroupName,
+                    value.SiteName,
+                    value.TicketReference,
+                    value.PlateNumber,
+                    value.AmountMinorUnits,
+                    value.Currency,
+                    value.PaymentMethod,
+                    value.PaymentProvider,
+                    value.PaymentReference,
+                    value.EntryTime,
+                    value.PaymentTime,
+                    value.PaymentStatus,
+                    value.ParkingStatus,
+                    value.ExitAuthorizationId,
+                    value.ExitAuthorizationStatus,
+                    value.ExitAuthorizationExpiresAt,
+                    value.CorrelationId));
+            }
+
+            var error = result.Error ?? new CentralPmsWebPayError(
+                StatusCodes.Status502BadGateway,
+                "WEBPAY_PAYMENT_ATTEMPT_STATUS_READ_FAILED",
+                "Payment status could not be retrieved.",
+                true,
+                correlationId);
+            httpContext.Response.Headers["X-Correlation-Id"] = (error.CorrelationId ?? correlationId).ToString();
+            return Results.Json(BuildErrorResponse(error, correlationId), statusCode: error.StatusCode);
+        })
+        .WithName("GetWebPayPaymentAttemptStatus")
+        .Produces<WebPayPaymentAttemptStatusResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status502BadGateway)
+        .Produces(StatusCodes.Status503ServiceUnavailable);
+
         app.MapGet("/v1/webpay/payment-attempts/{paymentAttemptId:guid}/receipt-presentation", async (
             Guid paymentAttemptId,
             ICentralPmsWebPayClient centralPmsClient,

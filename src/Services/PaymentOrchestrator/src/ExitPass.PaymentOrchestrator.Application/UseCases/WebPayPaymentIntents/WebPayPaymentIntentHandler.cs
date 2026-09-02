@@ -272,7 +272,7 @@ public sealed class WebPayPaymentIntentHandler
             return replayResult;
         }
 
-        var customerDisplayName = BuildCustomerDisplayName(resolvedParking);
+        var customerDisplayName = BuildCustomerDisplayName();
         var customerDescription = BuildCustomerDescription(resolvedParking);
         var metadata = BuildProviderMetadata(
             attempt.PaymentAttemptId,
@@ -285,14 +285,12 @@ public sealed class WebPayPaymentIntentHandler
             var successUrl = BuildReturnUrl(
                 _returnUrlOptions.PublicBaseUrl,
                 _returnUrlOptions.PaymentSuccessPath,
-                resolvedParking,
                 attempt.PaymentAttemptId,
                 correlationId,
                 "success");
             var cancelUrl = BuildReturnUrl(
                 _returnUrlOptions.PublicBaseUrl,
                 _returnUrlOptions.PaymentCancelPath,
-                resolvedParking,
                 attempt.PaymentAttemptId,
                 correlationId,
                 "cancelled");
@@ -1297,21 +1295,13 @@ public sealed class WebPayPaymentIntentHandler
         return $"webpay-recover-orphan:{paymentAttemptId:N}:{correlationId:N}";
     }
 
-    private static string BuildCustomerDisplayName(CentralPmsResolvedParking parking)
-    {
-        var ticketReference = BlankToNull(parking.TicketReference);
-        return ticketReference is null
-            ? "ExitPass Parking Fee"
-            : $"ExitPass Parking Fee - {ticketReference}";
-    }
+    private static string BuildCustomerDisplayName() => "ExitPass Parking Fee";
 
     private static string BuildCustomerDescription(CentralPmsResolvedParking parking)
     {
         var parts = new List<string>();
 
         AddDisplayPart(parts, "Site", WebPayDisplayNameSanitizer.ResolveSiteName(parking.SiteName));
-        AddDisplayPart(parts, "Ticket", parking.TicketReference);
-        AddDisplayPart(parts, "Plate", parking.PlateNumber);
 
         return parts.Count == 0
             ? "ExitPass Parking Fee"
@@ -1335,16 +1325,12 @@ public sealed class WebPayPaymentIntentHandler
         };
 
         AddMetadata(metadata, "site_name", WebPayDisplayNameSanitizer.ResolveSiteName(parking.SiteName));
-        AddMetadata(metadata, "ticket_reference", parking.TicketReference);
-        AddMetadata(metadata, "plate_number", parking.PlateNumber);
-
         return metadata;
     }
 
     private static string BuildReturnUrl(
         string publicBaseUrl,
         string configuredPath,
-        CentralPmsResolvedParking parking,
         Guid paymentAttemptId,
         Guid correlationId,
         string result)
@@ -1370,12 +1356,6 @@ public sealed class WebPayPaymentIntentHandler
             $"correlationId={Uri.EscapeDataString(correlationId.ToString())}",
             $"result={Uri.EscapeDataString(result)}"
         };
-
-        var ticketReference = BlankToNull(parking.TicketReference);
-        if (ticketReference is not null)
-        {
-            query.Insert(0, $"ticketReference={Uri.EscapeDataString(ticketReference)}");
-        }
 
         builder.Query = string.Join("&", query);
         return builder.Uri.ToString();

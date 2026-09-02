@@ -65,3 +65,75 @@ public sealed class WebPayReceiptPresentationRejectedException : Exception
 
     public bool Retryable { get; }
 }
+
+public interface IWebPayPaymentAttemptStatusService
+{
+    Task<WebPayPaymentAttemptStatus> GetAsync(Guid paymentAttemptId, Guid correlationId, CancellationToken cancellationToken);
+}
+
+public interface IWebPayPaymentAttemptStatusRepository
+{
+    Task<WebPayPaymentAttemptStatusRecord?> FindAsync(Guid paymentAttemptId, CancellationToken cancellationToken);
+}
+
+public sealed record WebPayPaymentAttemptStatusRecord(
+    Guid PaymentAttemptId,
+    Guid ParkingSessionId,
+    Guid TariffSnapshotId,
+    Guid SiteGroupId,
+    Guid SiteId,
+    string? SiteGroupName,
+    string? SiteName,
+    string? TicketReference,
+    string? PlateNumber,
+    long AmountMinorUnits,
+    string Currency,
+    string? PaymentMethod,
+    string? PaymentProvider,
+    string? PaymentReference,
+    DateTimeOffset? EntryTime,
+    DateTimeOffset? PaymentTime,
+    string PaymentStatus,
+    string ParkingStatus,
+    Guid? ExitAuthorizationId,
+    string? ExitAuthorizationStatus,
+    DateTimeOffset? ExitAuthorizationExpiresAt);
+
+public sealed record WebPayPaymentAttemptStatus(
+    Guid PaymentAttemptId,
+    Guid ParkingSessionId,
+    Guid TariffSnapshotId,
+    Guid SiteGroupId,
+    Guid SiteId,
+    string? SiteGroupName,
+    string? SiteName,
+    string? TicketReference,
+    string? PlateNumber,
+    long AmountMinorUnits,
+    string Currency,
+    string? PaymentMethod,
+    string? PaymentProvider,
+    string? PaymentReference,
+    DateTimeOffset? EntryTime,
+    DateTimeOffset? PaymentTime,
+    string PaymentStatus,
+    string ParkingStatus,
+    Guid? ExitAuthorizationId,
+    string? ExitAuthorizationStatus,
+    DateTimeOffset? ExitAuthorizationExpiresAt,
+    Guid CorrelationId);
+
+public sealed class WebPayPaymentAttemptStatusRejectedException : Exception
+{
+    public WebPayPaymentAttemptStatusRejectedException(string errorCode, string message, int httpStatusCode, bool retryable)
+        : base(message)
+    {
+        ErrorCode = errorCode;
+        HttpStatusCode = httpStatusCode;
+        Retryable = retryable;
+    }
+
+    public string ErrorCode { get; }
+    public int HttpStatusCode { get; }
+    public bool Retryable { get; }
+}

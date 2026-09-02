@@ -296,6 +296,60 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
     }
 
     /// <inheritdoc />
+    public async Task<CentralPmsWebPayResult<CentralPmsWebPayPaymentAttemptStatus>> GetPaymentAttemptStatusAsync(
+        Guid paymentAttemptId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            new Uri(_webPayPaymentAttemptsBaseUri, $"{paymentAttemptId:D}/status"));
+        request.Headers.Add("X-Correlation-Id", correlationId.ToString());
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return CentralPmsWebPayResult<CentralPmsWebPayPaymentAttemptStatus>.Failure(
+                ReadError((int)response.StatusCode, responseBody, "WEBPAY_PAYMENT_ATTEMPT_STATUS_READ_FAILED"));
+        }
+
+        var payload = JsonSerializer.Deserialize<WebPayPaymentAttemptStatusResponse>(responseBody, JsonOptions);
+        if (payload is null)
+        {
+            return CentralPmsWebPayResult<CentralPmsWebPayPaymentAttemptStatus>.Failure(new CentralPmsWebPayError(
+                502,
+                "MALFORMED_WEBPAY_PAYMENT_ATTEMPT_STATUS_RESPONSE",
+                "Central PMS payment status response could not be parsed.",
+                true));
+        }
+
+        return CentralPmsWebPayResult<CentralPmsWebPayPaymentAttemptStatus>.Success(new(
+            payload.PaymentAttemptId,
+            payload.ParkingSessionId,
+            payload.TariffSnapshotId,
+            payload.SiteGroupId,
+            payload.SiteId,
+            payload.SiteGroupName,
+            payload.SiteName,
+            payload.TicketReference,
+            payload.PlateNumber,
+            payload.AmountMinorUnits,
+            payload.Currency,
+            payload.PaymentMethod,
+            payload.PaymentProvider,
+            payload.PaymentReference,
+            payload.EntryTime,
+            payload.PaymentTime,
+            payload.PaymentStatus,
+            payload.ParkingStatus,
+            payload.ExitAuthorizationId,
+            payload.ExitAuthorizationStatus,
+            payload.ExitAuthorizationExpiresAt,
+            payload.CorrelationId));
+    }
+
+    /// <inheritdoc />
     public async Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability>> ResolveStatutoryDiscountAvailabilityAsync(
         CentralPmsStatutoryDiscountAvailabilityRequest request,
         Guid correlationId,
@@ -1170,6 +1224,30 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         DateTimeOffset? VoidedAt,
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt,
+        Guid CorrelationId);
+
+    private sealed record WebPayPaymentAttemptStatusResponse(
+        Guid PaymentAttemptId,
+        Guid ParkingSessionId,
+        Guid TariffSnapshotId,
+        Guid SiteGroupId,
+        Guid SiteId,
+        string? SiteGroupName,
+        string? SiteName,
+        string? TicketReference,
+        string? PlateNumber,
+        long AmountMinorUnits,
+        string Currency,
+        string? PaymentMethod,
+        string? PaymentProvider,
+        string? PaymentReference,
+        DateTimeOffset? EntryTime,
+        DateTimeOffset? PaymentTime,
+        string PaymentStatus,
+        string ParkingStatus,
+        Guid? ExitAuthorizationId,
+        string? ExitAuthorizationStatus,
+        DateTimeOffset? ExitAuthorizationExpiresAt,
         Guid CorrelationId);
 
     private sealed record StatutoryDiscountDecisionRequest(

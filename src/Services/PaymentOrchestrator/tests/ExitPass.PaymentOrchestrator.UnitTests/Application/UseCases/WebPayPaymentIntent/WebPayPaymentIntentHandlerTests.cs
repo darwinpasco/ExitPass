@@ -121,10 +121,11 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.True(result.Succeeded);
         var request = fixture.CapturedInitiateRequest!;
         Assert.Equal("PAYMONGO", result.Response!.SelectedProviderCode);
-        Assert.Equal("ExitPass Parking Fee - WEBPAY-20260523-FRESH-001", request.CustomerDisplayName);
-        Assert.Equal(
-            "Site: WebPay Test Site 2026-05-23  Ticket: WEBPAY-20260523-FRESH-001  Plate: WEBPAY001",
-            request.Description);
+        Assert.Equal("ExitPass Parking Fee", request.CustomerDisplayName);
+        Assert.Equal("Site: WebPay Test Site 2026-05-23", request.Description);
+        Assert.DoesNotContain("WEBPAY-20260523-FRESH-001", request.CustomerDisplayName);
+        Assert.DoesNotContain("WEBPAY-20260523-FRESH-001", request.Description);
+        Assert.DoesNotContain("WEBPAY001", request.Description);
         Assert.DoesNotContain("Amount:", request.Description);
         Assert.DoesNotContain("PHP 100.00", request.Description);
         Assert.DoesNotMatch(GuidPattern, request.CustomerDisplayName);
@@ -133,17 +134,53 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Equal(ParkingSessionId.ToString(), request.Metadata["parking_session_id"]);
         Assert.Equal(TariffSnapshotId.ToString(), request.Metadata["tariff_snapshot_id"]);
         Assert.Equal(CorrelationId.ToString(), request.Metadata["correlation_id"]);
-        Assert.Equal("WEBPAY-20260523-FRESH-001", request.Metadata["ticket_reference"]);
+        Assert.DoesNotContain("ticket_reference", request.Metadata.Keys);
+        Assert.DoesNotContain("plate_number", request.Metadata.Keys);
         Assert.StartsWith("https://webpay.public.test/webpay/payment-return?", request.SuccessUrl);
-        Assert.Contains("ticketReference=WEBPAY-20260523-FRESH-001", request.SuccessUrl);
         Assert.Contains($"paymentAttemptId={PaymentAttemptId}", request.SuccessUrl);
         Assert.Contains($"correlationId={CorrelationId}", request.SuccessUrl);
         Assert.Contains("result=success", request.SuccessUrl);
+        Assert.DoesNotContain("ticketReference=", request.SuccessUrl);
+        Assert.DoesNotContain("plateNumber=", request.SuccessUrl);
         Assert.StartsWith("https://webpay.public.test/webpay/payment-cancelled?", request.CancelUrl);
-        Assert.Contains("ticketReference=WEBPAY-20260523-FRESH-001", request.CancelUrl);
         Assert.Contains($"paymentAttemptId={PaymentAttemptId}", request.CancelUrl);
         Assert.Contains($"correlationId={CorrelationId}", request.CancelUrl);
         Assert.Contains("result=cancelled", request.CancelUrl);
+        Assert.DoesNotContain("ticketReference=", request.CancelUrl);
+        Assert.DoesNotContain("plateNumber=", request.CancelUrl);
+    }
+
+    /// <summary>
+    /// Verifies a plate-originated checkout uses only its durable payment-attempt return identity.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenCreatingPlateOnlyCheckout_UsesPaymentAttemptInReturnUrls()
+    {
+        var fixture = CreateFixture("CARD", "PAYMONGO", null);
+        fixture.CentralPms.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
+            new CentralPmsResolvedParking(
+                ParkingSessionId,
+                TariffSnapshotId,
+                2500,
+                "PHP",
+                "HIKCENTRAL",
+                CorrelationId,
+                SiteName: "Restart 35 Site A",
+                TicketReference: null,
+                PlateNumber: "R35-PLATE-A",
+                SiteGroupId: SiteGroupId,
+                SiteId: SiteId));
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("CARD"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        var request = fixture.CapturedInitiateRequest!;
+        Assert.Contains($"paymentAttemptId={PaymentAttemptId}", request.SuccessUrl);
+        Assert.Contains($"paymentAttemptId={PaymentAttemptId}", request.CancelUrl);
+        Assert.DoesNotContain("plateNumber=", request.SuccessUrl);
+        Assert.DoesNotContain("plateNumber=", request.CancelUrl);
+        Assert.DoesNotContain("ticketReference=", request.SuccessUrl);
+        Assert.DoesNotContain("ticketReference=", request.CancelUrl);
     }
 
     /// <summary>
@@ -1398,6 +1435,14 @@ public sealed class WebPayPaymentIntentHandlerTests
         }
 
         public Task<CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>> GetReceiptPresentationAsync(
+            Guid paymentAttemptId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsWebPayPaymentAttemptStatus>> GetPaymentAttemptStatusAsync(
             Guid paymentAttemptId,
             Guid correlationId,
             CancellationToken cancellationToken)
