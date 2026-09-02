@@ -4,7 +4,9 @@ using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.Public.PaymentAttempts;
 using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
+using ExitPass.CentralPms.Infrastructure.WebPay;
 using FluentAssertions;
+using Npgsql;
 using Xunit;
 
 namespace ExitPass.CentralPms.ContractTests.Public;
@@ -39,6 +41,15 @@ public sealed class PaymentAttemptsContractTests : IClassFixture<CustomWebApplic
         _factory = factory;
     }
 
+    [Fact]
+    public void CreatePaymentAttemptRequest_exposes_customer_selected_payment_method()
+    {
+        typeof(CreatePaymentAttemptRequest)
+            .GetProperty("PaymentMethod")
+            .Should()
+            .NotBeNull("the selected customer method must survive payment-attempt creation");
+    }
+
     /// <summary>
     /// Verifies BRD 9.9 and SDD 10.2.4 creation response shape for a valid v1.2 payment attempt request.
     /// </summary>
@@ -61,9 +72,11 @@ public sealed class PaymentAttemptsContractTests : IClassFixture<CustomWebApplic
                 client,
                 context,
                 idempotencyKey: $"ctest-idem-{Guid.NewGuid():N}",
-                correlationId: context.CorrelationId);
+                correlationId: context.CorrelationId,
+                paymentMethod: "CARD");
 
-            response.StatusCode.Should().Be(HttpStatusCode.Created);
+            var raw = await response.Content.ReadAsStringAsync();
+            response.StatusCode.Should().Be(HttpStatusCode.Created, $"response body: {raw}");
 
             var payload = await response.Content.ReadFromJsonAsync<CreatePaymentAttemptResponse>();
             payload.Should().NotBeNull();
@@ -73,6 +86,13 @@ public sealed class PaymentAttemptsContractTests : IClassFixture<CustomWebApplic
             payload.WasReused.Should().BeFalse();
             payload.ProviderHandoff.Should().NotBeNull();
             payload.ProviderHandoff.Type.Should().NotBeNullOrWhiteSpace();
+
+            (await ReadPaymentMethodAsync(payload.PaymentAttemptId)).Should().Be("CARD");
+            var readback = await new PostgresWebPayPaymentAttemptStatusRepository(ConnectionString)
+                .FindAsync(payload.PaymentAttemptId, CancellationToken.None);
+            readback.Should().NotBeNull();
+            readback!.PaymentMethod.Should().Be("CARD");
+            readback.PaymentMethod.Should().NotBe("PAYMONGO_CHECKOUT_SESSION");
         }
         finally
         {
@@ -189,7 +209,8 @@ public sealed class PaymentAttemptsContractTests : IClassFixture<CustomWebApplic
         HttpClient client,
         PaymentTestContext context,
         string idempotencyKey,
-        Guid correlationId)
+        Guid correlationId,
+        string paymentMethod = "GCASH")
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/public/payment-attempts")
         {
@@ -197,7 +218,8 @@ public sealed class PaymentAttemptsContractTests : IClassFixture<CustomWebApplic
             {
                 ParkingSessionId = context.ParkingSessionId,
                 TariffSnapshotId = context.TariffSnapshotId,
-                PaymentProvider = "GCASH"
+                PaymentProvider = "GCASH",
+                PaymentMethod = paymentMethod
             })
         };
 
@@ -205,5 +227,16 @@ public sealed class PaymentAttemptsContractTests : IClassFixture<CustomWebApplic
         request.Headers.Add("X-Correlation-Id", correlationId.ToString());
 
         return await client.SendAsync(request);
+    }
+
+    private static async Task<string?> ReadPaymentMethodAsync(Guid paymentAttemptId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT payment_method_code FROM core.payment_attempts WHERE payment_attempt_id = @payment_attempt_id;",
+            connection);
+        command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
+        return await command.ExecuteScalarAsync() as string;
     }
 }

@@ -96,7 +96,8 @@ public sealed class HikCentralParkingClientTests
     [Fact]
     public async Task ResolveSession_WhenHikCentralReturnsActiveSession_ReturnsProviderNeutralSession()
     {
-        var client = CreateClient(new FakeHikCentralHandler(_ => SuccessfulFeeResponse("ABC123", "125.00")));
+        var client = CreateClient(new FakeHikCentralHandler(_ =>
+            SuccessfulFeeResponse("ABC123", "125.00", "3519351207107")));
 
         var result = await client.ResolveSessionAsync(
             new VendorParkingSessionLookupRequest("ABC123", null, Guid.NewGuid()),
@@ -105,6 +106,7 @@ public sealed class HikCentralParkingClientTests
         Assert.Equal(VendorParkingLookupStatus.Found, result.Status);
         Assert.Equal("HIKCENTRAL", result.Session?.VendorProviderCode);
         Assert.Equal("ABC123", result.Session?.PlateNumber);
+        Assert.Equal("3519351207107", result.Session?.TicketReference);
         Assert.Equal("ACTIVE", result.Session?.Status);
         Assert.Equal(12500, result.Session?.TariffQuote?.AmountMinor);
         Assert.Equal("RULE-1", result.Session?.TariffQuote?.TariffVersionReference);
@@ -849,7 +851,10 @@ public sealed class HikCentralParkingClientTests
         };
     }
 
-    private static HttpResponseMessage SuccessfulFeeResponse(string plateLicense, string fee)
+    private static HttpResponseMessage SuccessfulFeeResponse(
+        string plateLicense,
+        string fee,
+        string? cardNumber = null)
     {
         return JsonResponse($$"""
             {
@@ -857,6 +862,7 @@ public sealed class HikCentralParkingClientTests
               "msg": "Success",
               "data": {
                 "plateLicense": "{{plateLicense}}",
+                "cardNum": "{{cardNumber ?? string.Empty}}",
                 "parkingInTime": "2026-05-15T09:00:00+08:00",
                 "parkingDuration": 3600,
                 "feeRuleType": 1,

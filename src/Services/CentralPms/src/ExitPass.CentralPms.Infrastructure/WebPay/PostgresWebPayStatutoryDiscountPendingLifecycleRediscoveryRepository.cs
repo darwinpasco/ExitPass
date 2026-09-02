@@ -497,7 +497,7 @@ public sealed class PostgresWebPayPaymentAttemptStatusRepository : IWebPayPaymen
                 ps.plate_number_masked AS plate_number,
                 pa.amount,
                 pa.currency_code::text,
-                rail.rail_code AS payment_method,
+                pa.payment_method_code AS payment_method,
                 rail.provider_code AS payment_provider,
                 latest_confirmation.provider_transaction_ref AS payment_reference,
                 COALESCE(ps.entry_at, ps.created_at) AS entry_time,

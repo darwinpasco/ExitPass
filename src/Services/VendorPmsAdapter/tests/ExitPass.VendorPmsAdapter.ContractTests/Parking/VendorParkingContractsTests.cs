@@ -9,6 +9,12 @@ namespace ExitPass.VendorPmsAdapter.ContractTests.Parking;
 /// </summary>
 public sealed class VendorParkingContractsTests
 {
+    [Fact]
+    public void SessionContract_exposes_authoritative_ticket_reference()
+    {
+        Assert.NotNull(typeof(VendorParkingSessionDto).GetProperty("TicketReference"));
+    }
+
     /// <summary>
     /// Verifies that a successful session lookup serializes with provider-neutral field names.
     /// </summary>
@@ -25,7 +31,8 @@ public sealed class VendorParkingContractsTests
                 DateTimeOffset.Parse("2026-05-15T09:00:00+08:00"),
                 3600,
                 "ACTIVE",
-                new VendorTariffQuoteDto(12500, "PHP", "RULE-1", "Standard", DateTimeOffset.Parse("2026-05-15T10:00:00+08:00"))),
+                new VendorTariffQuoteDto(12500, "PHP", "RULE-1", "Standard", DateTimeOffset.Parse("2026-05-15T10:00:00+08:00")),
+                "TICKET-001"),
             null,
             false,
             correlationId);
@@ -35,6 +42,7 @@ public sealed class VendorParkingContractsTests
         Assert.Contains("\"status\":0", json);
         Assert.Contains("\"vendorProviderCode\":\"HIKCENTRAL\"", json);
         Assert.Contains("\"plateNumber\":\"ABC123\"", json);
+        Assert.Contains("\"ticketReference\":\"TICKET-001\"", json);
         Assert.Contains("\"amountMinor\":12500", json);
         Assert.DoesNotContain("plateLicense", json, StringComparison.OrdinalIgnoreCase);
     }

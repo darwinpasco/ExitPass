@@ -1107,7 +1107,8 @@ public sealed class HikCentralParkingClient(
                 entryTime,
                 data.ParkingDuration,
                 "ACTIVE",
-                tariffQuote);
+                tariffQuote,
+                NormalizeTicketReference(data.CardNum));
 
             return HikCentralParkingFeeLookupResult.Found(session, tariffQuote);
         }
@@ -1118,6 +1119,9 @@ public sealed class HikCentralParkingClient(
                 ? "Unknown"
                 : plateLicense.Trim();
         }
+
+        private static string? NormalizeTicketReference(string? cardNum) =>
+            string.IsNullOrWhiteSpace(cardNum) ? null : cardNum.Trim();
 
         private static string BuildSessionReference(string plateLicense, DateTimeOffset entryTime)
         {

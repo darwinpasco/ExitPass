@@ -21,6 +21,11 @@ public sealed class CreateOrReusePaymentAttemptCommand
     public string PaymentProviderCode { get; init; } = string.Empty;
 
     /// <summary>
+    /// Customer-selected method kept separate from the internal provider rail.
+    /// </summary>
+    public string? PaymentMethodCode { get; init; }
+
+    /// <summary>
     /// Idempotency key used to replay the same semantic request deterministically.
     /// </summary>
     public string IdempotencyKey { get; init; } = string.Empty;

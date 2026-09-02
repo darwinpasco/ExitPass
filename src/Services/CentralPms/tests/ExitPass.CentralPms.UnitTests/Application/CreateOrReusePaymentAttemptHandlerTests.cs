@@ -68,6 +68,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
                     r.ParkingSessionId == ParkingSessionId &&
                     r.TariffSnapshotId == TariffSnapshotId &&
                     r.PaymentProviderCode == "GCASH" &&
+                    r.PaymentMethodCode == "GCASH" &&
                     r.IdempotencyKey == "idem-001" &&
                     r.CorrelationId == CorrelationId &&
                     r.RequestedBy == "unit-test" &&
@@ -796,6 +797,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
             ParkingSessionId = ParkingSessionId,
             TariffSnapshotId = TariffSnapshotId,
             PaymentProviderCode = "GCASH",
+            PaymentMethodCode = "GCASH",
             IdempotencyKey = idempotencyKey,
             CorrelationId = CorrelationId,
             RequestedBy = "unit-test"

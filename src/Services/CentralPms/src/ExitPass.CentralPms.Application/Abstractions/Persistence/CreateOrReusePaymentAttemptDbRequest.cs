@@ -21,6 +21,11 @@ public sealed class CreateOrReusePaymentAttemptDbRequest
     public string PaymentProviderCode { get; init; } = string.Empty;
 
     /// <summary>
+    /// Customer-selected method to persist on the payment attempt.
+    /// </summary>
+    public string? PaymentMethodCode { get; init; }
+
+    /// <summary>
     /// Idempotency key used by the database routine to create or reuse deterministically.
     /// </summary>
     public string IdempotencyKey { get; init; } = string.Empty;

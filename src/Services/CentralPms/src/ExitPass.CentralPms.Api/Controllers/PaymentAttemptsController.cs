@@ -140,6 +140,7 @@ public sealed class PaymentAttemptsController : ControllerBase
                 ParkingSessionId = request.ParkingSessionId,
                 TariffSnapshotId = request.TariffSnapshotId,
                 PaymentProviderCode = request.PaymentProvider,
+                PaymentMethodCode = request.PaymentMethod,
                 IdempotencyKey = idempotencyKey!,
                 CorrelationId = Guid.Parse(correlationIdRaw!),
                 RequestedBy = "public-api"
