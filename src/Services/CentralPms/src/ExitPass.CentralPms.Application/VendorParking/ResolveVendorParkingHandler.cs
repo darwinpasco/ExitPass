@@ -201,7 +201,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             session.VendorSessionReference.Trim(),
             ResolveIdentifierType(command),
             Normalize(session.PlateNumber),
-            Normalize(command.TicketReference),
+            Normalize(session.TicketReference) ?? Normalize(command.TicketReference),
             session.EntryTime,
             ParkingSessionStatus.PaymentRequired);
 

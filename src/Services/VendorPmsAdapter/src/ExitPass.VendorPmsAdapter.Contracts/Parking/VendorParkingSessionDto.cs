@@ -10,6 +10,7 @@ namespace ExitPass.VendorPmsAdapter.Contracts.Parking;
 /// <param name="ParkingDurationSeconds">Parking duration in seconds when supplied by the vendor PMS.</param>
 /// <param name="Status">Provider-neutral session status.</param>
 /// <param name="TariffQuote">Current vendor tariff quote when returned with the session.</param>
+/// <param name="TicketReference">Authoritative vendor ticket or card reference, when returned.</param>
 public sealed record VendorParkingSessionDto(
     string VendorProviderCode,
     string VendorSessionReference,
@@ -17,4 +18,5 @@ public sealed record VendorParkingSessionDto(
     DateTimeOffset EntryTime,
     int? ParkingDurationSeconds,
     string Status,
-    VendorTariffQuoteDto? TariffQuote);
+    VendorTariffQuoteDto? TariffQuote,
+    string? TicketReference = null);

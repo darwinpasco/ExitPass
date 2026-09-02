@@ -1,6 +1,7 @@
 using System.Data;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace ExitPass.CentralPms.Infrastructure.Persistence.Routines;
 
@@ -43,21 +44,32 @@ public sealed class PaymentAttemptDbRoutineGateway : IPaymentAttemptDbRoutineGat
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
-        await using var command = BuildCommand(connection, request);
-        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
-
-        if (!await reader.ReadAsync(cancellationToken))
+        CreateOrReusePaymentAttemptDbResult result;
+        await using (var command = BuildCommand(connection, transaction, request))
+        await using (var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken))
         {
-            throw new InvalidOperationException("The database routine returned no rows.");
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                throw new InvalidOperationException("The database routine returned no rows.");
+            }
+
+            result = Map(reader, request.IdempotencyKey);
         }
 
-        return Map(reader, request.IdempotencyKey);
+        await StorePaymentMethodAsync(connection, transaction, result.PaymentAttemptId, request, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 
-    private static NpgsqlCommand BuildCommand(NpgsqlConnection connection, CreateOrReusePaymentAttemptDbRequest request)
+    private static NpgsqlCommand BuildCommand(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CreateOrReusePaymentAttemptDbRequest request)
     {
         var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = @"
             SELECT *
             FROM core.create_or_reuse_payment_attempt(
@@ -80,6 +92,45 @@ public sealed class PaymentAttemptDbRoutineGateway : IPaymentAttemptDbRoutineGat
 
         return command;
     }
+
+    private static async Task StorePaymentMethodAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid paymentAttemptId,
+        CreateOrReusePaymentAttemptDbRequest request,
+        CancellationToken cancellationToken)
+    {
+        var paymentMethod = NormalizeOptional(request.PaymentMethodCode);
+        if (paymentMethod is null)
+        {
+            return;
+        }
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE core.payment_attempts
+            SET
+                payment_method_code = @payment_method_code,
+                updated_at = CASE WHEN payment_method_code IS NULL THEN @now ELSE updated_at END,
+                row_version = CASE WHEN payment_method_code IS NULL THEN row_version + 1 ELSE row_version END
+            WHERE payment_attempt_id = @payment_attempt_id
+              AND (payment_method_code IS NULL OR payment_method_code = @payment_method_code)
+            RETURNING payment_method_code;
+            """;
+        command.Parameters.Add("payment_method_code", NpgsqlDbType.Text).Value = paymentMethod;
+        command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
+        command.Parameters.AddWithValue("now", request.RequestedAt);
+
+        if (await command.ExecuteScalarAsync(cancellationToken) is not string storedMethod ||
+            !string.Equals(storedMethod, paymentMethod, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("The payment method does not match the existing payment attempt.");
+        }
+    }
+
+    private static string? NormalizeOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
 
     private static CreateOrReusePaymentAttemptDbResult Map(IDataRecord record, string idempotencyKey)
     {

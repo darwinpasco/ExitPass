@@ -2490,7 +2490,8 @@ describe("ExitPass WebPay UI", () => {
       resolvePayload: {
         ...successResponse,
         paymentStatus: "Paid",
-        parkingStatus: "PaymentRequired"
+        parkingStatus: "PaymentRequired",
+        paymentMethod: "CARD"
       }
     });
     window.history.pushState(
@@ -2526,7 +2527,7 @@ describe("ExitPass WebPay UI", () => {
     const printableInvoice = screen.getByLabelText("Printable Sales Invoice");
     expect(printableInvoice).toHaveTextContent("Ticket Number");
     expect(printableInvoice).toHaveTextContent("TICKET-TEST-023");
-    expect(printableInvoice).toHaveTextContent("QRPH");
+    expect(printableInvoice).toHaveTextContent("CARD");
     expect(printableInvoice).toHaveTextContent("PayMongo");
     expect(printableInvoice).toHaveTextContent("VAT BREAKDOWN");
     expect(printableInvoice).toHaveTextContent("VATable Sales");

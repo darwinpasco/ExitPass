@@ -555,6 +555,7 @@ CREATE TABLE IF NOT EXISTS core.payment_attempts (
     tariff_snapshot_id uuid NOT NULL,
     idempotency_key varchar(128) NOT NULL,
     payment_rail_id uuid,
+    payment_method_code varchar(32),
     currency_code char(3) NOT NULL,
     amount numeric(18,2) NOT NULL,
     attempt_status core.payment_attempt_status_enum NOT NULL,
@@ -576,6 +577,7 @@ COMMENT ON COLUMN core.payment_attempts.parking_session_id IS 'Parking session b
 COMMENT ON COLUMN core.payment_attempts.tariff_snapshot_id IS 'Immutable payable basis used by this attempt.';
 COMMENT ON COLUMN core.payment_attempts.idempotency_key IS 'Client or service-supplied idempotency key.';
 COMMENT ON COLUMN core.payment_attempts.payment_rail_id IS 'Intended or selected payment rail.';
+COMMENT ON COLUMN core.payment_attempts.payment_method_code IS 'Customer-selected payment method kept separate from the internal provider rail.';
 COMMENT ON COLUMN core.payment_attempts.currency_code IS 'Currency code.';
 COMMENT ON COLUMN core.payment_attempts.amount IS 'Amount to be paid, copied from bound tariff snapshot.';
 COMMENT ON COLUMN core.payment_attempts.attempt_status IS 'Lifecycle state of the payment attempt.';

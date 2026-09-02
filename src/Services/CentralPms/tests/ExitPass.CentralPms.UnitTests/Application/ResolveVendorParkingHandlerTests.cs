@@ -48,6 +48,7 @@ public sealed class ResolveVendorParkingHandlerTests
         result.ParkingSession.VendorSessionRef.Should().Be("VENDOR-SESSION-001");
         result.ParkingSession.IdentifierType.Should().Be("PLATE");
         result.ParkingSession.PlateNumber.Should().Be("ABC1234");
+        result.ParkingSession.TicketNumber.Should().Be("TICKET-001");
         result.ParkingSession.SessionStatus.Should().Be(ParkingSessionStatus.PaymentRequired);
         result.TariffSnapshot!.ParkingSessionId.Should().Be(result.ParkingSession.ParkingSessionId);
         result.TariffSnapshot.NetPayable.Should().Be(125.50m);
@@ -760,7 +761,8 @@ public sealed class ResolveVendorParkingHandlerTests
                 Now.AddHours(-2),
                 7200,
                 "PAYMENT_REQUIRED",
-                sessionQuote);
+                sessionQuote,
+                "TICKET-001");
 
             return new FakeVendorPmsParkingResolutionClient(
                 new VendorParkingSessionLookupResponse(VendorParkingLookupStatus.Found, session, null, false, CorrelationId),

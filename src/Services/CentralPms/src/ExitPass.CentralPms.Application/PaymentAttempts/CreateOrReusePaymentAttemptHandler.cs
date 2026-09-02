@@ -339,6 +339,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             ParkingSessionId = command.ParkingSessionId,
             TariffSnapshotId = command.TariffSnapshotId,
             PaymentProviderCode = command.PaymentProviderCode,
+            PaymentMethodCode = command.PaymentMethodCode,
             IdempotencyKey = command.IdempotencyKey,
             RequestedBy = command.RequestedBy,
             CorrelationId = command.CorrelationId,

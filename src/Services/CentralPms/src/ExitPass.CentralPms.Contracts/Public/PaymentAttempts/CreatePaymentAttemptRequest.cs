@@ -30,4 +30,9 @@ public sealed class CreatePaymentAttemptRequest
     /// External payment provider code selected for the attempt, such as GCASH.
     /// </summary>
     public string PaymentProvider { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Customer-selected payment method, such as CARD, GCASH, MAYA, or QRPH.
+    /// </summary>
+    public string? PaymentMethod { get; set; }
 }
