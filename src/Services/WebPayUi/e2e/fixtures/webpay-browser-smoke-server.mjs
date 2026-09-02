@@ -7,11 +7,12 @@ const port = Number(process.env.WEBPAY_BROWSER_SMOKE_PORT ?? 5196);
 const root = normalize(join(fileURLToPath(new URL(".", import.meta.url)), "..", ".."));
 const distRoot = normalize(join(root, "dist"));
 const paymentAttemptIds = {
-  available: "10000000-0000-4000-8000-000000000001",
+  available: "965a9700-fb9d-4f4c-be0a-5b3cbf8d6357",
   pending: "10000000-0000-4000-8000-000000000002",
   temporarilyUnavailable: "10000000-0000-4000-8000-000000000003",
   terminalFailure: "10000000-0000-4000-8000-000000000004",
-  refreshPending: "10000000-0000-4000-8000-000000000005"
+  refreshPending: "10000000-0000-4000-8000-000000000005",
+  expired: "10000000-0000-4000-8000-000000000006"
 };
 
 let requestLog = [];
@@ -276,15 +277,15 @@ function buildSessionResponse(ticketReference, correlationId, plateNumber = "SMK
     fallbackProviderCode: null,
     routingReason: "PRIMARY_PROVIDER",
     exitInstruction:
-      ticketReference === "WEBPAY-ONLY-PAYMENT-MARKER"
+      ticketReference === "R35-TICKET-PREVIEW-0002"
         ? {
             status: "ISSUED",
-            message: "CENTRAL PMS EXIT AUTHORIZATION MARKER",
-            laneName: "Controlled Exit",
-            exitBy: "2026-07-21T10:30:00+08:00"
+            message: "Proceed to exit",
+            laneName: "Site A Exit",
+            exitBy: "2026-09-01T14:51:52+08:00"
           }
         : null,
-    exitAuthorizationStatus: ticketReference === "WEBPAY-ONLY-PAYMENT-MARKER" ? "ISSUED" : null,
+    exitAuthorizationStatus: ticketReference === "R35-TICKET-PREVIEW-0002" ? "ISSUED" : null,
     handoff: null,
     correlationId
   };
@@ -467,7 +468,7 @@ function buildPresentationResponse(paymentAttemptId, correlationId) {
     fiscalIssuanceReferenceId: "80000000-0000-4000-8000-000000000001",
     fiscalIssuanceState: "FISCAL_ISSUANCE_RECORDED",
     posFiscalDocumentId: "90000000-0000-4000-8000-000000000001",
-    fiscalDocumentNumber: "SI-WEBPAY-BROWSER-SMOKE-0001",
+    fiscalDocumentNumber: "SIA-00000002-A",
     fiscalDocumentStatus: "RECORDED",
     receiptAvailabilityState: "AVAILABLE",
     presentationVersion: "digital-sales-invoice-presentation-json-v1",
@@ -478,20 +479,94 @@ function buildPresentationResponse(paymentAttemptId, correlationId) {
         documentTitle: "Sales Invoice",
         sections: [
           {
-            key: "summary",
-            title: "Document Summary",
+            name: "salesInvoiceHeaderSnapshot",
+            title: "Sales Invoice Header Snapshot",
             rows: [
-              { key: "number", label: "Sales Invoice Number", displayValue: "SI-WEBPAY-BROWSER-SMOKE-0001" },
-              { key: "marker", label: "Business Marker", displayValue: "POS SERVER AUTHORITATIVE PRESENTATION" },
-              { key: "tender", label: "Tender Marker", displayValue: "CASHLESS" }
+              { key: "salesInvoiceHeaderSnapshot.registeredBusinessName", label: "Registered Business Name", displayValue: "ExitPass Test Parking Services Inc." },
+              { key: "salesInvoiceHeaderSnapshot.tin", label: "TIN", displayValue: "123-456-789-000" },
+              { key: "salesInvoiceHeaderSnapshot.posSerialNumber", label: "POS Serial Number", displayValue: "SN-IST-POS-A-0001" },
+              { key: "salesInvoiceHeaderSnapshot.machineIdentificationNumber", label: "MIN", displayValue: "MIN-IST-POS-A-0001" },
+              { key: "salesInvoiceHeaderSnapshot.parkingLocationDisplay", label: "Parking Location", displayValue: "Site A Parking" },
+              { key: "salesInvoiceHeaderSnapshot.terminalId", label: "Terminal ID", displayValue: "SITE-A-WEBPAY-01" },
+              { key: "salesInvoiceHeaderSnapshot.birAccreditationNumber", label: "BIR Accreditation Number", displayValue: "ACCR-IST-SITE-A-0001" },
+              { key: "salesInvoiceHeaderSnapshot.birAccreditationIssuedDate", label: "BIR Accreditation Issued Date", displayValue: "2026-01-02" },
+              { key: "salesInvoiceHeaderSnapshot.ptuNumber", label: "PTU Number", displayValue: "PTU-IST-SITE-A-0001" },
+              { key: "salesInvoiceHeaderSnapshot.ptuIssuedDate", label: "PTU Issued Date", displayValue: "2026-01-03" },
+              { key: "salesInvoiceHeaderSnapshot.salesInvoiceLegalStatement", label: "Sales Invoice Legal Statement", displayValue: "THIS SERVES AS YOUR SALES INVOICE" }
+            ]
+          },
+          {
+            name: "fiscalNumbering",
+            title: "Fiscal Numbering",
+            rows: [
+              { key: "fiscalNumbering.fiscalDocumentNumber", label: "Fiscal Document Number", displayValue: "SIA-00000002-A" },
+              { key: "fiscalNumbering.fiscalNumberAssignedAt", label: "Fiscal Number Assigned At", displayValue: "2026-09-01T14:36:52+08:00" }
+            ]
+          },
+          {
+            name: "lineItems",
+            title: "Line Items",
+            rows: [
+              { key: "lineItems[0000].description", label: "Description", displayValue: "Parking Fee" },
+              { key: "lineItems[0000].quantity", label: "Quantity", displayValue: "1" },
+              { key: "lineItems[0000].unitAmount", label: "Unit Amount", displayValue: "PHP 25.00" },
+              { key: "lineItems[0000].netAmount", label: "Net Amount", displayValue: "PHP 25.00" }
+            ]
+          },
+          {
+            name: "totals",
+            title: "Totals",
+            rows: [
+              { key: "totals.subtotal", label: "Subtotal", displayValue: "PHP 25.00" },
+              { key: "totals.vatableSales", label: "VATable Sales", displayValue: "PHP 22.32" },
+              { key: "totals.vatAmount", label: "VAT Amount", displayValue: "PHP 2.68" },
+              { key: "totals.vatExempt", label: "VAT Exempt", displayValue: "PHP 0.00" },
+              { key: "totals.zeroRated", label: "Zero Rated", displayValue: "PHP 0.00" }
+            ]
+          },
+          {
+            name: "tenders",
+            title: "Tenders",
+            rows: [
+              { key: "tenders[0000].tenderTypeCodeKey", label: "Tender Type", displayValue: "QRPH" },
+              { key: "tenders[0000].amount", label: "Tender Amount", displayValue: "PHP 25.00" }
             ]
           }
         ]
       }
     },
-    createdAt: "2026-07-21T10:01:00+08:00",
-    updatedAt: "2026-07-21T10:02:00+08:00",
+    createdAt: "2026-09-01T14:36:52+08:00",
+    updatedAt: "2026-09-01T14:36:52+08:00",
     correlationId
+  };
+}
+
+function ticketForPaymentAttempt(paymentAttemptId) {
+  if (paymentAttemptId === paymentAttemptIds.pending) return "WEBPAY-SMOKE-PENDING";
+  if (paymentAttemptId === paymentAttemptIds.temporarilyUnavailable) return "WEBPAY-SMOKE-TEMPORARY-UNAVAILABLE";
+  if (paymentAttemptId === paymentAttemptIds.terminalFailure) return "WEBPAY-SMOKE-TERMINAL-FAILURE";
+  if (paymentAttemptId === paymentAttemptIds.refreshPending) return "WEBPAY-SMOKE-REFRESH-PENDING";
+  return "R35-TICKET-PREVIEW-0002";
+}
+
+function buildPaymentAttemptStatusResponse(paymentAttemptId, correlationId) {
+  const ticketReference = ticketForPaymentAttempt(paymentAttemptId);
+  return {
+    ...buildSessionResponse(ticketReference, correlationId),
+    paymentAttemptId,
+    siteGroupName: "Test Site Group A",
+    siteName: "Site A Parking",
+    plateNumber: "R35-PLATE-B",
+    amountMinorUnits: 2500,
+    entryTime: "2026-09-01T14:25:00+08:00",
+    currentFeeCalculationTime: "2026-09-01T14:36:52+08:00",
+    durationParked: "12m",
+    paymentMethod: "QRPH",
+    paymentProvider: "PAYMONGO",
+    paymentReference: "pay_eTN1CLQY5o9Dbv41Gj9vDAMs",
+    paymentTime: "2026-09-01T14:36:52+08:00",
+    paymentStatus: "CONFIRMED",
+    parkingStatus: "Payment Completed"
   };
 }
 
@@ -1201,6 +1276,21 @@ async function handleApi(request, response, url) {
     latestStatutoryDecisionReadResponse = recordedResponse(200, responseBody);
     fixtureLifecycleState = buildFixtureLifecycleState({ ...fixtureLifecycleState, ...responseBody });
     writeJson(response, 200, responseBody);
+    return;
+  }
+
+  const statusMatch = url.pathname.match(/^\/v1\/webpay\/payment-attempts\/([^/]+)\/status$/);
+  if (request.method === "GET" && statusMatch) {
+    const paymentAttemptId = decodeURIComponent(statusMatch[1]);
+    const correlationId = typeof request.headers["x-correlation-id"] === "string" ? request.headers["x-correlation-id"] : "";
+    recordRequest(request, null);
+
+    if (paymentAttemptId === paymentAttemptIds.expired) {
+      writeJson(response, 404, errorResponse("WEBPAY_PAYMENT_ATTEMPT_NOT_FOUND", "Payment reference was not found.", false, correlationId));
+      return;
+    }
+
+    writeJson(response, 200, buildPaymentAttemptStatusResponse(paymentAttemptId, correlationId));
     return;
   }
 

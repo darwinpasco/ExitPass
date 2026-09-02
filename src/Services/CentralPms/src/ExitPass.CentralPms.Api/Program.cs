@@ -921,6 +921,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<ITerminalCashFiscalIssuanceService, TerminalCashFiscalIssuanceService>();
     builder.Services.AddScoped<ITerminalCashReceiptPresentationService, TerminalCashReceiptPresentationService>();
     builder.Services.AddScoped<IWebPayReceiptPresentationService, WebPayReceiptPresentationService>();
+    builder.Services.AddScoped<IWebPayPaymentAttemptStatusRepository>(_ =>
+        new PostgresWebPayPaymentAttemptStatusRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IWebPayPaymentAttemptStatusService, WebPayPaymentAttemptStatusService>();
     builder.Services.AddScoped<IWebPayStatutoryDiscountPendingLifecycleRediscoveryRepository>(_ =>
         new PostgresWebPayStatutoryDiscountPendingLifecycleRediscoveryRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<

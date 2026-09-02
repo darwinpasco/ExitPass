@@ -1,4 +1,6 @@
 import { FormEvent, KeyboardEvent, RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import QRCode from "qrcode";
 import { QrScanner } from "./QrScanner";
 import { StatutoryEvidenceCapture } from "./StatutoryEvidenceCapture";
 import { AutomaticMaskedIdInput } from "./AutomaticMaskedIdInput";
@@ -40,6 +42,7 @@ import type {
   PaymentIntentRequest,
   PaymentIntentResponse,
   PaymentMethod,
+  SalesInvoicePresentationRow,
   StatutoryDiscountEntitlementType,
   WebPayStatutoryDiscountAvailabilityResponse,
   WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse,
@@ -1842,23 +1845,21 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
   const [receipt, setReceipt] = useState<WebPayReceiptPresentationResponse | null>(null);
   const [receiptMessage, setReceiptMessage] = useState("");
   const [receiptCorrelationId, setReceiptCorrelationId] = useState("");
-  const ticketReference = getQueryParam("ticketReference");
-  const plateNumber = getQueryParam("plateNumber");
   const paymentAttemptId = getQueryParam("paymentAttemptId");
   const returnCorrelationId = getQueryParam("correlationId");
   const isCancelled = mode === "cancelled";
   const paymentStatusKind = classifyPaymentStatus(summary?.paymentStatus, isCancelled);
   const isPaid = paymentStatusKind === "confirmed";
-  const retryQuery = ticketReference
-    ? `ticketReference=${encodeURIComponent(ticketReference)}`
-    : plateNumber
-      ? `plateNumber=${encodeURIComponent(plateNumber)}`
+  const retryQuery = summary?.ticketReference
+    ? `ticketReference=${encodeURIComponent(summary.ticketReference)}`
+    : summary?.plateNumber
+      ? `plateNumber=${encodeURIComponent(summary.plateNumber)}`
       : "";
 
   async function refreshStatus() {
-    if (!ticketReference && !plateNumber) {
+    if (!paymentAttemptId) {
       setStatus("error");
-      setError("Parking reference is missing.");
+      setError("Payment reference is missing.");
       return;
     }
 
@@ -1870,10 +1871,7 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
     setReceiptCorrelationId("");
 
     try {
-      const response = await retrievePaymentStatus({
-        ticketReference: ticketReference || undefined,
-        plateNumber: plateNumber || undefined
-      });
+      const response = await retrievePaymentStatus(paymentAttemptId, returnCorrelationId ?? undefined);
       setSummary(response);
       setStatus("loaded");
     } catch (apiError) {
@@ -1885,7 +1883,7 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
 
   useEffect(() => {
     void refreshStatus();
-  }, [ticketReference, plateNumber]);
+  }, [paymentAttemptId, returnCorrelationId]);
 
   useEffect(() => {
     if (!isPaid || !paymentAttemptId) {
@@ -1958,8 +1956,8 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
       </header>
 
       <section className="return-panel" aria-live="polite">
-        <p className="eyebrow">{isCancelled ? "Payment cancelled" : "Payment return"}</p>
-        <h1>{status === "checking" ? "Checking payment status" : "Payment status"}</h1>
+        {!isPaid && <p className="eyebrow">{isCancelled ? "Payment cancelled" : "Payment return"}</p>}
+        {!isPaid && <h1>{status === "checking" ? "Checking payment status" : "Payment status"}</h1>}
 
         {status === "checking" && <p role="status">Checking payment status</p>}
 
@@ -1972,54 +1970,62 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
 
         {status === "loaded" && summary && (
           <>
-            <PaymentStatusPanel summary={summary} statusKind={paymentStatusKind} />
+            <PaymentStatusPanel
+              summary={summary}
+              statusKind={paymentStatusKind}
+            />
             {isPaid && (
-              <SalesInvoicePresentationPanel
-                receipt={receipt}
-                status={receiptStatus}
-                message={receiptMessage}
-                correlationId={receiptCorrelationId}
-                onRefresh={() => {
-                  if (paymentAttemptId) {
-                    setReceiptStatus("checking");
-                    void retrieveReceiptPresentation(paymentAttemptId, returnCorrelationId ?? undefined)
-                      .then((response) => {
-                        setReceipt(response);
-                        setReceiptStatus("available");
-                        setReceiptMessage("");
-                        setReceiptCorrelationId(response.correlationId);
-                      })
-                      .catch((apiError) => {
-                        if (apiError instanceof ReceiptPresentationError) {
-                          setReceiptStatus(apiError.retryable ? "pending" : "error");
-                          setReceiptMessage(apiError.message);
-                          setReceiptCorrelationId(apiError.correlationId ?? returnCorrelationId ?? "");
-                          return;
-                        }
+              <>
+                <SalesInvoicePresentationPanel
+                  receipt={receipt}
+                  parkingSummary={summary}
+                  status={receiptStatus}
+                  message={receiptMessage}
+                  correlationId={receiptCorrelationId}
+                  onRefresh={() => {
+                    if (paymentAttemptId) {
+                      setReceiptStatus("checking");
+                      void retrieveReceiptPresentation(paymentAttemptId, returnCorrelationId ?? undefined)
+                        .then((response) => {
+                          setReceipt(response);
+                          setReceiptStatus("available");
+                          setReceiptMessage("");
+                          setReceiptCorrelationId(response.correlationId);
+                        })
+                        .catch((apiError) => {
+                          if (apiError instanceof ReceiptPresentationError) {
+                            setReceiptStatus(apiError.retryable ? "pending" : "error");
+                            setReceiptMessage(apiError.message);
+                            setReceiptCorrelationId(apiError.correlationId ?? returnCorrelationId ?? "");
+                            return;
+                          }
 
-                        setReceiptStatus("error");
-                        setReceiptMessage("Sales Invoice retrieval is temporarily unavailable. Please try again shortly.");
-                        setReceiptCorrelationId(returnCorrelationId ?? "");
-                      });
-                  }
-                }}
-                canRefresh={Boolean(paymentAttemptId)}
-              />
+                          setReceiptStatus("error");
+                          setReceiptMessage("Sales Invoice retrieval is temporarily unavailable. Please try again shortly.");
+                          setReceiptCorrelationId(returnCorrelationId ?? "");
+                        });
+                    }
+                  }}
+                  canRefresh={Boolean(paymentAttemptId)}
+                />
+                <ExitQrCodePanel ticketReference={summary.ticketReference ?? undefined} />
+              </>
             )}
-            <ParkingSessionSummaryPanel result={summary} />
           </>
         )}
 
-        <div className="return-actions">
-          <button type="button" className="primary-button status-button" onClick={() => void refreshStatus()}>
-            Check Status
-          </button>
-          {(isCancelled || (status === "loaded" && !isPaid)) && retryQuery && (
-            <a className="primary-link" href={`/?${retryQuery}`}>
-              Retry Payment
-            </a>
-          )}
-        </div>
+        {!isPaid && (
+          <div className="return-actions">
+            <button type="button" className="primary-button status-button" onClick={() => void refreshStatus()}>
+              Check Status
+            </button>
+            {(isCancelled || status === "loaded") && retryQuery && (
+              <a className="primary-link" href={`/?${retryQuery}`}>
+                Retry Payment
+              </a>
+            )}
+          </div>
+        )}
       </section>
     </main>
   );
@@ -2102,37 +2108,70 @@ function PaymentStatusPanel({
   summary: ParkingSessionResolveResponse;
   statusKind: PaymentStatusKind;
 }) {
+  const [paymentReferenceCopyState, setPaymentReferenceCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const paymentReferenceCopyResetTimer = useRef<number | null>(null);
+  const paymentReference = summary.paymentReference?.trim() || "";
+
+  useEffect(
+    () => () => {
+      if (paymentReferenceCopyResetTimer.current !== null) {
+        window.clearTimeout(paymentReferenceCopyResetTimer.current);
+      }
+    },
+    []
+  );
+
+  const copyPaymentReference = async () => {
+    if (!paymentReference) {
+      return;
+    }
+
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard access is unavailable.");
+      }
+
+      await navigator.clipboard.writeText(paymentReference);
+      setPaymentReferenceCopyState("copied");
+    } catch {
+      setPaymentReferenceCopyState("failed");
+    }
+
+    if (paymentReferenceCopyResetTimer.current !== null) {
+      window.clearTimeout(paymentReferenceCopyResetTimer.current);
+    }
+
+    paymentReferenceCopyResetTimer.current = window.setTimeout(() => {
+      setPaymentReferenceCopyState("idle");
+      paymentReferenceCopyResetTimer.current = null;
+    }, 1800);
+  };
+
   if (statusKind === "confirmed") {
     return (
       <>
-        <div className="return-state is-paid">
-          <img src="/assets/illustrations/payment-success.svg" alt="" aria-hidden="true" />
-          <div>
-            <h2>Payment confirmed</h2>
-            <p>Payment is recorded for {displayValue(summary.ticketReference ?? summary.plateNumber)}.</p>
-          </div>
-        </div>
         <section className="payment-confirmation-panel" aria-labelledby="payment-confirmation-heading">
-          <p className="eyebrow">Payment confirmation</p>
-          <h2 id="payment-confirmation-heading">Payment recorded</h2>
-          <dl>
-            <div>
-              <dt>Amount Paid</dt>
-              <dd>{formatCurrencyAmount(summary.amountMinorUnits, summary.currency)}</dd>
+          <h2 id="payment-confirmation-heading">Payment Confirmation</h2>
+          <div className="payment-reference">
+            <span>Payment reference number:</span>
+            <div className="payment-reference-value">
+              <strong>{paymentReference || "Unavailable"}</strong>
+              <button
+                type="button"
+                className="copy-payment-reference"
+                aria-label="Copy payment reference number"
+                title="Copy payment reference number"
+                disabled={!paymentReference}
+                onClick={() => void copyPaymentReference()}
+              >
+                {paymentReferenceCopyState === "copied"
+                  ? "Copied"
+                  : paymentReferenceCopyState === "failed"
+                    ? "Copy unavailable"
+                    : "Copy"}
+              </button>
             </div>
-            <div>
-              <dt>Payment Status</dt>
-              <dd>{displayValue(summary.paymentStatus)}</dd>
-            </div>
-            <div>
-              <dt>Ticket</dt>
-              <dd>{displayValue(summary.ticketReference)}</dd>
-            </div>
-            <div>
-              <dt>Plate</dt>
-              <dd>{displayValue(summary.plateNumber)}</dd>
-            </div>
-          </dl>
+          </div>
         </section>
         <ExitInstructionPanel summary={summary} />
       </>
@@ -2153,6 +2192,7 @@ function PaymentStatusPanel({
 
 function SalesInvoicePresentationPanel({
   receipt,
+  parkingSummary,
   status,
   message,
   correlationId,
@@ -2160,6 +2200,7 @@ function SalesInvoicePresentationPanel({
   canRefresh
 }: {
   receipt: WebPayReceiptPresentationResponse | null;
+  parkingSummary: ParkingSessionResolveResponse;
   status: "idle" | "checking" | "available" | "pending" | "error";
   message: string;
   correlationId: string;
@@ -2167,15 +2208,14 @@ function SalesInvoicePresentationPanel({
   canRefresh: boolean;
 }) {
   const presentation = receipt?.authoritativePresentation?.presentation ?? null;
-  const sections = presentation?.sections?.filter((section) => (section.rows?.length ?? 0) > 0) ?? [];
+  const invoice = receipt ? buildThermalSalesInvoice(receipt, parkingSummary) : null;
+  const receiptElementRef = useRef<HTMLElement>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
 
   return (
     <section className="sales-invoice-panel" aria-labelledby="sales-invoice-heading">
-      <p className="eyebrow">Sales Invoice</p>
       <h2 id="sales-invoice-heading">{presentation?.documentTitle ?? "Sales Invoice"}</h2>
-      <p className="invoice-source">
-        This presentation is retrieved from the POS Server-owned fiscal document record through Central PMS.
-      </p>
 
       {status === "checking" && <p role="status">Retrieving Sales Invoice</p>}
 
@@ -2197,53 +2237,489 @@ function SalesInvoicePresentationPanel({
 
       {status === "available" && receipt && (
         <>
-          <dl className="invoice-metadata">
-            <div>
-              <dt>Fiscal Document Number</dt>
-              <dd>{displayValue(receipt.fiscalDocumentNumber)}</dd>
-            </div>
-            <div>
-              <dt>Fiscal Document Status</dt>
-              <dd>{displayValue(receipt.fiscalDocumentStatus)}</dd>
-            </div>
-            <div>
-              <dt>Presentation Version</dt>
-              <dd>{displayValue(receipt.presentationVersion)}</dd>
-            </div>
-            <div>
-              <dt>Recorded At</dt>
-              <dd>{formatDateTime(receipt.updatedAt)}</dd>
-            </div>
-          </dl>
+          <article
+            ref={receiptElementRef}
+            className="thermal-receipt"
+            data-paper-width="80mm"
+            aria-label="Printable Sales Invoice"
+          >
+            <header className="thermal-receipt-header">
+              <span className="thermal-rule">================================</span>
+              <strong>SALES INVOICE</strong>
+              <span className="thermal-rule">================================</span>
+              <span>ORIGINAL</span>
+              {invoice?.registeredBusinessName && <b>{invoice.registeredBusinessName}</b>}
+              {invoice?.siteName && <span>{invoice.siteName}</span>}
+            </header>
 
-          {sections.length > 0 ? (
-            <div className="invoice-sections">
-              {sections.map((section, index) => (
-                <section className="invoice-section" key={section.key ?? section.name ?? section.title ?? index}>
-                  <h3>{section.title ?? section.name ?? `Section ${index + 1}`}</h3>
-                  <dl>
-                    {section.rows?.map((row, rowIndex) => (
-                      <div key={row.key ?? row.label ?? rowIndex}>
-                        <dt>{row.label ?? row.key ?? `Line ${rowIndex + 1}`}</dt>
-                        <dd>{displayValue(row.displayValue ?? row.value)}</dd>
+            {invoice && (
+              <>
+                <ReceiptDefinitionList
+                  className="thermal-receipt-identity"
+                  rows={[
+                    ["VAT REG TIN", invoice.tin],
+                    ["S/N", invoice.posSerialNumber],
+                    ["MIN", invoice.min],
+                    ["PARKING LOCATION", invoice.parkingLocation],
+                    ["TERMINAL ID", invoice.terminalId]
+                  ]}
+                />
+
+                <ReceiptDefinitionList
+                  className="thermal-receipt-summary"
+                  rows={[
+                    ["SI No", receipt.fiscalDocumentNumber ?? undefined],
+                    ["Issued Date", invoice.issuedDate]
+                  ]}
+                />
+
+                <ReceiptSection title="PARKING DETAILS">
+                  <ReceiptDefinitionList
+                    rows={[
+                      ["Ticket Number", invoice.ticketNumber],
+                      ["Plate Number", invoice.plateNumber],
+                      ["Entry Time", invoice.entryTime],
+                      ["Payment", invoice.paymentTime],
+                      ["Duration", invoice.duration]
+                    ]}
+                  />
+                </ReceiptSection>
+
+                <ReceiptSection title="ITEMS">
+                  <div className="receipt-item-table" role="table" aria-label="Sales Invoice items">
+                    <div className="receipt-item-row receipt-item-heading" role="row">
+                      <span>#</span><span>Description</span><span>Qty</span><span>Unit</span><span>Amount</span>
+                    </div>
+                    {invoice.items.map((item, index) => (
+                      <div className="receipt-item-row" role="row" key={`${item.description}-${index}`}>
+                        <span>{index + 1}</span>
+                        <span>{item.description}</span>
+                        <span>{item.quantity}</span>
+                        <span>{item.unitAmount ?? "-"}</span>
+                        <span>{item.amount}</span>
                       </div>
                     ))}
-                  </dl>
+                  </div>
+                  <ReceiptDefinitionList rows={[["Subtotal", invoice.subtotal]]} emphasize />
+                </ReceiptSection>
+
+                <ReceiptSection title="DISCOUNTS">
+                  <ReceiptDefinitionList
+                    rows={[
+                      ["Discount Reason", invoice.discountReason ?? "None"],
+                      ["Discount Amount", invoice.discountAmount ?? invoice.zeroAmount]
+                    ]}
+                  />
+                </ReceiptSection>
+
+                <ReceiptSection title="VAT BREAKDOWN">
+                  <ReceiptDefinitionList
+                    rows={[
+                      ["VATable Sales", invoice.vatableSales],
+                      ["VAT Amount", invoice.vatAmount],
+                      ["VAT Exempt", invoice.vatExempt],
+                      ["Zero Rated", invoice.zeroRated]
+                    ]}
+                  />
+                </ReceiptSection>
+
+                <ReceiptSection title="PAYMENT DETAILS">
+                  <div className="receipt-payment-table" role="table" aria-label="Payment details">
+                    <div className="receipt-payment-row receipt-payment-heading" role="row">
+                      <span>Type</span><span>Provider</span><span>Amount</span>
+                    </div>
+                    <div className="receipt-payment-row" role="row">
+                      <span>{invoice.paymentMethod}</span>
+                      <span>{invoice.paymentProvider}</span>
+                      <span>{invoice.paymentAmount}</span>
+                    </div>
+                  </div>
+                  {invoice.isCashChannel && (
+                    <ReceiptDefinitionList
+                      rows={[
+                        ["Tendered Amount", invoice.tenderedAmount],
+                        ["Change", invoice.changeAmount]
+                      ]}
+                      emphasize
+                    />
+                  )}
+                </ReceiptSection>
+
+                <section className="thermal-receipt-declaration">
+                  <strong>{invoice.legalStatement}</strong>
+                  <span>Print Date</span>
+                  <b>{invoice.printDate}</b>
                 </section>
-              ))}
-            </div>
-          ) : (
-            <p className="invoice-status">The Sales Invoice presentation was retrieved, but no display sections were supplied.</p>
-          )}
+
+                <ReceiptSection title="Customer Information" titleCase>
+                  <div className="receipt-customer-fields">
+                    <span>Customer Name : ____________________</span>
+                    <span>ID No&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; : ____________________</span>
+                    <span>Address&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; : ____________________</span>
+                    <span>TIN&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; : ____________________</span>
+                    <span className="customer-signature">Customer Sign : ____________________</span>
+                  </div>
+                </ReceiptSection>
+
+                <footer className="thermal-receipt-footer">
+                  <strong>THANK YOU FOR CHOOSING OUR SERVICE</strong>
+                  {invoice.registeredBusinessName && <b>{invoice.registeredBusinessName}</b>}
+                  {invoice.siteName && <span>{invoice.siteName}</span>}
+                  <ReceiptDefinitionList
+                    rows={[
+                      ["VAT REG TIN", invoice.tin],
+                      ["ACCR. NO.", invoice.accreditationNumber],
+                      ["DATE ISSUED", invoice.accreditationIssuedDate],
+                      ["PTU", invoice.ptuNumber],
+                      ["PTU Date", invoice.ptuIssuedDate]
+                    ]}
+                  />
+                  {invoice.qrCodeUrl && <img className="receipt-qr" src={invoice.qrCodeUrl} alt="Sales Invoice QR code" />}
+                  <strong className="nothing-follows">===== NOTHING FOLLOWS =====</strong>
+                </footer>
+              </>
+            )}
+          </article>
         </>
       )}
 
-      {canRefresh && status !== "checking" && (
-        <button type="button" className="secondary-button" onClick={onRefresh}>
-          Retrieve Sales Invoice
-        </button>
+      {status !== "checking" && (
+        <div className="invoice-actions">
+          {status === "available" && receipt && (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={isDownloading}
+              onClick={() => {
+                if (!receiptElementRef.current) return;
+                setIsDownloading(true);
+                setDownloadError("");
+                void downloadSalesInvoicePdf(receiptElementRef.current, receipt.fiscalDocumentNumber)
+                  .catch(() => setDownloadError("Sales Invoice download is temporarily unavailable."))
+                  .finally(() => setIsDownloading(false));
+              }}
+            >
+              {isDownloading ? "Preparing Sales Invoice" : "Download Sales Invoice"}
+            </button>
+          )}
+          {canRefresh && (
+            <button type="button" className="secondary-button" onClick={onRefresh}>
+              Retrieve Sales Invoice
+            </button>
+          )}
+        </div>
       )}
+      {downloadError && <p className="inline-error" role="alert">{downloadError}</p>}
     </section>
+  );
+}
+
+function ExitQrCodePanel({ ticketReference }: { ticketReference?: string }) {
+  const [qrDataUrl, setQrDataUrl] = useState("");
+
+  useEffect(() => {
+    let stale = false;
+    const ticket = ticketReference?.trim();
+    if (!ticket) {
+      setQrDataUrl("");
+      return () => { stale = true; };
+    }
+
+    void QRCode.toDataURL(ticket, { errorCorrectionLevel: "M", margin: 1, width: 320 })
+      .then((dataUrl) => {
+        if (!stale) setQrDataUrl(dataUrl);
+      });
+    return () => { stale = true; };
+  }, [ticketReference]);
+
+  const ticket = ticketReference?.trim();
+  return (
+    <section className="exit-qr-panel" aria-labelledby="exit-qr-heading" data-qr-source="ticket-reference">
+      <h2 id="exit-qr-heading">Exit QR Code</h2>
+      {qrDataUrl && <img src={qrDataUrl} alt="Exit QR Code" />}
+      <p>Present this QR code to the scanner at the exit validator.</p>
+      <button
+        type="button"
+        className="secondary-button"
+        disabled={!qrDataUrl || !ticket}
+        onClick={() => {
+          if (qrDataUrl && ticket) downloadDataUrl(qrDataUrl, `ExitPass-Ticket-${safeFileName(ticket)}.png`);
+        }}
+      >
+        Download Exit QR Code
+      </button>
+    </section>
+  );
+}
+
+type ReceiptLineItem = {
+  description: string;
+  quantity: string;
+  unitAmount?: string;
+  amount: string;
+};
+
+type ThermalSalesInvoice = {
+  registeredBusinessName?: string;
+  siteName?: string;
+  tin?: string;
+  posSerialNumber?: string;
+  min?: string;
+  parkingLocation?: string;
+  terminalId?: string;
+  issuedDate: string;
+  ticketNumber?: string;
+  plateNumber?: string;
+  entryTime?: string;
+  paymentTime?: string;
+  duration?: string;
+  items: ReceiptLineItem[];
+  subtotal: string;
+  discountReason?: string;
+  discountAmount?: string;
+  vatableSales?: string;
+  vatAmount?: string;
+  vatExempt?: string;
+  zeroRated?: string;
+  zeroAmount: string;
+  paymentMethod: string;
+  paymentProvider: string;
+  paymentAmount: string;
+  isCashChannel: boolean;
+  tenderedAmount?: string;
+  changeAmount?: string;
+  legalStatement: string;
+  printDate: string;
+  accreditationNumber?: string;
+  accreditationIssuedDate?: string;
+  ptuNumber?: string;
+  ptuIssuedDate?: string;
+  qrCodeUrl?: string;
+};
+
+function buildThermalSalesInvoice(
+  receipt: WebPayReceiptPresentationResponse,
+  parkingSummary: ParkingSessionResolveResponse
+): ThermalSalesInvoice {
+  const sections = receipt.authoritativePresentation.presentation?.sections ?? [];
+  const rows = sections.flatMap((section) => section.rows ?? []);
+  const value = (...keysOrLabels: string[]) => findPresentationValue(rows, keysOrLabels);
+  const paymentMethod = customerPaymentMethod(
+    parkingSummary.paymentMethod ?? value("appliedStatutoryFiscalFacts.sourcePaymentChannel", "Source Payment Channel", "tenders[0000].tenderTypeCodeKey", "Tender Type")
+  );
+  const paymentProvider = customerPaymentProvider(parkingSummary.paymentProvider);
+  const isCashChannel = paymentMethod === "CASH" || /^(APT|APM|TERMINAL_CASH|CASHIER)/.test(paymentMethod);
+  const paymentAmount = formatOptionalReceiptAmount(value("tenders[0000].amount", "Tender Amount"))
+    ?? formatReceiptAmount(formatCurrencyAmount(parkingSummary.amountMinorUnits, parkingSummary.currency) ?? "PHP 0.00");
+  const subtotal = formatReceiptAmount(value("totals.subtotal", "Subtotal", "totals[0000].amount", "Total Amount") ?? paymentAmount);
+  const zeroAmount = formatReceiptAmount(`PHP 0.00`);
+  const qrCodeUrl = authoritativeQrCodeUrl(receipt);
+
+  return {
+    registeredBusinessName: value("salesInvoiceHeaderSnapshot.registeredBusinessName", "Registered Business Name", "Business Name"),
+    siteName: value("salesInvoiceHeaderSnapshot.branchName", "Site / Branch", "Branch Name") ?? parkingSummary.siteName ?? undefined,
+    tin: value("salesInvoiceHeaderSnapshot.tin", "TIN", "VAT REG TIN"),
+    posSerialNumber: value("salesInvoiceHeaderSnapshot.posSerialNumber", "POS Serial Number", "S/N"),
+    min: value("salesInvoiceHeaderSnapshot.machineIdentificationNumber", "MIN"),
+    parkingLocation: value("salesInvoiceHeaderSnapshot.parkingLocationDisplay", "Parking Location"),
+    terminalId: value("salesInvoiceHeaderSnapshot.terminalId", "Terminal ID"),
+    issuedDate: formatDateTime(value("fiscalNumbering.fiscalNumberAssignedAt", "Fiscal Number Assigned At", "Issued Date", "Transaction Date") ?? receipt.updatedAt) ?? "",
+    ticketNumber: parkingSummary.ticketReference ?? undefined,
+    plateNumber: parkingSummary.plateNumber ?? undefined,
+    entryTime: parkingSummary.entryTime ? formatDateTime(parkingSummary.entryTime) : undefined,
+    paymentTime: parkingSummary.paymentTime ? formatDateTime(parkingSummary.paymentTime) : formatDateTime(receipt.updatedAt),
+    duration: parkingSummary.durationParked ?? formatDuration(parkingSummary.entryTime, parkingSummary.paymentTime ?? receipt.updatedAt),
+    items: buildReceiptLineItems(sections, subtotal),
+    subtotal,
+    discountReason: value("appliedStatutoryFiscalFacts.entitlementType", "Discount Reason", "Entitlement Type", "Benefit Classification"),
+    discountAmount: formatOptionalReceiptAmount(value("appliedStatutoryFiscalFacts.statutoryDiscountAmount", "Statutory Discount Amount", "Discount Amount")),
+    vatableSales: formatOptionalReceiptAmount(value("totals.vatableSales", "VATable Sales", "taxes[0000].taxableAmount", "Taxable Amount")),
+    vatAmount: formatOptionalReceiptAmount(value("appliedStatutoryFiscalFacts.vatAmount", "VAT Amount", "taxes[0000].taxAmount", "Tax Amount")),
+    vatExempt: formatOptionalReceiptAmount(value("totals.vatExempt", "VAT Exempt", "VAT-Exempt Sales", "VAT Exempt Sales")),
+    zeroRated: formatOptionalReceiptAmount(value("totals.zeroRated", "Zero Rated", "Zero-Rated Sales", "Zero Rated Sales")),
+    zeroAmount,
+    paymentMethod,
+    paymentProvider,
+    paymentAmount,
+    isCashChannel,
+    tenderedAmount: isCashChannel
+      ? formatOptionalReceiptAmount(value("tenders[0000].cashReceived", "Tendered Amount", "Cash Received"))
+      : undefined,
+    changeAmount: isCashChannel
+      ? formatOptionalReceiptAmount(value("tenders[0000].change", "Change", "Change Due"))
+      : undefined,
+    legalStatement: value("salesInvoiceHeaderSnapshot.salesInvoiceLegalStatement", "Sales Invoice Legal Statement") ?? "THIS SERVES AS YOUR SALES INVOICE",
+    printDate: formatDateTime(new Date().toISOString()) ?? new Date().toISOString(),
+    accreditationNumber: value("salesInvoiceHeaderSnapshot.birAccreditationNumber", "BIR Accreditation Number", "ACCR. NO."),
+    accreditationIssuedDate: value("salesInvoiceHeaderSnapshot.birAccreditationIssuedDate", "BIR Accreditation Issued Date", "DATE ISSUED"),
+    ptuNumber: value("salesInvoiceHeaderSnapshot.ptuNumber", "PTU Number", "PTU"),
+    ptuIssuedDate: value("salesInvoiceHeaderSnapshot.ptuIssuedDate", "PTU Issued Date", "PTU Date"),
+    qrCodeUrl
+  };
+}
+
+function buildReceiptLineItems(
+  sections: NonNullable<NonNullable<WebPayReceiptPresentationResponse["authoritativePresentation"]["presentation"]>["sections"]>
+  , fallbackAmount: string
+): ReceiptLineItem[] {
+  const rows = sections.flatMap((section) => section.rows ?? []);
+  const indexes = Array.from(new Set(rows.flatMap((row) => {
+    const match = row.key?.match(/^lineItems\[(\d+)]\./i);
+    return match ? [match[1]] : [];
+  })));
+
+  const items = indexes.flatMap((index) => {
+    const value = (...suffixes: string[]) => findPresentationValue(rows, suffixes.map((suffix) => `lineItems[${index}].${suffix}`));
+    const description = value("description");
+    const amount = formatOptionalReceiptAmount(value("netAmount", "grossAmount"));
+    if (!description || !amount) {
+      return [];
+    }
+
+    return [{
+      description,
+      quantity: value("quantity") ?? "1",
+      unitAmount: formatOptionalReceiptAmount(value("unitAmount")),
+      amount
+    }];
+  });
+
+  return items.length > 0 ? items : [{ description: "Parking Fee", quantity: "1", amount: fallbackAmount }];
+}
+
+function findPresentationValue(
+  rows: SalesInvoicePresentationRow[],
+  keysOrLabels: string[]
+): string | undefined {
+  for (const target of keysOrLabels) {
+    const normalizedTarget = target.trim().toLowerCase();
+    const row = rows.find((candidate) =>
+      candidate.key?.trim().toLowerCase() === normalizedTarget ||
+      candidate.label?.trim().toLowerCase() === normalizedTarget
+    );
+    const rawValue = row?.displayValue ?? row?.value ?? row?.rawValue;
+    const resolved = rawValue === null || rawValue === undefined ? "" : String(rawValue).trim();
+    if (resolved && !/^not available$/i.test(resolved) && !/^(placeholder|deferred)$/i.test(row?.posture ?? "")) {
+      return resolved;
+    }
+  }
+
+  return undefined;
+}
+
+function customerPaymentMethod(value?: string | null): string {
+  const normalized = value?.trim().toUpperCase().replace(/[- ]/g, "_") ?? "";
+  for (const method of ["QRPH", "GCASH", "MAYA", "CARD", "CASH"]) {
+    if (normalized === method || normalized.endsWith(`_${method}`)) {
+      return method;
+    }
+  }
+
+  return normalized && normalized !== "DIGITAL_OR_CASH_TENDER" && normalized !== "CASHLESS" ? normalized : "DIGITAL";
+}
+
+function customerPaymentProvider(value?: string | null): string {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return "-";
+  }
+
+  return normalized.toUpperCase() === "PAYMONGO" ? "PayMongo" : normalized;
+}
+
+function formatOptionalReceiptAmount(value?: string): string | undefined {
+  return value ? formatReceiptAmount(value) : undefined;
+}
+
+function formatReceiptAmount(value: string): string {
+  return value.replace(/^PHP\s+/i, "P ");
+}
+
+function authoritativeQrCodeUrl(receipt: WebPayReceiptPresentationResponse): string | undefined {
+  const source = receipt.authoritativePresentation as Record<string, unknown>;
+  for (const key of ["qrCodeUrl", "digitalSalesInvoiceQrCodeUrl"]) {
+    const value = source[key];
+    if (typeof value === "string" && /^https:\/\//i.test(value.trim())) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+async function downloadSalesInvoicePdf(receiptElement: HTMLElement, fiscalDocumentNumber?: string | null): Promise<void> {
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+    import("html2canvas"),
+    import("jspdf")
+  ]);
+  const canvas = await html2canvas(receiptElement, {
+    backgroundColor: "#ffffff",
+    logging: false,
+    scale: 2,
+    useCORS: true
+  });
+  const widthMm = 80;
+  const heightMm = Math.max(1, (canvas.height * widthMm) / canvas.width);
+  const pdf = new jsPDF({
+    orientation: "portrait",
+    unit: "mm",
+    format: [widthMm, heightMm],
+    compress: true
+  });
+  pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, widthMm, heightMm, undefined, "FAST");
+  pdf.save(`${safeFileName(fiscalDocumentNumber?.trim() || "Sales-Invoice")}.pdf`);
+}
+
+function downloadDataUrl(dataUrl: string, filename: string): void {
+  const link = document.createElement("a");
+  link.href = dataUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function safeFileName(value: string): string {
+  return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").replace(/\s+/g, "-");
+}
+
+function ReceiptSection({
+  title,
+  titleCase = false,
+  children
+}: {
+  title: string;
+  titleCase?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <section className="thermal-receipt-section">
+      <h3 className={titleCase ? "receipt-title-case" : undefined}>{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function ReceiptDefinitionList({
+  rows,
+  className = "",
+  emphasize = false
+}: {
+  rows: Array<[string, string | undefined]>;
+  className?: string;
+  emphasize?: boolean;
+}) {
+  const availableRows = rows.filter((row): row is [string, string] => Boolean(row[1]?.trim()));
+  if (availableRows.length === 0) {
+    return null;
+  }
+
+  return (
+    <dl className={`${className} ${emphasize ? "receipt-emphasis" : ""}`.trim()}>
+      {availableRows.map(([label, value]) => (
+        <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
+      ))}
+    </dl>
   );
 }
 
@@ -2255,15 +2731,20 @@ function ExitInstructionPanel({ summary }: { summary: ParkingSessionResolveRespo
 
   return (
     <section className={hasExitAuthorization ? "exit-instruction-panel is-ready" : "exit-instruction-panel"} aria-labelledby="exit-instruction-heading">
-      <p className="eyebrow">Exit instruction</p>
-      <h2 id="exit-instruction-heading">{hasExitAuthorization ? "Proceed to exit" : "Preparing exit authorization"}</h2>
-      <p>
-        {hasExitAuthorization
-          ? instruction?.message ?? "Proceed to the exit lane and present your parking ticket or plate for validation."
-          : "Payment is confirmed. Exit authorization is still being prepared; check status again shortly."}
-      </p>
-      {instruction?.laneName && <p className="exit-lane">Lane: {instruction.laneName}</p>}
-      {exitBy && <p className="exit-lane">Exit by {formatDateTime(exitBy)}</p>}
+      <h2 id="exit-instruction-heading">Exit Instruction</h2>
+      {hasExitAuthorization ? (
+        <>
+          <strong>Proceed to exit</strong>
+          {exitBy && <p className="exit-deadline">Exit by {formatTime(exitBy)}</p>}
+          <p>Additional parking charges will apply if you do not exit by the expiry time.</p>
+          <p>Do not close this page until you have exited the parking lot.</p>
+        </>
+      ) : (
+        <>
+          <strong>Exit authorization is being prepared</strong>
+          <p>Please try again shortly.</p>
+        </>
+      )}
     </section>
   );
 }
@@ -2968,6 +3449,22 @@ function formatDateTime(value?: string | null): string | undefined {
     year: "numeric",
     month: "short",
     day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function formatTime(value?: string | null): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-PH", {
     hour: "numeric",
     minute: "2-digit"
   }).format(date);

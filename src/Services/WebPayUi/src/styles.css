@@ -539,9 +539,232 @@ textarea {
   gap: 10px;
 }
 
+.invoice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.thermal-receipt {
+  box-sizing: border-box;
+  width: min(100%, 80mm);
+  margin-inline: auto;
+  padding: 4mm;
+  border: 1px solid #667085;
+  color: #000000;
+  background: #ffffff;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.thermal-receipt-header,
+.thermal-receipt-footer {
+  display: grid;
+  gap: 3px;
+  justify-items: center;
+  text-align: center;
+}
+
+.thermal-receipt-header {
+  padding-bottom: 2.5mm;
+}
+
+.thermal-receipt-header strong {
+  font-size: 16px;
+  text-transform: uppercase;
+}
+
+.thermal-rule {
+  width: 100%;
+  overflow: hidden;
+  color: #000000;
+  white-space: nowrap;
+}
+
+.sales-invoice-panel .thermal-receipt dl {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.sales-invoice-panel .thermal-receipt-identity,
+.sales-invoice-panel .thermal-receipt-summary {
+  padding-block: 2.5mm;
+  border-bottom: 1px dashed #000000;
+}
+
+.sales-invoice-panel .thermal-receipt dl div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 2mm;
+  padding: 0;
+  border: 0;
+}
+
+.sales-invoice-panel .thermal-receipt dt,
+.sales-invoice-panel .thermal-receipt dd {
+  margin: 0;
+  color: #000000;
+  overflow-wrap: anywhere;
+}
+
+.sales-invoice-panel .thermal-receipt dd {
+  font-weight: 700;
+  text-align: right;
+}
+
+.thermal-receipt-section {
+  display: grid;
+  gap: 1.5mm;
+  padding-block: 2.5mm;
+  border-bottom: 1px dashed #000000;
+}
+
+.thermal-receipt-section h3 {
+  margin: 0;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 800;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.thermal-receipt-section h3.receipt-title-case {
+  text-transform: none;
+}
+
+.receipt-item-table,
+.receipt-payment-table {
+  display: grid;
+  width: 100%;
+  border-block: 1px dashed #000000;
+}
+
+.receipt-item-row,
+.receipt-payment-row {
+  display: grid;
+  align-items: start;
+  gap: 1mm;
+  padding-block: 1mm;
+}
+
+.receipt-item-row {
+  grid-template-columns: 1.2em minmax(0, 1.45fr) minmax(0, 0.35fr) minmax(0, 0.75fr) minmax(0, 0.75fr);
+}
+
+.receipt-payment-row {
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr) minmax(0, 0.8fr);
+}
+
+.receipt-item-row span,
+.receipt-payment-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.receipt-item-row span:last-child,
+.receipt-payment-row span:last-child {
+  font-weight: 700;
+  text-align: right;
+}
+
+.receipt-item-row span:nth-child(3) {
+  text-align: center;
+}
+
+.receipt-item-row span:nth-child(4) {
+  text-align: right;
+}
+
+.receipt-item-heading,
+.receipt-payment-heading {
+  font-weight: 800;
+}
+
+.receipt-emphasis {
+  padding-top: 1.5mm;
+  font-weight: 800;
+}
+
+.thermal-receipt-declaration {
+  display: grid;
+  gap: 1mm;
+  justify-items: center;
+  padding-block: 3mm;
+  border-bottom: 1px dashed #000000;
+  text-align: center;
+}
+
+.receipt-customer-fields {
+  display: grid;
+  gap: 1.5mm;
+  white-space: nowrap;
+}
+
+.customer-signature {
+  margin-top: 2mm;
+}
+
+.thermal-receipt-footer {
+  gap: 1.5mm;
+  padding-top: 3mm;
+}
+
+.thermal-receipt-footer dl {
+  width: 100%;
+  margin-top: 1mm !important;
+}
+
+.receipt-qr {
+  width: 25mm;
+  height: 25mm;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.nothing-follows {
+  width: 100%;
+  margin-top: 2mm;
+  text-align: center;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+
+  .brand-header,
+  .return-panel > :not(.sales-invoice-panel),
+  .invoice-actions,
+  .sales-invoice-panel > .eyebrow,
+  .sales-invoice-panel > h2 {
+    display: none !important;
+  }
+
+  .app-shell,
+  .return-panel,
+  .sales-invoice-panel {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .thermal-receipt {
+    width: 80mm;
+    max-width: 80mm;
+    border: 0;
+  }
+}
+
 .payment-confirmation-panel,
 .sales-invoice-panel,
-.exit-instruction-panel {
+.exit-instruction-panel,
+.exit-qr-panel {
   display: grid;
   gap: 10px;
   padding: 12px;
@@ -553,18 +776,67 @@ textarea {
 .payment-confirmation-panel h2,
 .sales-invoice-panel h2,
 .exit-instruction-panel h2,
+.exit-qr-panel h2,
 .payment-confirmation-panel p,
 .sales-invoice-panel p,
-.exit-instruction-panel p {
+.exit-instruction-panel p,
+.exit-qr-panel p {
   margin: 0;
 }
 
 .payment-confirmation-panel h2,
 .sales-invoice-panel h2,
-.exit-instruction-panel h2 {
+.exit-instruction-panel h2,
+.exit-qr-panel h2 {
   color: #0b1f3a;
   font-size: 20px;
   line-height: 1.2;
+}
+
+.payment-reference {
+  display: grid;
+  gap: 4px;
+}
+
+.payment-reference-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.payment-reference-value strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.copy-payment-reference {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid #98a2b3;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #344054;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.copy-payment-reference:hover:not(:disabled) {
+  border-color: #344054;
+  background: #f9fafb;
+}
+
+.copy-payment-reference:focus-visible {
+  outline: 2px solid #175cd3;
+  outline-offset: 2px;
+}
+
+.copy-payment-reference:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .payment-confirmation-panel dl,
@@ -600,11 +872,6 @@ textarea {
 .sales-invoice-panel {
   border-color: #abefc6;
   background: #f6fef9;
-}
-
-.invoice-source {
-  color: #344054;
-  line-height: 1.45;
 }
 
 .invoice-metadata {
@@ -930,8 +1197,27 @@ textarea {
   line-height: 1.45;
 }
 
-.exit-lane {
+.exit-instruction-panel > strong,
+.exit-deadline {
   font-weight: 700;
+}
+
+.exit-qr-panel {
+  justify-items: center;
+  text-align: center;
+}
+
+.exit-qr-panel img {
+  width: min(100%, 220px);
+  height: auto;
+  padding: 8px;
+  border: 1px solid #d0d5dd;
+  background: #ffffff;
+  image-rendering: pixelated;
+}
+
+.exit-qr-panel .secondary-button {
+  width: min(100%, 280px);
 }
 
 .handoff-panel > img {
@@ -1142,5 +1428,42 @@ textarea {
 
   .modifier-grid {
     grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media print {
+  @page {
+    margin: 0;
+  }
+
+  html,
+  body {
+    width: max-content;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+  }
+
+  .return-panel,
+  .sales-invoice-panel {
+    display: block;
+    width: max-content !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+  }
+
+  .thermal-receipt {
+    margin: 0 !important;
+  }
+
+  .app-shell {
+    width: max-content !important;
+    min-height: 0;
   }
 }

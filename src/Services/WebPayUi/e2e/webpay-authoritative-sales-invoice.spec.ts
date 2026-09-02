@@ -2,11 +2,12 @@ import { expect, test, type Page, type Request, type Route } from "@playwright/t
 
 const baseFixtureUrl = `http://127.0.0.1:${process.env.WEBPAY_BROWSER_SMOKE_PORT ?? 5196}`;
 const ids = {
-  available: "10000000-0000-4000-8000-000000000001",
+  available: "965a9700-fb9d-4f4c-be0a-5b3cbf8d6357",
   pending: "10000000-0000-4000-8000-000000000002",
   temporarilyUnavailable: "10000000-0000-4000-8000-000000000003",
   terminalFailure: "10000000-0000-4000-8000-000000000004",
-  refreshPending: "10000000-0000-4000-8000-000000000005"
+  refreshPending: "10000000-0000-4000-8000-000000000005",
+  expired: "10000000-0000-4000-8000-000000000006"
 };
 const statutoryRecoveryStorageKey = "exitpass:webpay:statutory-discount-recovery:v1";
 const statutoryDecisionCommandId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -82,7 +83,7 @@ test.afterEach(async ({}, testInfo) => {
   consoleMessagesByTest.delete(testInfo.testId);
   expect(serialized).not.toContain("TIN");
   expect(serialized).not.toContain("POS SERVER AUTHORITATIVE PRESENTATION");
-  expect(serialized).not.toContain("SI-WEBPAY-BROWSER-SMOKE-0001");
+  expect(serialized).not.toContain("SIA-00000002-A");
   expect(serialized).not.toContain("Authorization");
   expect(serialized).not.toContain("AppSecret");
   expect(serialized).not.toContain("api key");
@@ -95,19 +96,23 @@ test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
   test("confirmed payment displays the authoritative POS Server presentation and no local receipt fallback", async ({ page, browser }) => {
     const apiRequests = collectApiRequests(page);
 
-    await openReturnPage(page, "WEBPAY-ONLY-PAYMENT-MARKER", ids.available);
+    await openReturnPage(page, ids.available);
 
-    await expect(page.getByRole("heading", { name: /payment confirmed/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^payment confirmation$/i })).toBeVisible();
     await expect(page.getByRole("heading", { name: /^sales invoice$/i })).toBeVisible();
-    await expect(page.getByText("Payment confirmation")).toBeVisible();
-    await expect(page.getByText("SI-WEBPAY-BROWSER-SMOKE-0001").first()).toBeVisible();
-    await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toBeVisible();
-    await expect(page.getByText("CASHLESS")).toBeVisible();
-    await expect(page.getByText("CENTRAL PMS EXIT AUTHORIZATION MARKER")).toBeVisible();
+    await expect(page.getByText(/Payment reference number:/)).toContainText("pay_eTN1CLQY5o9Dbv41Gj9vDAMs");
+    await expect(page.getByText("SIA-00000002-A").first()).toBeVisible();
+    await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toHaveCount(0);
+    await expect(page.getByText("CASHLESS")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: /^exit instruction$/i })).toBeVisible();
+    await expect(page.getByText("Proceed to exit")).toBeVisible();
+    await expect(page.getByText("Additional parking charges will apply if you do not exit by the expiry time.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^exit qr code$/i })).toBeVisible();
+    await expect(page.getByText("Parking Session Summary")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: /payment receipt/i })).toHaveCount(0);
 
     const invoiceText = await page.locator(".sales-invoice-panel").innerText();
-    expect(invoiceText).not.toContain("WEBPAY-ONLY-PAYMENT-MARKER");
+    expect(invoiceText).toContain("R35-TICKET-PREVIEW-0002");
     expect(invoiceText).not.toContain("PHP 129.00");
     expect(await browser.version()).toBeTruthy();
     await expectNoDuplicatePaymentOrFiscalSubmission();
@@ -117,11 +122,11 @@ test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
   test("fiscal issuance pending stays pending without fabricating a receipt", async ({ page }) => {
     const apiRequests = collectApiRequests(page);
 
-    await openReturnPage(page, "WEBPAY-SMOKE-PENDING", ids.pending);
+    await openReturnPage(page, ids.pending);
 
-    await expect(page.getByRole("heading", { name: /payment confirmed/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^payment confirmation$/i })).toBeVisible();
     await expect(page.getByText("Your payment is recorded. The Sales Invoice is still being prepared.")).toBeVisible();
-    await expect(page.getByText("SI-WEBPAY-BROWSER-SMOKE-0001")).toHaveCount(0);
+    await expect(page.getByText("SIA-00000002-A")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: /payment receipt/i })).toHaveCount(0);
     await expect.poll(async () => (await getFixtureState()).receiptAttempts[ids.pending] ?? 0).toBe(3);
     await expectNoDuplicatePaymentOrFiscalSubmission();
@@ -131,10 +136,10 @@ test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
   test("temporary presentation unavailability retries within the bounded read loop and later displays the authoritative presentation", async ({ page }) => {
     const apiRequests = collectApiRequests(page);
 
-    await openReturnPage(page, "WEBPAY-SMOKE-TEMPORARY-UNAVAILABLE", ids.temporarilyUnavailable);
+    await openReturnPage(page, ids.temporarilyUnavailable);
 
-    await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toBeVisible();
-    await expect(page.getByText("SI-WEBPAY-BROWSER-SMOKE-0001").first()).toBeVisible();
+    await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toHaveCount(0);
+    await expect(page.getByText("SIA-00000002-A").first()).toBeVisible();
     await expect.poll(async () => (await getFixtureState()).receiptAttempts[ids.temporarilyUnavailable] ?? 0).toBe(3);
     await expect(page.getByRole("heading", { name: /payment receipt/i })).toHaveCount(0);
     await expectNoDuplicatePaymentOrFiscalSubmission();
@@ -144,11 +149,11 @@ test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
   test("terminal fiscal failure shows a safe customer-facing failure and no fallback receipt", async ({ page }) => {
     const apiRequests = collectApiRequests(page);
 
-    await openReturnPage(page, "WEBPAY-SMOKE-TERMINAL-FAILURE", ids.terminalFailure);
+    await openReturnPage(page, ids.terminalFailure);
 
     await expect(page.getByText("Sales Invoice unavailable")).toBeVisible();
     await expect(page.getByText("Sales Invoice issuance failed. Please contact support.")).toBeVisible();
-    await expect(page.getByText("SI-WEBPAY-BROWSER-SMOKE-0001")).toHaveCount(0);
+    await expect(page.getByText("SIA-00000002-A")).toHaveCount(0);
     await expect(page.getByText(/stack trace|sql|connection string|internal exception/i)).toHaveCount(0);
     await expect(page.getByRole("heading", { name: /payment receipt/i })).toHaveCount(0);
     await expectNoDuplicatePaymentOrFiscalSubmission();
@@ -158,7 +163,7 @@ test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
   test("browser refresh while pending resumes readback from the durable payment attempt reference", async ({ page }) => {
     const apiRequests = collectApiRequests(page);
 
-    await openReturnPage(page, "WEBPAY-SMOKE-REFRESH-PENDING", ids.refreshPending);
+    await openReturnPage(page, ids.refreshPending);
     await expect(page.getByText("Your payment is recorded. The Sales Invoice is still being prepared.")).toBeVisible();
     await expect.poll(async () => (await getFixtureState()).receiptAttempts[ids.refreshPending] ?? 0).toBe(3);
 
@@ -174,14 +179,14 @@ test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
   test("later retrieval after temporary unavailability preserves one fiscal document identity", async ({ page }) => {
     const apiRequests = collectApiRequests(page);
 
-    await openReturnPage(page, "WEBPAY-SMOKE-LATER-RETRIEVAL", ids.temporarilyUnavailable);
-    await expect(page.getByText("SI-WEBPAY-BROWSER-SMOKE-0001").first()).toBeVisible();
+    await openReturnPage(page, ids.temporarilyUnavailable);
+    await expect(page.getByText("SIA-00000002-A").first()).toBeVisible();
 
     await page.reload();
 
-    await expect(page.getByText("SI-WEBPAY-BROWSER-SMOKE-0001").first()).toBeVisible();
-    await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toBeVisible();
-    const fiscalNumberOccurrences = await page.getByText("SI-WEBPAY-BROWSER-SMOKE-0001").count();
+    await expect(page.getByText("SIA-00000002-A").first()).toBeVisible();
+    await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toHaveCount(0);
+    const fiscalNumberOccurrences = await page.getByText("SIA-00000002-A").count();
     expect(fiscalNumberOccurrences).toBeGreaterThan(0);
     await expectNoDuplicatePaymentOrFiscalSubmission();
     await expectApiBoundary(apiRequests);
@@ -190,12 +195,43 @@ test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
   test("presentation viewing uses returned content and does not expose a competing WebPay fiscal document", async ({ page }) => {
     const apiRequests = collectApiRequests(page);
 
-    await openReturnPage(page, "WEBPAY-SMOKE-VIEW-PRESENTATION", ids.available);
+    await openReturnPage(page, ids.available);
 
-    await expect(page.locator(".sales-invoice-panel")).toContainText("POS SERVER AUTHORITATIVE PRESENTATION");
-    await expect(page.locator(".sales-invoice-panel")).toContainText("CASHLESS");
-    await expect(page.getByRole("button", { name: /print/i })).toHaveCount(0);
+    await expect(page.locator(".sales-invoice-panel")).not.toContainText("POS SERVER AUTHORITATIVE PRESENTATION");
+    await expect(page.locator(".sales-invoice-panel")).not.toContainText("CASHLESS");
+    await expect(page.getByRole("button", { name: /download sales invoice/i })).toBeVisible();
+    const printableInvoice = page.getByLabel("Printable Sales Invoice");
+    await expect(printableInvoice).toHaveAttribute("data-paper-width", "80mm");
+    await expect(page.getByRole("group", { name: /receipt paper width/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "57 mm" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "58 mm" })).toHaveCount(0);
+    await expect(printableInvoice).toContainText("Ticket Number");
+    await expect(printableInvoice).toContainText("PAYMENT DETAILS");
+    await expect(printableInvoice).toContainText("QRPH");
+    await expect(printableInvoice).toContainText("PayMongo");
+    await expect(printableInvoice).toContainText("VAT BREAKDOWN");
+    await expect(printableInvoice).toContainText("Customer Information");
+    await expect(printableInvoice).toContainText("===== NOTHING FOLLOWS =====");
+    await expect(printableInvoice).not.toContainText("Total Paid");
+    await expect(printableInvoice).not.toContainText("Tendered Amount");
+    await expect(printableInvoice).not.toContainText("Change");
+    await expect(page.getByRole("button", { name: /retrieve sales invoice/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^exit qr code$/i })).toBeVisible();
+    await expect(page.getByRole("img", { name: /^exit qr code$/i })).toBeVisible();
+    await expect(page.getByText("Present this QR code to the scanner at the exit validator.")).toBeVisible();
+    await expect(page.locator(".return-panel > section")).toHaveCount(4);
+    await expect(page.getByText("Parking Session Summary")).toHaveCount(0);
     await expect(page.getByText(/WebPay issued|WebPay Sales Invoice|generated by WebPay/i)).toHaveCount(0);
+
+    const invoiceDownloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: /download sales invoice/i }).click();
+    const invoiceDownload = await invoiceDownloadPromise;
+    expect(invoiceDownload.suggestedFilename()).toBe("SIA-00000002-A.pdf");
+
+    const qrDownloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: /download exit qr code/i }).click();
+    const qrDownload = await qrDownloadPromise;
+    expect(qrDownload.suggestedFilename()).toBe("ExitPass-Ticket-R35-TICKET-PREVIEW-0002.png");
     await expectNoDuplicatePaymentOrFiscalSubmission();
     await expectApiBoundary(apiRequests);
   });
@@ -203,11 +239,11 @@ test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
   test("expired transaction reference is safe and does not create a fallback receipt", async ({ page }) => {
     const apiRequests = collectApiRequests(page);
 
-    await openReturnPage(page, "WEBPAY-SMOKE-EXPIRED", ids.available);
+    await openReturnPage(page, ids.expired);
 
-    await expect(page.getByRole("alert")).toContainText("could not find an active parking session");
+    await expect(page.getByRole("alert")).toContainText("Payment reference was not found");
     await expect(page.getByText("Sales Invoice Number")).toHaveCount(0);
-    await expect(page.getByText("SI-WEBPAY-BROWSER-SMOKE-0001")).toHaveCount(0);
+    await expect(page.getByText("SIA-00000002-A")).toHaveCount(0);
     await expect(page.getByText(/stack trace|connection string|authorization|api key|internal hostname/i)).toHaveCount(0);
     await expect(page.getByRole("heading", { name: /payment receipt/i })).toHaveCount(0);
     await expectNoDuplicatePaymentOrFiscalSubmission();
@@ -645,11 +681,11 @@ test.describe("WebPay statutory discount applied payment browser smoke", () => {
   }
 
   test("payment return still displays authoritative Sales Invoice presentation", async ({ page }) => {
-    await openReturnPage(page, "WEBPAY-ONLY-PAYMENT-MARKER", ids.available);
+    await openReturnPage(page, ids.available);
 
     await expect(page.getByRole("heading", { name: /^sales invoice$/i })).toBeVisible();
-    await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toBeVisible();
-    await expect(page.getByText("SI-WEBPAY-BROWSER-SMOKE-0001").first()).toBeVisible();
+    await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toHaveCount(0);
+    await expect(page.getByText("SIA-00000002-A").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: /payment receipt/i })).toHaveCount(0);
   });
 });
@@ -1015,16 +1051,15 @@ test.describe("WebPay statutory discount browser recovery smoke", () => {
     await expect(page.getByRole("button", { name: /request statutory discount/i })).toBeVisible();
     expect(await readStatutoryRecoveryStorage(page)).toBeNull();
 
-    await openReturnPage(page, "WEBPAY-ONLY-PAYMENT-MARKER", ids.available);
+    await openReturnPage(page, ids.available);
     await expect(page.getByRole("heading", { name: /^sales invoice$/i })).toBeVisible();
-    await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toBeVisible();
+    await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toHaveCount(0);
     expect(await readStatutoryRecoveryStorage(page)).toBeNull();
   });
 });
 
-async function openReturnPage(page: Page, ticketReference: string, paymentAttemptId: string) {
+async function openReturnPage(page: Page, paymentAttemptId: string) {
   const query = new URLSearchParams({
-    ticketReference,
     paymentAttemptId,
     correlationId: "77777777-7777-4777-8777-777777777777",
     result: "success"
@@ -1240,7 +1275,7 @@ async function expectBrowserStorageSafe(page: Page) {
   });
 
   const serialized = JSON.stringify(storage);
-  expect(serialized).not.toContain("SI-WEBPAY-BROWSER-SMOKE-0001");
+  expect(serialized).not.toContain("SIA-00000002-A");
   expect(serialized).not.toContain("POS SERVER AUTHORITATIVE PRESENTATION");
   expect(serialized).not.toContain("WEBPAY-ONLY-PAYMENT-MARKER");
   expect(serialized).not.toContain("API key");

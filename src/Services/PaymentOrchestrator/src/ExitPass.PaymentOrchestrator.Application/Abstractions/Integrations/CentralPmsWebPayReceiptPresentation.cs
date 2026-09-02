@@ -24,3 +24,27 @@ public sealed record CentralPmsWebPayReceiptPresentation(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     Guid CorrelationId);
+
+public sealed record CentralPmsWebPayPaymentAttemptStatus(
+    Guid PaymentAttemptId,
+    Guid ParkingSessionId,
+    Guid TariffSnapshotId,
+    Guid SiteGroupId,
+    Guid SiteId,
+    string? SiteGroupName,
+    string? SiteName,
+    string? TicketReference,
+    string? PlateNumber,
+    long AmountMinorUnits,
+    string Currency,
+    string? PaymentMethod,
+    string? PaymentProvider,
+    string? PaymentReference,
+    DateTimeOffset? EntryTime,
+    DateTimeOffset? PaymentTime,
+    string PaymentStatus,
+    string ParkingStatus,
+    Guid? ExitAuthorizationId,
+    string? ExitAuthorizationStatus,
+    DateTimeOffset? ExitAuthorizationExpiresAt,
+    Guid CorrelationId);

@@ -294,6 +294,57 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal(CorrelationId, result.Error.CorrelationId);
     }
 
+    [Fact]
+    public async Task GetPaymentAttemptStatusAsync_UsesAttemptBoundReadOnlyPath()
+    {
+        var paymentAttemptId = Guid.Parse("66666666-6666-6666-6666-666666666666");
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(new
+            {
+                paymentAttemptId,
+                parkingSessionId = ParkingSessionId,
+                tariffSnapshotId = TariffSnapshotId,
+                siteGroupId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                siteId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                siteGroupName = "Test Group",
+                siteName = "Site A",
+                ticketReference = (string?)null,
+                plateNumber = "R35-PLATE-C",
+                amountMinorUnits = 2500,
+                currency = "PHP",
+                paymentMethod = "PAYMONGO_QRPH",
+                paymentProvider = "PAYMONGO",
+                paymentReference = "pay_R35_customer_reference",
+                entryTime = "2026-09-01T13:00:00+08:00",
+                paymentTime = "2026-09-01T15:00:00+08:00",
+                paymentStatus = "CONFIRMED",
+                parkingStatus = "ACTIVE",
+                exitAuthorizationId = Guid.Parse("88888888-8888-8888-8888-888888888888"),
+                exitAuthorizationStatus = "ISSUED",
+                exitAuthorizationExpiresAt = "2026-09-01T15:30:00+08:00",
+                correlationId = CorrelationId
+            })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.GetPaymentAttemptStatusAsync(paymentAttemptId, CorrelationId, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal($"/v1/webpay/payment-attempts/{paymentAttemptId:D}/status", handler.LastRequest!.RequestUri!.AbsolutePath);
+        Assert.Equal(HttpMethod.Get, handler.LastRequest.Method);
+        Assert.Null(handler.LastRequest.Content);
+        Assert.Equal("R35-PLATE-C", result.Value!.PlateNumber);
+        Assert.Equal("CONFIRMED", result.Value.PaymentStatus);
+        Assert.Equal("PAYMONGO_QRPH", result.Value.PaymentMethod);
+        Assert.Equal("PAYMONGO", result.Value.PaymentProvider);
+        Assert.Equal("pay_R35_customer_reference", result.Value.PaymentReference);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-01T13:00:00+08:00"), result.Value.EntryTime);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-01T15:00:00+08:00"), result.Value.PaymentTime);
+        Assert.Equal("ISSUED", result.Value.ExitAuthorizationStatus);
+        Assert.Equal(1, handler.SendCount);
+    }
+
     /// <summary>
     /// Verifies WebPay statutory-discount submit calls the shared Central PMS decision route with server-controlled WEBPAY identity.
     /// </summary>

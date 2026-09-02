@@ -6,6 +6,7 @@ import type {
   PaymentIntentRequest,
   PaymentIntentResponse,
   StatutoryDiscountEntitlementType,
+  WebPayPaymentAttemptStatusResponse,
   WebPayReceiptPresentationResponse,
   WebPayHandoff,
   WebPayStatutoryDiscountAvailabilityResponse,
@@ -290,16 +291,50 @@ export async function resolveParkingSession(
 }
 
 export async function retrievePaymentStatus(
-  request: ParkingSessionResolveRequest,
+  paymentAttemptId: string,
+  correlationId?: string,
   fetchImpl: typeof fetch = fetch
-): Promise<ParkingSessionResolveResponse> {
+): Promise<WebPayPaymentAttemptStatusResponse> {
   /*
    * ExitPass v1.2 BRD 18.3 Payment Initiation.
    * ExitPass v1.2 SDD 10.2.4 Initiate Payment Attempt.
    * Invariant: WebPay status display is read-only and must derive payment state from server-side
    * Central PMS status, never from checkout redirect state.
    */
-  return resolveParkingSession(request, fetchImpl);
+  const normalizedPaymentAttemptId = paymentAttemptId.trim();
+  if (!normalizedPaymentAttemptId) {
+    throw new Error("Payment reference is missing.");
+  }
+
+  const requestCorrelationId = correlationId?.trim() || createCorrelationId();
+  const response = await fetchImpl(
+    `${getApiBaseUrl()}${receiptPresentationPathPrefix}/${encodeURIComponent(normalizedPaymentAttemptId)}/status`,
+    {
+      method: "GET",
+      headers: { "X-Correlation-Id": requestCorrelationId }
+    }
+  );
+  const payload = (await response.json().catch(() => ({}))) as WebPayPaymentAttemptStatusResponse | ApiError;
+  if (!response.ok) {
+    const error = payload as ApiError;
+    throw new Error(toPaymentAttemptStatusMessage(error.errorCode));
+  }
+
+  return payload as WebPayPaymentAttemptStatusResponse;
+}
+
+function toPaymentAttemptStatusMessage(errorCode?: string): string {
+  switch ((errorCode ?? "").toUpperCase()) {
+    case "PAYMENT_ATTEMPT_ID_REQUIRED":
+    case "INVALID_REQUEST":
+      return "Payment reference is missing.";
+    case "WEBPAY_PAYMENT_ATTEMPT_NOT_FOUND":
+    case "PAYMENT_ATTEMPT_NOT_FOUND":
+    case "UNKNOWN_PAYMENT_ATTEMPT":
+      return "Payment reference was not found.";
+    default:
+      return "Payment status is temporarily unavailable. Please try again shortly.";
+  }
 }
 
 export async function retrieveReceiptPresentation(
