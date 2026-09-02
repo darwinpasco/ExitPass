@@ -100,7 +100,9 @@ test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
 
     await expect(page.getByRole("heading", { name: /^payment confirmation$/i })).toBeVisible();
     await expect(page.getByRole("heading", { name: /^sales invoice$/i })).toBeVisible();
-    await expect(page.getByText(/Payment reference number:/)).toContainText("pay_eTN1CLQY5o9Dbv41Gj9vDAMs");
+    await expect(page.getByText("Payment reference number:", { exact: true })).toBeVisible();
+    await expect(page.getByText("pay_eTN1CLQY5o9Dbv41Gj9vDAMs", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: /copy payment reference number/i })).toBeVisible();
     await expect(page.getByText("SIA-00000002-A").first()).toBeVisible();
     await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toHaveCount(0);
     await expect(page.getByText("CASHLESS")).toHaveCount(0);
