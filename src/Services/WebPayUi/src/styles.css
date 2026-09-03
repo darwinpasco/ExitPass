@@ -571,8 +571,13 @@ textarea {
   padding-bottom: 2.5mm;
 }
 
-.thermal-receipt-header strong {
+.thermal-receipt-header > strong:not(.receipt-merchant-name) {
   font-size: 16px;
+  text-transform: uppercase;
+}
+
+.receipt-merchant-name {
+  font-size: 12px;
   text-transform: uppercase;
 }
 
@@ -589,8 +594,9 @@ textarea {
   margin: 0;
 }
 
-.sales-invoice-panel .thermal-receipt-identity,
+.sales-invoice-panel .thermal-receipt-merchant-identity,
 .sales-invoice-panel .thermal-receipt-summary {
+  width: 100%;
   padding-block: 2.5mm;
   border-bottom: 1px dashed #000000;
 }

@@ -2235,7 +2235,14 @@ function SalesInvoicePresentationPanel({
         </div>
       )}
 
-      {status === "available" && receipt && (
+      {status === "available" && receipt && !invoice && (
+        <div className="invoice-status is-error" role="alert">
+          <strong>Sales Invoice fiscal identity is unavailable</strong>
+          <span>The configured merchant and POS software supplier details could not be verified.</span>
+        </div>
+      )}
+
+      {status === "available" && receipt && invoice && (
         <>
           <article
             ref={receiptElementRef}
@@ -2244,27 +2251,26 @@ function SalesInvoicePresentationPanel({
             aria-label="Printable Sales Invoice"
           >
             <header className="thermal-receipt-header">
+              <strong className="receipt-merchant-name">{invoice.registeredBusinessName}</strong>
+              <span>{invoice.registeredBusinessAddress}</span>
+              <ReceiptDefinitionList
+                className="thermal-receipt-merchant-identity"
+                rows={[
+                  ["VAT REG TIN", invoice.tin],
+                  ["MIN", invoice.min],
+                  ["S/N", invoice.posSerialNumber],
+                  ["Branch / Site", invoice.siteName],
+                  ["Parking Location", invoice.parkingLocation],
+                  ["Terminal ID", invoice.terminalId]
+                ]}
+              />
               <span className="thermal-rule">================================</span>
               <strong>SALES INVOICE</strong>
               <span className="thermal-rule">================================</span>
               <span>ORIGINAL</span>
-              {invoice?.registeredBusinessName && <b>{invoice.registeredBusinessName}</b>}
-              {invoice?.siteName && <span>{invoice.siteName}</span>}
             </header>
 
-            {invoice && (
-              <>
-                <ReceiptDefinitionList
-                  className="thermal-receipt-identity"
-                  rows={[
-                    ["VAT REG TIN", invoice.tin],
-                    ["S/N", invoice.posSerialNumber],
-                    ["MIN", invoice.min],
-                    ["PARKING LOCATION", invoice.parkingLocation],
-                    ["TERMINAL ID", invoice.terminalId]
-                  ]}
-                />
-
+            <>
                 <ReceiptDefinitionList
                   className="thermal-receipt-summary"
                   rows={[
@@ -2362,30 +2368,30 @@ function SalesInvoicePresentationPanel({
                 </ReceiptSection>
 
                 <footer className="thermal-receipt-footer">
-                  <strong>THANK YOU FOR CHOOSING OUR SERVICE</strong>
-                  {invoice.registeredBusinessName && <b>{invoice.registeredBusinessName}</b>}
-                  {invoice.siteName && <span>{invoice.siteName}</span>}
+                  <strong>POS SOFTWARE SUPPLIER / DEVELOPER</strong>
+                  <b>{invoice.supplierDeveloperRegisteredName}</b>
+                  <span>{invoice.supplierDeveloperAddress}</span>
                   <ReceiptDefinitionList
                     rows={[
-                      ["VAT REG TIN", invoice.tin],
+                      ["TIN", invoice.supplierDeveloperTin],
                       ["ACCR. NO.", invoice.accreditationNumber],
                       ["DATE ISSUED", invoice.accreditationIssuedDate],
                       ["PTU", invoice.ptuNumber],
                       ["PTU Date", invoice.ptuIssuedDate]
                     ]}
                   />
+                  <strong>THANK YOU FOR CHOOSING OUR SERVICE</strong>
                   {invoice.qrCodeUrl && <img className="receipt-qr" src={invoice.qrCodeUrl} alt="Sales Invoice QR code" />}
                   <strong className="nothing-follows">===== NOTHING FOLLOWS =====</strong>
                 </footer>
-              </>
-            )}
+            </>
           </article>
         </>
       )}
 
       {status !== "checking" && (
         <div className="invoice-actions">
-          {status === "available" && receipt && (
+          {status === "available" && receipt && invoice && (
             <button
               type="button"
               className="primary-button"
@@ -2460,12 +2466,13 @@ type ReceiptLineItem = {
 };
 
 type ThermalSalesInvoice = {
-  registeredBusinessName?: string;
+  registeredBusinessName: string;
+  registeredBusinessAddress: string;
   siteName?: string;
-  tin?: string;
-  posSerialNumber?: string;
-  min?: string;
-  parkingLocation?: string;
+  tin: string;
+  posSerialNumber: string;
+  min: string;
+  parkingLocation: string;
   terminalId?: string;
   issuedDate: string;
   ticketNumber?: string;
@@ -2494,13 +2501,16 @@ type ThermalSalesInvoice = {
   accreditationIssuedDate?: string;
   ptuNumber?: string;
   ptuIssuedDate?: string;
+  supplierDeveloperRegisteredName: string;
+  supplierDeveloperAddress: string;
+  supplierDeveloperTin: string;
   qrCodeUrl?: string;
 };
 
 function buildThermalSalesInvoice(
   receipt: WebPayReceiptPresentationResponse,
   parkingSummary: ParkingSessionResolveResponse
-): ThermalSalesInvoice {
+): ThermalSalesInvoice | null {
   const sections = receipt.authoritativePresentation.presentation?.sections ?? [];
   const rows = sections.flatMap((section) => section.rows ?? []);
   const value = (...keysOrLabels: string[]) => findPresentationValue(rows, keysOrLabels);
@@ -2514,14 +2524,35 @@ function buildThermalSalesInvoice(
   const subtotal = formatReceiptAmount(value("totals.subtotal", "Subtotal", "totals[0000].amount", "Total Amount") ?? paymentAmount);
   const zeroAmount = formatReceiptAmount(`PHP 0.00`);
   const qrCodeUrl = authoritativeQrCodeUrl(receipt);
+  const registeredBusinessName = value("salesInvoiceHeaderSnapshot.registeredBusinessName", "Registered Business Name", "Business Name");
+  const registeredBusinessAddress = value("salesInvoiceHeaderSnapshot.registeredBusinessAddress", "Registered Business Address");
+  const tin = value("salesInvoiceHeaderSnapshot.tin", "TIN", "VAT REG TIN");
+  const posSerialNumber = value("salesInvoiceHeaderSnapshot.posSerialNumber", "POS Serial Number", "S/N");
+  const min = value("salesInvoiceHeaderSnapshot.machineIdentificationNumber", "MIN");
+  const parkingLocation = value("salesInvoiceHeaderSnapshot.parkingLocationDisplay", "Parking Location");
+  const supplierDeveloperRegisteredName = value("salesInvoiceHeaderSnapshot.supplierDeveloperRegisteredName", "Supplier / Developer Registered Name");
+  const supplierDeveloperAddress = value("salesInvoiceHeaderSnapshot.supplierDeveloperAddress", "Supplier / Developer Address");
+  const supplierDeveloperTin = value("salesInvoiceHeaderSnapshot.supplierDeveloperTin", "Supplier / Developer TIN");
+  const accreditationNumber = value("salesInvoiceHeaderSnapshot.birAccreditationNumber", "BIR Accreditation Number", "ACCR. NO.");
+  const accreditationIssuedDate = value("salesInvoiceHeaderSnapshot.birAccreditationIssuedDate", "BIR Accreditation Issued Date", "DATE ISSUED");
+  const ptuNumber = value("salesInvoiceHeaderSnapshot.ptuNumber", "PTU Number", "PTU");
+  const ptuIssuedDate = value("salesInvoiceHeaderSnapshot.ptuIssuedDate", "PTU Issued Date", "PTU Date");
+
+  if (!registeredBusinessName || !registeredBusinessAddress || !tin || !posSerialNumber || !min ||
+      !parkingLocation || !supplierDeveloperRegisteredName || !supplierDeveloperAddress ||
+      !supplierDeveloperTin || !accreditationNumber || !accreditationIssuedDate ||
+      !ptuNumber || !ptuIssuedDate) {
+    return null;
+  }
 
   return {
-    registeredBusinessName: value("salesInvoiceHeaderSnapshot.registeredBusinessName", "Registered Business Name", "Business Name"),
+    registeredBusinessName,
+    registeredBusinessAddress,
     siteName: value("salesInvoiceHeaderSnapshot.branchName", "Site / Branch", "Branch Name") ?? parkingSummary.siteName ?? undefined,
-    tin: value("salesInvoiceHeaderSnapshot.tin", "TIN", "VAT REG TIN"),
-    posSerialNumber: value("salesInvoiceHeaderSnapshot.posSerialNumber", "POS Serial Number", "S/N"),
-    min: value("salesInvoiceHeaderSnapshot.machineIdentificationNumber", "MIN"),
-    parkingLocation: value("salesInvoiceHeaderSnapshot.parkingLocationDisplay", "Parking Location"),
+    tin,
+    posSerialNumber,
+    min,
+    parkingLocation,
     terminalId: value("salesInvoiceHeaderSnapshot.terminalId", "Terminal ID"),
     issuedDate: formatDateTime(value("fiscalNumbering.fiscalNumberAssignedAt", "Fiscal Number Assigned At", "Issued Date", "Transaction Date") ?? receipt.updatedAt) ?? "",
     ticketNumber: parkingSummary.ticketReference ?? undefined,
@@ -2550,10 +2581,13 @@ function buildThermalSalesInvoice(
       : undefined,
     legalStatement: value("salesInvoiceHeaderSnapshot.salesInvoiceLegalStatement", "Sales Invoice Legal Statement") ?? "THIS SERVES AS YOUR SALES INVOICE",
     printDate: formatDateTime(new Date().toISOString()) ?? new Date().toISOString(),
-    accreditationNumber: value("salesInvoiceHeaderSnapshot.birAccreditationNumber", "BIR Accreditation Number", "ACCR. NO."),
-    accreditationIssuedDate: value("salesInvoiceHeaderSnapshot.birAccreditationIssuedDate", "BIR Accreditation Issued Date", "DATE ISSUED"),
-    ptuNumber: value("salesInvoiceHeaderSnapshot.ptuNumber", "PTU Number", "PTU"),
-    ptuIssuedDate: value("salesInvoiceHeaderSnapshot.ptuIssuedDate", "PTU Issued Date", "PTU Date"),
+    accreditationNumber,
+    accreditationIssuedDate,
+    ptuNumber,
+    ptuIssuedDate,
+    supplierDeveloperRegisteredName,
+    supplierDeveloperAddress,
+    supplierDeveloperTin,
     qrCodeUrl
   };
 }

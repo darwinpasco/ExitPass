@@ -201,6 +201,7 @@ const salesInvoicePresentationResponse = {
           title: "Sales Invoice Header Snapshot",
           rows: [
             { key: "salesInvoiceHeaderSnapshot.registeredBusinessName", label: "Registered Business Name", displayValue: "Pro Parking Management Corp." },
+            { key: "salesInvoiceHeaderSnapshot.registeredBusinessAddress", label: "Registered Business Address", displayValue: "123 Merchant Avenue, Cebu City" },
             { key: "salesInvoiceHeaderSnapshot.tin", label: "TIN", displayValue: "123-456-789-000" },
             { key: "salesInvoiceHeaderSnapshot.posSerialNumber", label: "POS Serial Number", displayValue: "SN-SITE-A-0001" },
             { key: "salesInvoiceHeaderSnapshot.machineIdentificationNumber", label: "MIN", displayValue: "MIN-SITE-A-0001" },
@@ -210,6 +211,9 @@ const salesInvoicePresentationResponse = {
             { key: "salesInvoiceHeaderSnapshot.birAccreditationIssuedDate", label: "BIR Accreditation Issued Date", displayValue: "2026-01-02" },
             { key: "salesInvoiceHeaderSnapshot.ptuNumber", label: "PTU Number", displayValue: "PTU-SITE-A-0001" },
             { key: "salesInvoiceHeaderSnapshot.ptuIssuedDate", label: "PTU Issued Date", displayValue: "2026-01-03" },
+            { key: "salesInvoiceHeaderSnapshot.supplierDeveloperRegisteredName", label: "Supplier / Developer Registered Name", displayValue: "ExitPass Test Software Solutions Corp." },
+            { key: "salesInvoiceHeaderSnapshot.supplierDeveloperAddress", label: "Supplier / Developer Address", displayValue: "456 Software Park, Cebu City" },
+            { key: "salesInvoiceHeaderSnapshot.supplierDeveloperTin", label: "Supplier / Developer TIN", displayValue: "987-654-321-000" },
             { key: "salesInvoiceHeaderSnapshot.salesInvoiceLegalStatement", label: "Sales Invoice Legal Statement", displayValue: "THIS SERVES AS YOUR SALES INVOICE" }
           ]
         },
@@ -2527,6 +2531,14 @@ describe("ExitPass WebPay UI", () => {
     const printableInvoice = screen.getByLabelText("Printable Sales Invoice");
     expect(printableInvoice).toHaveTextContent("Ticket Number");
     expect(printableInvoice).toHaveTextContent("TICKET-TEST-023");
+    expect(printableInvoice).toHaveTextContent("Pro Parking Management Corp.");
+    expect(printableInvoice).toHaveTextContent("123 Merchant Avenue, Cebu City");
+    expect(printableInvoice).toHaveTextContent("VAT REG TIN");
+    expect(printableInvoice).toHaveTextContent("123-456-789-000");
+    expect(printableInvoice).toHaveTextContent("POS SOFTWARE SUPPLIER / DEVELOPER");
+    expect(printableInvoice).toHaveTextContent("ExitPass Test Software Solutions Corp.");
+    expect(printableInvoice).toHaveTextContent("456 Software Park, Cebu City");
+    expect(printableInvoice).toHaveTextContent("987-654-321-000");
     expect(printableInvoice).toHaveTextContent("CARD");
     expect(printableInvoice).toHaveTextContent("PayMongo");
     expect(printableInvoice).toHaveTextContent("VAT BREAKDOWN");
@@ -2566,6 +2578,86 @@ describe("ExitPass WebPay UI", () => {
     expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/receipt-presentation"))).toHaveLength(
       receiptRequestCount
     );
+  });
+
+  it("WebPayReturnPage_WhenMandatoryFiscalIdentityIsMissing_FailsClosedWithoutInvoiceOrDownload", async () => {
+    const receiptWithoutSupplierIdentity = {
+      ...salesInvoicePresentationResponse,
+      authoritativePresentation: {
+        presentation: {
+          ...salesInvoicePresentationResponse.authoritativePresentation.presentation,
+          sections: salesInvoicePresentationResponse.authoritativePresentation.presentation.sections.map((section) =>
+            section.name === "salesInvoiceHeaderSnapshot"
+              ? {
+                  ...section,
+                  rows: section.rows.filter((row) => !row.key.startsWith("salesInvoiceHeaderSnapshot.supplierDeveloper"))
+                }
+              : section
+          )
+        }
+      }
+    };
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        paymentStatus: "Paid",
+        paymentMethod: "CARD"
+      },
+      receiptPayload: receiptWithoutSupplierIdentity
+    });
+    window.history.pushState(
+      {},
+      "",
+      "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444&correlationId=77777777-7777-7777-7777-777777777777"
+    );
+
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sales Invoice fiscal identity is unavailable");
+    expect(screen.queryByLabelText("Printable Sales Invoice")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /download sales invoice/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retrieve sales invoice/i })).toBeInTheDocument();
+  });
+
+  it("WebPayReturnPage_WhenMerchantIdentityIsMissing_DoesNotSubstituteSiteName", async () => {
+    const receiptWithoutMerchantIdentity = {
+      ...salesInvoicePresentationResponse,
+      authoritativePresentation: {
+        presentation: {
+          ...salesInvoicePresentationResponse.authoritativePresentation.presentation,
+          sections: salesInvoicePresentationResponse.authoritativePresentation.presentation.sections.map((section) =>
+            section.name === "salesInvoiceHeaderSnapshot"
+              ? {
+                  ...section,
+                  rows: section.rows.filter(
+                    (row) => row.key !== "salesInvoiceHeaderSnapshot.registeredBusinessName"
+                  )
+                }
+              : section
+          )
+        }
+      }
+    };
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        siteName: "Restart 38 Site A",
+        paymentStatus: "Paid",
+        paymentMethod: "CARD"
+      },
+      receiptPayload: receiptWithoutMerchantIdentity
+    });
+    window.history.pushState(
+      {},
+      "",
+      "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444&correlationId=77777777-7777-7777-7777-777777777777"
+    );
+
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sales Invoice fiscal identity is unavailable");
+    expect(screen.queryByLabelText("Printable Sales Invoice")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /download sales invoice/i })).not.toBeInTheDocument();
   });
 
   it("WebPayReturnPage_WhenPaid_RendersDownloadableTicketExitQrWithoutMutation", async () => {

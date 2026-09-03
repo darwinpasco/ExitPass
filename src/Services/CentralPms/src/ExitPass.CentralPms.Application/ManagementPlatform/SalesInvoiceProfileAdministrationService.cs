@@ -180,6 +180,9 @@ public sealed class SalesInvoiceProfileAdministrationService : ISalesInvoiceProf
             string.IsNullOrWhiteSpace(request.PosSerialNumber) ||
             string.IsNullOrWhiteSpace(request.MachineIdentificationNumber) ||
             string.IsNullOrWhiteSpace(request.ParkingLocationDisplay) ||
+            string.IsNullOrWhiteSpace(request.SupplierDeveloperRegisteredName) ||
+            string.IsNullOrWhiteSpace(request.SupplierDeveloperAddress) ||
+            string.IsNullOrWhiteSpace(request.SupplierDeveloperTin) ||
             string.IsNullOrWhiteSpace(request.BirAccreditationNumber) ||
             string.IsNullOrWhiteSpace(request.PtuNumber) ||
             string.IsNullOrWhiteSpace(request.SalesInvoiceLegalStatement) ||

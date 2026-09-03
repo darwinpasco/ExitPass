@@ -483,6 +483,7 @@ function buildPresentationResponse(paymentAttemptId, correlationId) {
             title: "Sales Invoice Header Snapshot",
             rows: [
               { key: "salesInvoiceHeaderSnapshot.registeredBusinessName", label: "Registered Business Name", displayValue: "ExitPass Test Parking Services Inc." },
+              { key: "salesInvoiceHeaderSnapshot.registeredBusinessAddress", label: "Registered Business Address", displayValue: "123 Merchant Avenue, Cebu City" },
               { key: "salesInvoiceHeaderSnapshot.tin", label: "TIN", displayValue: "123-456-789-000" },
               { key: "salesInvoiceHeaderSnapshot.posSerialNumber", label: "POS Serial Number", displayValue: "SN-IST-POS-A-0001" },
               { key: "salesInvoiceHeaderSnapshot.machineIdentificationNumber", label: "MIN", displayValue: "MIN-IST-POS-A-0001" },
@@ -492,6 +493,9 @@ function buildPresentationResponse(paymentAttemptId, correlationId) {
               { key: "salesInvoiceHeaderSnapshot.birAccreditationIssuedDate", label: "BIR Accreditation Issued Date", displayValue: "2026-01-02" },
               { key: "salesInvoiceHeaderSnapshot.ptuNumber", label: "PTU Number", displayValue: "PTU-IST-SITE-A-0001" },
               { key: "salesInvoiceHeaderSnapshot.ptuIssuedDate", label: "PTU Issued Date", displayValue: "2026-01-03" },
+              { key: "salesInvoiceHeaderSnapshot.supplierDeveloperRegisteredName", label: "Supplier / Developer Registered Name", displayValue: "ExitPass Test Software Solutions Corp." },
+              { key: "salesInvoiceHeaderSnapshot.supplierDeveloperAddress", label: "Supplier / Developer Address", displayValue: "456 Software Park, Cebu City" },
+              { key: "salesInvoiceHeaderSnapshot.supplierDeveloperTin", label: "Supplier / Developer TIN", displayValue: "987-654-321-000" },
               { key: "salesInvoiceHeaderSnapshot.salesInvoiceLegalStatement", label: "Sales Invoice Legal Statement", displayValue: "THIS SERVES AS YOUR SALES INVOICE" }
             ]
           },

@@ -224,7 +224,10 @@ public sealed record ManagementPlatformSalesInvoiceHeaderProfileMutationRequest(
     string CustomerServiceFooter,
     DateTimeOffset EffectiveFrom,
     DateTimeOffset? EffectiveTo,
-    string RequestedByRef);
+    string RequestedByRef,
+    string? SupplierDeveloperRegisteredName = null,
+    string? SupplierDeveloperAddress = null,
+    string? SupplierDeveloperTin = null);
 
 public sealed record ManagementPlatformSalesInvoiceHeaderProfile(
     Guid SalesInvoiceHeaderProfileId,
@@ -251,7 +254,10 @@ public sealed record ManagementPlatformSalesInvoiceHeaderProfile(
     string? ApprovedByRef,
     DateTimeOffset? RetiredAt,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? UpdatedAt);
+    DateTimeOffset? UpdatedAt,
+    string? SupplierDeveloperRegisteredName = null,
+    string? SupplierDeveloperAddress = null,
+    string? SupplierDeveloperTin = null);
 
 public sealed record ManagementPlatformSalesInvoiceHeaderProfileListRequest(
     Guid? SiteId,

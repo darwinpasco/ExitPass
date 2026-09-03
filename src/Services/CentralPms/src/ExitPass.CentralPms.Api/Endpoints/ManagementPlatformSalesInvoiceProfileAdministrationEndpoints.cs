@@ -574,7 +574,10 @@ public static class ManagementPlatformSalesInvoiceProfileAdministrationEndpoints
             request.CustomerServiceFooter,
             request.EffectiveFrom,
             request.EffectiveTo,
-            actorRef);
+            actorRef,
+            request.SupplierDeveloperRegisteredName,
+            request.SupplierDeveloperAddress,
+            request.SupplierDeveloperTin);
 
     private static ManagementPlatformFiscalIdentityDto ToDto(ManagementPlatformFiscalIdentity value) =>
         new(
@@ -615,7 +618,10 @@ public static class ManagementPlatformSalesInvoiceProfileAdministrationEndpoints
             value.ApprovedByRef,
             value.RetiredAt,
             value.CreatedAt,
-            value.UpdatedAt);
+            value.UpdatedAt,
+            value.SupplierDeveloperRegisteredName,
+            value.SupplierDeveloperAddress,
+            value.SupplierDeveloperTin);
 
     private static ManagementPlatformSalesInvoiceHeaderProfileValidationDto ToDto(ManagementPlatformSalesInvoiceHeaderProfileValidation value) =>
         new(

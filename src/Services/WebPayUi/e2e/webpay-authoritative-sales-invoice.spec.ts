@@ -208,6 +208,12 @@ test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
     await expect(page.getByRole("button", { name: "57 mm" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "58 mm" })).toHaveCount(0);
     await expect(printableInvoice).toContainText("Ticket Number");
+    await expect(printableInvoice).toContainText("ExitPass Test Parking Services Inc.");
+    await expect(printableInvoice).toContainText("123 Merchant Avenue, Cebu City");
+    await expect(printableInvoice).toContainText("POS SOFTWARE SUPPLIER / DEVELOPER");
+    await expect(printableInvoice).toContainText("ExitPass Test Software Solutions Corp.");
+    await expect(printableInvoice).toContainText("456 Software Park, Cebu City");
+    await expect(printableInvoice).toContainText("987-654-321-000");
     await expect(printableInvoice).toContainText("PAYMENT DETAILS");
     await expect(printableInvoice).toContainText("QRPH");
     await expect(printableInvoice).toContainText("PayMongo");
