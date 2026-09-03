@@ -72,6 +72,10 @@ public sealed class ManagementPlatformSalesInvoiceProfileApiIntegrationTests
         readinessResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         usageResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
+        var profile = await profileResponse.Content.ReadFromJsonAsync<ManagementPlatformSalesInvoiceHeaderProfileDto>(JsonOptions);
+        profile!.SupplierDeveloperRegisteredName.Should().Be("Governed Test Software Supplier Inc.");
+        profile.SupplierDeveloperAddress.Should().Be("456 Software Park, Cebu City");
+        profile.SupplierDeveloperTin.Should().Be("987-654-321-000");
         var readiness = await readinessResponse.Content.ReadFromJsonAsync<ManagementPlatformSalesInvoiceHeaderProfileReadinessDto>(JsonOptions);
         readiness!.ResolutionStatus.Should().Be("FUTURE_SAFE_STATUS");
         var usage = await usageResponse.Content.ReadFromJsonAsync<ManagementPlatformSalesInvoiceHeaderProfileUsageDto>(JsonOptions);
@@ -114,6 +118,9 @@ public sealed class ManagementPlatformSalesInvoiceProfileApiIntegrationTests
         fake.LastProfileMutationRequest.BirAccreditationIssuedDate.Should().Be(new DateOnly(2026, 1, 2));
         fake.LastProfileMutationRequest.BirAccreditationValidUntil.Should().Be(new DateOnly(2031, 1, 2));
         fake.LastProfileMutationRequest.PtuIssuedDate.Should().Be(new DateOnly(2026, 1, 3));
+        fake.LastProfileMutationRequest.SupplierDeveloperRegisteredName.Should().Be("Governed Test Software Supplier Inc.");
+        fake.LastProfileMutationRequest.SupplierDeveloperAddress.Should().Be("456 Software Park, Cebu City");
+        fake.LastProfileMutationRequest.SupplierDeveloperTin.Should().Be("987-654-321-000");
     }
 
     [Fact]
@@ -308,7 +315,10 @@ public sealed class ManagementPlatformSalesInvoiceProfileApiIntegrationTests
             "This document is valid for local tax reporting.",
             "Customer service footer",
             DateTimeOffset.Parse("2026-07-19T00:00:00Z"),
-            null);
+            null,
+            "Governed Test Software Supplier Inc.",
+            "456 Software Park, Cebu City",
+            "987-654-321-000");
 
     private sealed class FakeSalesInvoiceProfileAdministrationService : ISalesInvoiceProfileAdministrationService
     {
@@ -552,6 +562,9 @@ public sealed class ManagementPlatformSalesInvoiceProfileApiIntegrationTests
                 null,
                 null,
                 DateTimeOffset.Parse("2026-07-19T00:00:00Z"),
-                null);
+                null,
+                "Governed Test Software Supplier Inc.",
+                "456 Software Park, Cebu City",
+                "987-654-321-000");
     }
 }

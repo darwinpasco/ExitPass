@@ -108,9 +108,15 @@ public sealed class PosServerSalesInvoiceProfileAdministrationClientTests
         var updated = await client.UpdateDraftProfileAsync(ProfileId, ProfileMutation(), Context(), CancellationToken.None);
 
         created.Value!.BirAccreditationIssuedDate.Should().Be(new DateOnly(2026, 1, 5));
+        created.Value.SupplierDeveloperRegisteredName.Should().Be("Governed Test Software Supplier Inc.");
         read.Value!.BirAccreditationValidUntil.Should().Be(new DateOnly(2027, 1, 5));
+        read.Value.SupplierDeveloperAddress.Should().Be("456 Software Park, Cebu City");
         updated.Value!.PtuIssuedDate.Should().Be(new DateOnly(2026, 1, 7));
+        updated.Value.SupplierDeveloperTin.Should().Be("987-654-321-000");
         listed.Value.Should().ContainSingle();
+        handler.Requests[0].Body.Should().Contain("\"supplierDeveloperRegisteredName\":\"Governed Test Software Supplier Inc.\"");
+        handler.Requests[0].Body.Should().Contain("\"supplierDeveloperAddress\":\"456 Software Park, Cebu City\"");
+        handler.Requests[0].Body.Should().Contain("\"supplierDeveloperTin\":\"987-654-321-000\"");
         handler.Requests[2].Uri.Query.Should().Contain("siteId=");
         handler.Requests[2].Uri.Query.Should().Contain("sitePosServerId=");
     }
@@ -336,9 +342,14 @@ public sealed class PosServerSalesInvoiceProfileAdministrationClientTests
             ProfileMutation() with { FiscalIdentityId = Guid.Empty },
             Context(),
             CancellationToken.None);
+        var missingSupplier = await service.CreateProfileAsync(
+            ProfileMutation() with { SupplierDeveloperTin = "" },
+            Context(),
+            CancellationToken.None);
         var valid = await service.CreateProfileAsync(ProfileMutation(), Context(), CancellationToken.None);
 
         invalid.Outcome.Should().Be(PosServerSalesInvoiceProfileAdminOutcome.InvalidRequest);
+        missingSupplier.Outcome.Should().Be(PosServerSalesInvoiceProfileAdminOutcome.InvalidRequest);
         valid.Succeeded.Should().BeTrue();
         handler.Requests.Should().ContainSingle();
     }
@@ -426,7 +437,10 @@ public sealed class PosServerSalesInvoiceProfileAdministrationClientTests
             "Customer support placeholder.",
             DateTimeOffset.Parse("2026-07-18T00:00:00Z"),
             null,
-            "admin:user");
+            "admin:user",
+            "Governed Test Software Supplier Inc.",
+            "456 Software Park, Cebu City",
+            "987-654-321-000");
 
     private static object FiscalIdentityPayload(string? updatedByRef = null) => new
     {
@@ -454,6 +468,9 @@ public sealed class PosServerSalesInvoiceProfileAdministrationClientTests
         posSerialNumber = "POS-123456",
         machineIdentificationNumber = "MIN-123456",
         parkingLocationDisplay = "ExitPass Test Parking",
+        supplierDeveloperRegisteredName = "Governed Test Software Supplier Inc.",
+        supplierDeveloperAddress = "456 Software Park, Cebu City",
+        supplierDeveloperTin = "987-654-321-000",
         birAccreditationNumber = "BIR-ACC-PLACEHOLDER",
         birAccreditationIssuedDate = "2026-01-05",
         birAccreditationValidUntil = "2027-01-05",

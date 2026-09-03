@@ -36,7 +36,10 @@ public sealed record ManagementPlatformSalesInvoiceHeaderProfileMutationRequestD
     string SalesInvoiceLegalStatement,
     string CustomerServiceFooter,
     DateTimeOffset EffectiveFrom,
-    DateTimeOffset? EffectiveTo);
+    DateTimeOffset? EffectiveTo,
+    string? SupplierDeveloperRegisteredName = null,
+    string? SupplierDeveloperAddress = null,
+    string? SupplierDeveloperTin = null);
 
 public sealed record ManagementPlatformSalesInvoiceHeaderProfileDto(
     Guid SalesInvoiceHeaderProfileId,
@@ -63,7 +66,10 @@ public sealed record ManagementPlatformSalesInvoiceHeaderProfileDto(
     string? ApprovedByRef,
     DateTimeOffset? RetiredAt,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? UpdatedAt);
+    DateTimeOffset? UpdatedAt,
+    string? SupplierDeveloperRegisteredName = null,
+    string? SupplierDeveloperAddress = null,
+    string? SupplierDeveloperTin = null);
 
 public sealed record ManagementPlatformSalesInvoiceHeaderProfileRetirementRequestDto(DateTimeOffset? RetireAt);
 
