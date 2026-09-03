@@ -1181,6 +1181,14 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             throw new NotSupportedException();
         }
 
+        public Task<CentralPmsWebPayResult<CentralPmsWebPayPaymentAttemptStatus>> GetPaymentAttemptStatusAsync(
+            Guid paymentAttemptId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> SubmitStatutoryDiscountDecisionAsync(
             CentralPmsStatutoryDiscountDecisionRequest request,
             string idempotencyKey,

@@ -126,10 +126,10 @@ public sealed class PayMongoWebhookContractTests
 
     /// <summary>
     /// Verifies that replayed provider event identifiers are acknowledged idempotently
-    /// without reporting duplicate verified outcomes.
+    /// and replay the same verified outcome for downstream finality recovery.
     /// </summary>
     [Fact]
-    public async Task PayMongoWebhook_WhenProviderEventIsReplayed_ReturnsOkWithoutDuplicateOutcomeReport()
+    public async Task PayMongoWebhook_WhenProviderEventIsReplayed_ReplaysVerifiedOutcomeForDownstreamRecovery()
     {
         var payload = BuildCheckoutPayload(
             eventId: "evt_contract_duplicate_001",
@@ -144,7 +144,9 @@ public sealed class PayMongoWebhookContractTests
 
         Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
         Assert.Equal(HttpStatusCode.OK, replayResponse.StatusCode);
-        Assert.Single(_factory.ReportedOutcomes);
+        Assert.Equal(2, _factory.ReportedOutcomes.Count);
+        Assert.Single(_factory.ReportedOutcomes.Select(report => report.EventId).Distinct());
+        Assert.Single(_factory.ReportedOutcomes.Select(report => report.PaymentAttemptId).Distinct());
     }
 
     /// <summary>
