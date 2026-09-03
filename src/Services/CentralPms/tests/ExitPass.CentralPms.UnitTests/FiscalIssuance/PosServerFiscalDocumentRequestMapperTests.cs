@@ -9,6 +9,14 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
     private readonly PosServerFiscalDocumentRequestMapper _sut = new();
 
     [Fact]
+    public void PosServerCreateRequest_ExposesTopLevelSiteIdForFiscalProfileResolution()
+    {
+        typeof(PosServerFiscalDocumentCreateRequest)
+            .GetProperty("SiteId")
+            .Should().NotBeNull();
+    }
+
+    [Fact]
     public void Map_WhenContextIsValid_MapsRequiredPosServerFields()
     {
         var context = ValidContext();
@@ -16,6 +24,7 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
         var result = _sut.Map(context);
 
         result.SitePosServerId.Should().Be(context.SitePosServerId);
+        result.SiteId.Should().Be(context.SiteId);
         result.SitePosServerRef.Should().Be(context.SitePosServerRef);
         result.FiscalDocumentTypeCodeId.Should().Be(context.FiscalDocumentTypeCodeId);
         result.FiscalDocumentTypeCodeKey.Should().Be(context.FiscalDocumentTypeCodeKey);
@@ -494,7 +503,8 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
             ],
             ReferenceContext: new Dictionary<string, string> { ["correlation"] = "correlation-ref" },
             PaymentFinalityRef: "payment-finality-ref",
-            VendorAckRef: null);
+            VendorAckRef: null,
+            SiteId: Guid.Parse("12121212-1212-4212-8212-121212121212"));
 
     private static readonly Guid StatutoryDecisionCommandId = Guid.Parse("01010101-0101-4101-8101-010101010101");
     private static readonly Guid StatutoryApplicationCommandId = Guid.Parse("02020202-0202-4202-8202-020202020202");

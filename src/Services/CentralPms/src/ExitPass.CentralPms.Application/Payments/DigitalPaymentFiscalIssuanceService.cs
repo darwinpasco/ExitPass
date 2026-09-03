@@ -207,7 +207,8 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             referenceContext,
             upstreamReference,
             null,
-            BuildAppliedStatutoryFiscalFacts(context, statutory));
+            BuildAppliedStatutoryFiscalFacts(context, statutory),
+            SiteId: context.SiteId);
     }
 
     private static void EnsureStatutoryContextMatches(

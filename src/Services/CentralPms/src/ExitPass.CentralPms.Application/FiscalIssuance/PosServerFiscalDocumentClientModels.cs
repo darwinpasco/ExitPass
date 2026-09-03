@@ -66,7 +66,8 @@ public sealed record CentralPmsFiscalDocumentMappingContext(
     IReadOnlyDictionary<string, string> ReferenceContext,
     string? PaymentFinalityRef,
     string? VendorAckRef,
-    CentralPmsAppliedStatutoryFiscalFactsContext? AppliedStatutoryFiscalFacts = null);
+    CentralPmsAppliedStatutoryFiscalFactsContext? AppliedStatutoryFiscalFacts = null,
+    Guid? SiteId = null);
 
 public sealed record CentralPmsAppliedStatutoryFiscalFactsContext(
     Guid StatutoryDiscountDecisionCommandId,
@@ -214,7 +215,8 @@ public sealed record PosServerFiscalDocumentCreateRequest(
     IReadOnlyList<PosServerFiscalDiscountPrivilegeDetailRequest> DiscountPrivilegeDetails,
     IReadOnlyList<PosServerFiscalTotalRequest> Totals,
     IReadOnlyDictionary<string, string> ReferenceContext,
-    PosServerAppliedStatutoryFiscalFactsRequest? AppliedStatutoryFiscalFacts = null);
+    PosServerAppliedStatutoryFiscalFactsRequest? AppliedStatutoryFiscalFacts = null,
+    Guid? SiteId = null);
 
 public sealed record PosServerAppliedStatutoryFiscalFactsRequest(
     Guid StatutoryDiscountDecisionCommandId,

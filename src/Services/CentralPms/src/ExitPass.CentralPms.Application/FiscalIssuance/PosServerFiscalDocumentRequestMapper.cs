@@ -135,7 +135,8 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
                     TotalContext: NormalizeDictionary(total.TotalContext)))
                 .ToArray(),
             ReferenceContext: NormalizeDictionary(context.ReferenceContext),
-            AppliedStatutoryFiscalFacts: MapAppliedStatutoryFiscalFacts(context.AppliedStatutoryFiscalFacts));
+            AppliedStatutoryFiscalFacts: MapAppliedStatutoryFiscalFacts(context.AppliedStatutoryFiscalFacts),
+            SiteId: context.SiteId);
     }
 
     private static IReadOnlyList<string> Validate(CentralPmsFiscalDocumentMappingContext context)
