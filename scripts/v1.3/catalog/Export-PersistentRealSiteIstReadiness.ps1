@@ -15,30 +15,38 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) {
 }
 
 $query = @'
-SELECT site_id, site_code, site_name, site_group_id, site_group_name, jurisdiction,
-       CASE WHEN site_exists_active AND site_group_exists_active AND jurisdiction_active THEN 'ACTIVE' ELSE 'INCOMPLETE' END AS catalog,
-       senior_policy_status AS senior_policy,
-       pwd_policy_status AS pwd_policy,
-       CASE WHEN hikcentral_target_configured THEN 'YES' ELSE 'NO' END AS hikcentral_target_configured,
-       CASE WHEN hikcentral_connectivity_verified THEN 'YES' ELSE 'NO' END AS hikcentral_connectivity_verified,
-       CASE WHEN webpay_public_lookup_enabled THEN 'YES' ELSE 'NO' END AS webpay_public_lookup_enabled,
-       CASE WHEN webpay_payment_enabled THEN 'YES' ELSE 'NO' END AS webpay_payment_enabled,
-       CASE WHEN fiscal_merchant_configured THEN 'YES' ELSE 'NO' END AS fiscal_merchant_configured,
-       CASE WHEN fiscal_supplier_configured THEN 'YES' ELSE 'NO' END AS fiscal_supplier_configured,
-       CASE WHEN fiscal_profile_approved THEN 'YES' ELSE 'NO' END AS fiscal_profile_approved,
-       CASE WHEN paymongo_enabled THEN 'YES' ELSE 'NO' END AS paymongo_enabled,
-       final_test_readiness,
+SELECT readiness.site_id, readiness.site_code, readiness.site_name, readiness.site_group_id, readiness.site_group_name, readiness.jurisdiction,
+       CASE WHEN readiness.site_exists_active AND readiness.site_group_exists_active AND readiness.jurisdiction_active THEN 'ACTIVE' ELSE 'INCOMPLETE' END AS catalog,
+       readiness.senior_policy_status AS senior_policy,
+       readiness.pwd_policy_status AS pwd_policy,
+       capability.operator_entity_code,
+       capability.hikcentral_instance_code,
+       CASE WHEN capability.hikcentral_target_configured THEN 'YES' ELSE 'NO' END AS hikcentral_target_configured,
+       CASE WHEN capability.hikcentral_connectivity_verified THEN 'YES' ELSE 'NO' END AS hikcentral_connectivity_verified,
+       capability.hikcentral_parking_lot_index_code,
+       capability.hikcentral_parking_lot_name,
+       CASE WHEN readiness.webpay_public_lookup_enabled THEN 'YES' ELSE 'NO' END AS webpay_public_lookup_enabled,
+       CASE WHEN readiness.webpay_payment_enabled THEN 'YES' ELSE 'NO' END AS webpay_payment_enabled,
+       CASE WHEN capability.fiscal_merchant_configured THEN 'YES' ELSE 'NO' END AS fiscal_merchant_configured,
+       CASE WHEN capability.fiscal_supplier_configured THEN 'YES' ELSE 'NO' END AS fiscal_supplier_configured,
+       CASE WHEN capability.fiscal_profile_approved THEN 'YES' ELSE 'NO' END AS fiscal_profile_approved,
+       capability.pos_site_server_id,
+       capability.fiscal_identity_id,
+       capability.sales_invoice_profile_id,
+       CASE WHEN capability.paymongo_enabled THEN 'YES' ELSE 'NO' END AS paymongo_enabled,
+       readiness.final_test_readiness,
        concat_ws('; ',
-         CASE WHEN NOT hikcentral_target_configured THEN 'HikCentral target' END,
-         CASE WHEN NOT hikcentral_connectivity_verified THEN 'HikCentral connectivity' END,
-         CASE WHEN NOT webpay_public_lookup_enabled THEN 'WebPay publication' END,
-         CASE WHEN NOT webpay_payment_enabled THEN 'WebPay payment enablement' END,
-         CASE WHEN NOT fiscal_merchant_configured THEN 'merchant fiscal identity' END,
-         CASE WHEN NOT fiscal_supplier_configured THEN 'supplier fiscal identity' END,
-         CASE WHEN NOT fiscal_profile_approved THEN 'approved Sales Invoice profile' END,
-         CASE WHEN NOT paymongo_enabled THEN 'Site PayMongo enablement' END
+         CASE WHEN NOT capability.hikcentral_target_configured THEN 'HikCentral target' END,
+         CASE WHEN NOT capability.hikcentral_connectivity_verified THEN 'HikCentral connectivity' END,
+         CASE WHEN NOT readiness.webpay_public_lookup_enabled THEN 'WebPay publication' END,
+         CASE WHEN NOT readiness.webpay_payment_enabled THEN 'WebPay payment enablement' END,
+         CASE WHEN NOT capability.fiscal_merchant_configured THEN 'merchant fiscal identity' END,
+         CASE WHEN NOT capability.fiscal_supplier_configured THEN 'supplier fiscal identity' END,
+         CASE WHEN NOT capability.fiscal_profile_approved THEN 'approved Sales Invoice profile' END,
+         CASE WHEN NOT capability.paymongo_enabled THEN 'Site PayMongo enablement' END
        ) AS missing_facts
-FROM ist_configuration.real_site_readiness
+FROM ist_configuration.real_site_readiness readiness
+JOIN ist_configuration.site_operational_capabilities capability USING (site_id)
 ORDER BY site_code;
 '@
 

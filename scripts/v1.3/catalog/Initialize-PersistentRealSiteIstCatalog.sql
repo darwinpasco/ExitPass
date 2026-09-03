@@ -46,12 +46,19 @@ CREATE TABLE IF NOT EXISTS ist_configuration.statutory_coverage_register (
 
 CREATE TABLE IF NOT EXISTS ist_configuration.site_operational_capabilities (
     site_id uuid PRIMARY KEY REFERENCES ist_configuration.real_site_catalog_members (site_id),
+    operator_entity_code text NULL,
+    hikcentral_instance_code text NULL,
+    hikcentral_parking_lot_index_code text NULL,
+    hikcentral_parking_lot_name text NULL,
     hikcentral_target_configured boolean NOT NULL DEFAULT false,
     hikcentral_connectivity_verified boolean NOT NULL DEFAULT false,
     fiscal_merchant_configured boolean NOT NULL DEFAULT false,
     fiscal_supplier_configured boolean NOT NULL DEFAULT false,
     fiscal_profile_approved boolean NOT NULL DEFAULT false,
     paymongo_enabled boolean NOT NULL DEFAULT false,
+    pos_site_server_id uuid NULL,
+    fiscal_identity_id uuid NULL,
+    sales_invoice_profile_id uuid NULL,
     last_verified_at timestamptz NULL,
     verification_reference text NULL,
     CONSTRAINT ck_site_operational_capabilities__connectivity_requires_target
