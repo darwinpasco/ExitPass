@@ -13,6 +13,8 @@ $requiredColumns = @(
     'site_id', 'site_code', 'operator_entity_code', 'hikcentral_instance_code',
     'hikcentral_parking_lot_index_code', 'hikcentral_parking_lot_name',
     'hikcentral_target_configured', 'hikcentral_connectivity_verified',
+    'site_adapter_base_url', 'site_adapter_environment_code',
+    'site_adapter_secret_reference', 'central_pms_service_identity_id',
     'webpay_public_lookup_enabled', 'webpay_payment_enabled',
     'fiscal_merchant_configured', 'fiscal_supplier_configured', 'fiscal_profile_approved',
     'pos_site_server_id', 'fiscal_identity_id', 'sales_invoice_profile_id',
@@ -51,6 +53,44 @@ function Convert-Uuid([string]$Value, [string]$Column, [string]$SiteCode) {
     }
     return $parsed.ToString('D')
 }
+function Test-SiteAdapterRoute($Row) {
+    $configured = (Convert-Boolean $Row.hikcentral_target_configured 'hikcentral_target_configured' $Row.site_code) -eq 'true'
+    $routeValues = @(
+        $Row.site_adapter_base_url,
+        $Row.site_adapter_environment_code,
+        $Row.site_adapter_secret_reference,
+        $Row.central_pms_service_identity_id
+    )
+    if (-not $configured) {
+        if (@($routeValues | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+            throw "Site Adapter routing fields for $($Row.site_code) require hikcentral_target_configured = YES."
+        }
+        return
+    }
+    if (@($routeValues | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+        throw "Configured HikCentral Site $($Row.site_code) requires a complete Site Adapter route."
+    }
+    $uri = $null
+    if (-not [Uri]::TryCreate($Row.site_adapter_base_url, [UriKind]::Absolute, [ref]$uri) -or
+        $uri.Scheme -notin @('http', 'https') -or [string]::IsNullOrWhiteSpace($uri.Host)) {
+        throw "site_adapter_base_url for $($Row.site_code) must be an absolute HTTP(S) URL."
+    }
+    $environment = $Row.site_adapter_environment_code.Trim().ToUpperInvariant()
+    if ($uri.Scheme -eq 'http' -and $environment -ne 'IST') {
+        throw "HTTP Site Adapter routes are allowed only for the explicit IST environment: $($Row.site_code)."
+    }
+    if ($headers -contains 'hikcentral_base_url_ref' -and
+        -not [string]::IsNullOrWhiteSpace($Row.hikcentral_base_url_ref) -and
+        $uri.AbsoluteUri.TrimEnd('/') -eq $Row.hikcentral_base_url_ref.Trim().TrimEnd('/')) {
+        throw "site_adapter_base_url for $($Row.site_code) must identify the Site Adapter, not its HikCentral upstream."
+    }
+    if (-not $Row.site_adapter_secret_reference.Trim().StartsWith('file:', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "site_adapter_secret_reference for $($Row.site_code) must use the mounted file: contract."
+    }
+    [void](Convert-Uuid $Row.central_pms_service_identity_id 'central_pms_service_identity_id' $Row.site_code)
+}
+
+foreach ($row in $rows) { Test-SiteAdapterRoute $row }
 
 $copy = [Text.StringBuilder]::new()
 [void]$copy.AppendLine(@'
@@ -59,6 +99,8 @@ CREATE TEMP TABLE ep_ist_operational (
     site_id uuid, site_code text, operator_entity_code text, hikcentral_instance_code text,
     hikcentral_parking_lot_index_code text, hikcentral_parking_lot_name text,
     hikcentral_target_configured boolean, hikcentral_connectivity_verified boolean,
+    site_adapter_base_url text, site_adapter_environment_code text,
+    site_adapter_secret_reference text, central_pms_service_identity_id uuid,
     webpay_public_lookup_enabled boolean, webpay_payment_enabled boolean,
     fiscal_merchant_configured boolean, fiscal_supplier_configured boolean, fiscal_profile_approved boolean,
     pos_site_server_id uuid, fiscal_identity_id uuid, sales_invoice_profile_id uuid,
@@ -74,6 +116,9 @@ foreach ($row in $rows) {
         (Convert-Nullable $row.hikcentral_parking_lot_name),
         (Convert-Boolean $row.hikcentral_target_configured 'hikcentral_target_configured' $row.site_code),
         (Convert-Boolean $row.hikcentral_connectivity_verified 'hikcentral_connectivity_verified' $row.site_code),
+        (Convert-Nullable $row.site_adapter_base_url), (Convert-Nullable $row.site_adapter_environment_code),
+        (Convert-Nullable $row.site_adapter_secret_reference),
+        (Convert-Uuid $row.central_pms_service_identity_id 'central_pms_service_identity_id' $row.site_code),
         (Convert-Boolean $row.webpay_public_lookup_enabled 'webpay_public_lookup_enabled' $row.site_code),
         (Convert-Boolean $row.webpay_payment_enabled 'webpay_payment_enabled' $row.site_code),
         (Convert-Boolean $row.fiscal_merchant_configured 'fiscal_merchant_configured' $row.site_code),

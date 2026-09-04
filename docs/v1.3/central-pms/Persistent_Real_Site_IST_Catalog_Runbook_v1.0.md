@@ -47,4 +47,17 @@ Only the 46 reviewed real Sites can resolve through this function.
 
 Export the current 46-row matrix with `Export-PersistentRealSiteIstReadiness.ps1`. Update `ist_configuration.site_operational_capabilities` only after the corresponding governed Site configuration and verification exists.
 
+HikCentral readiness covers two independent hops. The private Site Adapter configuration owns the upstream HikCentral URL and credentials. Central PMS resolves the provider-neutral Site Adapter hop from the canonical `identity.service_identities` and `integration.*` route tables. `hikcentral_target_configured` and `hikcentral_connectivity_verified` do not make a Site ready unless exactly one effective `SITE_ADAPTER_API` route resolves; zero or multiple routes fail closed.
+
+The operational input supplies these routing facts only for Sites whose HikCentral target is configured:
+
+- `site_adapter_base_url`: stable adapter network address, never the HikCentral URL;
+- `site_adapter_environment_code`: must match `CentralPms:VendorPms:Environment`;
+- `site_adapter_secret_reference`: mounted `file:` reference relative to `CentralPms:VendorPms:AdapterSecretMountRoot`;
+- `central_pms_service_identity_id`: existing active Central PMS service identity.
+
+For persistent PITX IST, the stable application-network identity is `http://pitx-site-adapter:8080/`. The Restart Compose/runtime must assign `pitx-site-adapter` as the adapter service name or network alias and explicitly enable task-owned HTTP only in `IntegrationTest`. The adapter independently reaches HikCentral at `https://sys-service.exitpass.test:443` with strict certificate validation. Production adapter routes remain HTTPS-only.
+
+The importer deterministically materializes the adapter identity, vendor system, Central-PMS-owned external credential reference, `SITE_ADAPTER_API` endpoint, and Site mapping. It stores only the `file:` reference; the API key remains under the private persistent IST secret root and is mounted into both runtimes. Rerunning the importer preserves the canonical IDs and exactly-one route cardinality.
+
 Ordinary Restart cleanup must not remove either persistent database container or volume, the persistent network, or governed catalog/configuration rows. Back up both databases before schema migration; migrate forward without truncating transaction history or reseeding Site identities.
