@@ -330,8 +330,15 @@ WHERE (integration.adapter_mappings.vendor_system_id,
 
 -- An existing enabled projection target declares that projection is required for the Site.
 -- Preserve its identity and operational history while aligning its hard route selector.
+-- PITX uses a 30-second poll so the 15-second managed scheduler scan remains inside
+-- the existing one-minute freshness requirement.
 UPDATE sessions.vendor_session_projection_sync_targets target
 SET vendor_system_id = route.vendor_system_id,
+    poll_interval_seconds = CASE
+        WHEN target.projection_sync_target_id = 'e244a8af-0e30-7db1-3621-ad883ae3542c'::uuid
+         AND route.site_code = 'PITX-LEVEL-3' THEN 30
+        ELSE target.poll_interval_seconds
+    END,
     updated_at = now(),
     row_version = target.row_version + 1
 FROM ep_ist_site_adapter_routes route
@@ -340,7 +347,10 @@ WHERE target.site_id = route.site_id
   AND target.site_group_id = route.site_group_id
   AND target.parking_lot_index_code = input.hikcentral_parking_lot_index_code
   AND target.enabled_flag
-  AND target.vendor_system_id IS DISTINCT FROM route.vendor_system_id
+  AND (target.vendor_system_id IS DISTINCT FROM route.vendor_system_id
+       OR (target.projection_sync_target_id = 'e244a8af-0e30-7db1-3621-ad883ae3542c'::uuid
+           AND route.site_code = 'PITX-LEVEL-3'
+           AND target.poll_interval_seconds IS DISTINCT FROM 30))
   AND (SELECT count(*)
        FROM sessions.vendor_session_projection_sync_targets enabled
        WHERE enabled.site_id = route.site_id

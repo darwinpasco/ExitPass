@@ -321,11 +321,12 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
             errors.Add("PROJECTION_MANAGED_SCHEDULER_REQUIRED");
         }
 
-        if (options.DefaultPollIntervalSeconds != 60 ||
+        if (options.DefaultPollIntervalSeconds != 30 ||
             options.NormalFreshnessTargetSeconds != 60 ||
-            options.MaxProjectionAgeMinutes != 1)
+            options.MaxProjectionAgeMinutes != 1 ||
+            options.SchedulerScanIntervalSeconds != 15)
         {
-            errors.Add("PROJECTION_MANAGED_SIXTY_SECOND_FRESHNESS_REQUIRED");
+            errors.Add("PROJECTION_MANAGED_THIRTY_SECOND_CADENCE_REQUIRED");
         }
 
         if (string.IsNullOrWhiteSpace(options.ExpectedDatabaseName) ||
@@ -354,9 +355,9 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
             errors.Add("PROJECTION_TARGET_SCOPE_INCOMPLETE");
         }
 
-        if (enabledTargets.Any(target => target.PollIntervalSeconds != 60))
+        if (enabledTargets.Any(target => target.PollIntervalSeconds != 30))
         {
-            errors.Add("PROJECTION_TARGET_POLL_INTERVAL_MUST_BE_SIXTY_SECONDS");
+            errors.Add("PROJECTION_TARGET_POLL_INTERVAL_MUST_BE_THIRTY_SECONDS");
         }
 
         if (enabledTargets.Select(target => target.ProjectionSyncTargetId).Distinct().Count() != enabledTargets.Length)
