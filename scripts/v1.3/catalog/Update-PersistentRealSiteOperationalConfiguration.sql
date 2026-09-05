@@ -171,6 +171,118 @@ BEGIN
     END IF;
 END $$;
 
+-- The APT payable-basis facade has a distinct read-only permission. Keep it
+-- separate from terminal-cash.receive and provision it through SITE_OPERATOR.
+DO $$
+DECLARE
+    expected_permission_id constant uuid := pg_temp.exitpass_operational_uuid(
+        'persistent-ist:rbac:permission:terminal-cash.payable-basis.read');
+    expected_binding_id constant uuid := pg_temp.exitpass_operational_uuid(
+        'persistent-ist:rbac:role-permission:SITE_OPERATOR:terminal-cash.payable-basis.read');
+BEGIN
+    IF (SELECT count(*) FROM identity.roles
+        WHERE role_code = 'SITE_OPERATOR' AND role_status::text = 'ACTIVE') <> 1 THEN
+        RAISE EXCEPTION 'Persistent APT RBAC requires exactly one active SITE_OPERATOR role.';
+    END IF;
+    IF (SELECT count(*) FROM identity.service_identities
+        WHERE service_identity_code = 'seed.reference-data' AND identity_status::text = 'ACTIVE') <> 1 THEN
+        RAISE EXCEPTION 'Persistent APT RBAC requires exactly one active reference-data service identity.';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM identity.permissions
+        WHERE identity.permissions.permission_id = expected_permission_id
+          AND permission_code <> 'terminal-cash.payable-basis.read'
+    ) THEN
+        RAISE EXCEPTION 'Persistent APT payable-basis permission ID conflicts with existing reference data.';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM identity.role_permissions binding
+        JOIN identity.roles role ON role.role_id = binding.role_id
+        JOIN identity.permissions permission ON permission.permission_id = binding.permission_id
+        WHERE binding.role_permission_id = expected_binding_id
+          AND (role.role_code <> 'SITE_OPERATOR'
+               OR permission.permission_code <> 'terminal-cash.payable-basis.read')
+    ) THEN
+        RAISE EXCEPTION 'Persistent APT payable-basis binding ID conflicts with existing reference data.';
+    END IF;
+END $$;
+
+INSERT INTO identity.permissions (
+    permission_id, permission_code, permission_name, permission_description,
+    permission_domain, permission_action, permission_status, is_sensitive,
+    requires_audit, created_by_service_identity_id,
+    updated_by_service_identity_id)
+SELECT pg_temp.exitpass_operational_uuid(
+           'persistent-ist:rbac:permission:terminal-cash.payable-basis.read'),
+       'terminal-cash.payable-basis.read',
+       'Read terminal cash payable basis',
+       'Resolve and revalidate payable-basis readiness through the read-only APT facade. Does not authorize cash receipt or any payment, fiscal, exit, statutory, or gate mutation.',
+       'terminal-cash', 'read', 'ACTIVE', false, true,
+       service.service_identity_id, service.service_identity_id
+FROM identity.service_identities service
+WHERE service.service_identity_code = 'seed.reference-data'
+ON CONFLICT ON CONSTRAINT uq_permissions__permission_code DO UPDATE
+SET permission_name = EXCLUDED.permission_name,
+    permission_description = EXCLUDED.permission_description,
+    permission_domain = EXCLUDED.permission_domain,
+    permission_action = EXCLUDED.permission_action,
+    permission_status = 'ACTIVE',
+    is_sensitive = EXCLUDED.is_sensitive,
+    requires_audit = EXCLUDED.requires_audit,
+    updated_at = now(),
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    row_version = identity.permissions.row_version + 1
+WHERE (identity.permissions.permission_name,
+       identity.permissions.permission_description,
+       identity.permissions.permission_domain,
+       identity.permissions.permission_action,
+       identity.permissions.permission_status::text,
+       identity.permissions.is_sensitive,
+       identity.permissions.requires_audit)
+  IS DISTINCT FROM
+      (EXCLUDED.permission_name, EXCLUDED.permission_description,
+       EXCLUDED.permission_domain, EXCLUDED.permission_action,
+       'ACTIVE', EXCLUDED.is_sensitive, EXCLUDED.requires_audit);
+
+INSERT INTO identity.role_permissions (
+    role_permission_id, role_id, permission_id, binding_status,
+    binding_reason_code, assigned_by_service_identity_id, effective_from,
+    created_by_service_identity_id, updated_by_service_identity_id)
+SELECT pg_temp.exitpass_operational_uuid(
+           'persistent-ist:rbac:role-permission:SITE_OPERATOR:terminal-cash.payable-basis.read'),
+       role.role_id, permission.permission_id, 'ACTIVE',
+       'PERSISTENT_IST_REFERENCE_DATA', service.service_identity_id, now(),
+       service.service_identity_id, service.service_identity_id
+FROM identity.roles role
+JOIN identity.permissions permission
+  ON permission.permission_code = 'terminal-cash.payable-basis.read'
+JOIN identity.service_identities service
+  ON service.service_identity_code = 'seed.reference-data'
+WHERE role.role_code = 'SITE_OPERATOR'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM identity.role_permissions existing
+      WHERE existing.role_id = role.role_id
+        AND existing.permission_id = permission.permission_id
+        AND existing.binding_status::text = 'ACTIVE'
+  )
+ON CONFLICT (role_permission_id) DO UPDATE
+SET role_id = EXCLUDED.role_id,
+    permission_id = EXCLUDED.permission_id,
+    binding_status = 'ACTIVE',
+    binding_reason_code = EXCLUDED.binding_reason_code,
+    assigned_by_service_identity_id = EXCLUDED.assigned_by_service_identity_id,
+    effective_from = EXCLUDED.effective_from,
+    effective_to = NULL,
+    revoked_at = NULL,
+    revoked_by_user_id = NULL,
+    revoked_by_service_identity_id = NULL,
+    revocation_reason_code = NULL,
+    updated_at = now(),
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    row_version = identity.role_permissions.row_version + 1;
+
 INSERT INTO identity.service_identities (
     service_identity_id, service_identity_code, service_identity_name,
     identity_type, identity_status, owning_service_name, effective_from,

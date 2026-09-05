@@ -5,7 +5,8 @@ param(
     [string]$ExitPassDatabase = 'exitpass_ist',
     [string]$DatabaseUser = 'exitpass_ist',
     [string]$InputPath,
-    [switch]$DatabaseValidation
+    [switch]$DatabaseValidation,
+    [switch]$ExpectPayableBasisPermissionAbsent
 )
 
 Set-StrictMode -Version Latest
@@ -32,7 +33,11 @@ $requiredSql = @(
     'target.last_success_at >= target.updated_at',
     "endpoint.endpoint_code = 'SITE_ADAPTER_API'",
     "mapping.vendor_object_type = 'SITE_ADAPTER'",
-    'credential.service_identity_id = capability.central_pms_service_identity_id'
+    'credential.service_identity_id = capability.central_pms_service_identity_id',
+    "'terminal-cash.payable-basis.read'",
+    "role.role_code = 'SITE_OPERATOR'",
+    "'terminal-cash', 'read', 'ACTIVE', false, true",
+    "'PERSISTENT_IST_REFERENCE_DATA'"
 )
 foreach ($expected in $requiredSql) {
     if ($sql.IndexOf($expected, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
@@ -84,6 +89,90 @@ function Assert-DbEqual([string]$Actual, [string]$Expected, [string]$Scenario) {
 }
 
 $pitxId = '2d1dcdf8-f563-537c-8542-0bde7cc9da97'
+$payableBasisPermission = 'terminal-cash.payable-basis.read'
+$payableBasisStateSql = @"
+SELECT concat_ws('|',
+ (SELECT count(*) FROM identity.permissions permission
+  WHERE permission.permission_code='$payableBasisPermission'
+    AND permission.permission_status='ACTIVE'
+    AND permission.permission_domain='terminal-cash'
+    AND permission.permission_action='read'
+    AND NOT permission.is_sensitive
+    AND permission.requires_audit),
+ (SELECT count(*) FROM identity.role_permissions binding
+  JOIN identity.roles role USING(role_id)
+  JOIN identity.permissions permission USING(permission_id)
+  WHERE role.role_code='SITE_OPERATOR'
+    AND role.role_status='ACTIVE'
+    AND permission.permission_code='$payableBasisPermission'
+    AND binding.binding_status='ACTIVE'
+    AND binding.effective_from <= now()
+    AND (binding.effective_to IS NULL OR binding.effective_to > now())));
+"@
+$unrelatedRoleBindingsSql = @"
+SELECT concat_ws('|',count(*),
+ coalesce(md5(string_agg(binding.role_permission_id::text || ':' || binding.role_id::text || ':' ||
+   binding.permission_id::text || ':' || binding.binding_status::text || ':' || binding.row_version::text,
+   ',' ORDER BY binding.role_permission_id)),'EMPTY'))
+FROM identity.role_permissions binding
+JOIN identity.permissions permission USING(permission_id)
+WHERE permission.permission_code <> '$payableBasisPermission';
+"@
+if ($ExpectPayableBasisPermissionAbsent) {
+    Assert-DbEqual (Invoke-DbScalar $payableBasisStateSql) '0|0' `
+        'pre-correction payable-basis RBAC reference data'
+}
+$unrelatedBindingsBefore = Invoke-DbScalar $unrelatedRoleBindingsSql
+& (Join-Path $PSScriptRoot 'Set-PersistentRealSiteOperationalConfiguration.ps1') `
+    -InputPath $InputPath -ExitPassContainer $ExitPassContainer `
+    -ExitPassDatabase $ExitPassDatabase -DatabaseUser $DatabaseUser
+Assert-DbEqual (Invoke-DbScalar $payableBasisStateSql) '1|1' `
+    'first importer run payable-basis permission and SITE_OPERATOR binding'
+Assert-DbEqual (Invoke-DbScalar @"
+SELECT count(*)
+FROM identity.role_permissions binding
+JOIN identity.roles role USING(role_id)
+JOIN identity.permissions permission USING(permission_id)
+WHERE permission.permission_code='$payableBasisPermission'
+  AND binding.binding_status='ACTIVE'
+  AND role.role_code <> 'SITE_OPERATOR';
+"@) '0' 'payable-basis permission is not bound to another role'
+$payableBasisIdentitySql = @"
+SELECT concat_ws('|',permission.permission_id,binding.role_permission_id,
+ permission.row_version,binding.row_version,binding.effective_from)
+FROM identity.permissions permission
+JOIN identity.role_permissions binding USING(permission_id)
+JOIN identity.roles role USING(role_id)
+WHERE permission.permission_code='$payableBasisPermission'
+  AND role.role_code='SITE_OPERATOR'
+  AND binding.binding_status='ACTIVE';
+"@
+$payableBasisAfterFirstRun = Invoke-DbScalar $payableBasisIdentitySql
+& (Join-Path $PSScriptRoot 'Set-PersistentRealSiteOperationalConfiguration.ps1') `
+    -InputPath $InputPath -ExitPassContainer $ExitPassContainer `
+    -ExitPassDatabase $ExitPassDatabase -DatabaseUser $DatabaseUser
+Assert-DbEqual (Invoke-DbScalar $payableBasisIdentitySql) $payableBasisAfterFirstRun `
+    'second importer run stable payable-basis permission and binding'
+Assert-DbEqual (Invoke-DbScalar $payableBasisStateSql) '1|1' `
+    'second importer run payable-basis cardinality'
+Assert-DbEqual (Invoke-DbScalar $unrelatedRoleBindingsSql) $unrelatedBindingsBefore `
+    'unrelated role-permission bindings unchanged'
+Assert-DbEqual (Invoke-DbScalar @"
+SELECT string_agg(permission.permission_code,',' ORDER BY permission.permission_code)
+FROM identity.roles role
+JOIN identity.role_permissions binding USING(role_id)
+JOIN identity.permissions permission USING(permission_id)
+WHERE role.role_code='SITE_OPERATOR'
+  AND binding.binding_status='ACTIVE'
+  AND permission.permission_status='ACTIVE'
+  AND binding.effective_from <= now()
+  AND (binding.effective_to IS NULL OR binding.effective_to > now())
+  AND permission.permission_code IN (
+    'apt.access','cashier-shifts.operate','cash-custody.operate',
+    'terminal-cash.receive','$payableBasisPermission');
+"@) 'apt.access,cash-custody.operate,cashier-shifts.operate,terminal-cash.payable-basis.read,terminal-cash.receive' `
+    'effective SITE_OPERATOR APT permission set'
+
 $routeStateSql = "SELECT concat_ws('|',site_adapter_route_count,site_adapter_route_ready,final_test_readiness) FROM ist_configuration.real_site_readiness WHERE site_id='$pitxId'::uuid;"
 Assert-DbEqual (Invoke-DbScalar $routeStateSql) '1|t|READY' 'one valid PITX route'
 $projectionStateSql = "SELECT concat_ws('|',projection_target_required,enabled_projection_target_count,projection_target_route_aligned,projection_sync_target_id,projection_target_vendor_system_id,projection_target_parking_lot_index_code,final_test_readiness) FROM ist_configuration.real_site_readiness WHERE site_id='$pitxId'::uuid;"
