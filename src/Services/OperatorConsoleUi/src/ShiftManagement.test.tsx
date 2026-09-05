@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { OperatorConsoleApiClient } from "./apiClient";
@@ -74,6 +74,33 @@ describe("ShiftManagement", () => {
     expect(await screen.findByText("Not authorized")).toBeInTheDocument();
     expect(api.listShifts).not.toHaveBeenCalled();
   });
+
+  it("shows own recently closed history without exposing the staff filter", async () => {
+    const closed = {
+      ...shift,
+      status: "ENDED",
+      cashCustodyStatus: "NONE",
+      closedAt: "2026-09-05T05:00:00Z",
+      closeType: "NORMAL",
+      closingActorName: "Test Cashier"
+    };
+    const api = client({ shifts: [closed], allShifts: false });
+    render(<ShiftManagement client={api} />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Recently Closed" }));
+
+    await waitFor(() => expect(api.listShifts).toHaveBeenLastCalledWith("recently-closed", undefined, undefined));
+    expect(screen.queryByLabelText("Staff member")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText("Test Cashier"));
+    const detail = screen.getByLabelText("Shift detail");
+    expect(within(detail).getByText("ENDED")).toBeInTheDocument();
+    expect(within(detail).getByText("NORMAL")).toBeInTheDocument();
+  });
+
+  it("preserves the all-staff filter for supervisor viewers", async () => {
+    render(<ShiftManagement client={client({ allShifts: true })} />);
+    expect(await screen.findByLabelText("Staff member")).toBeInTheDocument();
+  });
 });
 
 function authorizedSite(): ShiftAuthorizedSite {
@@ -87,7 +114,7 @@ function authorizedSite(): ShiftAuthorizedSite {
   };
 }
 
-function client(options: { sites?: ShiftAuthorizedSite[]; shifts?: OperationalShift[]; own?: OperationalShift | null; manage?: boolean; view?: boolean } = {}) {
+function client(options: { sites?: ShiftAuthorizedSite[]; shifts?: OperationalShift[]; own?: OperationalShift | null; manage?: boolean; view?: boolean; allShifts?: boolean } = {}) {
   const sites = options.sites ?? [authorizedSite()];
   return {
     listShiftAuthorizedSites: vi.fn().mockResolvedValue(sites),
@@ -97,6 +124,7 @@ function client(options: { sites?: ShiftAuthorizedSite[]; shifts?: OperationalSh
     closeOwnShift: vi.fn(),
     exceptionCloseShift: vi.fn(),
     canViewShiftManagement: () => options.view ?? true,
+    canViewAllShifts: () => options.allShifts ?? true,
     canManageShifts: () => options.manage ?? false
   } as unknown as OperatorConsoleApiClient;
 }

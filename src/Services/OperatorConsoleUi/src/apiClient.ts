@@ -67,6 +67,7 @@ export interface OperatorConsoleApiClient {
   getShift(shiftId: string): Promise<OperationalShift>;
   exceptionCloseShift(shiftId: string, reason: string): Promise<OperationalShift>;
   canViewShiftManagement(): boolean;
+  canViewAllShifts(): boolean;
   canManageShifts(): boolean;
   evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
   lookupSessionByTicket(input: OperatorTicketLookupInput): Promise<OperatorTicketLookupResult>;
@@ -586,6 +587,10 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
       return permissions.includes("shift-management.view") || permissions.includes("cashier-shifts.operate");
     },
 
+    canViewAllShifts() {
+      return permissions.includes("shift-management.view");
+    },
+
     canManageShifts() {
       return permissions.includes("shift-management.manage");
     },
@@ -626,12 +631,9 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
     },
 
     async listShifts(view, siteId, staffUserId) {
-      if (!permissions.includes("shift-management.view")) {
-        return { items: [], correlationId: newCorrelationId() };
-      }
       const query = new URLSearchParams({ view });
       addQuery(query, "siteId", siteId);
-      addQuery(query, "staffUserId", staffUserId);
+      addQuery(query, "staffUserId", permissions.includes("shift-management.view") ? staffUserId : undefined);
       return parseResponse<ShiftListResult>(await fetch(
         `${baseUrl}/v1/operator-console/shift-management/shifts?${query}`,
         { headers: operatorConsoleHeaders(newCorrelationId()) }
@@ -1267,6 +1269,10 @@ export function createMockOperatorConsoleApiClient(
   let productionPolicyReview: ProductionPolicyImportReviewResult | null = null;
   return {
     canViewShiftManagement() {
+      return true;
+    },
+
+    canViewAllShifts() {
       return true;
     },
 

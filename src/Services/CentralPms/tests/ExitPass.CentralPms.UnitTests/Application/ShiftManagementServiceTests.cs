@@ -153,6 +153,54 @@ public sealed class ShiftManagementServiceTests
 
         repository.LastListAuthorizedSiteIds.Should().Equal(SiteId);
         repository.LastListRequestedSiteId.Should().Be(OtherSiteId);
+        repository.LastListRequestedStaffUserId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task List_OwnOperatorRecentlyClosed_ForcesAuthenticatedUserFilter()
+    {
+        var closed = Shift(SiteId) with { Status = "ENDED", ClosedAt = Now, CloseType = "NORMAL" };
+        var repository = new FakeRepository
+        {
+            OwnAccess = Access(UserId, SiteId),
+            ListResult = [closed]
+        };
+
+        var result = await Sut(repository).ListAsync(
+            new ShiftListQuery(Actor(UserId), "RECENTLY_CLOSED", SiteId, SupervisorId, 50),
+            default);
+
+        result.Should().ContainSingle().Which.OperatorUserId.Should().Be(UserId);
+        repository.LastListAuthorizedSiteIds.Should().Equal(SiteId);
+        repository.LastListRequestedSiteId.Should().Be(SiteId);
+        repository.LastListRequestedStaffUserId.Should().Be(UserId);
+    }
+
+    [Fact]
+    public async Task Get_OwnOperatorClosedShift_AllowsOnlyOwnedAuthorizedDetail()
+    {
+        var owned = Shift(SiteId) with { Status = "ENDED", ClosedAt = Now, CloseType = "NORMAL" };
+        var repository = new FakeRepository { OwnAccess = Access(UserId, SiteId), ById = owned };
+
+        var ownResult = await Sut(repository).GetAsync(Actor(UserId), owned.ShiftId, default);
+        ownResult.Succeeded.Should().BeTrue();
+
+        repository.ById = owned with { OperatorUserId = SupervisorId };
+        var otherResult = await Sut(repository).GetAsync(Actor(UserId), owned.ShiftId, default);
+        otherResult.ErrorCode.Should().Be(ShiftManagementFailureCodes.ShiftNotFound);
+    }
+
+    [Fact]
+    public async Task Get_SupervisorView_RemainsSiteScoped()
+    {
+        var otherUserShift = Shift(SiteId) with { OperatorUserId = UserId };
+        var repository = new FakeRepository { ViewAccess = Access(SupervisorId, SiteId), ById = otherUserShift };
+
+        (await Sut(repository).GetAsync(Actor(SupervisorId), otherUserShift.ShiftId, default)).Succeeded.Should().BeTrue();
+
+        repository.ViewAccess = Access(SupervisorId, OtherSiteId);
+        (await Sut(repository).GetAsync(Actor(SupervisorId), otherUserShift.ShiftId, default))
+            .ErrorCode.Should().Be(ShiftManagementFailureCodes.ShiftNotFound);
     }
 
     private static ShiftManagementService Sut(FakeRepository repository) => new(repository, new FixedTimeProvider(Now));
@@ -185,6 +233,8 @@ public sealed class ShiftManagementServiceTests
         public int ResumeCount { get; private set; }
         public IReadOnlyList<Guid> LastListAuthorizedSiteIds { get; private set; } = [];
         public Guid? LastListRequestedSiteId { get; private set; }
+        public Guid? LastListRequestedStaffUserId { get; private set; }
+        public IReadOnlyList<ShiftSummary> ListResult { get; set; } = [];
         public List<(string Reason, string Action)> Denials { get; } = [];
 
         public Task<ShiftActorAccess?> ReadAccessAsync(Guid userId, string permission, DateTimeOffset now, CancellationToken cancellationToken) =>
@@ -214,7 +264,8 @@ public sealed class ShiftManagementServiceTests
         {
             LastListAuthorizedSiteIds = authorizedSiteIds;
             LastListRequestedSiteId = siteId;
-            return Task.FromResult<IReadOnlyList<ShiftSummary>>([]);
+            LastListRequestedStaffUserId = staffUserId;
+            return Task.FromResult(ListResult);
         }
         public Task RecordDenialAsync(Guid actorUserId, Guid? shiftId, Guid? siteId, string reasonCode, string action, Guid correlationId, DateTimeOffset now, CancellationToken cancellationToken)
         {

@@ -93,16 +93,34 @@ public sealed class ShiftManagementService(
 
     public async Task<IReadOnlyList<ShiftSummary>> ListAsync(ShiftListQuery query, CancellationToken cancellationToken)
     {
-        var access = await repository.ReadAccessAsync(query.Actor.UserId, ShiftManagementPermissions.View, Now, cancellationToken);
-        if (access is not { UserActive: true }) return [];
-        return await repository.ListAsync(access.Sites.Select(site => site.SiteId).ToArray(), query.View, query.SiteId, query.StaffUserId, Math.Clamp(query.Limit, 1, 100), cancellationToken);
+        var now = Now;
+        var viewAccess = await repository.ReadAccessAsync(query.Actor.UserId, ShiftManagementPermissions.View, now, cancellationToken);
+        if (viewAccess is { UserActive: true, Sites.Count: > 0 })
+        {
+            return await repository.ListAsync(viewAccess.Sites.Select(site => site.SiteId).ToArray(), query.View, query.SiteId, query.StaffUserId, Math.Clamp(query.Limit, 1, 100), cancellationToken);
+        }
+
+        var ownAccess = await repository.ReadAccessAsync(query.Actor.UserId, ShiftManagementPermissions.OperateOwn, now, cancellationToken);
+        if (ownAccess is not { UserActive: true, Sites.Count: > 0 }) return [];
+        return await repository.ListAsync(ownAccess.Sites.Select(site => site.SiteId).ToArray(), query.View, query.SiteId, query.Actor.UserId, Math.Clamp(query.Limit, 1, 100), cancellationToken);
     }
 
     public async Task<ShiftOperationResult> GetAsync(ShiftManagementActor actor, Guid shiftId, CancellationToken cancellationToken)
     {
-        var access = await repository.ReadAccessAsync(actor.UserId, ShiftManagementPermissions.View, Now, cancellationToken);
+        var now = Now;
         var shift = await repository.ReadByIdAsync(shiftId, cancellationToken);
-        return shift is not null && access is { UserActive: true } && access.Sites.Any(site => site.SiteId == shift.SiteId)
+        if (shift is null) return ShiftOperationResult.Failure(ShiftManagementFailureCodes.ShiftNotFound, actor.CorrelationId);
+
+        var viewAccess = await repository.ReadAccessAsync(actor.UserId, ShiftManagementPermissions.View, now, cancellationToken);
+        if (viewAccess is { UserActive: true } && viewAccess.Sites.Any(site => site.SiteId == shift.SiteId))
+        {
+            return ShiftOperationResult.Success(shift, actor.CorrelationId);
+        }
+
+        var ownAccess = await repository.ReadAccessAsync(actor.UserId, ShiftManagementPermissions.OperateOwn, now, cancellationToken);
+        return shift.OperatorUserId == actor.UserId &&
+               ownAccess is { UserActive: true } &&
+               ownAccess.Sites.Any(site => site.SiteId == shift.SiteId)
             ? ShiftOperationResult.Success(shift, actor.CorrelationId)
             : ShiftOperationResult.Failure(ShiftManagementFailureCodes.ShiftNotFound, actor.CorrelationId);
     }

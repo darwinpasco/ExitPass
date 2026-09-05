@@ -96,6 +96,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       getShift: vi.fn(),
       exceptionCloseShift: vi.fn(),
       canViewShiftManagement: vi.fn(() => true),
+      canViewAllShifts: vi.fn(() => true),
       canManageShifts: vi.fn(() => true),
       evaluateAccessReadiness: vi.fn(async () => readyReadiness()),
       lookupSessionByTicket: vi.fn(),
