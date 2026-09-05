@@ -115,6 +115,45 @@ BEGIN
         RAISE EXCEPTION 'Site Adapter route must reference an existing active Central PMS service identity.';
     END IF;
     IF EXISTS (
+        SELECT route.site_id
+        FROM ep_ist_site_adapter_routes route
+        JOIN sessions.vendor_session_projection_sync_targets target
+          ON target.site_id = route.site_id
+         AND target.enabled_flag
+        GROUP BY route.site_id
+        HAVING count(*) > 1
+    ) THEN
+        RAISE EXCEPTION 'Configured HikCentral Site has multiple enabled projection targets.';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM ep_ist_site_adapter_routes route
+        JOIN sessions.vendor_session_projection_sync_targets target
+          ON target.site_id = route.site_id
+         AND target.enabled_flag
+        WHERE target.site_group_id <> route.site_group_id
+           OR target.parking_lot_index_code <> (
+                SELECT input.hikcentral_parking_lot_index_code
+                FROM ep_ist_operational input
+                WHERE input.site_id = route.site_id)
+    ) THEN
+        RAISE EXCEPTION 'Enabled projection target conflicts with the canonical Site Group or parking lot.';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM ep_ist_site_adapter_routes route
+        JOIN sessions.vendor_session_projection_sync_targets target
+          ON target.site_id = route.site_id
+         AND target.enabled_flag
+        JOIN sessions.vendor_session_projection_sync_targets conflict
+          ON conflict.site_id = target.site_id
+         AND conflict.vendor_system_id = route.vendor_system_id
+         AND conflict.parking_lot_index_code = target.parking_lot_index_code
+         AND conflict.projection_sync_target_id <> target.projection_sync_target_id
+    ) THEN
+        RAISE EXCEPTION 'Projection target route reconciliation conflicts with an existing target scope.';
+    END IF;
+    IF EXISTS (
         SELECT 1
         FROM ep_ist_site_adapter_routes route
         JOIN identity.service_identities existing
@@ -289,6 +328,24 @@ WHERE (integration.adapter_mappings.vendor_system_id,
        EXCLUDED.vendor_object_ref, EXCLUDED.vendor_object_name, 'ACTIVE',
        EXCLUDED.mapping_confidence::text, NULL);
 
+-- An existing enabled projection target declares that projection is required for the Site.
+-- Preserve its identity and operational history while aligning its hard route selector.
+UPDATE sessions.vendor_session_projection_sync_targets target
+SET vendor_system_id = route.vendor_system_id,
+    updated_at = now(),
+    row_version = target.row_version + 1
+FROM ep_ist_site_adapter_routes route
+JOIN ep_ist_operational input USING (site_id, site_code)
+WHERE target.site_id = route.site_id
+  AND target.site_group_id = route.site_group_id
+  AND target.parking_lot_index_code = input.hikcentral_parking_lot_index_code
+  AND target.enabled_flag
+  AND target.vendor_system_id IS DISTINCT FROM route.vendor_system_id
+  AND (SELECT count(*)
+       FROM sessions.vendor_session_projection_sync_targets enabled
+       WHERE enabled.site_id = route.site_id
+         AND enabled.enabled_flag) = 1;
+
 UPDATE sites.sites site
 SET public_lookup_enabled = input.webpay_public_lookup_enabled,
     payment_enabled = input.webpay_payment_enabled,
@@ -411,6 +468,51 @@ GROUP BY capability.site_id,
          capability.site_adapter_environment_code,
          capability.site_adapter_secret_reference;
 
+CREATE OR REPLACE VIEW ist_configuration.projection_target_route_readiness AS
+SELECT capability.site_id,
+       count(target.projection_sync_target_id) FILTER (WHERE target.enabled_flag) > 0
+         AS projection_target_required,
+       count(target.projection_sync_target_id) FILTER (WHERE target.enabled_flag)
+         AS enabled_projection_target_count,
+       CASE
+         WHEN count(target.projection_sync_target_id) FILTER (WHERE target.enabled_flag) = 0 THEN true
+         WHEN count(target.projection_sync_target_id) FILTER (WHERE target.enabled_flag) = 1 THEN
+              coalesce(
+                   bool_and(target.site_group_id = site.site_group_id) FILTER (WHERE target.enabled_flag)
+               AND bool_and(target.vendor_system_id = route.vendor_system_id) FILTER (WHERE target.enabled_flag)
+               AND bool_and(target.parking_lot_index_code = capability.hikcentral_parking_lot_index_code)
+                     FILTER (WHERE target.enabled_flag)
+               AND route.site_adapter_route_ready,
+               false)
+         ELSE false
+       END AS projection_target_route_aligned,
+       (min(target.projection_sync_target_id::text) FILTER (WHERE target.enabled_flag))::uuid
+         AS projection_sync_target_id,
+       (min(target.vendor_system_id::text) FILTER (WHERE target.enabled_flag))::uuid
+         AS projection_target_vendor_system_id,
+       min(target.parking_lot_index_code) FILTER (WHERE target.enabled_flag)
+         AS projection_target_parking_lot_index_code,
+       min(target.health_status) FILTER (WHERE target.enabled_flag) AS projection_target_health_status,
+       max(target.last_success_at) FILTER (WHERE target.enabled_flag) AS projection_target_last_success_at,
+       CASE
+         WHEN count(target.projection_sync_target_id) FILTER (WHERE target.enabled_flag) = 0 THEN NULL
+         WHEN count(target.projection_sync_target_id) FILTER (WHERE target.enabled_flag) = 1 THEN
+              bool_and(target.health_status = 'HEALTHY'
+                       AND target.last_success_at IS NOT NULL
+                       AND target.last_success_at >= target.updated_at)
+                FILTER (WHERE target.enabled_flag)
+         ELSE false
+       END AS projection_target_runtime_healthy
+FROM ist_configuration.site_operational_capabilities capability
+JOIN sites.sites site USING (site_id)
+JOIN ist_configuration.site_adapter_route_readiness route USING (site_id)
+LEFT JOIN sessions.vendor_session_projection_sync_targets target USING (site_id)
+GROUP BY capability.site_id,
+         capability.hikcentral_parking_lot_index_code,
+         site.site_group_id,
+         route.vendor_system_id,
+         route.site_adapter_route_ready;
+
 CREATE OR REPLACE VIEW ist_configuration.real_site_readiness AS
 WITH policy AS (
     SELECT jurisdiction_id,
@@ -449,9 +551,10 @@ SELECT member.site_id,
          WHEN site.site_status = 'ACTIVE'
           AND site_group.site_group_status = 'ACTIVE'
           AND assignment.assignment_status = 'ACTIVE'
-          AND capability.hikcentral_connectivity_verified
-          AND route.site_adapter_route_ready
-          AND site.public_lookup_enabled
+           AND capability.hikcentral_connectivity_verified
+           AND route.site_adapter_route_ready
+           AND projection.projection_target_route_aligned
+           AND site.public_lookup_enabled
           AND site.payment_enabled
           AND capability.fiscal_profile_approved
           AND capability.paymongo_enabled THEN 'READY'
@@ -461,7 +564,16 @@ SELECT member.site_id,
          ELSE 'CONFIGURATION_REQUIRED'
        END AS final_test_readiness,
        route.effective_route_count AS site_adapter_route_count,
-       route.site_adapter_route_ready
+       route.site_adapter_route_ready,
+       projection.projection_target_required,
+       projection.enabled_projection_target_count,
+       projection.projection_target_route_aligned,
+       projection.projection_sync_target_id,
+       projection.projection_target_vendor_system_id,
+       projection.projection_target_parking_lot_index_code,
+       projection.projection_target_health_status,
+       projection.projection_target_last_success_at,
+       projection.projection_target_runtime_healthy
 FROM ist_configuration.real_site_catalog_members member
 JOIN sites.sites site ON site.site_id = member.site_id
 JOIN sites.site_groups site_group ON site_group.site_group_id = site.site_group_id
@@ -472,6 +584,7 @@ JOIN sites.site_jurisdiction_assignments assignment
 JOIN sites.jurisdictions jurisdiction ON jurisdiction.jurisdiction_id = assignment.jurisdiction_id
 JOIN ist_configuration.site_operational_capabilities capability ON capability.site_id = site.site_id
 JOIN ist_configuration.site_adapter_route_readiness route ON route.site_id = site.site_id
+JOIN ist_configuration.projection_target_route_readiness projection ON projection.site_id = site.site_id
 LEFT JOIN policy ON policy.jurisdiction_id = jurisdiction.jurisdiction_id;
 
 CREATE OR REPLACE VIEW ist_configuration.real_site_operational_readiness AS
@@ -510,7 +623,16 @@ SELECT readiness.site_id,
        capability.site_adapter_vendor_system_id,
        capability.site_adapter_credential_reference_id,
        capability.site_adapter_endpoint_id,
-       capability.site_adapter_mapping_id
+       capability.site_adapter_mapping_id,
+       readiness.projection_target_required,
+       readiness.enabled_projection_target_count,
+       readiness.projection_target_route_aligned,
+       readiness.projection_sync_target_id,
+       readiness.projection_target_vendor_system_id,
+       readiness.projection_target_parking_lot_index_code,
+       readiness.projection_target_health_status,
+       readiness.projection_target_last_success_at,
+       readiness.projection_target_runtime_healthy
 FROM ist_configuration.real_site_readiness readiness
 JOIN ist_configuration.site_operational_capabilities capability USING (site_id);
 
@@ -523,6 +645,16 @@ BEGIN
         WHERE input.hikcentral_target_configured AND route.effective_route_count <> 1
     ) THEN
         RAISE EXCEPTION 'Configured HikCentral Site does not resolve exactly one canonical SITE_ADAPTER_API route.';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM ep_ist_operational input
+        JOIN ist_configuration.projection_target_route_readiness projection USING (site_id)
+        WHERE input.hikcentral_target_configured
+          AND projection.projection_target_required
+          AND NOT projection.projection_target_route_aligned
+    ) THEN
+        RAISE EXCEPTION 'Enabled projection target is not aligned with the canonical Site Adapter route.';
     END IF;
     IF EXISTS (
         SELECT 1
