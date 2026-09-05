@@ -281,10 +281,10 @@ public sealed class HikCentralParkingClientTests
     }
 
     /// <summary>
-    /// Verifies that nonzero HikCentral response codes map to deterministic adapter diagnostics.
+    /// Verifies that HikCentral's vehicle-does-not-exist response maps to session not found.
     /// </summary>
     [Fact]
-    public async Task CalculateParkingFee_WhenCodeIsNonZero_ReturnsAdapterErrorWithHikCentralCode()
+    public async Task CalculateParkingFee_WhenVehicleDoesNotExist_ReturnsNotFound()
     {
         var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
             { "code": "128", "msg": "The request resource does not exist. [vehicle is not exist]", "data": {} }
@@ -294,8 +294,28 @@ public sealed class HikCentralParkingClientTests
             new VendorParkingSessionLookupRequest("ABC123", null, Guid.NewGuid()),
             CancellationToken.None);
 
+        Assert.Equal(VendorParkingLookupStatus.NotFound, result.Status);
+        Assert.Equal("VENDOR_SESSION_NOT_FOUND", result.ErrorCode);
+        Assert.False(result.Retryable);
+    }
+
+    /// <summary>
+    /// Verifies that another code-128 failure remains a deterministic adapter error.
+    /// </summary>
+    [Fact]
+    public async Task CalculateParkingFee_WhenCode128IsNotVehicleNotFound_ReturnsAdapterError()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
+            { "code": "128", "msg": "The request resource does not exist.", "data": {} }
+            """)));
+
+        var result = await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest("ABC123", null, Guid.NewGuid()),
+            CancellationToken.None);
+
         Assert.Equal(VendorParkingLookupStatus.AdapterError, result.Status);
         Assert.Equal("VENDOR_PMS_ADAPTER_ERROR_HIKCENTRAL_CODE_128", result.ErrorCode);
+        Assert.False(result.Retryable);
     }
 
     /// <summary>

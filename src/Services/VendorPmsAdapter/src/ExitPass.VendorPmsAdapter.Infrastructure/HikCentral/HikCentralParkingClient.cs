@@ -781,6 +781,12 @@ public sealed class HikCentralParkingClient(
         var code = TryGetString(document.RootElement, "code");
         var message = TryGetString(document.RootElement, "msg");
 
+        if (code is "128" &&
+            message?.Contains("vehicle is not exist", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return HikCentralParkingFeeLookupResult.NotFound();
+        }
+
         if (code is not "0")
         {
             return HikCentralParkingFeeLookupResult.AdapterError(code);
