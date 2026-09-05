@@ -37,6 +37,7 @@ using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.Reconciliation;
 using ExitPass.CentralPms.Application.Security;
+using ExitPass.CentralPms.Application.ShiftManagement;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.StatutoryEvidence;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
@@ -60,6 +61,7 @@ using ExitPass.CentralPms.Infrastructure.OperatorConsole;
 using ExitPass.CentralPms.Infrastructure.Operations;
 using ExitPass.CentralPms.Infrastructure.Reconciliation;
 using ExitPass.CentralPms.Infrastructure.Security;
+using ExitPass.CentralPms.Infrastructure.ShiftManagement;
 using ExitPass.CentralPms.Infrastructure.StatutoryDiscounts;
 using ExitPass.CentralPms.Infrastructure.StatutoryEvidence;
 using ExitPass.CentralPms.Infrastructure.TerminalCashPayments;
@@ -191,6 +193,7 @@ app.MapTerminalCashPaymentEndpoints();
 app.MapWebPayReceiptPresentationEndpoints();
 app.MapWebPayStatutoryDiscountPendingLifecycleRediscoveryEndpoints();
 app.MapHumanAuthenticationEndpoints();
+app.MapShiftManagementEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -728,6 +731,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleOperatingContextRepository>(_ =>
         new PostgresOperatorConsoleOperatingContextRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleOperatingContextService, OperatorConsoleOperatingContextService>();
+    builder.Services.AddScoped<IShiftManagementRepository>(_ =>
+        new PostgresShiftManagementRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IShiftManagementService, ShiftManagementService>();
     builder.Services.AddScoped<IOperatorConsoleSessionLookupReadRepository>(_ =>
         new OperatorConsoleSessionLookupReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleSessionLookupService, OperatorConsoleSessionLookupService>();

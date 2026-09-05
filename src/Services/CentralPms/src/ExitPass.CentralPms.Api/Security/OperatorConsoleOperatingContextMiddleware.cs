@@ -45,6 +45,10 @@ public sealed class OperatorConsoleOperatingContextMiddleware(RequestDelegate ne
     private static bool IsOperatorConsoleRequest(PathString path)
     {
         var value = path.Value ?? string.Empty;
+        if (value.StartsWith("/v1/operator-console/shift-management", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
         return value.StartsWith("/v1/operator-console/", StringComparison.OrdinalIgnoreCase) ||
             value.StartsWith("/v1/ops/operator-console/", StringComparison.OrdinalIgnoreCase);
     }

@@ -230,6 +230,52 @@ export type LoadState<T> =
   | { status: "access-denied"; message: string }
   | { status: "error"; message: string };
 
+export interface ShiftAuthorizedSite {
+  siteId: string;
+  siteGroupId: string;
+  siteCode: string;
+  siteName: string;
+  siteGroupCode: string;
+  siteGroupName: string;
+}
+
+export interface OperationalShift {
+  shiftId: string;
+  shiftReference: string;
+  operatorUserId: string;
+  username: string;
+  displayName: string;
+  userType: string;
+  roles: string[];
+  siteId: string;
+  siteGroupId: string;
+  siteCode: string;
+  siteName: string;
+  siteGroupCode: string;
+  siteGroupName: string;
+  deviceId?: string;
+  deviceName?: string;
+  terminalReference?: string;
+  openedAt: string;
+  closedAt?: string;
+  elapsedSeconds: number;
+  status: string;
+  cashCustodyStatus: string;
+  openingCashMinorUnits?: number;
+  cashTransactionCount: number;
+  cashCollectedMinorUnits?: number;
+  closeType?: string;
+  closingActorName?: string;
+  closeReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShiftListResult {
+  items: OperationalShift[];
+  correlationId: string;
+}
+
 export interface OperatorConsoleApiError {
   status: "access-denied" | "not-found" | "error";
   message: string;

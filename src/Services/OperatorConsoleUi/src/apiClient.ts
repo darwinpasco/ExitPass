@@ -51,11 +51,23 @@ import type {
   VendorSessionProjectionHealthTarget,
   VendorSessionProjectionHealthTargetDetail,
   VendorSessionProjectionHealthTargetsResponse,
-  VendorSessionProjectionHealthSummary
+  VendorSessionProjectionHealthSummary,
+  ShiftAuthorizedSite,
+  ShiftListResult,
+  OperationalShift
 } from "./types";
 import { formatPhpMoney, requirePhpCurrencyForAmounts } from "./phpCurrency";
 
 export interface OperatorConsoleApiClient {
+  listShiftAuthorizedSites(): Promise<ShiftAuthorizedSite[]>;
+  getCurrentOwnShift(): Promise<OperationalShift | null>;
+  startOwnShift(siteId: string, terminalReference?: string): Promise<OperationalShift>;
+  closeOwnShift(shiftId: string): Promise<OperationalShift>;
+  listShifts(view: "open" | "recently-closed", siteId?: string, staffUserId?: string): Promise<ShiftListResult>;
+  getShift(shiftId: string): Promise<OperationalShift>;
+  exceptionCloseShift(shiftId: string, reason: string): Promise<OperationalShift>;
+  canViewShiftManagement(): boolean;
+  canManageShifts(): boolean;
   evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
   lookupSessionByTicket(input: OperatorTicketLookupInput): Promise<OperatorTicketLookupResult>;
   getFiscalIssuanceStatus(fiscalIssuanceReferenceId: string): Promise<FiscalIssuanceStatus>;
@@ -570,6 +582,79 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
   };
 
   return {
+    canViewShiftManagement() {
+      return permissions.includes("shift-management.view") || permissions.includes("cashier-shifts.operate");
+    },
+
+    canManageShifts() {
+      return permissions.includes("shift-management.manage");
+    },
+
+    async listShiftAuthorizedSites() {
+      const response = await fetch(`${baseUrl}/v1/shift-management/authorized-sites`, {
+        headers: operatorConsoleHeaders(newCorrelationId())
+      });
+      return parseResponse<ShiftAuthorizedSite[]>(response);
+    },
+
+    async getCurrentOwnShift() {
+      const response = await fetch(`${baseUrl}/v1/shift-management/own/current`, {
+        headers: operatorConsoleHeaders(newCorrelationId())
+      });
+      if (response.status === 204) return null;
+      return parseResponse<OperationalShift>(response);
+    },
+
+    async startOwnShift(siteId, terminalReference) {
+      const csrfToken = requireCsrfToken(options.csrfToken);
+      const response = await fetch(`${baseUrl}/v1/shift-management/own/start`, {
+        method: "POST",
+        headers: { ...operatorConsoleHeaders(newCorrelationId(), { json: true }), "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ siteId, terminalReference: terminalReference ?? null })
+      });
+      return (await parseResponse<{ shift: OperationalShift }>(response)).shift;
+    },
+
+    async closeOwnShift(shiftId) {
+      const csrfToken = requireCsrfToken(options.csrfToken);
+      const response = await fetch(`${baseUrl}/v1/shift-management/own/${encodeURIComponent(shiftId)}/close`, {
+        method: "POST",
+        headers: { ...operatorConsoleHeaders(newCorrelationId(), { json: true }), "X-CSRF-Token": csrfToken },
+        body: "{}"
+      });
+      return (await parseResponse<{ shift: OperationalShift }>(response)).shift;
+    },
+
+    async listShifts(view, siteId, staffUserId) {
+      if (!permissions.includes("shift-management.view")) {
+        return { items: [], correlationId: newCorrelationId() };
+      }
+      const query = new URLSearchParams({ view });
+      addQuery(query, "siteId", siteId);
+      addQuery(query, "staffUserId", staffUserId);
+      return parseResponse<ShiftListResult>(await fetch(
+        `${baseUrl}/v1/operator-console/shift-management/shifts?${query}`,
+        { headers: operatorConsoleHeaders(newCorrelationId()) }
+      ));
+    },
+
+    async getShift(shiftId) {
+      const response = await fetch(`${baseUrl}/v1/operator-console/shift-management/shifts/${encodeURIComponent(shiftId)}`, {
+        headers: operatorConsoleHeaders(newCorrelationId())
+      });
+      return (await parseResponse<{ shift: OperationalShift }>(response)).shift;
+    },
+
+    async exceptionCloseShift(shiftId, reason) {
+      const csrfToken = requireCsrfToken(options.csrfToken);
+      const response = await fetch(`${baseUrl}/v1/operator-console/shift-management/shifts/${encodeURIComponent(shiftId)}/exception-close`, {
+        method: "POST",
+        headers: { ...operatorConsoleHeaders(newCorrelationId(), { json: true }), "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ reason })
+      });
+      return (await parseResponse<{ shift: OperationalShift }>(response)).shift;
+    },
+
     canApproveStatutoryDiscount() {
       return permissions.includes(statutoryDiscountApprovePermission);
     },
@@ -1181,6 +1266,42 @@ export function createMockOperatorConsoleApiClient(
   const evidence = new Map<string, StatutoryDiscountEvidenceItem[]>();
   let productionPolicyReview: ProductionPolicyImportReviewResult | null = null;
   return {
+    canViewShiftManagement() {
+      return true;
+    },
+
+    canManageShifts() {
+      return true;
+    },
+
+    async listShiftAuthorizedSites() {
+      return [];
+    },
+
+    async getCurrentOwnShift() {
+      return null;
+    },
+
+    async startOwnShift() {
+      throw new Error("Mock shift start is not configured.");
+    },
+
+    async closeOwnShift() {
+      throw new Error("Mock shift close is not configured.");
+    },
+
+    async listShifts() {
+      return { items: [], correlationId: newCorrelationId() };
+    },
+
+    async getShift() {
+      throw new Error("Mock shift detail is not configured.");
+    },
+
+    async exceptionCloseShift() {
+      throw new Error("Mock exception close is not configured.");
+    },
+
     canApproveStatutoryDiscount() {
       return options.statutoryDiscountApproveAuthorized ?? options.statutoryDiscountDecisionAuthorized ?? true;
     },

@@ -528,7 +528,11 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                 new ApplicationSchemaSource(
                     "Operator Console server-owned operating context",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_OperatorConsoleOperatingContext_v1.3.sql"),
-                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_OperatorConsoleOperatingContext_v1.3.sql"))
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_OperatorConsoleOperatingContext_v1.3.sql")),
+                new ApplicationSchemaSource(
+                    "operational Shift Management MVP",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_ShiftManagementMvp_v1.3.sql"),
+                    ValidatorPath: null)
             };
 
             var container = RequireEnvironmentValue(DockerContainerEnvVar);
