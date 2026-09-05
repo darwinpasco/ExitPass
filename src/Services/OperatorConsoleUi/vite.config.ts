@@ -2,7 +2,7 @@ import { loadEnv, type UserConfig } from "vite";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
-const defaultApiProxyTarget = "http://localhost:8082";
+const defaultApiProxyTarget = "http://127.0.0.1:56065";
 
 export function createOperatorConsoleViteConfig(
   apiProxyTarget = defaultApiProxyTarget
@@ -13,6 +13,7 @@ export function createOperatorConsoleViteConfig(
     plugins: [react()],
     server: {
       port: 5175,
+      strictPort: true,
       allowedHosts: [".ngrok-free.app", ".ngrok-free.dev"],
       proxy: {
         "/v1": {

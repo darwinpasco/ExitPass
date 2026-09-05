@@ -6,17 +6,10 @@ Vite/React UI for testing WebPay payment intent creation from a desktop browser 
 
 ```powershell
 cd D:\SourceCodes\ExitPass
-docker compose -f .\infra\docker\docker-compose.yml up -d
-
-cd .\src\Services\WebPayUi
-$env:VITE_WEBPAY_API_PROXY_TARGET = "http://localhost:8082"
-$env:VITE_WEBPAY_DEFAULT_SITE_GROUP_ID = "<site-group-guid>"
-$env:VITE_WEBPAY_DEFAULT_SITE_ID = "<site-guid>"
-$env:VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID = "HIKCENTRAL"
-npm run dev
+powershell -ExecutionPolicy Bypass -File .\scripts\v1.3\local-runtime\Start-WebPayPitx.ps1
 ```
 
-The UI runs on `http://localhost:5174`. During Vite development, the UI should call `POST /v1/webpay/payment-intents` as a same-origin request. Vite proxies `/v1` to `VITE_WEBPAY_API_PROXY_TARGET`, which defaults to `http://localhost:8082` to match the local Payment Orchestrator compose port.
+The UI runs on `http://localhost:5174`. During normal manual development, the UI calls `POST /v1/webpay/payment-intents` as a same-origin request and Vite proxies `/v1` to Payment Orchestrator at `http://127.0.0.1:56063`. `VITE_WEBPAY_API_PROXY_TARGET` can override that default. Docker Compose retains its separate 808x topology.
 
 `VITE_WEBPAY_API_BASE_URL` is still supported for cases where the browser should call an explicit API origin. Leave it unset for ngrok phone testing so the phone only talks to the ngrok HTTPS origin and the laptop-side Vite proxy talks to the backend.
 
@@ -63,7 +56,7 @@ https://<ngrok-host>.ngrok-free.dev
 
 ## Environment variables
 
-- `VITE_WEBPAY_API_PROXY_TARGET`: Vite dev proxy target for `/v1`. Defaults to `http://localhost:8082`.
+- `VITE_WEBPAY_API_PROXY_TARGET`: Vite dev proxy target for `/v1`. Defaults to `http://127.0.0.1:56063` for the local .NET Payment Orchestrator.
 - `VITE_WEBPAY_API_BASE_URL`: Optional browser-side API base URL. Prefer leaving this unset for ngrok phone testing so requests stay same-origin.
 - `VITE_WEBPAY_DEFAULT_SITE_GROUP_ID`: Optional default site group GUID sent with local WebPay payment intent requests.
 - `VITE_WEBPAY_DEFAULT_SITE_ID`: Optional default site GUID sent with local WebPay payment intent requests.
