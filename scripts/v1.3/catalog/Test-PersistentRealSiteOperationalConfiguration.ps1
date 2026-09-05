@@ -28,6 +28,7 @@ $requiredSql = @(
     'projection_target_route_aligned',
     'UPDATE sessions.vendor_session_projection_sync_targets target',
     'target.vendor_system_id IS DISTINCT FROM route.vendor_system_id',
+    'target.poll_interval_seconds IS DISTINCT FROM 30',
     'target.last_success_at >= target.updated_at',
     "endpoint.endpoint_code = 'SITE_ADAPTER_API'",
     "mapping.vendor_object_type = 'SITE_ADAPTER'",
@@ -88,6 +89,8 @@ Assert-DbEqual (Invoke-DbScalar $routeStateSql) '1|t|READY' 'one valid PITX rout
 $projectionStateSql = "SELECT concat_ws('|',projection_target_required,enabled_projection_target_count,projection_target_route_aligned,projection_sync_target_id,projection_target_vendor_system_id,projection_target_parking_lot_index_code,final_test_readiness) FROM ist_configuration.real_site_readiness WHERE site_id='$pitxId'::uuid;"
 Assert-DbEqual (Invoke-DbScalar $projectionStateSql) 't|1|t|e244a8af-0e30-7db1-3621-ad883ae3542c|afdefaab-6be4-6b25-8f3f-3ad8309662e8|1|READY' `
     'one aligned PITX projection target'
+Assert-DbEqual (Invoke-DbScalar "SELECT poll_interval_seconds FROM sessions.vendor_session_projection_sync_targets WHERE projection_sync_target_id='e244a8af-0e30-7db1-3621-ad883ae3542c'::uuid;") `
+    '30' 'PITX projection freshness cadence'
 $projectionRuntimeStateSql = "SELECT concat_ws('|',projection_target_runtime_healthy,final_test_readiness) FROM ist_configuration.real_site_readiness WHERE site_id='$pitxId'::uuid;"
 Assert-DbEqual (Invoke-DbScalar "BEGIN; UPDATE sessions.vendor_session_projection_sync_targets SET health_status='HEALTHY',last_success_at=updated_at - interval '1 second' WHERE projection_sync_target_id='e244a8af-0e30-7db1-3621-ad883ae3542c'::uuid; $projectionRuntimeStateSql ROLLBACK;") `
     'f|READY' 'pre-alignment health does not qualify as current runtime health'

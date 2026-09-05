@@ -55,9 +55,9 @@ public sealed class VendorSessionProjectionSafetyTests
     }
 
     [Fact]
-    public void ManagedDeployment_WithExplicitApprovalAndMultipleTargets_IsValid()
+    public void ManagedDeployment_WithThirtySecondTargetsAndFifteenSecondScan_IsValid()
     {
-        var first = Target(enabled: true, lastSuccessAt: Now);
+        var first = Target(enabled: true, lastSuccessAt: Now, pollIntervalSeconds: 30);
         var second = first with
         {
             ProjectionSyncTargetId = Guid.Parse("10000000-0000-0000-0000-000000000002"),
@@ -77,6 +77,31 @@ public sealed class VendorSessionProjectionSafetyTests
             []);
 
         errors.Should().BeEmpty();
+        options.DefaultPollIntervalSeconds.Should().Be(30);
+        options.SchedulerScanIntervalSeconds.Should().Be(15);
+        options.NormalFreshnessTargetSeconds.Should().Be(60);
+        options.MaxProjectionAgeMinutes.Should().Be(1);
+    }
+
+    [Fact]
+    public void ManagedDeployment_WithOldRestart41Cadence_FailsClosed()
+    {
+        var options = ValidManagedOptions();
+        options.DefaultPollIntervalSeconds = 60;
+        options.SchedulerScanIntervalSeconds = 30;
+
+        var errors = VendorSessionProjectionStartupValidationHostedService.ValidateEnabledConfiguration(
+            options,
+            "Development",
+            "SITE_ADAPTER",
+            "https://hikcentral-uat.example",
+            "127.0.0.1",
+            "exitpass_hikcentral_local_uat",
+            [Target(enabled: true, lastSuccessAt: Now)],
+            []);
+
+        errors.Should().Contain("PROJECTION_MANAGED_THIRTY_SECOND_CADENCE_REQUIRED");
+        errors.Should().Contain("PROJECTION_TARGET_POLL_INTERVAL_MUST_BE_THIRTY_SECONDS");
     }
 
     [Fact]
@@ -93,7 +118,7 @@ public sealed class VendorSessionProjectionSafetyTests
             "https://hikcentral-uat.example",
             "127.0.0.1",
             "exitpass_hikcentral_local_uat",
-            [Target(enabled: true, lastSuccessAt: Now)],
+            [Target(enabled: true, lastSuccessAt: Now, pollIntervalSeconds: 30)],
             []);
 
         errors.Should().Contain("PROJECTION_MANAGED_DEPLOYMENT_APPROVAL_REQUIRED");
@@ -112,7 +137,7 @@ public sealed class VendorSessionProjectionSafetyTests
             "https://production.hikcentral.example",
             "postgres.internal",
             "exitpass_hikcentral_local_uat",
-            [Target(enabled: true, lastSuccessAt: Now)],
+            [Target(enabled: true, lastSuccessAt: Now, pollIntervalSeconds: 30)],
             []);
 
         errors.Should().Contain("PROJECTION_NON_LOOPBACK_DATABASE_NOT_APPROVED");
@@ -502,9 +527,10 @@ public sealed class VendorSessionProjectionSafetyTests
         ExpectedEndpointHost = "hikcentral-uat.example",
         ExpectedEndpointScheme = "https",
         ExpectedEndpointPort = 443,
-        DefaultPollIntervalSeconds = 60,
+        DefaultPollIntervalSeconds = 30,
         NormalFreshnessTargetSeconds = 60,
-        MaxProjectionAgeMinutes = 1
+        MaxProjectionAgeMinutes = 1,
+        SchedulerScanIntervalSeconds = 15
     };
 
     private static VendorSessionProjectionOptions WithExpectedSite(
@@ -567,7 +593,8 @@ public sealed class VendorSessionProjectionSafetyTests
 
     private static VendorSessionProjectionHealthTargetReadModel Target(
         bool enabled,
-        DateTimeOffset? lastSuccessAt) => new(
+        DateTimeOffset? lastSuccessAt,
+        int pollIntervalSeconds = 60) => new(
         Guid.Parse("10000000-0000-0000-0000-000000000001"),
         Guid.Parse("20000000-0000-0000-0000-000000000001"),
         Guid.Parse("30000000-0000-0000-0000-000000000001"),
@@ -584,7 +611,7 @@ public sealed class VendorSessionProjectionSafetyTests
         null,
         null,
         0,
-        60,
+        pollIntervalSeconds,
         180,
         100,
         lastSuccessAt,
