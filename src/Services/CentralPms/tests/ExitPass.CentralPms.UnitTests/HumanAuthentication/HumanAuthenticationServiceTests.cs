@@ -68,6 +68,21 @@ public sealed class HumanAuthenticationServiceTests
     }
 
     [Fact]
+    public async Task Operator_console_user_authenticates_without_site_shift_schedule_or_custody()
+    {
+        var fixture = new Fixture();
+        fixture.Login = fixture.CreateLogin(privileged: false);
+        fixture.Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .Returns(new EffectiveHumanAuthorization([], [], [], false));
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.OperatorConsole);
+
+        result.Response.Authenticated.Should().BeTrue();
+        result.Response.Session!.SiteReferences.Should().BeEmpty();
+        result.Response.Session.SiteGroupReferences.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Privileged_management_user_without_authenticator_gets_restricted_enrollment_session()
     {
         var fixture = new Fixture();

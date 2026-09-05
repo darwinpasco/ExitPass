@@ -50,6 +50,7 @@ import {
   defaultCanonicalStatutoryReviewFilters
 } from "./CanonicalStatutoryReview";
 import type { CanonicalStatutoryReviewFilters } from "./types";
+import { ShiftManagement } from "./ShiftManagement";
 
 const routes = {
   home: "/operator-console",
@@ -62,7 +63,8 @@ const routes = {
   detail: "/operator-console/statutory-discounts/",
   vendorAcknowledgments: "/operator-console/vendor-acknowledgments",
   vendorProjectionHealth: "/operator-console/vendor-session-projections/health",
-  policyImportReview: "/operator-console/production-policy-import-review"
+  policyImportReview: "/operator-console/production-policy-import-review",
+  shiftManagement: "/operator-console/shift-management"
 };
 
 interface AppProps {
@@ -140,7 +142,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
           <p className="eyebrow">Operator Console</p>
           <h1 id="app-title">ExitPass Operator Console</h1>
           <p className="headerCopy">
-            Back-office workspace for statutory discount review, focused on operator validation and policy context.
+            Site operations workspace for shift accountability, parking support, and controlled exception handling.
           </p>
         </div>
         <div className="operatorStatus" aria-label="Operator identity">
@@ -172,6 +174,14 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
               onClick={() => navigate(routes.home)}
             >
               Overview
+            </button>
+            <button
+              aria-current={path === routes.shiftManagement ? "page" : undefined}
+              className={`navLink ${path === routes.shiftManagement ? "navLinkActive" : ""}`}
+              type="button"
+              onClick={() => navigate(routes.shiftManagement)}
+            >
+              Shift Management
             </button>
             <button
               aria-current={path === routes.ticketLookup ? "page" : undefined}
@@ -255,7 +265,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
         </aside>
 
         <section className="workspace">
-          {!draftId && (
+          {!draftId && path !== routes.shiftManagement && (
             <AccessReadinessPanel
               state={readinessState}
               usesLocalDevFallbackContext={devModeContext.usesLocalDevFallbackContext}
@@ -268,6 +278,8 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
               decisionId={draftId}
               onBack={() => navigate(routes.queue)}
             />
+          ) : path === routes.shiftManagement ? (
+            <ShiftManagement client={client} />
           ) : path === routes.ticketLookup ? (
             <TicketLookupPage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.fiscalStatus ? (

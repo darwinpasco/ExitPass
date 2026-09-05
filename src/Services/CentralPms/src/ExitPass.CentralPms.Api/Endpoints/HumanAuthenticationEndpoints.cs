@@ -42,7 +42,8 @@ public static class HumanAuthenticationEndpoints
         var result = await service.LoginAsync(request.Username, request.Password, request.Audience, request.TotpCode, context, cancellationToken);
         if (result.Response.Authenticated &&
             result.Response.Session is { Audience: HumanSessionAudiences.OperatorConsole } operatorSession &&
-            result.InternalHumanSessionId.HasValue)
+            result.InternalHumanSessionId.HasValue &&
+            OperatorConsoleDeviceBindingCookie.Read(httpRequest) is not null)
         {
             var binding = await operatingContextService.BindSessionAsync(
                 result.InternalHumanSessionId.Value,
@@ -53,27 +54,19 @@ public static class HumanAuthenticationEndpoints
                 OperatorConsoleDeviceBindingCookie.Read(httpRequest),
                 result.Response.CorrelationId,
                 cancellationToken);
-            if (!binding.Succeeded || binding.Context is null)
+            if (binding.Succeeded && binding.Context is { } bound)
             {
-                if (result.Credential is not null)
+                var enrichedSession = operatorSession with
                 {
-                    await service.LogoutAsync(result.Credential.SerializedToken, context, cancellationToken);
-                }
-                DeleteWebSessionCookie(response, options.Value);
-                return SafeFailure(StatusCodes.Status403Forbidden, binding.ErrorCode ?? OperatorConsoleOperatingContextFailureCodes.SessionExpiredOrRevoked, result.Response.CorrelationId);
+                    OperatorDeviceBindingReference = bound.OperatorDeviceBindingId,
+                    OperatorShiftReference = bound.OperatorShiftId,
+                    EffectiveSiteReference = bound.SiteId,
+                    EffectiveSiteGroupReference = bound.SiteGroupId,
+                    AuthorizationEpoch = bound.AuthorizationEpoch,
+                    CredentialVersion = bound.CredentialVersion
+                };
+                result = result with { Response = result.Response with { Session = enrichedSession } };
             }
-
-            var bound = binding.Context;
-            var enrichedSession = operatorSession with
-            {
-                OperatorDeviceBindingReference = bound.OperatorDeviceBindingId,
-                OperatorShiftReference = bound.OperatorShiftId,
-                EffectiveSiteReference = bound.SiteId,
-                EffectiveSiteGroupReference = bound.SiteGroupId,
-                AuthorizationEpoch = bound.AuthorizationEpoch,
-                CredentialVersion = bound.CredentialVersion
-            };
-            result = result with { Response = result.Response with { Session = enrichedSession } };
         }
         if (result.Response.Authenticated && result.Credential is not null)
         {
@@ -279,14 +272,7 @@ public static class HumanAuthenticationEndpoints
             OperatorConsoleDeviceBindingCookie.Read(request),
             result.Response.CorrelationId,
             cancellationToken);
-        if (!operating.Succeeded || operating.Context is null)
-        {
-            return new HumanAuthenticationResult(
-                StatusCodes.Status403Forbidden,
-                new HumanAuthenticationResponse("REJECTED", false, null, null, operating.ErrorCode, false, result.Response.CorrelationId),
-                result.Credential,
-                result.InternalHumanSessionId);
-        }
+        if (!operating.Succeeded || operating.Context is null) return result;
 
         var context = operating.Context;
         return result with
@@ -319,6 +305,8 @@ public static class HumanAuthenticationEndpoints
             return result;
         }
 
+        if (OperatorConsoleDeviceBindingCookie.Read(request) is null) return result;
+
         var operating = await operatingContextService.BindSessionAsync(
             result.InternalHumanSessionId.Value,
             session.UserReference,
@@ -328,14 +316,7 @@ public static class HumanAuthenticationEndpoints
             OperatorConsoleDeviceBindingCookie.Read(request),
             result.Response.CorrelationId,
             cancellationToken);
-        if (!operating.Succeeded || operating.Context is null)
-        {
-            return new HumanAuthenticationResult(
-                StatusCodes.Status403Forbidden,
-                new HumanAuthenticationResponse("REJECTED", false, null, null, operating.ErrorCode, false, result.Response.CorrelationId),
-                result.Credential,
-                result.InternalHumanSessionId);
-        }
+        if (!operating.Succeeded || operating.Context is null) return result;
 
         var context = operating.Context;
         return result with

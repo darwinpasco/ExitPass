@@ -47,6 +47,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     const navigationItems = within(navigation).getAllByRole("button");
     expect(navigationItems.map((item) => item.textContent)).toEqual([
       "Overview",
+      "Shift Management",
       "Ticket Lookup",
       "Fiscal Status",
       "Statutory Discounts",
@@ -87,6 +88,15 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
   it.skip("StatutoryDiscountQueue_RendersLoadingEmptyAndDataStates", async () => {
     let resolveQueue: (items: StatutoryDiscountQueueItem[]) => void = () => undefined;
     const apiClient: OperatorConsoleApiClient = {
+      listShiftAuthorizedSites: vi.fn(),
+      getCurrentOwnShift: vi.fn(),
+      startOwnShift: vi.fn(),
+      closeOwnShift: vi.fn(),
+      listShifts: vi.fn(),
+      getShift: vi.fn(),
+      exceptionCloseShift: vi.fn(),
+      canViewShiftManagement: vi.fn(() => true),
+      canManageShifts: vi.fn(() => true),
       evaluateAccessReadiness: vi.fn(async () => readyReadiness()),
       lookupSessionByTicket: vi.fn(),
       getFiscalIssuanceStatus: vi.fn(),

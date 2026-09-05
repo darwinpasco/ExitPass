@@ -140,6 +140,14 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 AptHumanPermissionCatalog.PayableBasisRead
             ],
+            ["ShiftManagementView"] =
+            [
+                "shift-management.view"
+            ],
+            ["ShiftManagementManage"] =
+            [
+                "shift-management.manage"
+            ],
             ["AptStatutoryOrdinanceAvailabilityRead"] =
             [
                 "statutory-discounts.ordinance-availability.read.apt"

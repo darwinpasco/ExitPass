@@ -283,6 +283,86 @@ SET role_id = EXCLUDED.role_id,
     updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
     row_version = identity.role_permissions.row_version + 1;
 
+-- Shift Management is Site-scoped operational authority. Viewing and
+-- exception-closing are supervisor permissions; own shift operation remains
+-- on the existing cashier-shifts.operate permission.
+DO $$ BEGIN
+    IF (SELECT count(*) FROM identity.roles
+        WHERE role_code = 'OPERATIONS_SUPERVISOR' AND role_status::text = 'ACTIVE') <> 1 THEN
+        RAISE EXCEPTION 'Persistent Shift Management RBAC requires exactly one active OPERATIONS_SUPERVISOR role.';
+    END IF;
+END $$;
+
+INSERT INTO identity.permissions (
+    permission_id, permission_code, permission_name, permission_description,
+    permission_domain, permission_action, permission_status, is_sensitive,
+    requires_audit, created_by_service_identity_id, updated_by_service_identity_id)
+SELECT pg_temp.exitpass_operational_uuid('persistent-ist:rbac:permission:' || permission.permission_code),
+       permission.permission_code, permission.permission_name, permission.permission_description,
+       'shift-management', permission.permission_action, 'ACTIVE', permission.is_sensitive,
+       true, service.service_identity_id, service.service_identity_id
+FROM (VALUES
+    ('shift-management.view', 'View Site operational shifts',
+     'View current and recently closed operational shifts within current Site or Site Group scope.', 'view', false),
+    ('shift-management.manage', 'Manage Site operational shifts',
+     'Perform audited supervisor exception close within current Site or Site Group scope.', 'manage', true)
+) AS permission(permission_code, permission_name, permission_description, permission_action, is_sensitive)
+CROSS JOIN identity.service_identities service
+WHERE service.service_identity_code = 'seed.reference-data'
+ON CONFLICT ON CONSTRAINT uq_permissions__permission_code DO UPDATE
+SET permission_name = EXCLUDED.permission_name,
+    permission_description = EXCLUDED.permission_description,
+    permission_domain = EXCLUDED.permission_domain,
+    permission_action = EXCLUDED.permission_action,
+    permission_status = 'ACTIVE',
+    is_sensitive = EXCLUDED.is_sensitive,
+    requires_audit = true,
+    updated_at = now(),
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    row_version = identity.permissions.row_version + 1
+WHERE (identity.permissions.permission_name, identity.permissions.permission_description,
+       identity.permissions.permission_domain, identity.permissions.permission_action,
+       identity.permissions.permission_status::text, identity.permissions.is_sensitive,
+       identity.permissions.requires_audit)
+  IS DISTINCT FROM
+      (EXCLUDED.permission_name, EXCLUDED.permission_description,
+       EXCLUDED.permission_domain, EXCLUDED.permission_action,
+       'ACTIVE', EXCLUDED.is_sensitive, true);
+
+INSERT INTO identity.role_permissions (
+    role_permission_id, role_id, permission_id, binding_status,
+    binding_reason_code, assigned_by_service_identity_id, effective_from,
+    created_by_service_identity_id, updated_by_service_identity_id)
+SELECT pg_temp.exitpass_operational_uuid(
+           'persistent-ist:rbac:role-permission:OPERATIONS_SUPERVISOR:' || permission.permission_code),
+       role.role_id, permission.permission_id, 'ACTIVE',
+       'PERSISTENT_IST_REFERENCE_DATA', service.service_identity_id, now(),
+       service.service_identity_id, service.service_identity_id
+FROM identity.roles role
+JOIN identity.permissions permission
+  ON permission.permission_code IN ('shift-management.view', 'shift-management.manage')
+JOIN identity.service_identities service
+  ON service.service_identity_code = 'seed.reference-data'
+WHERE role.role_code = 'OPERATIONS_SUPERVISOR'
+  AND NOT EXISTS (
+      SELECT 1 FROM identity.role_permissions existing
+      WHERE existing.role_id = role.role_id
+        AND existing.permission_id = permission.permission_id
+        AND existing.binding_status::text = 'ACTIVE')
+ON CONFLICT (role_permission_id) DO UPDATE
+SET role_id = EXCLUDED.role_id,
+    permission_id = EXCLUDED.permission_id,
+    binding_status = 'ACTIVE',
+    binding_reason_code = EXCLUDED.binding_reason_code,
+    effective_to = NULL,
+    revoked_at = NULL,
+    revoked_by_user_id = NULL,
+    revoked_by_service_identity_id = NULL,
+    revocation_reason_code = NULL,
+    updated_at = now(),
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    row_version = identity.role_permissions.row_version + 1;
+
 INSERT INTO identity.service_identities (
     service_identity_id, service_identity_code, service_identity_name,
     identity_type, identity_status, owning_service_name, effective_from,

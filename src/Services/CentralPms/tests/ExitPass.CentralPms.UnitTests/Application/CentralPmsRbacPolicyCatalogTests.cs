@@ -48,6 +48,8 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("WebPayStatutoryEvidenceCapture", "statutory-discounts.evidence.capture.webpay")]
     [InlineData("AptStatutoryEvidenceCapture", "statutory-discounts.evidence.capture.assisted-payment-terminal")]
     [InlineData("AptStatutoryOrdinanceAvailabilityRead", "statutory-discounts.ordinance-availability.read.apt")]
+    [InlineData("ShiftManagementView", "shift-management.view")]
+    [InlineData("ShiftManagementManage", "shift-management.manage")]
     [InlineData("CentralPmsStatutoryEvidenceCaptureMetadata", "statutory-discounts.evidence.capture")]
     [InlineData("CentralPmsStatutoryEvidenceViewMetadata", "statutory-discounts.evidence.view")]
     [InlineData("CentralPmsStatutoryEvidenceHoldManage", "statutory-discounts.evidence.hold")]
