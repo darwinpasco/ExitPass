@@ -56,6 +56,19 @@ public sealed class ShiftManagementSchemaTests
         source.Should().Contain("CSRF_VALIDATION_FAILED");
     }
 
+    [Fact]
+    public void ShiftManagementReads_DelegateOwnerOrSupervisorAuthorizationToService()
+    {
+        var source = File.ReadAllText(FindRepositoryFile("src", "Services", "CentralPms", "src", "ExitPass.CentralPms.Api", "Endpoints", "ShiftManagementEndpoints.cs"));
+
+        source.Should().Contain("var management = app.MapGroup(\"/v1/operator-console/shift-management\")");
+        source.Should().Contain(".RequireAuthorization()");
+        source.Should().Contain("management.MapGet(\"/shifts\", ListAsync);");
+        source.Should().Contain("management.MapGet(\"/shifts/{shiftId:guid}\", GetAsync);");
+        source.Should().Contain("ReconciliationPolicyMetadata(\"ShiftManagementManage\")");
+        source.Should().NotContain("ReconciliationPolicyMetadata(\"ShiftManagementView\")");
+    }
+
     private static string FindRepositoryFile(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

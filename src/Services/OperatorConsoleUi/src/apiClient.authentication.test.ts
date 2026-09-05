@@ -20,6 +20,33 @@ describe("Operator Console authenticated HTTP boundary", () => {
     expect(createHttpOperatorConsoleApiClient().canApproveStatutoryDiscount?.()).toBe(false);
   });
 
+  it("requests own shift history without forwarding an all-staff filter", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ items: [], correlationId: crypto.randomUUID() }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ permissions: ["cashier-shifts.operate"] });
+
+    await client.listShifts("recently-closed", undefined, "another-user-id");
+
+    expect(client.canViewShiftManagement()).toBe(true);
+    expect(client.canViewAllShifts()).toBe(false);
+    const url = new URL((fetchMock.mock.calls as unknown as Array<[string, RequestInit]>)[0][0], "http://operator-console.test");
+    expect(url.pathname).toBe("/v1/operator-console/shift-management/shifts");
+    expect(url.searchParams.get("view")).toBe("recently-closed");
+    expect(url.searchParams.has("staffUserId")).toBe(false);
+  });
+
+  it("preserves the staff filter for supervisor shift viewers", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ items: [], correlationId: crypto.randomUUID() }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ permissions: ["shift-management.view"] });
+
+    await client.listShifts("recently-closed", undefined, "staff-user-id");
+
+    expect(client.canViewAllShifts()).toBe(true);
+    const url = new URL((fetchMock.mock.calls as unknown as Array<[string, RequestInit]>)[0][0], "http://operator-console.test");
+    expect(url.searchParams.get("staffUserId")).toBe("staff-user-id");
+  });
+
   it("sends same-origin credentials without fixture authority headers", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
     vi.stubGlobal("fetch", fetchMock);

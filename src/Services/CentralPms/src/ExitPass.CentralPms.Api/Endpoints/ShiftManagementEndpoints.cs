@@ -24,8 +24,8 @@ public static class ShiftManagementEndpoints
         var management = app.MapGroup("/v1/operator-console/shift-management")
             .WithTags("ShiftManagement")
             .RequireAuthorization();
-        management.MapGet("/shifts", ListAsync).WithMetadata(new ReconciliationPolicyMetadata("ShiftManagementView"));
-        management.MapGet("/shifts/{shiftId:guid}", GetAsync).WithMetadata(new ReconciliationPolicyMetadata("ShiftManagementView"));
+        management.MapGet("/shifts", ListAsync);
+        management.MapGet("/shifts/{shiftId:guid}", GetAsync);
         management.MapPost("/shifts/{shiftId:guid}/exception-close", ExceptionCloseAsync)
             .WithMetadata(new ReconciliationPolicyMetadata("ShiftManagementManage"));
         return app;
