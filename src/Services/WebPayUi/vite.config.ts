@@ -2,7 +2,7 @@ import { loadEnv, type UserConfig } from "vite";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
-const defaultApiProxyTarget = "http://localhost:8082";
+const defaultApiProxyTarget = "http://127.0.0.1:56063";
 
 export function createWebPayViteConfig(apiProxyTarget = defaultApiProxyTarget): UserConfig {
   const trimmedApiProxyTarget = apiProxyTarget.trim() || defaultApiProxyTarget;
@@ -11,6 +11,7 @@ export function createWebPayViteConfig(apiProxyTarget = defaultApiProxyTarget): 
     plugins: [react()],
     server: {
       port: 5174,
+      strictPort: true,
       allowedHosts: [
         ".ngrok-free.app",
         ".ngrok-free.dev"
