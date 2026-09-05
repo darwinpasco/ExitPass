@@ -23,7 +23,12 @@ $requiredSql = @(
     'CREATE OR REPLACE VIEW ist_configuration.real_site_operational_readiness',
     'CREATE OR REPLACE VIEW ist_configuration.effective_site_adapter_routes',
     'CREATE OR REPLACE VIEW ist_configuration.site_adapter_route_readiness',
+    'CREATE OR REPLACE VIEW ist_configuration.projection_target_route_readiness',
     'effective_route_count <> 1',
+    'projection_target_route_aligned',
+    'UPDATE sessions.vendor_session_projection_sync_targets target',
+    'target.vendor_system_id IS DISTINCT FROM route.vendor_system_id',
+    'target.last_success_at >= target.updated_at',
     "endpoint.endpoint_code = 'SITE_ADAPTER_API'",
     "mapping.vendor_object_type = 'SITE_ADAPTER'",
     'credential.service_identity_id = capability.central_pms_service_identity_id'
@@ -36,6 +41,13 @@ foreach ($expected in $requiredSql) {
 foreach ($prohibited in @('core.payment_attempts', 'core.payment_confirmations', 'pos.fiscal_documents', 'exit_authorizations')) {
     if ($sql.IndexOf($prohibited, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
         throw "Operational SQL must not touch business transaction state: $prohibited"
+    }
+}
+foreach ($prohibitedProjectionMutation in @(
+    'UPDATE sessions.vendor_session_projections',
+    'DELETE FROM sessions.vendor_session_projections')) {
+    if ($sql.IndexOf($prohibitedProjectionMutation, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "Operational SQL must preserve historical projections: $prohibitedProjectionMutation"
     }
 }
 foreach ($expected in @(
@@ -73,6 +85,12 @@ function Assert-DbEqual([string]$Actual, [string]$Expected, [string]$Scenario) {
 $pitxId = '2d1dcdf8-f563-537c-8542-0bde7cc9da97'
 $routeStateSql = "SELECT concat_ws('|',site_adapter_route_count,site_adapter_route_ready,final_test_readiness) FROM ist_configuration.real_site_readiness WHERE site_id='$pitxId'::uuid;"
 Assert-DbEqual (Invoke-DbScalar $routeStateSql) '1|t|READY' 'one valid PITX route'
+$projectionStateSql = "SELECT concat_ws('|',projection_target_required,enabled_projection_target_count,projection_target_route_aligned,projection_sync_target_id,projection_target_vendor_system_id,projection_target_parking_lot_index_code,final_test_readiness) FROM ist_configuration.real_site_readiness WHERE site_id='$pitxId'::uuid;"
+Assert-DbEqual (Invoke-DbScalar $projectionStateSql) 't|1|t|e244a8af-0e30-7db1-3621-ad883ae3542c|afdefaab-6be4-6b25-8f3f-3ad8309662e8|1|READY' `
+    'one aligned PITX projection target'
+$projectionRuntimeStateSql = "SELECT concat_ws('|',projection_target_runtime_healthy,final_test_readiness) FROM ist_configuration.real_site_readiness WHERE site_id='$pitxId'::uuid;"
+Assert-DbEqual (Invoke-DbScalar "BEGIN; UPDATE sessions.vendor_session_projection_sync_targets SET health_status='HEALTHY',last_success_at=updated_at - interval '1 second' WHERE projection_sync_target_id='e244a8af-0e30-7db1-3621-ad883ae3542c'::uuid; $projectionRuntimeStateSql ROLLBACK;") `
+    'f|READY' 'pre-alignment health does not qualify as current runtime health'
 
 $mappingId = "(SELECT site_adapter_mapping_id FROM ist_configuration.site_operational_capabilities WHERE site_id='$pitxId'::uuid)"
 $endpointId = "(SELECT site_adapter_endpoint_id FROM ist_configuration.site_operational_capabilities WHERE site_id='$pitxId'::uuid)"
@@ -111,6 +129,38 @@ SELECT 'f4100000-0000-4000-8000-000000000005','f4100000-0000-4000-8000-000000000
 Assert-DbEqual (Invoke-DbScalar "BEGIN; $duplicateRouteSql $routeStateSql ROLLBACK;") `
     '2|f|PARTIALLY_CONFIGURED' 'duplicate effective route'
 
+$targetId = "'e244a8af-0e30-7db1-3621-ad883ae3542c'::uuid"
+$testVendorId = "'f4200000-0000-4000-8000-000000000001'::uuid"
+$foreignVendorSql = @"
+INSERT INTO integration.vendor_systems (vendor_system_id,vendor_code,vendor_name,vendor_system_type,vendor_system_status,environment_code,base_url_ref,api_version,owner_team,effective_from)
+SELECT $testVendorId,'IST_PROJECTION_TARGET_REGRESSION','IST projection target regression',vendor_system_type,vendor_system_status,environment_code,base_url_ref,api_version,owner_team,effective_from FROM integration.vendor_systems WHERE vendor_system_id=$vendorId
+ON CONFLICT (vendor_system_id) DO NOTHING;
+"@
+Assert-DbEqual (Invoke-DbScalar "BEGIN; $foreignVendorSql UPDATE sessions.vendor_session_projection_sync_targets SET vendor_system_id=$testVendorId WHERE projection_sync_target_id=$targetId; $projectionStateSql ROLLBACK;") `
+    't|1|f|e244a8af-0e30-7db1-3621-ad883ae3542c|f4200000-0000-4000-8000-000000000001|1|PARTIALLY_CONFIGURED' `
+    'enabled projection target with non-route vendor'
+Assert-DbEqual (Invoke-DbScalar "BEGIN; UPDATE sessions.vendor_session_projection_sync_targets SET site_group_id=(SELECT site_group_id FROM sites.site_groups WHERE site_group_id<>(SELECT site_group_id FROM sites.sites WHERE site_id='$pitxId'::uuid) ORDER BY site_group_id LIMIT 1) WHERE projection_sync_target_id=$targetId; $projectionStateSql ROLLBACK;") `
+    't|1|f|e244a8af-0e30-7db1-3621-ad883ae3542c|afdefaab-6be4-6b25-8f3f-3ad8309662e8|1|PARTIALLY_CONFIGURED' `
+    'projection target with wrong Site Group'
+Assert-DbEqual (Invoke-DbScalar "BEGIN; UPDATE sessions.vendor_session_projection_sync_targets SET parking_lot_index_code='999' WHERE projection_sync_target_id=$targetId; $projectionStateSql ROLLBACK;") `
+    't|1|f|e244a8af-0e30-7db1-3621-ad883ae3542c|afdefaab-6be4-6b25-8f3f-3ad8309662e8|999|PARTIALLY_CONFIGURED' `
+    'projection target with wrong parking lot'
+Assert-DbEqual (Invoke-DbScalar "BEGIN; UPDATE integration.adapter_mappings SET mapping_status='SUSPENDED' WHERE adapter_mapping_id=$mappingId; $projectionStateSql ROLLBACK;") `
+    't|1|f|e244a8af-0e30-7db1-3621-ad883ae3542c|afdefaab-6be4-6b25-8f3f-3ad8309662e8|1|PARTIALLY_CONFIGURED' `
+    'projection target referencing an inactive route'
+$duplicateTargetSql = @"
+$foreignVendorSql
+INSERT INTO sessions.vendor_session_projection_sync_targets (
+ projection_sync_target_id,site_id,site_group_id,vendor_system_id,parking_lot_index_code,
+ parking_lot_name,enabled_flag,poll_interval_seconds,lookback_window_minutes,page_size,health_status)
+SELECT 'f4200000-0000-4000-8000-000000000002',site_id,site_group_id,$testVendorId,parking_lot_index_code,
+ parking_lot_name,true,poll_interval_seconds,lookback_window_minutes,page_size,'UNKNOWN'
+FROM sessions.vendor_session_projection_sync_targets WHERE projection_sync_target_id=$targetId;
+"@
+Assert-DbEqual (Invoke-DbScalar "BEGIN; $duplicateTargetSql $projectionStateSql ROLLBACK;") `
+    't|2|f|e244a8af-0e30-7db1-3621-ad883ae3542c|afdefaab-6be4-6b25-8f3f-3ad8309662e8|1|PARTIALLY_CONFIGURED' `
+    'duplicate enabled projection target'
+
 $identitySql = @"
 SELECT concat_ws('|',site_adapter_service_identity_id,site_adapter_vendor_system_id,
 site_adapter_credential_reference_id,site_adapter_endpoint_id,site_adapter_mapping_id,
@@ -132,6 +182,32 @@ $before = Invoke-DbScalar $identitySql
 $after = Invoke-DbScalar $identitySql
 Assert-DbEqual $after $before 'importer rerun stable route identity'
 Assert-DbEqual $after '3986bf89-8373-da14-fc3f-f3818dc6b500|afdefaab-6be4-6b25-8f3f-3ad8309662e8|c01e2f80-4596-3862-ce3f-8bd1883b6384|c22a55cb-6509-afdd-ec47-27e13d1fdab7|b18bb030-1d5e-eb33-f5eb-4ed379ec6804|1|1|1|1|1|1' 'deterministic PITX route IDs and cardinality'
+
+$targetIdentitySql = @"
+SELECT concat_ws('|',projection_sync_target_id,vendor_system_id,site_id,site_group_id,
+ parking_lot_index_code,poll_interval_seconds,lookback_window_minutes,page_size,enabled_flag,
+ health_status,last_success_at,last_failure_at,last_attempt_at,failure_count,last_error_code,row_version)
+FROM sessions.vendor_session_projection_sync_targets WHERE projection_sync_target_id=$targetId;
+"@
+$projectionHistorySql = @"
+SELECT concat_ws('|',count(*),count(*) FILTER (WHERE vendor_system_id='afdefaab-6be4-6b25-8f3f-3ad8309662e8'::uuid),
+ count(*) FILTER (WHERE vendor_system_id<>'afdefaab-6be4-6b25-8f3f-3ad8309662e8'::uuid),
+ coalesce(md5(string_agg(vendor_session_projection_id::text || ':' || vendor_system_id::text,',' ORDER BY vendor_session_projection_id)),'EMPTY'))
+FROM sessions.vendor_session_projections WHERE site_id='$pitxId'::uuid;
+"@
+$historyBefore = Invoke-DbScalar $projectionHistorySql
+Invoke-DbScalar "$foreignVendorSql UPDATE sessions.vendor_session_projection_sync_targets SET vendor_system_id=$testVendorId,updated_at=now(),row_version=row_version+1 WHERE projection_sync_target_id=$targetId; SELECT 'stale';" | Out-Null
+& (Join-Path $PSScriptRoot 'Set-PersistentRealSiteOperationalConfiguration.ps1') `
+    -InputPath $InputPath -ExitPassContainer $ExitPassContainer `
+    -ExitPassDatabase $ExitPassDatabase -DatabaseUser $DatabaseUser
+$targetAfterCorrection = Invoke-DbScalar $targetIdentitySql
+Assert-DbEqual (Invoke-DbScalar $projectionHistorySql) $historyBefore 'historical projections preserved by target alignment'
+& (Join-Path $PSScriptRoot 'Set-PersistentRealSiteOperationalConfiguration.ps1') `
+    -InputPath $InputPath -ExitPassContainer $ExitPassContainer `
+    -ExitPassDatabase $ExitPassDatabase -DatabaseUser $DatabaseUser
+Assert-DbEqual (Invoke-DbScalar $targetIdentitySql) $targetAfterCorrection 'projection target rerun without row churn'
+Assert-DbEqual (Invoke-DbScalar $projectionStateSql) 't|1|t|e244a8af-0e30-7db1-3621-ad883ae3542c|afdefaab-6be4-6b25-8f3f-3ad8309662e8|1|READY' `
+    'projection target identity preserved and route aligned'
 
 $invariantsSql = @"
 SELECT concat_ws('|',

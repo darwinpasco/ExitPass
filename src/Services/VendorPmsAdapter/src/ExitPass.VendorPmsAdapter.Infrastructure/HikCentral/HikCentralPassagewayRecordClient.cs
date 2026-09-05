@@ -335,7 +335,7 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
             IReadOnlyList<JsonElement> recordElements;
             try
             {
-                recordElements = ExtractRecords(data);
+                recordElements = ExtractRecords(data, total);
             }
             catch (InvalidOperationException)
             {
@@ -364,7 +364,7 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
         }
     }
 
-    private static IReadOnlyList<JsonElement> ExtractRecords(JsonElement data)
+    private static IReadOnlyList<JsonElement> ExtractRecords(JsonElement data, int? total)
     {
         if (data.ValueKind is JsonValueKind.Array)
         {
@@ -383,6 +383,13 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
             {
                 return list.EnumerateArray().Select(item => item.Clone()).ToArray();
             }
+        }
+
+        // HikCentral V3.1 emits an explicit blank total and omits the collection
+        // for a successful empty page. A parsed zero count makes that shape unambiguous.
+        if (total == 0)
+        {
+            return [];
         }
 
         throw new InvalidOperationException("HIKCENTRAL_RECORD_COLLECTION_MISSING");
@@ -406,6 +413,11 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
         }
 
         var text = value.GetString();
+        if (string.IsNullOrEmpty(text))
+        {
+            return 0;
+        }
+
         if (int.TryParse(text, out var parsedValue))
         {
             return parsedValue;
@@ -413,9 +425,12 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
 
         // Some HikCentral installations encode small totals as escaped control
         // characters whose code point is the numeric value.
-        return text is { Length: 1 } && char.IsControl(text[0])
-            ? text[0]
-            : null;
+        if (text is { Length: 1 } && char.IsControl(text[0]))
+        {
+            return text[0];
+        }
+
+        return string.IsNullOrWhiteSpace(text) ? 0 : null;
     }
 
     private DateTimeOffset ConvertRequestTime(DateTimeOffset value) =>

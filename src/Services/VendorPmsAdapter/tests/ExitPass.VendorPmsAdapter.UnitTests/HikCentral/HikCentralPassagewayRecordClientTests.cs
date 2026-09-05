@@ -230,6 +230,31 @@ public sealed class HikCentralPassagewayRecordClientTests
         Assert.Empty(page.Records);
     }
 
+    [Fact]
+    public async Task GetPassagewayRecordsAsync_DeployedBlankTotalWithoutCollection_ReturnsSuccessfulEmptyPage()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse(
+            """{ "code": "0", "msg": "Success", "data": { "total": "", "pageIndex": 1, "pageSize": 100 } }""")));
+
+        var page = await client.GetPassagewayRecordsAsync(Request(), CancellationToken.None);
+
+        Assert.Equal("0", page.Code);
+        Assert.Equal(0, page.Total);
+        Assert.Empty(page.Records);
+    }
+
+    [Fact]
+    public async Task GetPassagewayRecordsAsync_ZeroTotalWithoutCollection_IsTheOnlyCollectionOmissionAccepted()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse(
+            """{ "code": "0", "msg": "Success", "data": { "total": 1, "pageIndex": 1, "pageSize": 100 } }""")));
+
+        var error = await Assert.ThrowsAsync<HikCentralPassagewayException>(
+            () => client.GetPassagewayRecordsAsync(Request(), CancellationToken.None));
+
+        Assert.Equal("HIKCENTRAL_MALFORMED_RESPONSE", error.Classification);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized, "HIKCENTRAL_ACCESS_DENIED", false)]
     [InlineData(HttpStatusCode.Forbidden, "HIKCENTRAL_ACCESS_DENIED", false)]
