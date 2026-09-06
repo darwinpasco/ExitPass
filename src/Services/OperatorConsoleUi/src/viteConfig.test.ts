@@ -12,8 +12,9 @@ describe("Operator Console Vite dev server config", () => {
     expect(config.server?.allowedHosts).toEqual([".ngrok-free.app", ".ngrok-free.dev"]);
     expect(config.server?.allowedHosts).not.toBe(true);
     expect(config.server?.proxy?.["/v1"]).toMatchObject({
-      target: "http://127.0.0.1:56065",
-      changeOrigin: true
+      target: "https://localhost:56064",
+      changeOrigin: true,
+      secure: false
     });
   });
 
@@ -22,7 +23,17 @@ describe("Operator Console Vite dev server config", () => {
 
     expect(config.server?.proxy?.["/v1"]).toMatchObject({
       target: "http://localhost:19082",
-      changeOrigin: true
+      changeOrigin: true,
+      secure: true
+    });
+  });
+
+  it("OperatorConsoleDevServer_WhenCanonicalTargetHasTrailingSlash_AcceptsOnlyItsDevelopmentCertificate", () => {
+    const config = createOperatorConsoleViteConfig("https://localhost:56064/");
+
+    expect(config.server?.proxy?.["/v1"]).toMatchObject({
+      target: "https://localhost:56064",
+      secure: false
     });
   });
 });

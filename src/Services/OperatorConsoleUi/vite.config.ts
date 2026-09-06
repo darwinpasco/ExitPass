@@ -2,12 +2,12 @@ import { loadEnv, type UserConfig } from "vite";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
-const defaultApiProxyTarget = "http://127.0.0.1:56065";
+const defaultApiProxyTarget = "https://localhost:56064";
 
 export function createOperatorConsoleViteConfig(
   apiProxyTarget = defaultApiProxyTarget
 ): UserConfig {
-  const trimmedApiProxyTarget = apiProxyTarget.trim() || defaultApiProxyTarget;
+  const trimmedApiProxyTarget = apiProxyTarget.trim().replace(/\/+$/, "") || defaultApiProxyTarget;
 
   return {
     plugins: [react()],
@@ -18,7 +18,8 @@ export function createOperatorConsoleViteConfig(
       proxy: {
         "/v1": {
           target: trimmedApiProxyTarget,
-          changeOrigin: true
+          changeOrigin: true,
+          secure: trimmedApiProxyTarget !== defaultApiProxyTarget
         }
       }
     },
