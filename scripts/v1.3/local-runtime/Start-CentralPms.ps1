@@ -197,6 +197,8 @@ try {
         --env 'ASPNETCORE_URLS=http://+:8080;https://+:8443' `
         --env 'ASPNETCORE_Kestrel__Certificates__Default__Path=/https/exitpass-central-pms-local.pfx' `
         --env "ASPNETCORE_Kestrel__Certificates__Default__Password=$certificatePassword" `
+        --env 'HumanAuthentication__AllowedWebOrigins__0=http://127.0.0.1:5175' `
+        --env 'HumanAuthentication__AllowedWebOrigins__1=http://127.0.0.1:5178' `
         --publish '127.0.0.1:56065:8080' `
         --publish '127.0.0.1:56064:8443' `
         --mount "type=bind,source=$certificatePath,target=/https/exitpass-central-pms-local.pfx,readonly" `
