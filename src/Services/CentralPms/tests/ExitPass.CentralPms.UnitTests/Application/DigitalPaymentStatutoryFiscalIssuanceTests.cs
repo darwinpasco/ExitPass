@@ -10,6 +10,8 @@ namespace ExitPass.CentralPms.UnitTests.Application;
 
 public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
 {
+    private static readonly Guid VatTaxTypeId = Guid.Parse("328dcb64-584a-5f59-a304-2e5189a2aa83");
+    private static readonly Guid VatableTaxClassificationId = Guid.Parse("ab180f41-e181-5579-b9f1-5ae7a840a946");
     private static readonly Guid ConfirmationId = Guid.Parse("76000000-0000-4000-8000-000000000001");
     private static readonly Guid AttemptId = Guid.Parse("76000000-0000-4000-8000-000000000002");
     private static readonly Guid SessionId = Guid.Parse("76000000-0000-4000-8000-000000000003");
@@ -23,6 +25,50 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
     private static readonly Guid ValidationId = Guid.Parse("76000000-0000-4000-8000-000000000011");
     private static readonly Guid PolicyId = Guid.Parse("76000000-0000-4000-8000-000000000012");
     private static readonly Guid FiscalReferenceId = Guid.Parse("76000000-0000-4000-8000-000000000013");
+
+    [Theory]
+    [InlineData(2500, 2232, 268)]
+    [InlineData(3000, 2679, 321)]
+    [InlineData(4000, 3571, 429)]
+    [InlineData(14, 13, 1)]
+    public async Task OrdinaryDigitalPayment_MapsVatInclusiveFiscalFacts(
+        long grossAmountMinorUnits,
+        long expectedVatableSalesMinorUnits,
+        long expectedVatAmountMinorUnits)
+    {
+        var fixture = CreateFixture(Context() with
+        {
+            AmountMinorUnits = grossAmountMinorUnits,
+            AppliedStatutoryFiscalContext = null
+        });
+
+        await fixture.Sut.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        var request = new PosServerFiscalDocumentRequestMapper().Map(fixture.CapturedMapping!);
+        Assert.Equal(grossAmountMinorUnits, request.PayableBasis.PayableAmountMinorUnits);
+        Assert.Empty(request.PayableBasis.DiscountReferences);
+        Assert.Empty(request.DiscountPrivilegeDetails);
+        Assert.Null(request.AppliedStatutoryFiscalFacts);
+
+        var line = Assert.Single(request.DocumentLines);
+        Assert.Equal(grossAmountMinorUnits, line.UnitAmountMinorUnits);
+        Assert.Equal(grossAmountMinorUnits, line.GrossAmountMinorUnits);
+        Assert.Equal(0, line.DiscountAmountMinorUnits);
+        Assert.Equal(expectedVatAmountMinorUnits, line.TaxAmountMinorUnits);
+        Assert.Equal(grossAmountMinorUnits, line.NetAmountMinorUnits);
+
+        var tax = Assert.Single(request.TaxDetails);
+        Assert.Equal(VatTaxTypeId, tax.TaxTypeCodeId);
+        Assert.Equal(VatableTaxClassificationId, tax.TaxClassificationCodeId);
+        Assert.Equal(expectedVatableSalesMinorUnits, tax.TaxableAmountMinorUnits);
+        Assert.Equal(expectedVatAmountMinorUnits, tax.TaxAmountMinorUnits);
+        Assert.Equal("PHP", tax.CurrencyCode);
+        Assert.Equal(1, tax.LineSequence);
+        Assert.Equal(12m, tax.TaxRate);
+        Assert.Equal("VAT_INCLUSIVE_NO_EXEMPTION", tax.TaxContext["basis"]);
+        Assert.Equal(grossAmountMinorUnits, tax.TaxableAmountMinorUnits + tax.TaxAmountMinorUnits);
+        Assert.Equal(line.TaxAmountMinorUnits, tax.TaxAmountMinorUnits);
+    }
 
     [Fact]
     public async Task ApprovedPositiveAdjustment_MapsAuthoritativeWebPayFactsAndExactFiscalEconomics()
@@ -41,11 +87,13 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         var line = Assert.Single(request.DocumentLines);
         Assert.Equal(11161, line.GrossAmountMinorUnits);
         Assert.Equal(2232, line.DiscountAmountMinorUnits);
+        Assert.Equal(0, line.TaxAmountMinorUnits);
         Assert.Equal(8929, line.NetAmountMinorUnits);
 
         var tax = Assert.Single(request.TaxDetails);
         Assert.Equal(11161, tax.TaxableAmountMinorUnits);
         Assert.Equal(1339, tax.TaxAmountMinorUnits);
+        Assert.Equal("VAT_EXCLUSIVE", tax.TaxContext["basis"]);
 
         var privilege = Assert.Single(request.DiscountPrivilegeDetails);
         Assert.Equal(2232, privilege.DiscountAmountMinorUnits);
