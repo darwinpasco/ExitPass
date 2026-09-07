@@ -36,6 +36,16 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
     }
 
     [Fact]
+    public void Map_WhenBusinessDayDateIsNull_PreservesNullForPosAssignment()
+    {
+        var context = ValidContext() with { BusinessDayDate = null };
+
+        var result = _sut.Map(context);
+
+        result.BusinessDayDate.Should().BeNull();
+    }
+
+    [Fact]
     public void Map_MapsUpstreamFinalityReferenceToPayableBasisAndTopLevelFallback()
     {
         var context = ValidContext();

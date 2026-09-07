@@ -163,7 +163,7 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             reference.FiscalDocumentTypeCodeId,
             reference.FiscalDocumentTypeCodeKey,
             null,
-            DateOnly.FromDateTime(context.ConfirmedAt.UtcDateTime),
+            null,
             command.ParkingSessionId.ToString("D"),
             attemptRef,
             confirmationRef,

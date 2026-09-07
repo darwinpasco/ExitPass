@@ -52,6 +52,43 @@ public sealed class DigitalPaymentFiscalIssuanceRecoveryTests
     }
 
     [Fact]
+    public async Task ConfirmationNearUtcDateBoundary_DefersBusinessDayAssignmentToPosServer()
+    {
+        var contextReader = Substitute.For<IDigitalPaymentFiscalContextReader>();
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        references.FindByPaymentConfirmationIdAsync(ConfirmationId, Arg.Any<CancellationToken>())
+            .Returns(Reference(
+                FiscalIssuanceIntegrationState.FiscalIssuanceFailedService,
+                FiscalIssuanceErrorPosture.RetryAfterServiceRecovery));
+        var confirmedAt = DateTimeOffset.Parse("2026-09-08T00:23:00+08:00");
+        contextReader.ReadAsync(AttemptId, ConfirmationId, SessionId, Arg.Any<CancellationToken>())
+            .Returns(Context() with { ConfirmedAt = confirmedAt });
+        CentralPmsFiscalDocumentMappingContext? capturedMapping = null;
+        posServer.TryIssueFiscalDocumentViaPosServerAsync(
+                FiscalReferenceId,
+                Arg.Do<CentralPmsFiscalDocumentMappingContext>(value => capturedMapping = value),
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(["test_stop_after_mapping"]));
+        var sut = new DigitalPaymentFiscalIssuanceService(contextReader, references, orchestration, posServer);
+
+        await sut.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.Equal(new DateOnly(2026, 9, 7), DateOnly.FromDateTime(confirmedAt.UtcDateTime));
+        Assert.Equal(new DateOnly(2026, 9, 8), DateOnly.FromDateTime(confirmedAt.DateTime));
+        Assert.NotNull(capturedMapping);
+        Assert.Null(capturedMapping.BusinessDayDate);
+        Assert.Equal(12500, capturedMapping.PayableBasis.PayableAmountMinorUnits);
+        Assert.Equal(12500, Assert.Single(capturedMapping.DocumentLines).NetAmountMinorUnits);
+        Assert.Equal(12500, Assert.Single(capturedMapping.Tenders).AmountMinorUnits);
+        Assert.Empty(capturedMapping.TaxDetails);
+        Assert.Equal("PHP", capturedMapping.PayableBasis.CurrencyCode);
+        Assert.Equal("sales_invoice", capturedMapping.FiscalDocumentTypeCodeKey);
+    }
+
+    [Fact]
     public async Task RetryableExistingReference_WhenSitePosRouteChanged_FailsBeforePosCall()
     {
         var contextReader = Substitute.For<IDigitalPaymentFiscalContextReader>();
