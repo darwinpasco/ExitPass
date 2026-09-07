@@ -32,6 +32,7 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         await fixture.Sut.IssueOrReadAsync(Command(), CancellationToken.None);
 
         var request = new PosServerFiscalDocumentRequestMapper().Map(fixture.CapturedMapping!);
+        Assert.Null(request.BusinessDayDate);
         Assert.Equal(SiteAId, request.SiteId);
         Assert.Equal(8929, request.PayableBasis.PayableAmountMinorUnits);
         Assert.Equal(8929, Assert.Single(request.Tenders).AmountMinorUnits);
