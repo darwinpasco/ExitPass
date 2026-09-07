@@ -129,7 +129,7 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
         EnsureStatutoryContextMatches(context, command, statutory);
         var amount = statutory?.FinalPayableAmountMinorUnits ?? context.AmountMinorUnits;
         var ordinaryVat = statutory is null ? BuildOrdinaryVatFacts(amount) : null;
-        var lineGrossAmount = statutory?.VatExclusiveBasisAmountMinorUnits ?? amount;
+        var lineGrossAmount = statutory?.VatExclusiveBasisAmountMinorUnits ?? ordinaryVat!.VatableSalesMinorUnits;
         var discountAmount = statutory?.StatutoryDiscountAmountMinorUnits ?? 0;
         var attemptRef = command.PaymentAttemptId.ToString("D");
         var confirmationRef = command.PaymentConfirmationId.ToString("D");

@@ -46,16 +46,21 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
 
         var request = new PosServerFiscalDocumentRequestMapper().Map(fixture.CapturedMapping!);
         Assert.Equal(grossAmountMinorUnits, request.PayableBasis.PayableAmountMinorUnits);
+        Assert.Equal(grossAmountMinorUnits, Assert.Single(request.Tenders).AmountMinorUnits);
+        Assert.Equal(grossAmountMinorUnits, Assert.Single(request.Totals).AmountMinorUnits);
         Assert.Empty(request.PayableBasis.DiscountReferences);
         Assert.Empty(request.DiscountPrivilegeDetails);
         Assert.Null(request.AppliedStatutoryFiscalFacts);
 
         var line = Assert.Single(request.DocumentLines);
-        Assert.Equal(grossAmountMinorUnits, line.UnitAmountMinorUnits);
-        Assert.Equal(grossAmountMinorUnits, line.GrossAmountMinorUnits);
+        Assert.Equal(expectedVatableSalesMinorUnits, line.UnitAmountMinorUnits);
+        Assert.Equal(expectedVatableSalesMinorUnits, line.GrossAmountMinorUnits);
         Assert.Equal(0, line.DiscountAmountMinorUnits);
         Assert.Equal(expectedVatAmountMinorUnits, line.TaxAmountMinorUnits);
         Assert.Equal(grossAmountMinorUnits, line.NetAmountMinorUnits);
+        Assert.Equal(
+            line.GrossAmountMinorUnits - line.DiscountAmountMinorUnits + line.TaxAmountMinorUnits,
+            line.NetAmountMinorUnits);
 
         var tax = Assert.Single(request.TaxDetails);
         Assert.Equal(VatTaxTypeId, tax.TaxTypeCodeId);
