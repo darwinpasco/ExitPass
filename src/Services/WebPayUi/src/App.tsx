@@ -49,7 +49,6 @@ import type {
   WebPayReceiptPresentationResponse,
   WebPayStatutoryDiscountDecisionResponse
 } from "./types";
-import { RuntimeProfileBadge } from "./RuntimeProfileBadge";
 import type { StatutoryRecoveryStage, WebPayStatutoryRecoveryRecord } from "./statutoryRecovery";
 
 const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string; helper: string }> = [
@@ -1190,7 +1189,6 @@ export function App() {
     <main className="app-shell">
       <header className="brand-header">
         <img className="exitpass-logo" src="/assets/logo/exitpass-logo.svg" alt="ExitPass" />
-        <RuntimeProfileBadge />
         <div className="operator-brand">
           <span>Operated with</span>
           <img src="/assets/logo/proparking-logo.png" alt="Pro Parking" />

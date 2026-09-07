@@ -51,7 +51,6 @@ import {
 } from "./CanonicalStatutoryReview";
 import type { CanonicalStatutoryReviewFilters } from "./types";
 import { ShiftManagement } from "./ShiftManagement";
-import { RuntimeProfileBadge } from "./RuntimeProfileBadge";
 
 const routes = {
   home: "/operator-console",
@@ -141,7 +140,6 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
       <header className="appHeader">
         <div>
           <p className="eyebrow">Operator Console</p>
-          <RuntimeProfileBadge />
           <h1 id="app-title">ExitPass Operator Console</h1>
           <p className="headerCopy">
             Site operations workspace for shift accountability, parking support, and controlled exception handling.
