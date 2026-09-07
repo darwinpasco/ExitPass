@@ -20,6 +20,7 @@ namespace ExitPass.PaymentOrchestrator.Contracts.Internal;
 /// <param name="PaymentAttemptId">The canonical PaymentAttempt identifier from Central PMS.</param>
 /// <param name="ProviderCode">The target provider code.</param>
 /// <param name="ProviderProduct">The target provider product code.</param>
+/// <param name="PaymentMethod">The canonical customer-selected payment method code.</param>
 /// <param name="AmountMinor">The payable amount in minor currency units.</param>
 /// <param name="Currency">The ISO currency code.</param>
 /// <param name="Description">The human-readable payment description.</param>
@@ -34,6 +35,7 @@ public sealed record InitiateProviderPaymentRequest(
     Guid PaymentAttemptId,
     string ProviderCode,
     string ProviderProduct,
+    string PaymentMethod,
     long AmountMinor,
     string Currency,
     string Description,

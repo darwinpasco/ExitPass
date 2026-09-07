@@ -73,6 +73,7 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedPaymentProvider);
         Assert.Equal(paymentMethod, fixture.CapturedPaymentMethod);
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedInitiateRequest!.ProviderProduct);
+        Assert.Equal(paymentMethod, fixture.CapturedInitiateRequest.PaymentMethod);
     }
 
     /// <summary>

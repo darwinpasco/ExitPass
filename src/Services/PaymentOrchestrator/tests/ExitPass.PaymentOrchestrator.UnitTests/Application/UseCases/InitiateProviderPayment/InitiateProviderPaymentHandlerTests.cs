@@ -36,6 +36,7 @@ public sealed class InitiateProviderPaymentHandlerTests
         var registry = Substitute.For<IPaymentProviderRegistry>();
         var repository = Substitute.For<IProviderSessionRepository>();
         var adapter = Substitute.For<IPaymentProviderAdapter>();
+        CreateProviderPaymentSessionCommand? capturedCommand = null;
 
         var paymentAttemptId = Guid.NewGuid();
 
@@ -59,20 +60,24 @@ public sealed class InitiateProviderPaymentHandlerTests
         adapter.CreatePaymentSessionAsync(
                 Arg.Any<CreateProviderPaymentSessionCommand>(),
                 Arg.Any<CancellationToken>())
-            .Returns(new CreateProviderPaymentSessionResult(
-                "cs_test_123",
-                "cs_test_123",
-                "PENDING_PROVIDER",
-                new ProviderHandoffDto(
-                    ProviderHandoffType.Redirect,
-                    "https://checkout.paymongo.test/session",
-                    "GET",
-                    null,
-                    null,
-                    null,
-                    DateTimeOffset.UtcNow.AddMinutes(30)),
-                DateTimeOffset.UtcNow.AddMinutes(30),
-                "{\"data\":{}}"));
+            .Returns(call =>
+            {
+                capturedCommand = call.Arg<CreateProviderPaymentSessionCommand>();
+                return new CreateProviderPaymentSessionResult(
+                    "cs_test_123",
+                    "cs_test_123",
+                    "PENDING_PROVIDER",
+                    new ProviderHandoffDto(
+                        ProviderHandoffType.Redirect,
+                        "https://checkout.paymongo.test/session",
+                        "GET",
+                        null,
+                        null,
+                        null,
+                        DateTimeOffset.UtcNow.AddMinutes(30)),
+                    DateTimeOffset.UtcNow.AddMinutes(30),
+                    "{\"data\":{}}");
+            });
 
         var handler = new InitiateProviderPaymentHandler(
             NullLogger<InitiateProviderPaymentHandler>.Instance,
@@ -83,6 +88,7 @@ public sealed class InitiateProviderPaymentHandlerTests
             paymentAttemptId,
             "PAYMONGO",
             "PAYMONGO_CHECKOUT_SESSION",
+            "QRPH",
             15000,
             "PHP",
             "ExitPass parking payment",
@@ -101,6 +107,7 @@ public sealed class InitiateProviderPaymentHandlerTests
         Assert.Equal("cs_test_123", response.ProviderSessionId);
         Assert.Equal(ProviderHandoffType.Redirect, response.ProviderHandoff.Type);
         Assert.Equal("https://checkout.paymongo.test/session", response.ProviderHandoff.RedirectUrl);
+        Assert.Equal("QRPH", capturedCommand!.PaymentMethod);
     }
 
     /// <summary>
@@ -159,6 +166,7 @@ public sealed class InitiateProviderPaymentHandlerTests
             paymentAttemptId,
             "PAYMONGO",
             "PAYMONGO_CHECKOUT_SESSION",
+            "CARD",
             25000,
             "PHP",
             "ExitPass parking payment",
@@ -363,6 +371,7 @@ public sealed class InitiateProviderPaymentHandlerTests
             StablePaymentAttemptId,
             "PAYMONGO",
             "PAYMONGO_CHECKOUT_SESSION",
+            "QRPH",
             15000,
             "PHP",
             "ExitPass parking payment",

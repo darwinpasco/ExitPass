@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
+using ExitPass.PaymentOrchestrator.Contracts.Routing;
 using Microsoft.Extensions.Options;
 
 namespace ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
@@ -189,6 +190,7 @@ public sealed class PayMongoClient
             ? "ExitPass Parking Fee"
             : command.CustomerDisplayName.Trim();
         var referenceNumber = BuildCustomerReferenceNumber(command);
+        var selectedPaymentMethod = ResolveSelectedPaymentMethod(command.PaymentMethod);
 
         return new PayMongoCheckoutSessionRequest(
             new PayMongoCheckoutSessionData(
@@ -196,7 +198,7 @@ public sealed class PayMongoClient
                     null,
                     command.CancelUrl,
                     command.Description,
-                    _options.AllowedPaymentMethodTypes,
+                    new[] { selectedPaymentMethod },
                     new[]
                     {
                         new PayMongoCheckoutSessionLineItem(
@@ -211,6 +213,32 @@ public sealed class PayMongoClient
                     true,
                     true,
                     command.SuccessUrl)));
+    }
+
+    private string ResolveSelectedPaymentMethod(string paymentMethod)
+    {
+        var canonicalPaymentMethod = paymentMethod?.Trim().ToUpperInvariant();
+        var providerPaymentMethod = canonicalPaymentMethod switch
+        {
+            PaymentMethodCode.QrPh => "qrph",
+            PaymentMethodCode.GCash => "gcash",
+            PaymentMethodCode.Maya => "paymaya",
+            PaymentMethodCode.Card => "card",
+            _ => throw new InvalidOperationException(
+                $"PayMongo does not support the selected ExitPass payment method '{canonicalPaymentMethod ?? "<missing>"}'.")
+        };
+
+        if (!_options.AllowedPaymentMethodTypes.Any(
+                configured => string.Equals(
+                    configured?.Trim(),
+                    providerPaymentMethod,
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                $"PayMongo payment method '{providerPaymentMethod}' is not enabled by AllowedPaymentMethodTypes.");
+        }
+
+        return providerPaymentMethod;
     }
 
     private static string BuildCustomerReferenceNumber(CreateProviderPaymentSessionCommand command)
