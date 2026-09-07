@@ -33,6 +33,7 @@ public sealed class PayMongoClientCheckoutRequestTests
         await client.CreateCheckoutSessionAsync(
             new CreateProviderPaymentSessionCommand(
                 paymentAttemptId,
+                "QRPH",
                 10000,
                 "PHP",
                 "Site: WebPay Test Site 2026-05-21  Ticket: WEBPAY-20260521-FRESH-001  Plate: WEBPAY001",
@@ -99,6 +100,74 @@ public sealed class PayMongoClientCheckoutRequestTests
     }
 
     /// <summary>
+    /// Verifies the customer-selected ExitPass method is mapped to exactly one PayMongo checkout method.
+    /// </summary>
+    [Theory]
+    [InlineData("QRPH", "qrph")]
+    [InlineData("GCASH", "gcash")]
+    [InlineData("MAYA", "paymaya")]
+    [InlineData("CARD", "card")]
+    public async Task CreateCheckoutSessionAsync_SendsOnlySelectedAllowedPaymentMethod(
+        string canonicalPaymentMethod,
+        string expectedProviderPaymentMethod)
+    {
+        var handler = new CapturingHttpMessageHandler();
+        var configuredAllowlist = new[] { "CARD", "PayMaya", "GCASH", "QrPh" };
+        var originalAllowlist = configuredAllowlist.ToArray();
+        var client = CreateClient(handler, configuredAllowlist);
+
+        await client.CreateCheckoutSessionAsync(
+            CreateDefaultCommand() with { PaymentMethod = canonicalPaymentMethod },
+            CancellationToken.None);
+
+        using var document = JsonDocument.Parse(handler.RequestJson!);
+        var paymentMethods = document.RootElement
+            .GetProperty("data")
+            .GetProperty("attributes")
+            .GetProperty("payment_method_types");
+
+        Assert.Equal(JsonValueKind.Array, paymentMethods.ValueKind);
+        Assert.Equal(expectedProviderPaymentMethod, Assert.Single(paymentMethods.EnumerateArray()).GetString());
+        Assert.Equal(originalAllowlist, configuredAllowlist);
+    }
+
+    /// <summary>
+    /// Verifies unsupported canonical methods fail before any PayMongo request is sent.
+    /// </summary>
+    [Fact]
+    public async Task CreateCheckoutSessionAsync_WhenCanonicalPaymentMethodUnsupported_FailsClosed()
+    {
+        var handler = new CapturingHttpMessageHandler();
+        var client = CreateClient(handler, new[] { "card", "qrph" });
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.CreateCheckoutSessionAsync(
+                CreateDefaultCommand() with { PaymentMethod = "CASH" },
+                CancellationToken.None));
+
+        Assert.Contains("does not support", exception.Message, StringComparison.Ordinal);
+        Assert.Null(handler.RequestJson);
+    }
+
+    /// <summary>
+    /// Verifies a selected method outside the configured provider allowlist fails without fallback.
+    /// </summary>
+    [Fact]
+    public async Task CreateCheckoutSessionAsync_WhenSelectedPaymentMethodNotAllowed_FailsClosed()
+    {
+        var handler = new CapturingHttpMessageHandler();
+        var client = CreateClient(handler, new[] { "card", "gcash" });
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.CreateCheckoutSessionAsync(
+                CreateDefaultCommand() with { PaymentMethod = "QRPH" },
+                CancellationToken.None));
+
+        Assert.Contains("not enabled by AllowedPaymentMethodTypes", exception.Message, StringComparison.Ordinal);
+        Assert.Null(handler.RequestJson);
+    }
+
+    /// <summary>
     /// Verifies PayMongo option validation catches production-critical omissions without exposing secrets.
     /// </summary>
     [Fact]
@@ -152,7 +221,9 @@ public sealed class PayMongoClientCheckoutRequestTests
         Assert.DoesNotContain("secret body detail", exception.Message);
     }
 
-    private static PayMongoClient CreateClient(CapturingHttpMessageHandler handler)
+    private static PayMongoClient CreateClient(
+        CapturingHttpMessageHandler handler,
+        string[]? allowedPaymentMethodTypes = null)
     {
         var httpClient = new HttpClient(handler);
         var options = Options.Create(new PayMongoOptions
@@ -160,7 +231,7 @@ public sealed class PayMongoClientCheckoutRequestTests
             BaseUrl = "https://api.paymongo.test",
             SecretKey = "sk_test_unit",
             PublicKey = "pk_test_unit",
-            AllowedPaymentMethodTypes = new[] { "qrph" },
+            AllowedPaymentMethodTypes = allowedPaymentMethodTypes ?? new[] { "qrph" },
             WebhookSecretKey = "whsec_unit",
             IsLiveMode = false
         });
@@ -172,6 +243,7 @@ public sealed class PayMongoClientCheckoutRequestTests
     {
         return new CreateProviderPaymentSessionCommand(
             Guid.Parse("df0b6210-d30e-404d-9d43-d70b2134601e"),
+            "QRPH",
             10000,
             "PHP",
             "Site: WebPay Test Site 2026-05-21  Ticket: WEBPAY-20260521-FRESH-001  Plate: WEBPAY001",

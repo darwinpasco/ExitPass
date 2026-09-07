@@ -302,6 +302,7 @@ public sealed class WebPayPaymentIntentHandler
                     attempt.PaymentAttemptId,
                     route.SelectedProviderCode,
                     providerProduct,
+                    paymentMethod,
                     resolvedParking.NetPayableMinorUnits,
                     resolvedParking.Currency,
                     customerDescription,

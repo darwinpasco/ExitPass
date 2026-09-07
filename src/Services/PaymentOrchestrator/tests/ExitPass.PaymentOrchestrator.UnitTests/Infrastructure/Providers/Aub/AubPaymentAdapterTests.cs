@@ -272,6 +272,7 @@ public sealed class AubPaymentAdapterTests
     {
         return new CreateProviderPaymentSessionCommand(
             PaymentAttemptId,
+            PaymentMethod: "CARD",
             AmountMinor: 12500,
             Currency: "PHP",
             Description: "ExitPass parking payment",

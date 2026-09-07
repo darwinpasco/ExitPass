@@ -120,6 +120,7 @@ public sealed class InitiateProviderPaymentHandler
 
             var command = new CreateProviderPaymentSessionCommand(
                 request.PaymentAttemptId,
+                request.PaymentMethod,
                 request.AmountMinor,
                 request.Currency,
                 request.Description,

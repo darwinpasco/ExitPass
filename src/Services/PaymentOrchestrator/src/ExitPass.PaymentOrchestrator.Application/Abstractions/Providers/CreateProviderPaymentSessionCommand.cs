@@ -16,6 +16,7 @@ namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 /// - Provider session creation must remain bound to one canonical PaymentAttempt.
 /// </summary>
 /// <param name="PaymentAttemptId">The canonical PaymentAttempt identifier.</param>
+/// <param name="PaymentMethod">The canonical customer-selected payment method code.</param>
 /// <param name="AmountMinor">The payable amount in minor currency units.</param>
 /// <param name="Currency">The ISO currency code.</param>
 /// <param name="Description">The human-readable payment description.</param>
@@ -28,6 +29,7 @@ namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 /// <param name="CustomerDisplayName">Customer-facing product or line-item name shown by the provider, when supported.</param>
 public sealed record CreateProviderPaymentSessionCommand(
     Guid PaymentAttemptId,
+    string PaymentMethod,
     long AmountMinor,
     string Currency,
     string Description,

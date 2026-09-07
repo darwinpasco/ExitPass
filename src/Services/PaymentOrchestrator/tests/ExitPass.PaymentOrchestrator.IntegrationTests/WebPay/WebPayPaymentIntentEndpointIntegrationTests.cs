@@ -61,6 +61,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", state.CapturedPaymentProvider);
         Assert.Equal("QRPH", state.CapturedPaymentMethod);
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", state.CapturedInitiateRequest!.ProviderProduct);
+        Assert.Equal("QRPH", state.CapturedInitiateRequest.PaymentMethod);
     }
 
     /// <summary>
@@ -166,6 +167,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.Equal(paymentMethod, state.CapturedPaymentMethod);
         Assert.NotEqual(state.CapturedPaymentMethod, state.CapturedPaymentProvider);
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", state.CapturedInitiateRequest!.ProviderProduct);
+        Assert.Equal(paymentMethod, state.CapturedInitiateRequest.PaymentMethod);
     }
 
     /// <summary>
