@@ -82,8 +82,14 @@ public sealed class DigitalPaymentFiscalIssuanceRecoveryTests
         Assert.Null(capturedMapping.BusinessDayDate);
         Assert.Equal(12500, capturedMapping.PayableBasis.PayableAmountMinorUnits);
         var line = Assert.Single(capturedMapping.DocumentLines);
+        Assert.Equal(11161, line.UnitAmountMinorUnits);
+        Assert.Equal(11161, line.GrossAmountMinorUnits);
+        Assert.Equal(0, line.DiscountAmountMinorUnits);
         Assert.Equal(12500, line.NetAmountMinorUnits);
         Assert.Equal(1339, line.TaxAmountMinorUnits);
+        Assert.Equal(
+            line.GrossAmountMinorUnits - line.DiscountAmountMinorUnits + line.TaxAmountMinorUnits,
+            line.NetAmountMinorUnits);
         Assert.Equal(12500, Assert.Single(capturedMapping.Tenders).AmountMinorUnits);
         var tax = Assert.Single(capturedMapping.TaxDetails);
         Assert.Equal(11161, tax.TaxableAmountMinorUnits);
