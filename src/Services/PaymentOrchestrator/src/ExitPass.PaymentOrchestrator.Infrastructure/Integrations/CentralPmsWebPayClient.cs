@@ -62,17 +62,21 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         }
 
         var normalizedBaseUrl = new Uri(baseUrl.TrimEnd('/') + "/");
+        var statutoryBaseUrl = configuration["Integrations:CentralPms:StatutoryDiscounts:BaseUrl"];
+        var normalizedStatutoryBaseUrl = string.IsNullOrWhiteSpace(statutoryBaseUrl)
+            ? normalizedBaseUrl
+            : new Uri(statutoryBaseUrl.TrimEnd('/') + "/");
         _httpClient = httpClient;
         _logger = logger;
         _vendorParkingResolveUri = new Uri(normalizedBaseUrl, "v1/vendor-parking/resolve");
         _createPaymentAttemptUri = new Uri(normalizedBaseUrl, "v1/public/payment-attempts");
         _paymentAttemptsBaseUri = new Uri(normalizedBaseUrl, "v1/internal/payment-attempts/");
         _webPayPaymentAttemptsBaseUri = new Uri(normalizedBaseUrl, "v1/webpay/payment-attempts/");
-        _statutoryDiscountAvailabilityUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions/availability");
-        _statutoryDiscountPendingLifecycleRediscoveryUri = new Uri(normalizedBaseUrl, "v1/webpay/statutory-discounts/pending-lifecycle/rediscover");
-        _statutoryDiscountDecisionsUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions");
-        _statutoryDiscountDecisionsBaseUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions/");
-        _statutoryEvidenceBaseUri = new Uri(normalizedBaseUrl, "v1/webpay/statutory-discounts/evidence/");
+        _statutoryDiscountAvailabilityUri = new Uri(normalizedStatutoryBaseUrl, "v1/statutory-discounts/decisions/availability");
+        _statutoryDiscountPendingLifecycleRediscoveryUri = new Uri(normalizedStatutoryBaseUrl, "v1/webpay/statutory-discounts/pending-lifecycle/rediscover");
+        _statutoryDiscountDecisionsUri = new Uri(normalizedStatutoryBaseUrl, "v1/statutory-discounts/decisions");
+        _statutoryDiscountDecisionsBaseUri = new Uri(normalizedStatutoryBaseUrl, "v1/statutory-discounts/decisions/");
+        _statutoryEvidenceBaseUri = new Uri(normalizedStatutoryBaseUrl, "v1/webpay/statutory-discounts/evidence/");
 
         _useServerDerivedStatutoryServicePrincipal =
             bool.TryParse(

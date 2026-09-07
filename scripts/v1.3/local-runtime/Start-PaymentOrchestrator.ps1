@@ -13,6 +13,7 @@ $databaseVolume = 'exitpass-ist-persistent-data'
 $networkName = 'exitpass-ist-persistent'
 $centralPmsContainer = 'exitpass-central-pms-pitx-local'
 $centralPmsInternalUrl = 'http://exitpass-central-pms-pitx-local:8080'
+$centralPmsStatutoryInternalUrl = 'https://exitpass-central-pms-pitx-local:8443'
 $centralPmsHostUrl = 'http://127.0.0.1:56065'
 $containerName = 'exitpass-payment-orchestrator-pitx-local'
 $httpUrl = 'http://127.0.0.1:56063'
@@ -28,6 +29,7 @@ else {
     $env:EXITPASS_PERSISTENT_IST_ROOT
 }
 $environmentFile = Join-Path $privateRoot 'runtime\restart-41-business\payment.env'
+$mtlsProvisionerPath = Join-Path $PSScriptRoot 'Initialize-WebPayStatutoryMtls.ps1'
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "exitpass-payment-orchestrator-pitx-local-$PID"
 $certificatePath = Join-Path $temporaryRoot 'exitpass-payment-orchestrator-local.pfx'
 $containerStarted = $false
@@ -114,6 +116,9 @@ foreach ($requiredFile in @($dockerfilePath, $runtimeDockerfilePath)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw 'Run this launcher from a complete ExitPass source checkout.'
     }
+}
+if (-not (Test-Path -LiteralPath $mtlsProvisionerPath -PathType Leaf)) {
+    throw 'The WebPay statutory mTLS provisioner is missing from the local-runtime scripts.'
 }
 if (-not (Test-Path -LiteralPath $environmentFile -PathType Leaf)) {
     throw "Persistent PITX Payment Orchestrator configuration was not found at $environmentFile."
@@ -206,6 +211,7 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceSha)) {
     throw 'Unable to determine the Payment Orchestrator source revision.'
 }
 $imageName = "exitpass-payment-orchestrator-local:$sourceSha"
+$mtls = & $mtlsProvisionerPath -PrivateRoot $privateRoot -PassThru
 
 [void](New-Item -ItemType Directory -Path $temporaryRoot -Force)
 $certificatePassword = New-RandomSecret
@@ -224,12 +230,20 @@ try {
         --network $networkName `
         --env-file $environmentFile `
         --env "Integrations__CentralPms__BaseUrl=$centralPmsInternalUrl" `
+        --env "Integrations__CentralPms__StatutoryDiscounts__BaseUrl=$centralPmsStatutoryInternalUrl" `
+        --env 'Integrations__CentralPms__StatutoryDiscounts__UseServerDerivedServicePrincipal=true' `
+        --env 'Integrations__CentralPms__StatutoryDiscounts__ClientCertificatePath=/run/exitpass/statutory-mtls/payment-orchestrator-client.pfx' `
+        --env 'Integrations__CentralPms__StatutoryDiscounts__ClientCertificatePasswordFile=/run/exitpass/statutory-mtls/payment-orchestrator-client-password' `
+        --env 'Integrations__CentralPms__StatutoryDiscounts__TrustedServerCertificatePath=/run/exitpass/statutory-mtls/central-pms-root-ca.cer' `
         --env 'ASPNETCORE_URLS=http://+:8080;https://+:8443' `
         --env 'ASPNETCORE_Kestrel__Certificates__Default__Path=/https/exitpass-payment-orchestrator-local.pfx' `
         --env "ASPNETCORE_Kestrel__Certificates__Default__Password=$certificatePassword" `
         --publish '127.0.0.1:56063:8080' `
         --publish '127.0.0.1:56062:8443' `
         --mount "type=bind,source=$certificatePath,target=/https/exitpass-payment-orchestrator-local.pfx,readonly" `
+        --mount "type=bind,source=$($mtls.ClientCertificatePath),target=/run/exitpass/statutory-mtls/payment-orchestrator-client.pfx,readonly" `
+        --mount "type=bind,source=$($mtls.ClientPasswordPath),target=/run/exitpass/statutory-mtls/payment-orchestrator-client-password,readonly" `
+        --mount "type=bind,source=$($mtls.RootCertificatePath),target=/run/exitpass/statutory-mtls/central-pms-root-ca.cer,readonly" `
         --label 'com.exitpass.local-runtime=persistent-pitx-payment-orchestrator' `
         $imageName).Trim()
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($containerId)) {
@@ -243,6 +257,7 @@ try {
     Write-Host "HTTPS: $httpsUrl"
     Write-Host "HTTP:  $httpUrl"
     Write-Host "Central PMS: $centralPmsInternalUrl"
+    Write-Host "Central PMS statutory service boundary: $centralPmsStatutoryInternalUrl (mTLS)"
     Write-Host 'PayMongo: approved private test-mode configuration loaded'
 
     if (-not $SmokeTest) {

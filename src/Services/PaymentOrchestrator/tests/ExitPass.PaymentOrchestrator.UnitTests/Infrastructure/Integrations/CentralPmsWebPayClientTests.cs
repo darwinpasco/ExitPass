@@ -617,6 +617,33 @@ public sealed class CentralPmsWebPayClientTests
     }
 
     /// <summary>
+    /// Verifies production service-principal mode uses the dedicated HTTPS endpoint without caller-authored authority.
+    /// </summary>
+    [Fact]
+    public async Task ResolveStatutoryDiscountAvailabilityAsync_WhenServerDerivedPrincipalEnabled_UsesHttpsAndOmitsLegacyAuthorityHeaders()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryAvailabilityResponse())
+        });
+        var client = CreateClient(
+            handler,
+            useServerDerivedServicePrincipal: true,
+            statutoryBaseUrl: "https://central-pms.internal:8443");
+
+        var result = await client.ResolveStatutoryDiscountAvailabilityAsync(
+            StatutoryAvailabilityRequest(),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(Uri.UriSchemeHttps, handler.LastRequest!.RequestUri!.Scheme);
+        Assert.Equal("central-pms.internal", handler.LastRequest.RequestUri.Host);
+        Assert.False(handler.LastRequest.Headers.Contains("X-ExitPass-Service-Identity-Id"));
+        Assert.False(handler.LastRequest.Headers.Contains("X-ExitPass-Permissions"));
+    }
+
+    /// <summary>
     /// Verifies statutory availability fails closed without an HTTP call when service identity configuration is missing.
     /// </summary>
     [Fact]
@@ -783,6 +810,29 @@ public sealed class CentralPmsWebPayClientTests
     }
 
     [Fact]
+    public async Task BootstrapStatutoryEvidenceAsync_WhenServerDerivedPrincipalEnabled_OmitsLegacyAuthorityHeaders()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryEvidenceChannelResponse())
+        });
+        var client = CreateClient(
+            handler,
+            useServerDerivedServicePrincipal: true,
+            statutoryBaseUrl: "https://central-pms.internal:8443");
+
+        var result = await client.BootstrapAsync(
+            new CentralPmsStatutoryEvidenceBootstrapRequest(StatutoryDecisionCommandId, "webpay-evidence-bootstrap:mtls"),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.False(handler.LastRequest!.Headers.Contains("X-ExitPass-Service-Identity-Id"));
+        Assert.False(handler.LastRequest.Headers.Contains("X-ExitPass-Permissions"));
+        Assert.Equal(Uri.UriSchemeHttps, handler.LastRequest.RequestUri!.Scheme);
+    }
+
+    [Fact]
     public async Task GetStatutoryEvidenceStatusAsync_UsesDecisionScopedReadOnlyRoute()
     {
         var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
@@ -934,7 +984,8 @@ public sealed class CentralPmsWebPayClientTests
     private static CentralPmsWebPayClient CreateClient(
         HttpMessageHandler handler,
         bool configureStatutoryServiceIdentity = true,
-        bool useServerDerivedServicePrincipal = false)
+        bool useServerDerivedServicePrincipal = false,
+        string? statutoryBaseUrl = null)
     {
         var values = new Dictionary<string, string?>
         {
@@ -946,6 +997,10 @@ public sealed class CentralPmsWebPayClientTests
         }
         values["Integrations:CentralPms:StatutoryDiscounts:UseServerDerivedServicePrincipal"] =
             useServerDerivedServicePrincipal.ToString();
+        if (statutoryBaseUrl is not null)
+        {
+            values["Integrations:CentralPms:StatutoryDiscounts:BaseUrl"] = statutoryBaseUrl;
+        }
 
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(values)

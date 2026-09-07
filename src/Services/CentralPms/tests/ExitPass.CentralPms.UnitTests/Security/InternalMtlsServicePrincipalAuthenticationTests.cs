@@ -12,8 +12,11 @@ namespace ExitPass.CentralPms.UnitTests.Security;
 
 public sealed class InternalMtlsServicePrincipalAuthenticationTests
 {
-    [Fact]
-    public async Task Verified_certificate_builds_principal_only_from_binding_and_canonical_record()
+    [Theory]
+    [InlineData("PaymentOrchestrator")]
+    [InlineData("PAYMENT_ORCHESTRATOR")]
+    public async Task Verified_webpay_owner_builds_principal_only_from_binding_and_canonical_record(
+        string owningServiceName)
     {
         using var certificate = CreateCertificate();
         var serviceIdentityId = Guid.NewGuid();
@@ -22,7 +25,7 @@ public sealed class InternalMtlsServicePrincipalAuthenticationTests
         var repository = Substitute.For<ICentralPmsRbacRepository>();
         repository.GetServicePrincipalAuthenticationAsync("secret://webpay", Arg.Any<CancellationToken>())
             .Returns(new CentralPmsServicePrincipalAuthenticationRecord(
-                serviceIdentityId, "INTERNAL_SERVICE", "ACTIVE", "PAYMENT_ORCHESTRATOR",
+                serviceIdentityId, "INTERNAL_SERVICE", "ACTIVE", owningServiceName,
                 "MTLS_CERTIFICATE_REFERENCE", true, true, [siteId], [siteGroupId]));
         var nextCalled = false;
         var middleware = new InternalMtlsMiddleware(_ =>
@@ -87,6 +90,28 @@ public sealed class InternalMtlsServicePrincipalAuthenticationTests
         await middleware.InvokeAsync(
             context,
             Options.Create(OptionsFor(certificate, "webpay", "WEBPAY", [])),
+            new FixedCertificateAccessor(certificate),
+            repository);
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        (context.User.Identity?.IsAuthenticated ?? false).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Payment_orchestrator_owner_is_denied_for_assisted_payment_terminal_source()
+    {
+        using var certificate = CreateCertificate();
+        var repository = Substitute.For<ICentralPmsRbacRepository>();
+        repository.GetServicePrincipalAuthenticationAsync("secret://webpay", Arg.Any<CancellationToken>())
+            .Returns(new CentralPmsServicePrincipalAuthenticationRecord(
+                Guid.NewGuid(), "INTERNAL_SERVICE", "ACTIVE", "PaymentOrchestrator",
+                "MTLS_CERTIFICATE_REFERENCE", true, true, [], []));
+        var middleware = new InternalMtlsMiddleware(_ => throw new InvalidOperationException("next must not run"));
+        var context = ContextWithServiceMetadata();
+
+        await middleware.InvokeAsync(
+            context,
+            Options.Create(OptionsFor(certificate, "webpay", "ASSISTED_PAYMENT_TERMINAL", [])),
             new FixedCertificateAccessor(certificate),
             repository);
 

@@ -32,6 +32,7 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
     private const string CertificateSelectorHeader = "X-Test-Service-Certificate";
 
     [Theory]
+    [InlineData(StatutoryDiscountSourceChannels.WebPay, "PaymentOrchestrator", "statutory-discounts.decision.submit.webpay")]
     [InlineData(StatutoryDiscountSourceChannels.WebPay, "PAYMENT_ORCHESTRATOR", "statutory-discounts.decision.submit.webpay")]
     [InlineData(StatutoryDiscountSourceChannels.AssistedPaymentTerminal, "ASSISTED_PAYMENT_TERMINAL", "statutory-discounts.decision.submit.assisted-payment-terminal")]
     public async Task Valid_mtls_service_principal_is_admitted_and_server_creates_canonical_intake(

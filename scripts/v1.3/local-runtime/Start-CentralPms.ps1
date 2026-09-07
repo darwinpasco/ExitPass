@@ -26,8 +26,7 @@ else {
 $environmentFile = Join-Path $privateRoot 'runtime\restart-41-business\central.env'
 $posApiKeyFile = Join-Path $privateRoot 'runtime\restart-41-business\pos-api-key'
 $adapterApiKeyFile = Join-Path $privateRoot 'site-adapters\pitx-level-3\central-pms-api-key'
-$temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "exitpass-central-pms-pitx-local-$PID"
-$certificatePath = Join-Path $temporaryRoot 'exitpass-central-pms-local.pfx'
+$mtlsProvisionerPath = Join-Path $PSScriptRoot 'Initialize-WebPayStatutoryMtls.ps1'
 $containerStarted = $false
 
 function Invoke-CheckedCommand {
@@ -68,19 +67,6 @@ function Assert-PrivateEnvironmentValue {
     }
 }
 
-function New-RandomSecret {
-    $bytes = [byte[]]::new(32)
-    $generator = [Security.Cryptography.RandomNumberGenerator]::Create()
-    try {
-        $generator.GetBytes($bytes)
-    }
-    finally {
-        $generator.Dispose()
-    }
-
-    return [Convert]::ToBase64String($bytes)
-}
-
 function Wait-ForHealth {
     param([int] $Attempts = 180)
 
@@ -105,10 +91,8 @@ function Wait-ForHealth {
 if (-not (Get-Command docker.exe -ErrorAction SilentlyContinue)) {
     throw 'Docker Desktop is required for the persistent PITX runtime network.'
 }
-if (-not (Get-Command dotnet.exe -ErrorAction SilentlyContinue)) {
-    throw 'The .NET 8 SDK is required to export the local HTTPS certificate.'
-}
-if (-not (Test-Path -LiteralPath $dockerfilePath)) {
+if (-not (Test-Path -LiteralPath $dockerfilePath) -or
+    -not (Test-Path -LiteralPath $mtlsProvisionerPath -PathType Leaf)) {
     throw 'Run this launcher from a complete ExitPass source checkout.'
 }
 foreach ($requiredFile in @($environmentFile, $posApiKeyFile, $adapterApiKeyFile)) {
@@ -176,15 +160,9 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceSha)) {
     throw 'Unable to determine the Central PMS source revision.'
 }
 $imageName = "exitpass-central-pms-local:$sourceSha"
-
-[void](New-Item -ItemType Directory -Path $temporaryRoot -Force)
-$certificatePassword = New-RandomSecret
+$mtls = & $mtlsProvisionerPath -PrivateRoot $privateRoot -PassThru
 
 try {
-    Invoke-CheckedCommand dotnet.exe @(
-        'dev-certs', 'https', '--export-path', $certificatePath, '--password', $certificatePassword
-    ) 'Unable to export the local ASP.NET Core HTTPS development certificate.'
-
     Invoke-CheckedCommand docker.exe @(
         'build', '--file', $dockerfilePath, '--tag', $imageName, $repoRoot
     ) 'Central PMS image build failed.'
@@ -195,17 +173,32 @@ try {
         --network-alias 'exitpass-central-pms-pitx-local' `
         --env-file $environmentFile `
         --env 'ASPNETCORE_URLS=http://+:8080;https://+:8443' `
-        --env 'ASPNETCORE_Kestrel__Certificates__Default__Path=/https/exitpass-central-pms-local.pfx' `
-        --env "ASPNETCORE_Kestrel__Certificates__Default__Password=$certificatePassword" `
+        --env 'ASPNETCORE_Kestrel__Certificates__Default__Path=/run/exitpass/statutory-mtls/central-pms-server.pfx' `
+        --env "ASPNETCORE_Kestrel__Certificates__Default__Password=$($mtls.ServerPassword)" `
+        --env 'ASPNETCORE_Kestrel__EndpointDefaults__ClientCertificateMode=AllowCertificate' `
+        --env 'InternalSecurity__Mtls__Enabled=true' `
+        --env 'InternalSecurity__Mtls__RequireClientCertificate=false' `
+        --env "InternalSecurity__Mtls__TrustedClientThumbprints__0=$($mtls.ClientThumbprint)" `
+        --env "InternalSecurity__Mtls__ServicePrincipalCredentials__0__CertificateThumbprint=$($mtls.ClientThumbprint)" `
+        --env "InternalSecurity__Mtls__ServicePrincipalCredentials__0__CredentialReference=$($mtls.CredentialReference)" `
+        --env 'InternalSecurity__Mtls__ServicePrincipalCredentials__0__Audience=CENTRAL_PMS' `
+        --env 'InternalSecurity__Mtls__ServicePrincipalCredentials__0__SourceChannel=WEBPAY' `
+        --env 'InternalSecurity__Mtls__ServicePrincipalCredentials__0__Permissions__0=statutory-discounts.decision.read' `
+        --env 'InternalSecurity__Mtls__ServicePrincipalCredentials__0__Permissions__1=statutory-discounts.decision.submit.webpay' `
+        --env 'InternalSecurity__Mtls__ServicePrincipalCredentials__0__Permissions__2=statutory-discounts.pending-lifecycle.rediscover.webpay' `
+        --env 'InternalSecurity__Mtls__ServicePrincipalCredentials__0__Permissions__3=statutory-discounts.evidence.capture.webpay' `
         --env 'HumanAuthentication__AllowedWebOrigins__0=http://127.0.0.1:5175' `
         --env 'HumanAuthentication__AllowedWebOrigins__1=http://127.0.0.1:5178' `
         --publish '127.0.0.1:56065:8080' `
         --publish '127.0.0.1:56064:8443' `
-        --mount "type=bind,source=$certificatePath,target=/https/exitpass-central-pms-local.pfx,readonly" `
+        --mount "type=bind,source=$($mtls.ServerCertificatePath),target=/run/exitpass/statutory-mtls/central-pms-server.pfx,readonly" `
+        --mount "type=bind,source=$($mtls.RootCertificatePemPath),target=/usr/local/share/ca-certificates/exitpass-local-statutory-root-ca.crt,readonly" `
         --mount "type=bind,source=$posApiKeyFile,target=/run/exitpass/pos-api-key,readonly" `
         --mount "type=bind,source=$adapterApiKeyFile,target=/run/exitpass/site-adapter-secrets/pitx-level-3/central-pms-api-key,readonly" `
         --label 'com.exitpass.local-runtime=persistent-pitx-central-pms' `
-        $imageName).Trim()
+        --entrypoint '/bin/sh' `
+        $imageName `
+        '-c' 'update-ca-certificates >/dev/null && exec dotnet ExitPass.CentralPms.Api.dll').Trim()
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($containerId)) {
         throw 'Central PMS container failed to start. Confirm ports 56064 and 56065 are available.'
     }
@@ -218,6 +211,7 @@ try {
     Write-Host "HTTP:  $httpUrl"
     Write-Host "Database: $databaseContainer/$databaseName (volume $databaseVolume)"
     Write-Host 'Projection scheduler: enabled and required for this environment'
+    Write-Host 'WebPay statutory service principal: HTTPS/mTLS enabled'
 
     if (-not $SmokeTest) {
         Write-Host 'Press Ctrl+C to stop the local Central PMS.'
@@ -227,15 +221,5 @@ try {
 finally {
     if ($containerStarted) {
         & docker.exe stop --time 10 $containerName 2>$null | Out-Null
-    }
-    if (Test-Path -LiteralPath $temporaryRoot) {
-        $resolvedTemporaryRoot = (Resolve-Path -LiteralPath $temporaryRoot).Path
-        $systemTemporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
-        if (-not $resolvedTemporaryRoot.StartsWith(
-                "$systemTemporaryRoot\exitpass-central-pms-pitx-local-",
-                [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Refusing to remove unexpected temporary path: $resolvedTemporaryRoot"
-        }
-        Remove-Item -LiteralPath $resolvedTemporaryRoot -Recurse -Force
     }
 }
