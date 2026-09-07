@@ -81,9 +81,13 @@ public sealed class DigitalPaymentFiscalIssuanceRecoveryTests
         Assert.NotNull(capturedMapping);
         Assert.Null(capturedMapping.BusinessDayDate);
         Assert.Equal(12500, capturedMapping.PayableBasis.PayableAmountMinorUnits);
-        Assert.Equal(12500, Assert.Single(capturedMapping.DocumentLines).NetAmountMinorUnits);
+        var line = Assert.Single(capturedMapping.DocumentLines);
+        Assert.Equal(12500, line.NetAmountMinorUnits);
+        Assert.Equal(1339, line.TaxAmountMinorUnits);
         Assert.Equal(12500, Assert.Single(capturedMapping.Tenders).AmountMinorUnits);
-        Assert.Empty(capturedMapping.TaxDetails);
+        var tax = Assert.Single(capturedMapping.TaxDetails);
+        Assert.Equal(11161, tax.TaxableAmountMinorUnits);
+        Assert.Equal(1339, tax.TaxAmountMinorUnits);
         Assert.Equal("PHP", capturedMapping.PayableBasis.CurrencyCode);
         Assert.Equal("sales_invoice", capturedMapping.FiscalDocumentTypeCodeKey);
     }

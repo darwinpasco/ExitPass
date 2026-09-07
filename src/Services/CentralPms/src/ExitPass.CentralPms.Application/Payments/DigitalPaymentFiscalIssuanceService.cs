@@ -23,10 +23,11 @@ public interface IDigitalPaymentFiscalIssuanceService
 public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalIssuanceService
 {
     private const string FiscalDocumentTypeCodeKey = "sales_invoice";
+    private const decimal OrdinaryVatRate = 0.12m;
     private static readonly Guid FiscalLineTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000201");
     private static readonly Guid FiscalTenderTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000301");
-    private static readonly Guid FiscalTaxTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000401");
-    private static readonly Guid FiscalTaxClassificationCodeId = Guid.Parse("10000000-0000-0000-0000-000000000402");
+    private static readonly Guid FiscalTaxTypeCodeId = Guid.Parse("328dcb64-584a-5f59-a304-2e5189a2aa83");
+    private static readonly Guid FiscalTaxClassificationCodeId = Guid.Parse("ab180f41-e181-5579-b9f1-5ae7a840a946");
     private static readonly Guid FiscalDiscountPrivilegeTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000501");
     private static readonly Guid FiscalTotalTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000601");
     private readonly IDigitalPaymentFiscalContextReader _contextReader;
@@ -127,6 +128,7 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
         var statutory = context.AppliedStatutoryFiscalContext;
         EnsureStatutoryContextMatches(context, command, statutory);
         var amount = statutory?.FinalPayableAmountMinorUnits ?? context.AmountMinorUnits;
+        var ordinaryVat = statutory is null ? BuildOrdinaryVatFacts(amount) : null;
         var lineGrossAmount = statutory?.VatExclusiveBasisAmountMinorUnits ?? amount;
         var discountAmount = statutory?.StatutoryDiscountAmountMinorUnits ?? 0;
         var attemptRef = command.PaymentAttemptId.ToString("D");
@@ -182,7 +184,7 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
                 lineGrossAmount,
                 lineGrossAmount,
                 discountAmount,
-                0,
+                ordinaryVat?.VatAmountMinorUnits ?? 0,
                 amount,
                 context.Currency,
                 null,
@@ -197,7 +199,7 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
                 upstreamReference,
                 command.ProviderReference,
                 new Dictionary<string, string> { ["channel"] = "DIGITAL" })],
-            BuildTaxDetails(statutory, context.Currency),
+            BuildTaxDetails(statutory, ordinaryVat, context.Currency),
             BuildDiscountPrivilegeDetails(statutory, context.Currency),
             [new CentralPmsFiscalTotalContext(
                 statutory is null ? null : FiscalTotalTypeCodeId,
@@ -295,23 +297,42 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
                 }
             ];
 
+    private static OrdinaryVatFacts BuildOrdinaryVatFacts(long grossAmountMinorUnits)
+    {
+        var vatableSalesMinorUnits = decimal.ToInt64(decimal.Round(
+            grossAmountMinorUnits / (1m + OrdinaryVatRate),
+            0,
+            MidpointRounding.AwayFromZero));
+
+        return new OrdinaryVatFacts(
+            vatableSalesMinorUnits,
+            grossAmountMinorUnits - vatableSalesMinorUnits);
+    }
+
     private static IReadOnlyList<CentralPmsFiscalTaxDetailContext> BuildTaxDetails(
         TerminalCashStatutoryFiscalLinkageContext? statutory,
-        string currency) =>
-        statutory is null
-            ? []
-            :
-            [
-                new CentralPmsFiscalTaxDetailContext(
-                    FiscalTaxTypeCodeId,
-                    FiscalTaxClassificationCodeId,
-                    statutory.VatExclusiveBasisAmountMinorUnits,
-                    statutory.VatAmountMinorUnits,
-                    currency,
-                    1,
-                    12m,
-                    new Dictionary<string, string> { ["basis"] = statutory.VatTreatment })
-            ];
+        OrdinaryVatFacts? ordinaryVat,
+        string currency)
+    {
+        var taxableAmountMinorUnits = statutory?.VatExclusiveBasisAmountMinorUnits
+            ?? ordinaryVat!.VatableSalesMinorUnits;
+        var taxAmountMinorUnits = statutory?.VatAmountMinorUnits
+            ?? ordinaryVat!.VatAmountMinorUnits;
+        var basis = statutory?.VatTreatment ?? "VAT_INCLUSIVE_NO_EXEMPTION";
+
+        return
+        [
+            new CentralPmsFiscalTaxDetailContext(
+                FiscalTaxTypeCodeId,
+                FiscalTaxClassificationCodeId,
+                taxableAmountMinorUnits,
+                taxAmountMinorUnits,
+                currency,
+                1,
+                12m,
+                new Dictionary<string, string> { ["basis"] = basis })
+        ];
+    }
 
     private static IReadOnlyList<CentralPmsFiscalDiscountPrivilegeDetailContext> BuildDiscountPrivilegeDetails(
         TerminalCashStatutoryFiscalLinkageContext? statutory,
@@ -452,6 +473,10 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             reference.SitePosServerRef,
             reference.FiscalIssuanceState == FiscalIssuanceIntegrationState.FiscalIssuanceFailedService &&
             reference.LatestErrorPosture == FiscalIssuanceErrorPosture.RetryAfterServiceRecovery);
+
+    private sealed record OrdinaryVatFacts(
+        long VatableSalesMinorUnits,
+        long VatAmountMinorUnits);
 }
 
 public sealed record DigitalPaymentFiscalIssuanceCommand(
