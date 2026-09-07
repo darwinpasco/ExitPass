@@ -123,9 +123,9 @@ try {
     }
 
     Set-Content -LiteralPath $profileFile -Value 'EXITPASS_RUNTIME_PROFILE=DEVELOPER'
-    Assert-Throws {
-        Initialize-ExitPassLocalRuntimeProfile -RepositoryRoot $temporaryRoot -Component 'test component'
-    } 'DEVELOPER startup is not yet available' 'Developer startup guard'
+    $developerRuntime = Initialize-ExitPassLocalRuntimeProfile -RepositoryRoot $temporaryRoot -Component 'test component'
+    Assert-Equal $true $developerRuntime.LocalConfigurationAvailable 'Developer startup availability'
+    Assert-Equal 'WIREMOCK_HIKCENTRAL' $developerRuntime.VendorMode 'Developer WireMock boundary'
 
     Set-Content -LiteralPath $profileFile -Value 'EXITPASS_RUNTIME_PROFILE=PRODUCTION'
     Assert-Throws {

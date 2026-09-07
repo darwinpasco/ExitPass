@@ -68,7 +68,7 @@ function Get-ExitPassRuntimeProfileDefinition {
                 VendorMode = 'WIREMOCK_HIKCENTRAL'
                 PaymentEnvironment = 'TEST'
                 SyntheticFixturesEnabled = $true
-                LocalConfigurationAvailable = $false
+                LocalConfigurationAvailable = $true
             }
         }
         'TESTING' {
@@ -143,21 +143,19 @@ function Initialize-ExitPassLocalRuntimeProfile {
     $profile = Get-ExitPassRuntimeProfile -RepositoryRoot $RepositoryRoot
     $definition = Get-ExitPassRuntimeProfileDefinition -Profile $profile
     Write-Host "ExitPass Runtime Profile: $($definition.Name)"
+    Write-Host $definition.DisplayLabel
 
-    if ($profile -eq 'DEVELOPER') {
-        throw "$Component DEVELOPER startup is not yet available. Isolated resources are reserved as '$($definition.ExitPassDatabaseContainer)' on '$($definition.Network)', but the WireMock HikCentral fixture layer is not provisioned. Testing resources were not accessed."
-    }
     if ($profile -eq 'PRODUCTION') {
         throw "$Component PRODUCTION startup is unavailable because no approved local Production configuration is present. Testing, Developer, WireMock, and synthetic resources are not permitted."
     }
 
     Assert-ExitPassRuntimeProfileCombination `
         -Profile $profile `
-        -DatabaseProfile 'TESTING' `
-        -VendorMode 'REAL_HIKCENTRAL' `
-        -PaymentEnvironment 'TEST' `
+        -DatabaseProfile $definition.Name `
+        -VendorMode $definition.VendorMode `
+        -PaymentEnvironment $definition.PaymentEnvironment `
         -SiteMode 'REAL_SITE' `
-        -SyntheticFixturesEnabled $false
+        -SyntheticFixturesEnabled $definition.SyntheticFixturesEnabled
 
     return $definition
 }
