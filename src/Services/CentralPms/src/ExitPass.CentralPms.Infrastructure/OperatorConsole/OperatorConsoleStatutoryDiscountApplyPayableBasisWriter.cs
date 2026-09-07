@@ -191,24 +191,41 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 sdv.evidence_required,
                 sdv.evidence_captured,
                 sdv.currency_code,
-                COALESCE(sdv.applied_policy_reference_id, sdv.evaluated_policy_reference_id, sdv.fallback_policy_reference_id) AS policy_reference_id,
-                NULL::uuid AS resolved_jurisdiction_id,
+                COALESCE(
+                    dpa.statutory_discount_policy_version_id,
+                    sdv.applied_policy_reference_id,
+                    sdv.evaluated_policy_reference_id,
+                    sdv.fallback_policy_reference_id) AS policy_reference_id,
+                dpa.jurisdiction_id AS resolved_jurisdiction_id,
                 sdv.policy_resolution_basis::text,
                 jsonb_build_object(
-                    'statutoryDiscountPolicyId', p.discount_policy_reference_id,
-                    'policyCode', p.policy_code,
-                    'benefitType', 'STATUTORY_DISCOUNT_VAT_EXEMPT',
+                    'statutoryDiscountPolicyId', COALESCE(dpa.statutory_discount_policy_version_id, p.discount_policy_reference_id),
+                    'policyCode', COALESCE(dpa.policy_code, p.policy_code),
+                    'benefitType', COALESCE(dpa.benefit_type::text, 'STATUTORY_DISCOUNT_VAT_EXEMPT'),
                     'policyResolutionBasis', sdv.policy_resolution_basis::text,
-                    'succeedingHoursDiscountRule', 'STANDARD_20_PERCENT',
-                    'discountBaseScope', 'VAT_EXCLUSIVE',
+                    'succeedingHoursDiscountRule', CASE
+                        WHEN dpa.benefit_type = 'FULL_FEE_EXEMPTION'::discounts.parking_benefit_type_enum THEN 'NOT_APPLICABLE'
+                        ELSE 'STANDARD_20_PERCENT'
+                    END,
+                    'discountBaseScope', COALESCE(pv.discount_base_scope::text, 'VAT_EXCLUSIVE'),
                     'stackingPolicy', 'STATUTORY_FIRST',
-                    'legalBasisPriority', COALESCE(p.local_ordinance_reference, p.national_law_reference, 'LOCKED_SCHEMA'),
-                    'requiresEvidence', p.requires_evidence_capture,
-                    'policyName', p.policy_name,
+                    'legalBasisPriority', COALESCE(dpa.legal_basis_reference, p.local_ordinance_reference, p.national_law_reference, 'LOCKED_SCHEMA'),
+                    'requiresEvidence', sdv.evidence_required,
+                    'policyName', COALESCE(dpa.ordinance_title, p.policy_name),
+                    'legalBasisReference', dpa.legal_basis_reference,
                     'nationalLawReference', p.national_law_reference,
-                    'ordinanceReference', p.local_ordinance_reference
+                    'ordinanceReference', COALESCE(dpa.ordinance_number, p.local_ordinance_reference),
+                    'fullFeeExempt', COALESCE(pv.full_fee_exempt, false),
+                    'policyEffectSupportStatus', pv.policy_effect_support_status::text,
+                    'snapshotHash', dpa.policy_authority_semantic_hash
                 )::text AS resolved_policy_snapshot_json
             FROM discounts.statutory_discount_validations AS sdv
+            LEFT JOIN operator_console.statutory_discount_service_channel_reviews AS review
+              ON review.statutory_discount_validation_id = sdv.statutory_discount_validation_id
+            LEFT JOIN discounts.statutory_discount_decision_policy_authorities AS dpa
+              ON dpa.statutory_discount_decision_command_id = review.statutory_discount_decision_command_id
+            LEFT JOIN discounts.statutory_discount_policy_versions AS pv
+              ON pv.statutory_discount_policy_version_id = dpa.statutory_discount_policy_version_id
             LEFT JOIN discounts.discount_policy_references AS p
               ON p.discount_policy_reference_id = COALESCE(
                     sdv.applied_policy_reference_id,
@@ -600,7 +617,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         npgsqlCommand.Parameters.Add("statutory_discount_amount_minor_units", NpgsqlDbType.Bigint).Value = computed.StatutoryDiscountAmountMinorUnits;
         npgsqlCommand.Parameters.Add("final_payable_amount_minor_units", NpgsqlDbType.Bigint).Value = computed.FinalPayableAmountMinorUnits;
         npgsqlCommand.Parameters.Add("currency_code", NpgsqlDbType.Varchar).Value = originalSnapshot.CurrencyCode;
-        npgsqlCommand.Parameters.Add("computation_basis_json", NpgsqlDbType.Jsonb).Value = BuildComputationBasisJson(originalSnapshot, policy);
+        npgsqlCommand.Parameters.Add("computation_basis_json", NpgsqlDbType.Jsonb).Value = BuildComputationBasisJson(originalSnapshot, computed, policy);
         npgsqlCommand.Parameters.Add("rounding_mode", NpgsqlDbType.Varchar).Value = OperatorConsoleStatutoryDiscountComputationContract.RoundingMode;
         npgsqlCommand.Parameters.Add("idempotency_key", NpgsqlDbType.Varchar).Value = command.IdempotencyKey;
         npgsqlCommand.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = command.CorrelationId;
@@ -818,14 +835,26 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             originalSnapshot.CurrencyCode), null);
     }
 
-    private static string BuildComputationBasisJson(TariffSnapshotRow originalSnapshot, PolicySnapshotContext policy) =>
+    private static string BuildComputationBasisJson(
+        TariffSnapshotRow originalSnapshot,
+        ComputedPayableBasis computed,
+        PolicySnapshotContext policy) =>
         JsonSerializer.Serialize(new
         {
             basis = "GROSS_INCLUSIVE_OF_VAT",
             sourceTariffSnapshotId = originalSnapshot.TariffSnapshotId,
             vatRate = OperatorConsoleStatutoryDiscountComputationContract.VatRate,
-            statutoryDiscountRate = OperatorConsoleStatutoryDiscountComputationContract.StatutoryDiscountRate,
-            formula = "final_payable = round(gross / 1.12) - round(round(gross / 1.12) * 0.20)",
+            statutoryDiscountRate = IsFullFeeExemption(policy)
+                ? OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionRate
+                : OperatorConsoleStatutoryDiscountComputationContract.StatutoryDiscountRate,
+            formula = IsFullFeeExemption(policy)
+                ? "final_payable = 0; statutory_discount = round(gross / 1.12); vat_privilege = gross - statutory_discount"
+                : "final_payable = round(gross / 1.12) - round(round(gross / 1.12) * 0.20)",
+            originalAmountMinorUnits = computed.GrossAmountMinorUnits,
+            vatExclusiveBasisAmountMinorUnits = computed.VatExclusiveAmountMinorUnits,
+            vatAmountMinorUnits = computed.VatAmountMinorUnits,
+            statutoryDiscountAmountMinorUnits = computed.StatutoryDiscountAmountMinorUnits,
+            finalPayableAmountMinorUnits = computed.FinalPayableAmountMinorUnits,
             roundingMode = OperatorConsoleStatutoryDiscountComputationContract.RoundingMode,
             policyContext = new
             {
@@ -874,13 +903,41 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             var stackingPolicy = RequiredString(root, "stackingPolicy");
             var legalBasisPriority = RequiredString(root, "legalBasisPriority");
             var requiresEvidence = RequiredBoolean(root, "requiresEvidence");
+            var policyEffectSupportStatus = OptionalString(root, "policyEffectSupportStatus");
 
             if (snapshotPolicyId != validation.StatutoryDiscountPolicyId.Value)
             {
                 return (false, null, "STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID", "STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID");
             }
 
-            if (!string.Equals(benefitType, "STATUTORY_DISCOUNT_VAT_EXEMPT", StringComparison.Ordinal))
+            var fullFeeExemption = string.Equals(
+                benefitType,
+                OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionBenefitType,
+                StringComparison.Ordinal);
+            if (!fullFeeExemption &&
+                !string.Equals(
+                    benefitType,
+                    OperatorConsoleStatutoryDiscountComputationContract.SupportedBenefitType,
+                    StringComparison.Ordinal))
+            {
+                return (
+                    false,
+                    null,
+                    "POLICY_BENEFIT_TYPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION",
+                    "POLICY_BENEFIT_TYPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION");
+            }
+
+            if (fullFeeExemption && (OptionalBool(root, "fullFeeExempt") ?? false) is false)
+            {
+                return (
+                    false,
+                    null,
+                    "POLICY_FULL_FEE_EXEMPTION_FACTS_INVALID",
+                    "POLICY_FULL_FEE_EXEMPTION_FACTS_INVALID");
+            }
+
+            if (policyEffectSupportStatus is not null &&
+                !string.Equals(policyEffectSupportStatus, "SUPPORTED_BY_CURRENT_CALCULATION", StringComparison.Ordinal))
             {
                 return (
                     false,
@@ -923,6 +980,12 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             return (false, null, "STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID", "STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID");
         }
     }
+
+    private static bool IsFullFeeExemption(PolicySnapshotContext policy) =>
+        string.Equals(
+            policy.BenefitType,
+            OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionBenefitType,
+            StringComparison.Ordinal);
 
     private static PolicySummary ReadPolicySummaryFromComputationBasis(string computationBasisJson)
     {

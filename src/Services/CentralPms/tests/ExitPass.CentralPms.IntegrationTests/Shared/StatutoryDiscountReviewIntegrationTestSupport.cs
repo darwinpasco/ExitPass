@@ -23,6 +23,8 @@ internal sealed record StatutoryDiscountWorkflowBoundaryRowCounts(
     long TerminalCashCommandCount,
     long TerminalCashCommandAuditCount,
     long FiscalIssuanceReferenceCount,
+    long ExitAuthorizationCount,
+    long VendorPaymentAcknowledgmentCount,
     long ParkingSessionCount);
 
 internal sealed record ApprovedStatutoryEligibilityFacts(
@@ -139,12 +141,20 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         await command.ExecuteNonQueryAsync();
     }
 
-    public static async Task<PaymentTestContext> SeedPaymentContextAsync(string scenarioName)
+    public static async Task<PaymentTestContext> SeedPaymentContextAsync(
+        string scenarioName,
+        string benefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT",
+        string discountBaseScope = "VAT_EXCLUSIVE",
+        bool fullFeeExempt = false)
     {
         await EnsureSchemaAsync();
         var context = PaymentTestContext.Create(scenarioName);
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, $"Seed {scenarioName}.");
-        await SeedSupportedLocalOrdinancePolicyAsync(context);
+        await SeedSupportedLocalOrdinancePolicyAsync(
+            context,
+            benefitType: benefitType,
+            discountBaseScope: discountBaseScope,
+            fullFeeExempt: fullFeeExempt);
         await SeedReviewerUserAsync(context, context.RequestedByUserId);
         return context;
     }
@@ -579,6 +589,8 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
                     WHERE pa.parking_session_id = @parking_session_id) AS payment_confirmation_count,
                 (SELECT COUNT(*) FROM core.fiscal_issuance_references
                     WHERE parking_session_id = @parking_session_id) AS fiscal_issuance_reference_count,
+                (SELECT COUNT(*) FROM core.exit_authorizations
+                    WHERE parking_session_id = @parking_session_id) AS exit_authorization_count,
                 (SELECT COUNT(*) FROM core.parking_sessions
                     WHERE parking_session_id = @parking_session_id) AS parking_session_count;
             """;
@@ -612,6 +624,14 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
             WHERE command.parking_session_id = @parking_session_id;
             """,
             parkingSessionId);
+        var vendorPaymentAcknowledgmentCount = await CountIfTablesExistAsync(
+            ["integration.vendor_payment_acknowledgments"],
+            """
+            SELECT COUNT(*)::bigint
+            FROM integration.vendor_payment_acknowledgments
+            WHERE parking_session_id = @parking_session_id;
+            """,
+            parkingSessionId);
 
         return new StatutoryDiscountWorkflowBoundaryRowCounts(
             reader.GetInt64(reader.GetOrdinal("decision_command_count")),
@@ -624,6 +644,8 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
             terminalCashCommandCount,
             terminalCashCommandAuditCount,
             reader.GetInt64(reader.GetOrdinal("fiscal_issuance_reference_count")),
+            reader.GetInt64(reader.GetOrdinal("exit_authorization_count")),
+            vendorPaymentAcknowledgmentCount,
             reader.GetInt64(reader.GetOrdinal("parking_session_count")));
     }
 
@@ -759,7 +781,10 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
 
     private static async Task<SeededPolicyAuthority> SeedSupportedLocalOrdinancePolicyAsync(
         PaymentTestContext context,
-        string entitlementType = "SENIOR_CITIZEN")
+        string entitlementType = "SENIOR_CITIZEN",
+        string benefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT",
+        string discountBaseScope = "VAT_EXCLUSIVE",
+        bool fullFeeExempt = false)
     {
         var jurisdictionId = StableGuid(context.ParkingSessionId, "jurisdiction");
         var assignmentId = StableGuid(context.ParkingSessionId, "assignment");
@@ -856,13 +881,13 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
                 'LOCAL_ORDINANCE'::discounts.discount_policy_level_enum,
                 'LOCAL_ORDINANCE'::discounts.discount_policy_type_enum,
                 'LOCAL_ORDINANCE_APPLIED'::discounts.policy_resolution_basis_enum,
-                'STATUTORY_DISCOUNT_VAT_EXEMPT'::discounts.parking_benefit_type_enum,
-                'VAT_EXCLUSIVE'::discounts.discount_base_scope_enum,
+                @benefit_type::discounts.parking_benefit_type_enum,
+                @discount_base_scope::discounts.discount_base_scope_enum,
                 @jurisdiction_id,
                 @jurisdiction_code,
                 @display_name,
                 'NON_RESIDENT_ALLOWED'::discounts.beneficiary_residency_scope_enum,
-                false,
+                @full_fee_exempt,
                 true,
                 @evidence_type::discounts.discount_evidence_type_enum,
                 'CANONICAL_TEST_LOCAL_ORDINANCE',
@@ -936,9 +961,9 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
                 'ACTIVE_FOR_TRANSACTION_USE'::discounts.statutory_policy_publication_status_enum,
                 'PARTIALLY_VERIFIED'::discounts.policy_detail_verification_status_enum,
                 'COVERED'::discounts.parking_service_applicability_status_enum,
-                'STATUTORY_DISCOUNT_VAT_EXEMPT'::discounts.parking_benefit_type_enum,
+                @benefit_type::discounts.parking_benefit_type_enum,
                 'SUPPORTED_BY_CURRENT_CALCULATION'::discounts.policy_effect_support_status_enum,
-                'VAT_EXCLUSIVE'::discounts.discount_base_scope_enum,
+                @discount_base_scope::discounts.discount_base_scope_enum,
                 'NON_RESIDENT_ALLOWED'::discounts.beneficiary_residency_scope_enum,
                 true,
                 false,
@@ -950,7 +975,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
                 @source_reference,
                 'Canonical test statutory parking policy.',
                 'Review under frozen canonical test policy authority.',
-                false,
+                @full_fee_exempt,
                 NOW() - INTERVAL '1 day',
                 100,
                 @policy_semantic_hash,
@@ -991,6 +1016,9 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         command.Parameters.AddWithValue("policy_name", $"Canonical statutory parking policy {context.SiteCode}");
         command.Parameters.AddWithValue("entitlement_type", entitlementType);
         command.Parameters.AddWithValue("evidence_type", evidenceType);
+        command.Parameters.AddWithValue("benefit_type", benefitType);
+        command.Parameters.AddWithValue("discount_base_scope", discountBaseScope);
+        command.Parameters.Add("full_fee_exempt", NpgsqlDbType.Boolean).Value = fullFeeExempt;
         command.Parameters.AddWithValue("source_reference", sourceReference);
         command.Parameters.AddWithValue("policy_semantic_hash", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = context.CorrelationId;
@@ -1004,7 +1032,8 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
             policyCode,
             "v1",
             sourceReference,
-            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            benefitType);
     }
 
     private static async Task SeedDecisionPolicyAuthorityAsync(
@@ -1047,7 +1076,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
                     "Masked statutory ID reference",
                     SafeRequirementNotes: null)],
                 "COVERED",
-                "STATUTORY_DISCOUNT_VAT_EXEMPT",
+                policy.BenefitType,
                 "SUPPORTED_BY_CURRENT_CALCULATION",
                 OfficialSourceAvailable: false,
                 OrdinanceTextAvailable: false,
@@ -1081,6 +1110,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         string PolicyCode,
         string PolicyVersion,
         string SourceReference,
-        string PolicySemanticHash);
+        string PolicySemanticHash,
+        string BenefitType);
 
 }

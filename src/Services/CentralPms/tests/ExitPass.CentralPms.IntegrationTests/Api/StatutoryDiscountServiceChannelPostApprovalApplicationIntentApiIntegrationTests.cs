@@ -241,6 +241,99 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         }
     }
 
+    [Fact]
+    public async Task WebPayFullFeeExemption_AfterApproval_AppliesZeroPayableBasisWithoutDownstreamSideEffects()
+    {
+        var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
+            nameof(WebPayFullFeeExemption_AfterApproval_AppliesZeroPayableBasisWithoutDownstreamSideEffects),
+            benefitType: OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionBenefitType,
+            discountBaseScope: OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionDiscountBaseScope,
+            fullFeeExempt: true);
+        await SeedServiceAuthorizationAsync(context);
+
+        try
+        {
+            using var factory = CreateFactory(context);
+            using var serviceClient = factory.CreateClient();
+            using var operatorClient = factory.CreateClient();
+            AddServiceHeaders(serviceClient, StatutoryDiscountSourceChannels.WebPay);
+            AddOperatorHeaders(operatorClient, context);
+
+            var intake = await PostSharedDecisionAsync(
+                serviceClient,
+                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: false),
+                $"full-fee-intake-{context.ParkingSessionId:N}",
+                context.CorrelationId,
+                HttpStatusCode.Created);
+
+            var beforeApprovalApply = await PostSharedDecisionAsync(
+                serviceClient,
+                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
+                $"full-fee-before-approval-{context.ParkingSessionId:N}",
+                Guid.NewGuid(),
+                HttpStatusCode.Created);
+            beforeApprovalApply.ApplicationRequested.Should().BeFalse();
+            (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(
+                intake.StatutoryDiscountDecisionCommandId)).Should().Be(0);
+
+            await CompleteReviewAsync(operatorClient, context, intake.StatutoryDiscountDecisionCommandId, "APPROVE");
+
+            var approvedReview = await GetReviewDetailAsync(operatorClient, intake.StatutoryDiscountDecisionCommandId);
+            approvedReview.GoverningPolicy.Should().NotBeNull();
+            approvedReview.GoverningPolicy!.BenefitType.Should().Be(
+                OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionBenefitType);
+
+            var application = await PostSharedDecisionAsync(
+                serviceClient,
+                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
+                $"full-fee-apply-{context.ParkingSessionId:N}",
+                Guid.NewGuid(),
+                HttpStatusCode.OK);
+
+            application.ApplicationCommandStatus.Should().Be(StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied);
+            application.OriginalTariffSnapshotId.Should().Be(context.TariffSnapshotId);
+            application.AppliedTariffSnapshotId.Should().NotBeNull();
+            application.AppliedTariffSnapshotId.Should().NotBe(context.TariffSnapshotId);
+            application.GrossAmountMinorUnits.Should().BeGreaterThan(0);
+            application.VatExclusiveBasisAmountMinorUnits.Should().BeGreaterThan(0);
+            application.VatAmountMinorUnits.Should().BeGreaterThan(0);
+            application.StatutoryDiscountAmountMinorUnits.Should().Be(application.VatExclusiveBasisAmountMinorUnits);
+            application.FinalPayableAmountMinorUnits().Should().Be(0);
+            (application.StatutoryDiscountAmountMinorUnits + application.VatAmountMinorUnits)
+                .Should().Be(application.GrossAmountMinorUnits);
+            application.PayableBasisReady.Should().BeTrue();
+
+            var replay = await PostSharedDecisionAsync(
+                serviceClient,
+                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
+                $"full-fee-apply-{context.ParkingSessionId:N}",
+                Guid.NewGuid(),
+                HttpStatusCode.OK);
+            replay.StatutoryDiscountPayableBasisApplicationCommandId.Should()
+                .Be(application.StatutoryDiscountPayableBasisApplicationCommandId);
+            replay.AppliedTariffSnapshotId.Should().Be(application.AppliedTariffSnapshotId);
+
+            var counts = await StatutoryDiscountReviewIntegrationTestSupport.WorkflowBoundaryRowCountsAsync(
+                context.ParkingSessionId,
+                intake.StatutoryDiscountDecisionCommandId);
+            counts.ApplicationCommandCount.Should().Be(1);
+            counts.PayableBasisApplicationCount.Should().Be(1);
+            counts.AppliedTariffSnapshotCount.Should().Be(1);
+            counts.PaymentAttemptCount.Should().Be(0);
+            counts.PaymentConfirmationCount.Should().Be(0);
+            counts.TerminalCashCommandCount.Should().Be(0);
+            counts.TerminalCashCommandAuditCount.Should().Be(0);
+            counts.FiscalIssuanceReferenceCount.Should().Be(0);
+            counts.ExitAuthorizationCount.Should().Be(0);
+            counts.VendorPaymentAcknowledgmentCount.Should().Be(0);
+        }
+        finally
+        {
+            await CleanupServiceAssignmentsAsync(context);
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
+        }
+    }
+
     [Theory]
     [InlineData(StatutoryDiscountSourceChannels.WebPay, StatutoryDiscountSourceChannels.AssistedPaymentTerminal)]
     [InlineData(StatutoryDiscountSourceChannels.AssistedPaymentTerminal, StatutoryDiscountSourceChannels.WebPay)]
