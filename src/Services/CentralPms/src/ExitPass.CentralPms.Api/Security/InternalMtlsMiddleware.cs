@@ -210,6 +210,7 @@ public sealed class InternalMtlsMiddleware
         {
             StatutoryDiscountSourceChannels.WebPay =>
                 owningServiceName.Equals("WEBPAY", StringComparison.OrdinalIgnoreCase) ||
+                owningServiceName.Equals("PaymentOrchestrator", StringComparison.OrdinalIgnoreCase) ||
                 owningServiceName.Equals("PAYMENT_ORCHESTRATOR", StringComparison.OrdinalIgnoreCase),
             StatutoryDiscountSourceChannels.AssistedPaymentTerminal =>
                 owningServiceName.Equals("APT", StringComparison.OrdinalIgnoreCase) ||

@@ -16,6 +16,7 @@ using ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
 using ExitPass.PaymentOrchestrator.Infrastructure.Routing;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 using Microsoft.OpenApi.Models;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
@@ -237,14 +238,25 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
         client.Timeout = TimeSpan.FromSeconds(30);
     });
 
+    services.AddSingleton<
+        IValidateOptions<CentralPmsStatutoryServicePrincipalOptions>,
+        CentralPmsStatutoryServicePrincipalOptionsValidator>();
+    services.AddOptions<CentralPmsStatutoryServicePrincipalOptions>()
+        .Bind(configuration.GetSection(CentralPmsStatutoryServicePrincipalOptions.SectionName))
+        .ValidateOnStart();
+
     services.AddHttpClient<ICentralPmsWebPayClient, CentralPmsWebPayClient>(static client =>
     {
         client.Timeout = TimeSpan.FromSeconds(30);
-    });
+    }).ConfigurePrimaryHttpMessageHandler(static serviceProvider =>
+        new CentralPmsStatutoryServicePrincipalHttpMessageHandler(
+            serviceProvider.GetRequiredService<IOptions<CentralPmsStatutoryServicePrincipalOptions>>().Value));
     services.AddHttpClient<ICentralPmsWebPayStatutoryEvidenceClient, CentralPmsWebPayClient>(static client =>
     {
         client.Timeout = TimeSpan.FromSeconds(30);
-    });
+    }).ConfigurePrimaryHttpMessageHandler(static serviceProvider =>
+        new CentralPmsStatutoryServicePrincipalHttpMessageHandler(
+            serviceProvider.GetRequiredService<IOptions<CentralPmsStatutoryServicePrincipalOptions>>().Value));
 
     services.AddHttpClient<PayMongoClient>();
     services.AddScoped<IProviderSessionRepository, ProviderSessionRepository>();
