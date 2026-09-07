@@ -547,14 +547,13 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
                 gen_random_uuid(),@service_id,@service_id);
 
             INSERT INTO operator_console.operator_shifts (
-                operator_shift_id,shift_reference,hr_provider_code,external_shift_id_hash,hr_identity_mapping_id,operator_user_id,
+                operator_shift_id,hr_provider_code,external_shift_id_hash,hr_identity_mapping_id,operator_user_id,
                 site_group_id,site_id,scheduled_start_at,scheduled_end_at,source_imported_at,import_status_code,
                 source_system_code,operational_status,active_from,active_to,correlation_id,
-                created_by_service_identity_id,updated_by_service_identity_id,opened_at)
-            VALUES (@shift_id,@shift_reference,'TEST',@shift_hash,@mapping_id,@user_id,@site_group_id,@site_id,
+                created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (@shift_id,'TEST',@shift_hash,@mapping_id,@user_id,@site_group_id,@site_id,
                 now()-interval '1 hour',now()+interval '8 hours',now(),'IMPORTED','TEST','ACTIVE',
-                now()-interval '1 hour',now()+interval '8 hours',gen_random_uuid(),@service_id,@service_id,
-                now()-interval '1 hour');
+                now()-interval '1 hour',now()+interval '8 hours',gen_random_uuid(),@service_id,@service_id);
             """;
         await using var connection = new NpgsqlConnection(_database.ConnectionString);
         await connection.OpenAsync();
@@ -568,7 +567,6 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
         command.Parameters.AddWithValue("site_id", siteId);
         command.Parameters.AddWithValue("proof_thumbprint", proofThumbprint);
         command.Parameters.AddWithValue("shift_id", shiftId);
-        command.Parameters.AddWithValue("shift_reference", $"I020-{shiftId:N}");
         command.Parameters.AddWithValue("shift_hash", Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant());
         command.Parameters.AddWithValue("service_id", CentralPmsServiceIdentityId);
         await command.ExecuteNonQueryAsync();
