@@ -6,6 +6,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+. (Join-Path $PSScriptRoot 'RuntimeProfile.ps1')
+$runtimeProfile = Initialize-ExitPassLocalRuntimeProfile -RepositoryRoot $repoRoot -Component 'Payment Orchestrator'
+
 $databaseContainer = 'exitpass-ist-persistent-db'
 $databaseName = 'exitpass_ist'
 $databaseUser = 'exitpass_ist'
@@ -18,7 +22,6 @@ $containerName = 'exitpass-payment-orchestrator-pitx-local'
 $httpUrl = 'http://127.0.0.1:56063'
 $httpsUrl = 'https://localhost:56062'
 
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $dockerfilePath = Join-Path $repoRoot 'src\Services\PaymentOrchestrator\src\ExitPass.PaymentOrchestrator.Api\Dockerfile'
 $runtimeDockerfilePath = Join-Path $repoRoot 'infra\docker\Dockerfile.aspnet-base'
 $privateRoot = if ([string]::IsNullOrWhiteSpace($env:EXITPASS_PERSISTENT_IST_ROOT)) {
@@ -223,6 +226,8 @@ try {
         --name $containerName `
         --network $networkName `
         --env-file $environmentFile `
+        --env "EXITPASS_RUNTIME_PROFILE=$($runtimeProfile.Name)" `
+        --env "EXITPASS_RUNTIME_PROFILE_LABEL=$($runtimeProfile.DisplayLabel)" `
         --env "Integrations__CentralPms__BaseUrl=$centralPmsInternalUrl" `
         --env 'ASPNETCORE_URLS=http://+:8080;https://+:8443' `
         --env 'ASPNETCORE_Kestrel__Certificates__Default__Path=/https/exitpass-payment-orchestrator-local.pfx' `

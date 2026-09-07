@@ -5,6 +5,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
+. (Join-Path $PSScriptRoot 'RuntimeProfile.ps1')
+$runtimeProfile = Initialize-ExitPassLocalRuntimeProfile -RepositoryRoot $repoRoot -Component 'Operator Console'
 $uiRoot = Join-Path $repoRoot "src\Services\OperatorConsoleUi"
 $defaultApiProxyTarget = "https://localhost:56064"
 $apiProxyTarget = if ([string]::IsNullOrWhiteSpace($env:VITE_OPERATOR_CONSOLE_API_PROXY_TARGET)) {
@@ -39,6 +41,8 @@ try {
 }
 
 Write-Host "Central PMS readiness: PASS ($apiProxyTarget)"
+$env:VITE_EXITPASS_RUNTIME_PROFILE = $runtimeProfile.Name
+$env:VITE_EXITPASS_RUNTIME_PROFILE_LABEL = $runtimeProfile.DisplayLabel
 if ($PreflightOnly) {
     exit 0
 }

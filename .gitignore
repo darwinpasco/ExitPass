@@ -52,4 +52,7 @@ src/Services/WebPayUi/.vite/
 /scripts/hikcentral/*
 !/scripts/hikcentral/Invoke-HikCentralVendorAckUat.ps1
 
+# Safe runtime-profile selector template; the actual infra/docker/.env stays local.
+!/infra/docker/.env.example
+
 .local/

@@ -6,6 +6,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+. (Join-Path $PSScriptRoot 'RuntimeProfile.ps1')
+$runtimeProfile = Initialize-ExitPassLocalRuntimeProfile -RepositoryRoot $repoRoot -Component 'Central PMS'
+
 $databaseContainer = 'exitpass-ist-persistent-db'
 $databaseName = 'exitpass_ist'
 $databaseUser = 'exitpass_ist'
@@ -15,7 +19,6 @@ $containerName = 'exitpass-central-pms-pitx-local'
 $httpUrl = 'http://127.0.0.1:56065'
 $httpsUrl = 'https://localhost:56064'
 
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $dockerfilePath = Join-Path $repoRoot 'src\Services\CentralPms\src\ExitPass.CentralPms.Api\Dockerfile'
 $privateRoot = if ([string]::IsNullOrWhiteSpace($env:EXITPASS_PERSISTENT_IST_ROOT)) {
     'D:\SourceCodes\ExitPass.local\persistent-ist'
@@ -194,6 +197,8 @@ try {
         --network $networkName `
         --network-alias 'exitpass-central-pms-pitx-local' `
         --env-file $environmentFile `
+        --env "EXITPASS_RUNTIME_PROFILE=$($runtimeProfile.Name)" `
+        --env "EXITPASS_RUNTIME_PROFILE_LABEL=$($runtimeProfile.DisplayLabel)" `
         --env 'ASPNETCORE_URLS=http://+:8080;https://+:8443' `
         --env 'ASPNETCORE_Kestrel__Certificates__Default__Path=/https/exitpass-central-pms-local.pfx' `
         --env "ASPNETCORE_Kestrel__Certificates__Default__Password=$certificatePassword" `
