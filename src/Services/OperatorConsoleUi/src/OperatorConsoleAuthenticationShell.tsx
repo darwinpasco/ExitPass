@@ -6,6 +6,7 @@ import {
   type HumanAuthenticationClient,
   type OperatorConsoleHumanSession
 } from "./humanAuthentication";
+import { RuntimeProfileBadge } from "./RuntimeProfileBadge";
 import { createOperatorConsoleApiClient, type OperatorConsoleApiClient } from "./apiClient";
 
 type ShellState =
@@ -205,6 +206,7 @@ export function OperatorConsoleAuthenticationShell({
     <main className="authenticationShell">
       <section className="authenticationPanel" aria-labelledby="operator-console-login-title">
         <p className="eyebrow">Operator Console</p>
+        <RuntimeProfileBadge />
         <h1 id="operator-console-login-title">Staff sign in</h1>
         <p>Use your ExitPass staff account to open the authorized operations workspace.</p>
         {message && <p className="authenticationError" role="alert">{message}</p>}

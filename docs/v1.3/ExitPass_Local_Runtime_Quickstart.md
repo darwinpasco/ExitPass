@@ -6,6 +6,7 @@
 - `D:\SourceCodes\ExitPass-PoSServer`
 - `D:\SourceCodes\ExitPass-ManagementPlatform`
 - `D:\SourceCodes\ExitPass-AssistedPaymentTerminal`
+- `D:\SourceCodes\exitpassdb_v1.2` for canonical clean Developer database bootstrap
 
 Install each frontend's dependencies once with `npm.cmd ci` before starting it.
 
@@ -31,11 +32,27 @@ EXITPASS_RUNTIME_PROFILE=PRODUCTION
 
 Profile changes require restarting the applications; there is no live profile
 switch. `TESTING` is the current persistent PITX IST environment using real
-HikCentral and PayMongo TEST. `DEVELOPER` is reserved for isolated synthetic
-data and the forthcoming WireMock HikCentral runtime, and cannot provide
-real-site acceptance. `PRODUCTION` requires approved Production configuration
-and fails closed when that configuration is unavailable. Credentials and other
-secrets remain in their existing private configuration files.
+HikCentral and PayMongo TEST. `DEVELOPER` uses an isolated synthetic database
+and WireMock HikCentral, and cannot provide real-site acceptance. `PRODUCTION`
+requires approved Production configuration and fails closed when that
+configuration is unavailable. Credentials and other secrets remain in their
+existing private configuration files.
+
+For Developer mode, select `DEVELOPER`, prepare its isolated dependencies once,
+then use the same canonical application launchers:
+
+```powershell
+cd D:\SourceCodes\ExitPass
+powershell -ExecutionPolicy Bypass -File .\scripts\v1.3\local-runtime\Start-DeveloperRuntime.ps1
+```
+
+The deterministic Developer ticket references are `DEV-QRPH-001`,
+`DEV-GCASH-001`, `DEV-MAYA-001`, `DEV-CARD-001`, and `DEV-APT-CASH-001`.
+Developer mode simulates HikCentral but uses PayMongo TEST for browser payment
+handoffs. It does not replace Testing-profile PITX acceptance. Stop Developer
+dependencies with `Start-DeveloperRuntime.ps1 -Action Stop`; add
+`-Action Reset -ConfirmDeveloperReset` only to explicitly recreate Developer
+synthetic data and fixtures. Neither action targets Testing resources.
 
 ## Canonical Ports
 
@@ -85,7 +102,7 @@ cd D:\SourceCodes\ExitPass
 powershell -ExecutionPolicy Bypass -File .\scripts\v1.3\local-runtime\Start-OperatorConsole.ps1
 ```
 
-Start the components in the order shown: Central PMS, Payment Orchestrator, POS Server, Management Platform, WebPay, APT, and Operator Console. Central PMS and Payment Orchestrator build from the current checkout and run in dedicated local-runtime containers attached to `exitpass-ist-persistent`; their canonical ports remain available on the host. This preserves the authoritative persistent database and Docker-network-only PITX routes without changing them. Management Platform and Operator Console proxy same-origin `/v1` requests to Central PMS. WebPay proxies same-origin `/v1` requests to Payment Orchestrator. The APT native host targets Central PMS over HTTPS. Central PMS keeps Site-specific fiscal routing; PITX Level 3 resolves to POS Server ID `3a138565-1b88-55f8-c83d-5380db6edccc`. Environment-specific proxy variables still override the browser UI defaults.
+Start the components in the order shown: Central PMS, Payment Orchestrator, POS Server, Management Platform, WebPay, APT, and Operator Console. In Testing, Central PMS and Payment Orchestrator build from the current checkout and run in dedicated local-runtime containers attached to `exitpass-ist-persistent`; their canonical ports remain available on the host. This preserves the authoritative persistent database and Docker-network-only PITX routes without changing them. In Developer mode, the same launchers use only `exitpass-dev-synthetic` resources. Management Platform and Operator Console proxy same-origin `/v1` requests to Central PMS. WebPay proxies same-origin `/v1` requests to Payment Orchestrator. The APT native host targets Central PMS over HTTPS. Central PMS keeps Site-specific fiscal routing; PITX Level 3 resolves to POS Server ID `3a138565-1b88-55f8-c83d-5380db6edccc`. Environment-specific proxy variables still override the browser UI defaults.
 
 After startup, the POS Server health endpoints are `http://127.0.0.1:56067/health/live` and `http://127.0.0.1:56067/health/ready`.
 

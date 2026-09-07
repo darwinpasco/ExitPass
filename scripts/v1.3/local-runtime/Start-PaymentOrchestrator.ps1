@@ -9,6 +9,10 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 . (Join-Path $PSScriptRoot 'RuntimeProfile.ps1')
 $runtimeProfile = Initialize-ExitPassLocalRuntimeProfile -RepositoryRoot $repoRoot -Component 'Payment Orchestrator'
+if ($runtimeProfile.Name -eq 'DEVELOPER') {
+    & (Join-Path $PSScriptRoot 'Start-PaymentOrchestratorDeveloper.ps1') -SmokeTest:$SmokeTest
+    exit $LASTEXITCODE
+}
 
 $databaseContainer = 'exitpass-ist-persistent-db'
 $databaseName = 'exitpass_ist'
