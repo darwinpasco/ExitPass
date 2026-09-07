@@ -15,6 +15,28 @@ backend launchers read private runtime settings from
 `EXITPASS_PERSISTENT_IST_ROOT` only when that approved private root is elsewhere.
 Secrets remain outside Git.
 
+## Runtime Profile
+
+Select the runtime profile before startup in:
+
+`D:\SourceCodes\ExitPass\infra\docker\.env`
+
+Use exactly one of:
+
+```dotenv
+EXITPASS_RUNTIME_PROFILE=DEVELOPER
+EXITPASS_RUNTIME_PROFILE=TESTING
+EXITPASS_RUNTIME_PROFILE=PRODUCTION
+```
+
+Profile changes require restarting the applications; there is no live profile
+switch. `TESTING` is the current persistent PITX IST environment using real
+HikCentral and PayMongo TEST. `DEVELOPER` is reserved for isolated synthetic
+data and the forthcoming WireMock HikCentral runtime, and cannot provide
+real-site acceptance. `PRODUCTION` requires approved Production configuration
+and fails closed when that configuration is unavailable. Credentials and other
+secrets remain in their existing private configuration files.
+
 ## Canonical Ports
 
 | Component | Local/manual address |
