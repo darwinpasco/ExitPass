@@ -79,6 +79,49 @@ public sealed class OperatorConsoleStatutoryDiscountComputationContractTests
     }
 
     /// <summary>
+    /// Proves an approved-policy full-fee computation preserves gross/VAT facts and produces a zero payable basis.
+    /// </summary>
+    [Theory]
+    [InlineData("SENIOR_CITIZEN", 3000, 2679, 321)]
+    [InlineData("PWD", 2500, 2232, 268)]
+    public void Compute_ForFullFeeExemption_WaivesEntireVatExclusiveBasis(
+        string entitlementType,
+        long grossAmountMinorUnits,
+        long expectedVatExclusiveMinorUnits,
+        long expectedVatMinorUnits)
+    {
+        var result = OperatorConsoleStatutoryDiscountComputationContract.Compute(
+            FullFeeRequest(grossAmountMinorUnits, entitlementType));
+
+        result.Accepted.Should().BeTrue();
+        result.ErrorCode.Should().BeNull();
+        result.GrossAmountMinorUnits.Should().Be(grossAmountMinorUnits);
+        result.VatExclusiveAmountMinorUnits.Should().Be(expectedVatExclusiveMinorUnits);
+        result.VatAmountMinorUnits.Should().Be(expectedVatMinorUnits);
+        result.StatutoryDiscountAmountMinorUnits.Should().Be(expectedVatExclusiveMinorUnits);
+        result.FinalPayableAmountMinorUnits.Should().Be(0);
+        result.BenefitType.Should().Be(OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionBenefitType);
+        result.DiscountBaseScope.Should().Be(OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionDiscountBaseScope);
+        result.StatutoryDiscountRate.Should().Be(1m);
+        (result.VatAmountMinorUnits + result.StatutoryDiscountAmountMinorUnits)
+            .Should().Be(grossAmountMinorUnits);
+    }
+
+    /// <summary>
+    /// Proves full-fee exemption does not reuse the national 20% calculation.
+    /// </summary>
+    [Fact]
+    public void Compute_ForFullFeeExemption_DoesNotApplyTwentyPercentFormula()
+    {
+        var result = OperatorConsoleStatutoryDiscountComputationContract.Compute(
+            FullFeeRequest(11200, "SENIOR_CITIZEN"));
+
+        result.StatutoryDiscountAmountMinorUnits.Should().Be(10000);
+        result.StatutoryDiscountAmountMinorUnits.Should().NotBe(2000);
+        result.FinalPayableAmountMinorUnits.Should().Be(0);
+    }
+
+    /// <summary>
     /// Proves unsupported entitlement categories fail closed for this slice.
     /// </summary>
     [Theory]
@@ -123,6 +166,19 @@ public sealed class OperatorConsoleStatutoryDiscountComputationContractTests
         result.ErrorCode.Should().Be("POLICY_DISCOUNT_BASE_SCOPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION");
     }
 
+    /// <summary>
+    /// Proves full-fee exemption accepts only its explicit non-percentage base semantics.
+    /// </summary>
+    [Fact]
+    public void Compute_WhenFullFeeExemptionUsesPercentageBase_FailsClosed()
+    {
+        var result = OperatorConsoleStatutoryDiscountComputationContract.Compute(
+            FullFeeRequest(11200, "PWD") with { DiscountBaseScope = "VAT_EXCLUSIVE" });
+
+        result.Accepted.Should().BeFalse();
+        result.ErrorCode.Should().Be("POLICY_DISCOUNT_BASE_SCOPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION");
+    }
+
     public static TheoryData<long, long, long, long, long> SeniorCitizenCases() => new()
     {
         // gross, VAT-exclusive, VAT, 20% statutory discount, final payable
@@ -147,6 +203,15 @@ public sealed class OperatorConsoleStatutoryDiscountComputationContractTests
             entitlementType,
             OperatorConsoleStatutoryDiscountComputationContract.SupportedBenefitType,
             OperatorConsoleStatutoryDiscountComputationContract.SupportedDiscountBaseScope);
+
+    private static OperatorConsoleStatutoryDiscountComputationRequest FullFeeRequest(
+        long grossAmountMinorUnits,
+        string entitlementType) =>
+        new(
+            grossAmountMinorUnits,
+            entitlementType,
+            OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionBenefitType,
+            OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionDiscountBaseScope);
 
     private static void AssertAccepted(
         OperatorConsoleStatutoryDiscountComputationResult result,

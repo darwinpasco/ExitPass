@@ -9,10 +9,13 @@ public static class OperatorConsoleStatutoryDiscountComputationContract
     public const decimal StatutoryDiscountRate = 0.20m;
     public const string SupportedBenefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT";
     public const string SupportedDiscountBaseScope = "VAT_EXCLUSIVE";
+    public const decimal FullFeeExemptionRate = 1m;
+    public const string FullFeeExemptionBenefitType = "FULL_FEE_EXEMPTION";
+    public const string FullFeeExemptionDiscountBaseScope = "NOT_APPLICABLE";
     public const string RoundingMode = "HALF_AWAY_FROM_ZERO";
 
     /// <summary>
-    /// Computes the VAT-exclusive statutory discount amounts for supported Senior Citizen and PWD parking cases.
+    /// Computes the supported statutory payable-basis amounts for Senior Citizen and PWD parking cases.
     /// </summary>
     public static OperatorConsoleStatutoryDiscountComputationResult Compute(
         OperatorConsoleStatutoryDiscountComputationRequest request)
@@ -29,12 +32,20 @@ public static class OperatorConsoleStatutoryDiscountComputationContract
             return Rejected(request, "STATUTORY_DISCOUNT_ENTITLEMENT_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION");
         }
 
-        if (!string.Equals(request.BenefitType, SupportedBenefitType, StringComparison.Ordinal))
+        var fullFeeExemption = string.Equals(
+            request.BenefitType,
+            FullFeeExemptionBenefitType,
+            StringComparison.Ordinal);
+        if (!fullFeeExemption &&
+            !string.Equals(request.BenefitType, SupportedBenefitType, StringComparison.Ordinal))
         {
             return Rejected(request, "POLICY_BENEFIT_TYPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION");
         }
 
-        if (!string.Equals(request.DiscountBaseScope, SupportedDiscountBaseScope, StringComparison.Ordinal))
+        var expectedDiscountBaseScope = fullFeeExemption
+            ? FullFeeExemptionDiscountBaseScope
+            : SupportedDiscountBaseScope;
+        if (!string.Equals(request.DiscountBaseScope, expectedDiscountBaseScope, StringComparison.Ordinal))
         {
             return Rejected(request, "POLICY_DISCOUNT_BASE_SCOPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION");
         }
@@ -44,11 +55,16 @@ public static class OperatorConsoleStatutoryDiscountComputationContract
             0,
             MidpointRounding.AwayFromZero));
         var vatMinorUnits = request.GrossAmountMinorUnits - vatExclusiveMinorUnits;
-        var statutoryDiscountMinorUnits = decimal.ToInt64(decimal.Round(
-            vatExclusiveMinorUnits * StatutoryDiscountRate,
-            0,
-            MidpointRounding.AwayFromZero));
-        var finalPayableMinorUnits = vatExclusiveMinorUnits - statutoryDiscountMinorUnits;
+        var appliedDiscountRate = fullFeeExemption ? FullFeeExemptionRate : StatutoryDiscountRate;
+        var statutoryDiscountMinorUnits = fullFeeExemption
+            ? vatExclusiveMinorUnits
+            : decimal.ToInt64(decimal.Round(
+                vatExclusiveMinorUnits * appliedDiscountRate,
+                0,
+                MidpointRounding.AwayFromZero));
+        var finalPayableMinorUnits = fullFeeExemption
+            ? 0
+            : vatExclusiveMinorUnits - statutoryDiscountMinorUnits;
 
         return new OperatorConsoleStatutoryDiscountComputationResult(
             Accepted: true,
@@ -61,7 +77,7 @@ public static class OperatorConsoleStatutoryDiscountComputationContract
             request.BenefitType,
             request.DiscountBaseScope,
             VatRate,
-            StatutoryDiscountRate,
+            appliedDiscountRate,
             RoundingMode,
             ErrorCode: null);
     }
