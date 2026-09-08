@@ -127,6 +127,32 @@ public sealed record StatutoryDiscountZeroPayableFinalityResponse(
     Guid CorrelationId,
     string FinalityState);
 
+public sealed record CompletionAuthorityResponse(
+    Guid ParkingSessionId,
+    Guid TariffSnapshotId,
+    Guid SiteId,
+    Guid SiteGroupId,
+    string CompletionBasis,
+    Guid DurableSourceReferenceId,
+    DateTimeOffset EstablishedAt,
+    Guid CorrelationId,
+    long FinalPayableAmountMinorUnits,
+    string Currency,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
+    Guid? StatutoryDiscountDecisionCommandId,
+    Guid? StatutoryDiscountPayableBasisApplicationCommandId,
+    Guid? StatutoryDiscountValidationId,
+    Guid? AppliedPolicyReferenceId,
+    string AuthorityState);
+
+public sealed record ExitAuthorizationEligibilityResponse(
+    bool CompletionAuthorityEligible,
+    bool ExitAuthorizationIssuanceAllowed,
+    string Status,
+    string? BlockedReason,
+    string CompletionBasis);
+
 /// <summary>
 /// Canonical Central PMS statutory-discount result and readback response.
 /// </summary>
@@ -195,4 +221,6 @@ public sealed record StatutoryDiscountDecisionResponse(
     bool PayableBasisReady = false,
     string PayableBasisReadinessStatus = "NOT_READY",
     string? PayableBasisReadinessAction = null,
-    StatutoryDiscountZeroPayableFinalityResponse? ZeroPayableStatutoryFinality = null);
+    StatutoryDiscountZeroPayableFinalityResponse? ZeroPayableStatutoryFinality = null,
+    CompletionAuthorityResponse? CompletionAuthority = null,
+    ExitAuthorizationEligibilityResponse? ExitAuthorizationEligibility = null);

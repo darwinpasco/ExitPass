@@ -20,6 +20,8 @@ internal sealed record StatutoryDiscountWorkflowBoundaryRowCounts(
     long AppliedTariffSnapshotCount,
     long PaymentAttemptCount,
     long PaymentConfirmationCount,
+    long ProviderSessionCount,
+    long ProviderOutcomeCount,
     long TerminalCashCommandCount,
     long TerminalCashCommandAuditCount,
     long FiscalIssuanceReferenceCount,
@@ -587,6 +589,14 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
                     INNER JOIN core.payment_attempts AS pa
                         ON pa.payment_attempt_id = pc.payment_attempt_id
                     WHERE pa.parking_session_id = @parking_session_id) AS payment_confirmation_count,
+                (SELECT COUNT(*) FROM payments.provider_sessions AS provider_session
+                    INNER JOIN core.payment_attempts AS pa
+                        ON pa.payment_attempt_id = provider_session.payment_attempt_id
+                    WHERE pa.parking_session_id = @parking_session_id) AS provider_session_count,
+                (SELECT COUNT(*) FROM payments.provider_outcomes AS provider_outcome
+                    INNER JOIN core.payment_attempts AS pa
+                        ON pa.payment_attempt_id = provider_outcome.payment_attempt_id
+                    WHERE pa.parking_session_id = @parking_session_id) AS provider_outcome_count,
                 (SELECT COUNT(*) FROM core.fiscal_issuance_references
                     WHERE parking_session_id = @parking_session_id) AS fiscal_issuance_reference_count,
                 (SELECT COUNT(*) FROM core.exit_authorizations
@@ -641,6 +651,8 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
             reader.GetInt64(reader.GetOrdinal("applied_tariff_snapshot_count")),
             reader.GetInt64(reader.GetOrdinal("payment_attempt_count")),
             reader.GetInt64(reader.GetOrdinal("payment_confirmation_count")),
+            reader.GetInt64(reader.GetOrdinal("provider_session_count")),
+            reader.GetInt64(reader.GetOrdinal("provider_outcome_count")),
             terminalCashCommandCount,
             terminalCashCommandAuditCount,
             reader.GetInt64(reader.GetOrdinal("fiscal_issuance_reference_count")),

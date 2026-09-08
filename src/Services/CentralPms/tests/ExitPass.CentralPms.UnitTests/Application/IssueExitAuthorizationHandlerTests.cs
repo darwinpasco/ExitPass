@@ -84,6 +84,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         Assert.Equal(paymentAttemptId, result.PaymentAttemptId);
         Assert.Equal("AUTH-TOKEN-001", result.AuthorizationToken);
         Assert.Equal("ISSUED", result.AuthorizationStatus);
+        Assert.Equal(CompletionBasisCodes.PaymentFinality, result.CompletionBasis);
         Assert.Equal(now, result.IssuedAt);
         Assert.Equal(now.AddMinutes(15), result.ExpirationTimestamp);
 
@@ -135,6 +136,68 @@ public sealed class IssueExitAuthorizationHandlerTests
 
         Assert.Equal(exitAuthorizationId, result.ExitAuthorizationId);
         Assert.Equal("ISSUED", result.AuthorizationStatus);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenCanonicalPaymentCompletionAuthorityExists_IssuesNormally()
+    {
+        var now = new DateTimeOffset(2026, 9, 8, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+        var command = ValidCommand();
+        var reader = Substitute.For<IPaymentFinalityCompletionAuthorityReader>();
+        reader.ReadAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .Returns(PaymentCompletionCandidate(command, now));
+
+        var result = await CreateSut(completionAuthorityReader: reader)
+            .ExecuteAsync(command, CancellationToken.None);
+
+        Assert.Equal(CompletionBasisCodes.PaymentFinality, result.CompletionBasis);
+        await _gateway.Received(1).IssueAsync(
+            Arg.Any<IssueExitAuthorizationDbRequest>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenCanonicalPaymentAttemptIsMissing_PreservesNotFoundPosture()
+    {
+        var now = new DateTimeOffset(2026, 9, 8, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+        var command = ValidCommand();
+        var reader = Substitute.For<IPaymentFinalityCompletionAuthorityReader>();
+        reader.ReadAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .Returns((PaymentFinalityCompletionCandidate?)null);
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            CreateSut(completionAuthorityReader: reader).ExecuteAsync(command, CancellationToken.None));
+
+        await _gateway.DidNotReceive().IssueAsync(
+            Arg.Any<IssueExitAuthorizationDbRequest>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("PENDING_PROVIDER")]
+    [InlineData("FAILED")]
+    [InlineData("CANCELLED")]
+    public async Task ExecuteAsync_WhenPaymentCompletionAuthorityIsNotFinal_BlocksIssuance(string attemptStatus)
+    {
+        var now = new DateTimeOffset(2026, 9, 8, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+        var command = ValidCommand();
+        var reader = Substitute.For<IPaymentFinalityCompletionAuthorityReader>();
+        reader.ReadAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .Returns(PaymentCompletionCandidate(command, now) with { AttemptStatus = attemptStatus });
+
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            CreateSut(completionAuthorityReader: reader).ExecuteAsync(command, CancellationToken.None));
+
+        Assert.Equal("payment_finality_not_verified", ex.ErrorCode);
+        await _gateway.DidNotReceive().IssueAsync(
+            Arg.Any<IssueExitAuthorizationDbRequest>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -678,7 +741,8 @@ public sealed class IssueExitAuthorizationHandlerTests
     private IssueExitAuthorizationHandler CreateSut(
         IExitAuthorizationFiscalGatingShadowEvaluator? fiscalGatingShadowEvaluator = null,
         bool isPaymentFinalityVerified = true,
-        FiscalIssuanceExitAuthorizationGatingOptions? fiscalGatingOptions = null)
+        FiscalIssuanceExitAuthorizationGatingOptions? fiscalGatingOptions = null,
+        IPaymentFinalityCompletionAuthorityReader? completionAuthorityReader = null)
     {
         var effectiveFiscalGatingEvaluator = fiscalGatingShadowEvaluator ?? ReadyFiscalGatingEvaluator();
         var paymentFinalityReader = Substitute.For<IExitAuthorizationPaymentFinalityReadRepository>();
@@ -694,7 +758,8 @@ public sealed class IssueExitAuthorizationHandlerTests
             NullLogger<IssueExitAuthorizationHandler>.Instance,
             effectiveFiscalGatingEvaluator,
             paymentFinalityReader,
-            fiscalGatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions());
+            fiscalGatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions(),
+            completionAuthorityReader);
     }
 
     private static IExitAuthorizationFiscalGatingShadowEvaluator ReadyFiscalGatingEvaluator()
@@ -744,6 +809,30 @@ public sealed class IssueExitAuthorizationHandlerTests
             PaymentAttemptId: Guid.Parse("10000000-0000-0000-0000-000000000002"),
             RequestedByUserId: Guid.Parse("10000000-0000-0000-0000-000000000003"),
             CorrelationId: Guid.Parse("10000000-0000-0000-0000-000000000004"));
+
+    private static PaymentFinalityCompletionCandidate PaymentCompletionCandidate(
+        IssueExitAuthorizationCommand command,
+        DateTimeOffset establishedAt) =>
+        new(
+            command.PaymentAttemptId,
+            command.ParkingSessionId,
+            Guid.Parse("10000000-0000-0000-0000-000000000005"),
+            Guid.Parse("10000000-0000-0000-0000-000000000006"),
+            Guid.Parse("10000000-0000-0000-0000-000000000007"),
+            "CONFIRMED",
+            establishedAt,
+            3000,
+            "PHP",
+            command.ParkingSessionId,
+            "ACTIVE",
+            3000,
+            "PHP",
+            Guid.Parse("10000000-0000-0000-0000-000000000008"),
+            "RECORDED",
+            3000,
+            "PHP",
+            establishedAt,
+            command.CorrelationId);
 
     private static FiscalIssuanceReferenceRecord CompleteFiscalReference(
         IssueExitAuthorizationCommand command,

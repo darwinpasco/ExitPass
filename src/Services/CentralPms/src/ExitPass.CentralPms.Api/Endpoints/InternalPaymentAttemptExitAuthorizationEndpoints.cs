@@ -122,7 +122,8 @@ public static class InternalPaymentAttemptExitAuthorizationEndpoints
                 result.AuthorizationToken,
                 result.AuthorizationStatus,
                 result.IssuedAt,
-                result.ExpirationTimestamp));
+                result.ExpirationTimestamp,
+                result.CompletionBasis));
         }
         catch (ArgumentException ex)
         {
@@ -197,5 +198,6 @@ public static class InternalPaymentAttemptExitAuthorizationEndpoints
         string AuthorizationToken,
         string AuthorizationStatus,
         DateTimeOffset IssuedAt,
-        DateTimeOffset ExpirationTimestamp);
+        DateTimeOffset ExpirationTimestamp,
+        string CompletionBasis);
 }

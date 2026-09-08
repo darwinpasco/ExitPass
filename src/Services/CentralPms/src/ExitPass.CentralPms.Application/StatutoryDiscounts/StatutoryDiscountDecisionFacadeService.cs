@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.Payments;
 
 namespace ExitPass.CentralPms.Application.StatutoryDiscounts;
 
@@ -244,7 +245,37 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                 "Zero-payable statutory finality could not be established from canonical durable state.");
         }
 
-        return enriched with { ZeroPayableStatutoryFinality = resolution.Finality };
+        if (!enriched.AppliedTariffSnapshotId.HasValue ||
+            !enriched.SiteId.HasValue ||
+            !enriched.SiteGroupId.HasValue)
+        {
+            throw new StatutoryDiscountDecisionRejectedException(
+                "ZERO_PAYABLE_COMPLETION_CONTEXT_INCOMPLETE",
+                "Zero-payable completion authority requires applied tariff and Site scope context.");
+        }
+
+        var authorityResolution = CompletionAuthorityResolver.ResolveZeroPayableStatutoryFinality(
+            resolution,
+            enriched.ParkingSessionId,
+            enriched.AppliedTariffSnapshotId.Value,
+            enriched.SiteId.Value,
+            enriched.SiteGroupId.Value);
+        if (!authorityResolution.IsEstablished || authorityResolution.Authority is null)
+        {
+            throw new StatutoryDiscountDecisionRejectedException(
+                authorityResolution.RejectionCode ?? "ZERO_PAYABLE_COMPLETION_AUTHORITY_NOT_AVAILABLE",
+                "Zero-payable completion authority could not be established from canonical durable state.");
+        }
+
+        var eligibility = CompletionAuthorityResolver.EvaluateZeroPayableExitAuthorizationEligibility(
+            authorityResolution.Authority);
+
+        return enriched with
+        {
+            ZeroPayableStatutoryFinality = resolution.Finality,
+            CompletionAuthority = authorityResolution.Authority,
+            ExitAuthorizationEligibility = eligibility
+        };
     }
 
     private static bool IsPotentialZeroPayableFinality(StatutoryDiscountDecisionResult result) =>
