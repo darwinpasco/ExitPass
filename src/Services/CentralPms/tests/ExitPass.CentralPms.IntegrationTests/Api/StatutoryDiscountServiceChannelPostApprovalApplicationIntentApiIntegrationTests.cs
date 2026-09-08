@@ -4,6 +4,7 @@ using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
 using ExitPass.CentralPms.IntegrationTests.Shared;
@@ -175,6 +176,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             readback.VatTreatment.Should().Be(application.VatTreatment);
             readback.PayableBasisReady.Should().BeTrue();
             readback.PayableBasisReadinessStatus.Should().Be(StatutoryDiscountPayableBasisReadinessStatuses.PayableBasisReady);
+            readback.ZeroPayableStatutoryFinality.Should().BeNull();
 
             var paymentAttempt = await PaymentRoutineTestHelper.CreateAttemptAsync(
                 StatutoryDiscountReviewIntegrationTestSupport.ConnectionString,
@@ -303,6 +305,45 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 .Should().Be(application.GrossAmountMinorUnits);
             application.PayableBasisReady.Should().BeTrue();
 
+            var beforeReadback = await StatutoryDiscountReviewIntegrationTestSupport.WorkflowBoundaryRowCountsAsync(
+                context.ParkingSessionId,
+                intake.StatutoryDiscountDecisionCommandId);
+            var finalityReadback = await GetSharedReadbackAsync(
+                serviceClient,
+                intake.StatutoryDiscountDecisionCommandId);
+            var repeatedReadback = await GetSharedReadbackAsync(
+                serviceClient,
+                intake.StatutoryDiscountDecisionCommandId);
+
+            finalityReadback.ZeroPayableStatutoryFinality.Should().NotBeNull();
+            var finality = finalityReadback.ZeroPayableStatutoryFinality!;
+            finality.FinalityState.Should().Be("ZERO_PAYABLE_STATUTORY_FINALITY");
+            finality.ParkingSessionId.Should().Be(context.ParkingSessionId);
+            finality.StatutoryDiscountDecisionCommandId.Should().Be(intake.StatutoryDiscountDecisionCommandId);
+            finality.StatutoryDiscountPayableBasisApplicationCommandId.Should()
+                .Be(application.StatutoryDiscountPayableBasisApplicationCommandId!.Value);
+            finality.StatutoryDiscountValidationId.Should().Be(application.StatutoryDiscountValidationId!.Value);
+            finality.AppliedPolicyReferenceId.Should().Be(application.AppliedPolicyReferenceId!.Value);
+            finality.OriginalTariffSnapshotId.Should().Be(context.TariffSnapshotId);
+            finality.AppliedTariffSnapshotId.Should().Be(application.AppliedTariffSnapshotId!.Value);
+            finality.SiteId.Should().Be(context.SiteId);
+            finality.SiteGroupId.Should().Be(context.SiteGroupId);
+            finality.EntitlementType.Should().Be("SENIOR_CITIZEN");
+            finality.BenefitType.Should().Be(
+                OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionBenefitType);
+            finality.OriginalAmountMinorUnits.Should().Be(application.GrossAmountMinorUnits);
+            finality.StatutoryWaiverAmountMinorUnits.Should().Be(application.GrossAmountMinorUnits);
+            finality.VatAmountMinorUnits.Should().Be(application.VatAmountMinorUnits);
+            finality.FinalPayableAmountMinorUnits.Should().Be(0);
+            finality.Currency.Should().Be("PHP");
+            finality.SourceChannel.Should().Be(StatutoryDiscountSourceChannels.WebPay);
+            repeatedReadback.ZeroPayableStatutoryFinality.Should().BeEquivalentTo(finality);
+
+            var afterReadback = await StatutoryDiscountReviewIntegrationTestSupport.WorkflowBoundaryRowCountsAsync(
+                context.ParkingSessionId,
+                intake.StatutoryDiscountDecisionCommandId);
+            afterReadback.Should().BeEquivalentTo(beforeReadback);
+
             var replay = await PostSharedDecisionAsync(
                 serviceClient,
                 Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
@@ -326,6 +367,22 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             counts.FiscalIssuanceReferenceCount.Should().Be(0);
             counts.ExitAuthorizationCount.Should().Be(0);
             counts.VendorPaymentAcknowledgmentCount.Should().Be(0);
+
+            await AssertZeroPayableReaderCardinalityConstraintsAsync();
+            await AssertEveryPaymentAttemptStatusBlocksFinalityAsync(
+                serviceClient,
+                context,
+                intake.StatutoryDiscountDecisionCommandId,
+                application.AppliedTariffSnapshotId!.Value);
+            (await StatutoryDiscountReviewIntegrationTestSupport.WorkflowBoundaryRowCountsAsync(
+                context.ParkingSessionId,
+                intake.StatutoryDiscountDecisionCommandId)).PaymentAttemptCount.Should().Be(0);
+
+            await CorruptDecisionGrossAmountAsync(intake.StatutoryDiscountDecisionCommandId);
+            var inconsistentState = await GetSharedReadbackErrorAsync(
+                serviceClient,
+                intake.StatutoryDiscountDecisionCommandId);
+            inconsistentState.ErrorCode.Should().Be("ZERO_PAYABLE_STATUTORY_DECISION_FINANCIAL_FACTS_MISMATCH");
         }
         finally
         {
@@ -820,6 +877,160 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         using var response = await client.SendAsync(message);
         response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<StatutoryDiscountDecisionResponse>())!;
+    }
+
+    private static async Task<ErrorResponse> GetSharedReadbackErrorAsync(
+        HttpClient client,
+        Guid statutoryDiscountDecisionCommandId)
+    {
+        using var message = new HttpRequestMessage(
+            HttpMethod.Get,
+            string.Format(SharedReadbackEndpointTemplate, statutoryDiscountDecisionCommandId));
+        message.Headers.Add("X-Correlation-Id", Guid.NewGuid().ToString());
+        using var response = await client.SendAsync(message);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest, await response.Content.ReadAsStringAsync());
+        return (await response.Content.ReadFromJsonAsync<ErrorResponse>())!;
+    }
+
+    private static async Task AssertEveryPaymentAttemptStatusBlocksFinalityAsync(
+        HttpClient client,
+        PaymentTestContext context,
+        Guid statutoryDiscountDecisionCommandId,
+        Guid appliedTariffSnapshotId)
+    {
+        string[] statuses =
+        [
+            "REQUESTED",
+            "PENDING_PROVIDER",
+            "PENDING_FINALIZATION",
+            "CONFIRMED",
+            "FAILED",
+            "EXPIRED",
+            "CANCELLED"
+        ];
+
+        await using var connection = new Npgsql.NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+
+        foreach (var status in statuses)
+        {
+            var paymentAttemptId = Guid.NewGuid();
+            await using var insert = new Npgsql.NpgsqlCommand(
+                """
+                INSERT INTO core.payment_attempts (
+                    payment_attempt_id,
+                    parking_session_id,
+                    tariff_snapshot_id,
+                    idempotency_key,
+                    currency_code,
+                    amount,
+                    attempt_status,
+                    requested_at,
+                    expires_at,
+                    finalized_at,
+                    failure_reason_code,
+                    correlation_id,
+                    created_at,
+                    created_by_service_identity_id,
+                    updated_at,
+                    updated_by_service_identity_id,
+                    row_version)
+                VALUES (
+                    @payment_attempt_id,
+                    @parking_session_id,
+                    @tariff_snapshot_id,
+                    @idempotency_key,
+                    'PHP',
+                    0.00,
+                    CAST(@attempt_status AS core.payment_attempt_status_enum),
+                    now(),
+                    now() + interval '15 minutes',
+                    CASE WHEN @attempt_status IN ('CONFIRMED', 'FAILED', 'EXPIRED', 'CANCELLED') THEN now() ELSE NULL END,
+                    CASE WHEN @attempt_status IN ('FAILED', 'EXPIRED', 'CANCELLED') THEN 'INTEGRATION_TEST' ELSE NULL END,
+                    @correlation_id,
+                    now(),
+                    @service_identity_id,
+                    now(),
+                    @service_identity_id,
+                    1);
+                """,
+                connection);
+            insert.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
+            insert.Parameters.AddWithValue("parking_session_id", context.ParkingSessionId);
+            insert.Parameters.AddWithValue("tariff_snapshot_id", appliedTariffSnapshotId);
+            insert.Parameters.AddWithValue("idempotency_key", $"zero-finality-conflict-{status}-{paymentAttemptId:N}");
+            insert.Parameters.AddWithValue("attempt_status", status);
+            insert.Parameters.AddWithValue("correlation_id", Guid.NewGuid());
+            insert.Parameters.AddWithValue("service_identity_id", WebPayServiceIdentityId);
+            await insert.ExecuteNonQueryAsync();
+
+            try
+            {
+                var error = await GetSharedReadbackErrorAsync(client, statutoryDiscountDecisionCommandId);
+                error.ErrorCode.Should().Be(
+                    "ZERO_PAYABLE_STATUTORY_PAYMENT_CONFLICT",
+                    $"a {status} attempt still proves the zero-payable tariff entered a payment flow");
+            }
+            finally
+            {
+                await using var delete = new Npgsql.NpgsqlCommand(
+                    "DELETE FROM core.payment_attempts WHERE payment_attempt_id = @payment_attempt_id;",
+                    connection);
+                delete.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
+                await delete.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    private static async Task AssertZeroPayableReaderCardinalityConstraintsAsync()
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new Npgsql.NpgsqlCommand(
+            """
+            SELECT
+                EXISTS (
+                    SELECT 1
+                    FROM pg_indexes
+                    WHERE schemaname = 'discounts'
+                      AND tablename = 'statutory_discount_payable_basis_application_commands'
+                      AND indexname = 'ux_stat_discount_pba_commands__decision_command'
+                      AND indexdef ILIKE 'CREATE UNIQUE INDEX%'
+                      AND indexdef LIKE '%(statutory_discount_decision_command_id)%'
+                ) AS application_command_is_unique,
+                EXISTS (
+                    SELECT 1
+                    FROM pg_indexes
+                    WHERE schemaname = 'discounts'
+                      AND tablename = 'statutory_discount_decision_policy_authorities'
+                      AND indexname = 'pk_statutory_discount_decision_policy_authorities'
+                      AND indexdef ILIKE 'CREATE UNIQUE INDEX%'
+                      AND indexdef LIKE '%(statutory_discount_decision_command_id)%'
+                ) AS policy_authority_is_unique;
+            """,
+            connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        (await reader.ReadAsync()).Should().BeTrue();
+        reader.GetBoolean(0).Should().BeTrue(
+            "a decision must identify at most one payable-basis application command");
+        reader.GetBoolean(1).Should().BeTrue(
+            "a decision must identify at most one authoritative policy-version row");
+    }
+
+    private static async Task CorruptDecisionGrossAmountAsync(Guid statutoryDiscountDecisionCommandId)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new Npgsql.NpgsqlCommand(
+            """
+            UPDATE discounts.statutory_discount_decision_commands
+            SET gross_amount_minor_units = gross_amount_minor_units + 1,
+                updated_at = now()
+            WHERE statutory_discount_decision_command_id = @decision_command_id;
+            """,
+            connection);
+        command.Parameters.AddWithValue("decision_command_id", statutoryDiscountDecisionCommandId);
+        (await command.ExecuteNonQueryAsync()).Should().Be(1);
     }
 
     private static async Task<StatutoryDiscountDecisionResponse> GetSharedReadbackAsync(

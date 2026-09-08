@@ -25,6 +25,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
     private readonly IStatutoryDiscountServiceChannelReviewRepository _serviceChannelReviewRepository;
     private readonly IStatutoryDiscountParkingEligibilityResolver _parkingEligibilityResolver;
     private readonly IStatutoryDiscountParkingEligibilityRepository _parkingEligibilityRepository;
+    private readonly IStatutoryDiscountZeroPayableFinalityReader _zeroPayableFinalityReader;
 
     public StatutoryDiscountDecisionFacadeService(
         IStatutoryDiscountStagedCommandService stagedCommandService,
@@ -36,7 +37,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         IOperatorConsoleStatutoryDiscountReadService readService,
         IStatutoryDiscountServiceChannelReviewRepository serviceChannelReviewRepository,
         IStatutoryDiscountParkingEligibilityResolver parkingEligibilityResolver,
-        IStatutoryDiscountParkingEligibilityRepository parkingEligibilityRepository)
+        IStatutoryDiscountParkingEligibilityRepository parkingEligibilityRepository,
+        IStatutoryDiscountZeroPayableFinalityReader zeroPayableFinalityReader)
     {
         _stagedCommandService = stagedCommandService ?? throw new ArgumentNullException(nameof(stagedCommandService));
         _historicalRepository = historicalRepository ?? throw new ArgumentNullException(nameof(historicalRepository));
@@ -48,6 +50,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         _serviceChannelReviewRepository = serviceChannelReviewRepository ?? throw new ArgumentNullException(nameof(serviceChannelReviewRepository));
         _parkingEligibilityResolver = parkingEligibilityResolver ?? throw new ArgumentNullException(nameof(parkingEligibilityResolver));
         _parkingEligibilityRepository = parkingEligibilityRepository ?? throw new ArgumentNullException(nameof(parkingEligibilityRepository));
+        _zeroPayableFinalityReader = zeroPayableFinalityReader ?? throw new ArgumentNullException(nameof(zeroPayableFinalityReader));
     }
 
     public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAvailabilityAsync(
@@ -223,8 +226,31 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                 cancellationToken)
             .ConfigureAwait(false);
 
-        return result.WithChannelSafeReviewFacts(review);
+        var enriched = result.WithChannelSafeReviewFacts(review);
+        if (!IsPotentialZeroPayableFinality(enriched))
+        {
+            return enriched;
+        }
+
+        var candidate = await _zeroPayableFinalityReader.ReadAsync(
+                enriched.StatutoryDiscountDecisionCommandId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var resolution = StatutoryDiscountZeroPayableFinalityResolver.Resolve(candidate);
+        if (!resolution.IsAvailable)
+        {
+            throw new StatutoryDiscountDecisionRejectedException(
+                resolution.RejectionCode ?? "ZERO_PAYABLE_STATUTORY_FINALITY_NOT_AVAILABLE",
+                "Zero-payable statutory finality could not be established from canonical durable state.");
+        }
+
+        return enriched with { ZeroPayableStatutoryFinality = resolution.Finality };
     }
+
+    private static bool IsPotentialZeroPayableFinality(StatutoryDiscountDecisionResult result) =>
+        string.Equals(result.DecisionResultStatus, StatutoryDiscountDecisionV2ResultStates.Approved, StringComparison.Ordinal) &&
+        string.Equals(result.ApplicationCommandStatus, StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied, StringComparison.Ordinal) &&
+        result.NetPayableAmountMinorUnits is 0;
 
     private static StatutoryDiscountParkingAvailabilityRequest ToAvailabilityRequest(
         StatutoryDiscountDecisionCommand command) =>
@@ -590,13 +616,58 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                     StringComparison.Ordinal));
         }
 
-        return await _stagedCommandService.GetApplicationByDecisionAsync(
+        var application = await _stagedCommandService.GetApplicationByDecisionAsync(
                 decision.StatutoryDiscountDecisionCommandId,
                 cancellationToken)
             .ConfigureAwait(false)
             ?? throw new StatutoryDiscountDecisionRejectedException(
                 "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_NOT_AVAILABLE",
                 "The canonical statutory-discount payable-basis application is unavailable after persistence.");
+
+        if (application.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied &&
+            application.ApprovedFinalPayableAmountMinorUnits == 0)
+        {
+            if (!application.ApprovedVatAmountMinorUnits.HasValue ||
+                !application.ApprovedVatExclusiveAmountMinorUnits.HasValue)
+            {
+                throw new StatutoryDiscountDecisionRejectedException(
+                    "ZERO_PAYABLE_STATUTORY_DECISION_FINANCIAL_FACTS_INCOMPLETE",
+                    "The applied zero-payable statutory basis lacks canonical VAT facts.");
+            }
+
+            var vatAmount = application.ApprovedVatAmountMinorUnits.Value;
+            var vatExclusiveAmount = checked(
+                application.ApprovedDiscountAmountMinorUnits + application.ApprovedFinalPayableAmountMinorUnits);
+            if (application.ApprovedVatExclusiveAmountMinorUnits.Value != vatExclusiveAmount)
+            {
+                throw new StatutoryDiscountDecisionRejectedException(
+                    "ZERO_PAYABLE_STATUTORY_DECISION_FINANCIAL_FACTS_MISMATCH",
+                    "The applied zero-payable statutory basis carries inconsistent VAT-exclusive facts.");
+            }
+
+            var grossAmount = checked(vatExclusiveAmount + vatAmount);
+            await _stagedCommandService.CompleteDecisionApprovedAsync(
+                    decision.StatutoryDiscountDecisionCommandId,
+                    decision.StatutoryDiscountValidationId,
+                    application.OriginalTariffSnapshotId ?? decision.OriginalTariffSnapshotId,
+                    decision.AppliedPolicyReferenceId,
+                    decision.FallbackPolicyReferenceId,
+                    decision.PolicyResolutionBasis,
+                    decision.LocalOrdinanceApplied,
+                    new StatutoryDiscountDecisionV2TariffFacts(
+                        grossAmount,
+                        vatExclusiveAmount,
+                        vatAmount,
+                        application.ApprovedDiscountAmountMinorUnits,
+                        application.ApprovedFinalPayableAmountMinorUnits,
+                        application.Currency),
+                    decision.ReasonCode,
+                    normalized.CorrelationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return application;
     }
 
     private static bool HasPayableBasisFacts(StatutoryDiscountDecisionV2Record decision) =>

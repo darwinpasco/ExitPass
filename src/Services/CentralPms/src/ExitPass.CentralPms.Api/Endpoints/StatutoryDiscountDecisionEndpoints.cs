@@ -372,7 +372,31 @@ public static class StatutoryDiscountDecisionEndpoints
             result.VatTreatment,
             result.PayableBasisReady,
             result.PayableBasisReadinessStatus,
-            result.PayableBasisReadinessAction);
+            result.PayableBasisReadinessAction,
+            result.ZeroPayableStatutoryFinality is null
+                ? null
+                : new StatutoryDiscountZeroPayableFinalityResponse(
+                    result.ZeroPayableStatutoryFinality.ParkingSessionId,
+                    result.ZeroPayableStatutoryFinality.StatutoryDiscountDecisionCommandId,
+                    result.ZeroPayableStatutoryFinality.StatutoryDiscountPayableBasisApplicationCommandId,
+                    result.ZeroPayableStatutoryFinality.StatutoryDiscountValidationId,
+                    result.ZeroPayableStatutoryFinality.AppliedPolicyReferenceId,
+                    result.ZeroPayableStatutoryFinality.OriginalTariffSnapshotId,
+                    result.ZeroPayableStatutoryFinality.AppliedTariffSnapshotId,
+                    result.ZeroPayableStatutoryFinality.SiteId,
+                    result.ZeroPayableStatutoryFinality.SiteGroupId,
+                    result.ZeroPayableStatutoryFinality.EntitlementType,
+                    result.ZeroPayableStatutoryFinality.BenefitType,
+                    result.ZeroPayableStatutoryFinality.OriginalAmountMinorUnits,
+                    result.ZeroPayableStatutoryFinality.StatutoryWaiverAmountMinorUnits,
+                    result.ZeroPayableStatutoryFinality.VatAmountMinorUnits,
+                    result.ZeroPayableStatutoryFinality.FinalPayableAmountMinorUnits,
+                    result.ZeroPayableStatutoryFinality.Currency,
+                    result.ZeroPayableStatutoryFinality.SourceChannel,
+                    result.ZeroPayableStatutoryFinality.DecidedAt,
+                    result.ZeroPayableStatutoryFinality.AppliedAt,
+                    result.ZeroPayableStatutoryFinality.CorrelationId,
+                    result.ZeroPayableStatutoryFinality.FinalityState));
 
     private static StatutoryDiscountParkingAvailabilityResponse ToAvailabilityResponse(
         StatutoryDiscountParkingAvailabilityResult result) =>
