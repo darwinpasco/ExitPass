@@ -906,6 +906,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         var parkingEligibilityResolver = Substitute.For<IStatutoryDiscountParkingEligibilityResolver>();
         parkingEligibilityResolver.ResolveAsync(Arg.Any<StatutoryDiscountParkingAvailabilityRequest>(), Arg.Any<CancellationToken>())
             .Returns(call => availability ?? AvailablePolicy((StatutoryDiscountParkingAvailabilityRequest)call[0]!));
+        var zeroPayableFinalityReader = Substitute.For<IStatutoryDiscountZeroPayableFinalityReader>();
 
         var sut = new StatutoryDiscountDecisionFacadeService(
             repository,
@@ -917,7 +918,8 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             readService,
             serviceChannelReviewRepository,
             parkingEligibilityResolver,
-            parkingEligibilityRepository);
+            parkingEligibilityRepository,
+            zeroPayableFinalityReader);
 
         return new TestFixture(
             repository,

@@ -282,7 +282,8 @@ public sealed record StatutoryDiscountDecisionResult(
     string? VatTreatment = null,
     bool PayableBasisReady = false,
     string PayableBasisReadinessStatus = StatutoryDiscountPayableBasisReadinessStatuses.NotReady,
-    string? PayableBasisReadinessAction = null);
+    string? PayableBasisReadinessAction = null,
+    StatutoryDiscountZeroPayableFinality? ZeroPayableStatutoryFinality = null);
 
 /// <summary>
 /// Controlled rejection from the shared statutory-discount facade.

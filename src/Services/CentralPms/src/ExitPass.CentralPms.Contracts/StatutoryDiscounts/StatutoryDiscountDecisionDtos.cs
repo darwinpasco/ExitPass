@@ -102,6 +102,32 @@ public sealed record StatutoryDiscountEvidenceReferenceRequest(
     string? VerificationStatus);
 
 /// <summary>
+/// Server-derived no-payment finality for an approved and applied full-fee statutory exemption.
+/// </summary>
+public sealed record StatutoryDiscountZeroPayableFinalityResponse(
+    Guid ParkingSessionId,
+    Guid StatutoryDiscountDecisionCommandId,
+    Guid StatutoryDiscountPayableBasisApplicationCommandId,
+    Guid StatutoryDiscountValidationId,
+    Guid AppliedPolicyReferenceId,
+    Guid OriginalTariffSnapshotId,
+    Guid AppliedTariffSnapshotId,
+    Guid SiteId,
+    Guid SiteGroupId,
+    string EntitlementType,
+    string BenefitType,
+    long OriginalAmountMinorUnits,
+    long StatutoryWaiverAmountMinorUnits,
+    long VatAmountMinorUnits,
+    long FinalPayableAmountMinorUnits,
+    string Currency,
+    string SourceChannel,
+    DateTimeOffset DecidedAt,
+    DateTimeOffset AppliedAt,
+    Guid CorrelationId,
+    string FinalityState);
+
+/// <summary>
 /// Canonical Central PMS statutory-discount result and readback response.
 /// </summary>
 /// <param name="SiteId">Durable site identifier linked to the reviewed service-channel decision, when available.</param>
@@ -168,4 +194,5 @@ public sealed record StatutoryDiscountDecisionResponse(
     string? VatTreatment = null,
     bool PayableBasisReady = false,
     string PayableBasisReadinessStatus = "NOT_READY",
-    string? PayableBasisReadinessAction = null);
+    string? PayableBasisReadinessAction = null,
+    StatutoryDiscountZeroPayableFinalityResponse? ZeroPayableStatutoryFinality = null);
