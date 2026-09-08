@@ -532,7 +532,11 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                 new ApplicationSchemaSource(
                     "operational Shift Management MVP",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_ShiftManagementMvp_v1.3.sql"),
-                    ValidatorPath: null)
+                    ValidatorPath: null),
+                new ApplicationSchemaSource(
+                    "ExitAuthorization completion authority",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_ExitAuthorizationCompletionAuthority_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_ExitAuthorizationCompletionAuthority_v1.3.sql"))
             };
 
             var container = RequireEnvironmentValue(DockerContainerEnvVar);

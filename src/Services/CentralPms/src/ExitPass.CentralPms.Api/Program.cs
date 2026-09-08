@@ -646,6 +646,8 @@ static void ConfigureApplicationServices(
 
     builder.Services.AddScoped<IExitAuthorizationPaymentFinalityReadRepository>(_ =>
         new ExitAuthorizationPaymentFinalityReadRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IPaymentFinalityCompletionAuthorityReader>(_ =>
+        new PaymentFinalityCompletionAuthorityReader(mainDatabaseConnectionString));
     builder.Services.AddScoped<IIssueExitAuthorizationUseCase>(serviceProvider =>
         new IssueExitAuthorizationHandler(
             serviceProvider.GetRequiredService<IIssueExitAuthorizationGateway>(),
@@ -655,7 +657,8 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<ILogger<IssueExitAuthorizationHandler>>(),
             serviceProvider.GetRequiredService<IExitAuthorizationFiscalGatingShadowEvaluator>(),
             serviceProvider.GetRequiredService<IExitAuthorizationPaymentFinalityReadRepository>(),
-            serviceProvider.GetRequiredService<IOptions<FiscalIssuanceExitAuthorizationGatingOptions>>().Value));
+            serviceProvider.GetRequiredService<IOptions<FiscalIssuanceExitAuthorizationGatingOptions>>().Value,
+            serviceProvider.GetRequiredService<IPaymentFinalityCompletionAuthorityReader>()));
     builder.Services.AddScoped<IIssueExitAuthorizationGateway>(serviceProvider =>
         new IssueExitAuthorizationGateway(
             mainDatabaseConnectionString,

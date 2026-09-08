@@ -43,6 +43,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
     private readonly ILogger<IssueExitAuthorizationHandler> _logger;
     private readonly IExitAuthorizationFiscalGatingShadowEvaluator _fiscalGatingShadowEvaluator;
     private readonly IExitAuthorizationPaymentFinalityReadRepository _paymentFinalityReadRepository;
+    private readonly IPaymentFinalityCompletionAuthorityReader? _completionAuthorityReader;
     private readonly FiscalIssuanceExitAuthorizationGatingOptions _fiscalGatingOptions;
 
     /// <summary>
@@ -64,7 +65,8 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         ILogger<IssueExitAuthorizationHandler> logger,
         IExitAuthorizationFiscalGatingShadowEvaluator? fiscalGatingShadowEvaluator = null,
         IExitAuthorizationPaymentFinalityReadRepository? paymentFinalityReadRepository = null,
-        FiscalIssuanceExitAuthorizationGatingOptions? fiscalGatingOptions = null)
+        FiscalIssuanceExitAuthorizationGatingOptions? fiscalGatingOptions = null,
+        IPaymentFinalityCompletionAuthorityReader? completionAuthorityReader = null)
     {
         _gateway = gateway;
         _eventPublisher = eventPublisher;
@@ -76,6 +78,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         _paymentFinalityReadRepository =
             paymentFinalityReadRepository ?? OptimisticExitAuthorizationPaymentFinalityReadRepository.Instance;
         _fiscalGatingOptions = fiscalGatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions();
+        _completionAuthorityReader = completionAuthorityReader;
     }
 
     /// <summary>
@@ -154,7 +157,8 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
                 AuthorizationToken: dbResult.AuthorizationToken,
                 AuthorizationStatus: dbResult.AuthorizationStatus,
                 IssuedAt: dbResult.IssuedAt,
-                ExpirationTimestamp: dbResult.ExpirationTimestamp);
+                ExpirationTimestamp: dbResult.ExpirationTimestamp,
+                CompletionBasis: CompletionBasisCodes.PaymentFinality);
         }
         catch (ArgumentException ex)
         {
@@ -212,9 +216,9 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
 
         try
         {
-            var isPaymentFinalityVerified = await _paymentFinalityReadRepository.IsPaymentFinalityVerifiedAsync(
-                command.ParkingSessionId,
-                command.PaymentAttemptId,
+            var isPaymentFinalityVerified = await IsPaymentCompletionAuthorityEstablishedAsync(
+                command,
+                activity,
                 cancellationToken);
 
             if (!isPaymentFinalityVerified)
@@ -291,6 +295,44 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
                 blockedReason,
                 $"ExitAuthorization blocked by fiscal/payment readiness: {blockedReason}.");
         }
+    }
+
+    private async Task<bool> IsPaymentCompletionAuthorityEstablishedAsync(
+        IssueExitAuthorizationCommand command,
+        Activity? activity,
+        CancellationToken cancellationToken)
+    {
+        if (_completionAuthorityReader is null)
+        {
+            return await _paymentFinalityReadRepository.IsPaymentFinalityVerifiedAsync(
+                command.ParkingSessionId,
+                command.PaymentAttemptId,
+                cancellationToken);
+        }
+
+        var candidate = await _completionAuthorityReader.ReadAsync(
+            command.PaymentAttemptId,
+            cancellationToken);
+        if (candidate is null)
+        {
+            throw new KeyNotFoundException("Payment attempt was not found.");
+        }
+
+        var resolution = CompletionAuthorityResolver.ResolvePaymentFinality(
+            candidate,
+            command.ParkingSessionId,
+            command.PaymentAttemptId);
+
+        activity?.SetTag("completion_authority.established", resolution.IsEstablished);
+        activity?.SetTag(
+            "completion_authority.basis",
+            resolution.Authority?.CompletionBasis ?? string.Empty);
+        activity?.SetTag(
+            "completion_authority.source_reference_id",
+            resolution.Authority?.DurableSourceReferenceId);
+        activity?.SetTag("completion_authority.rejection_code", resolution.RejectionCode ?? string.Empty);
+
+        return resolution.IsEstablished;
     }
 
     /// <summary>

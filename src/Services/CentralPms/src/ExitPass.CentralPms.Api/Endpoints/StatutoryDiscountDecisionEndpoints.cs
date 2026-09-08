@@ -396,7 +396,35 @@ public static class StatutoryDiscountDecisionEndpoints
                     result.ZeroPayableStatutoryFinality.DecidedAt,
                     result.ZeroPayableStatutoryFinality.AppliedAt,
                     result.ZeroPayableStatutoryFinality.CorrelationId,
-                    result.ZeroPayableStatutoryFinality.FinalityState));
+                    result.ZeroPayableStatutoryFinality.FinalityState),
+            result.CompletionAuthority is null
+                ? null
+                : new CompletionAuthorityResponse(
+                    result.CompletionAuthority.ParkingSessionId,
+                    result.CompletionAuthority.TariffSnapshotId,
+                    result.CompletionAuthority.SiteId,
+                    result.CompletionAuthority.SiteGroupId,
+                    result.CompletionAuthority.CompletionBasis,
+                    result.CompletionAuthority.DurableSourceReferenceId,
+                    result.CompletionAuthority.EstablishedAt,
+                    result.CompletionAuthority.CorrelationId,
+                    result.CompletionAuthority.FinalPayableAmountMinorUnits,
+                    result.CompletionAuthority.Currency,
+                    result.CompletionAuthority.PaymentAttemptId,
+                    result.CompletionAuthority.PaymentConfirmationId,
+                    result.CompletionAuthority.StatutoryDiscountDecisionCommandId,
+                    result.CompletionAuthority.StatutoryDiscountPayableBasisApplicationCommandId,
+                    result.CompletionAuthority.StatutoryDiscountValidationId,
+                    result.CompletionAuthority.AppliedPolicyReferenceId,
+                    result.CompletionAuthority.AuthorityState),
+            result.ExitAuthorizationEligibility is null
+                ? null
+                : new ExitAuthorizationEligibilityResponse(
+                    result.ExitAuthorizationEligibility.CompletionAuthorityEligible,
+                    result.ExitAuthorizationEligibility.ExitAuthorizationIssuanceAllowed,
+                    result.ExitAuthorizationEligibility.Status,
+                    result.ExitAuthorizationEligibility.BlockedReason,
+                    result.ExitAuthorizationEligibility.CompletionBasis));
 
     private static StatutoryDiscountParkingAvailabilityResponse ToAvailabilityResponse(
         StatutoryDiscountParkingAvailabilityResult result) =>

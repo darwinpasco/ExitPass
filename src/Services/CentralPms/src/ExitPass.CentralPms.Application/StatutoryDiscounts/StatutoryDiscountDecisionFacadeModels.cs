@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.Payments;
 
 namespace ExitPass.CentralPms.Application.StatutoryDiscounts;
 
@@ -283,7 +284,9 @@ public sealed record StatutoryDiscountDecisionResult(
     bool PayableBasisReady = false,
     string PayableBasisReadinessStatus = StatutoryDiscountPayableBasisReadinessStatuses.NotReady,
     string? PayableBasisReadinessAction = null,
-    StatutoryDiscountZeroPayableFinality? ZeroPayableStatutoryFinality = null);
+    StatutoryDiscountZeroPayableFinality? ZeroPayableStatutoryFinality = null,
+    CompletionAuthority? CompletionAuthority = null,
+    ExitAuthorizationEligibility? ExitAuthorizationEligibility = null);
 
 /// <summary>
 /// Controlled rejection from the shared statutory-discount facade.

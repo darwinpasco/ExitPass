@@ -84,6 +84,21 @@ public sealed class IssueExitAuthorizationIntegrationTests
             Assert.NotNull(persisted);
             Assert.Equal("ISSUED", persisted!.AuthorizationStatus);
             Assert.Equal(attempt.PaymentAttemptId, persisted.PaymentAttemptId);
+
+            await using var connection = new NpgsqlConnection(ConnectionString);
+            await connection.OpenAsync();
+            await using var ancestryCommand = new NpgsqlCommand(
+                """
+                SELECT completion_basis, tariff_snapshot_id
+                FROM core.exit_authorizations
+                WHERE exit_authorization_id = @exit_authorization_id;
+                """,
+                connection);
+            ancestryCommand.Parameters.AddWithValue("exit_authorization_id", authorization.ExitAuthorizationId);
+            await using var ancestry = await ancestryCommand.ExecuteReaderAsync();
+            Assert.True(await ancestry.ReadAsync());
+            Assert.Equal("PAYMENT_FINALITY", ancestry.GetString(0));
+            Assert.Equal(context.TariffSnapshotId, ancestry.GetGuid(1));
         }
         finally
         {

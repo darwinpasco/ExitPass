@@ -22,4 +22,5 @@ public sealed record IssueExitAuthorizationResult(
     string AuthorizationToken,
     string AuthorizationStatus,
     DateTimeOffset IssuedAt,
-    DateTimeOffset ExpirationTimestamp);
+    DateTimeOffset ExpirationTimestamp,
+    string CompletionBasis = CompletionBasisCodes.PaymentFinality);
