@@ -166,6 +166,22 @@ public sealed record ZeroPayableStatutoryFiscalCompletionResponse(
     string? SafeErrorCode);
 
 /// <summary>
+/// Issued statutory ExitAuthorization. Payment ancestry remains absent by contract.
+/// </summary>
+public sealed record ZeroPayableStatutoryExitAuthorizationResponse(
+    Guid ExitAuthorizationId,
+    Guid ParkingSessionId,
+    Guid? PaymentAttemptId,
+    string AuthorizationToken,
+    string AuthorizationStatus,
+    DateTimeOffset IssuedAt,
+    DateTimeOffset ExpirationTimestamp,
+    string CompletionBasis,
+    Guid? TariffSnapshotId,
+    Guid? FiscalIssuanceReferenceId,
+    bool PaymentRequired);
+
+/// <summary>
 /// Canonical Central PMS statutory-discount result and readback response.
 /// </summary>
 /// <param name="SiteId">Durable site identifier linked to the reviewed service-channel decision, when available.</param>
@@ -236,4 +252,6 @@ public sealed record StatutoryDiscountDecisionResponse(
     StatutoryDiscountZeroPayableFinalityResponse? ZeroPayableStatutoryFinality = null,
     CompletionAuthorityResponse? CompletionAuthority = null,
     ExitAuthorizationEligibilityResponse? ExitAuthorizationEligibility = null,
-    ZeroPayableStatutoryFiscalCompletionResponse? ZeroPayableFiscalCompletion = null);
+    ZeroPayableStatutoryFiscalCompletionResponse? ZeroPayableFiscalCompletion = null,
+    ZeroPayableStatutoryExitAuthorizationResponse? ExitAuthorization = null,
+    bool? PaymentRequired = null);

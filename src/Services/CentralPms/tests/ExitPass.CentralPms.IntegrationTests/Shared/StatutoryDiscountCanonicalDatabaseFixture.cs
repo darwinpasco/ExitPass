@@ -540,7 +540,11 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                 new ApplicationSchemaSource(
                     "zero-payable fiscal completion",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_ZeroPayableFiscalCompletion_v1.3.sql"),
-                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPmsZeroPayableFiscalCompletion_v1.3.sql"))
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPmsZeroPayableFiscalCompletion_v1.3.sql")),
+                new ApplicationSchemaSource(
+                    "zero-payable ExitAuthorization issuance",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_Core_IssueExitAuthorization_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CoreIssueExitAuthorization_v1.3.sql"))
             };
 
             var container = RequireEnvironmentValue(DockerContainerEnvVar);

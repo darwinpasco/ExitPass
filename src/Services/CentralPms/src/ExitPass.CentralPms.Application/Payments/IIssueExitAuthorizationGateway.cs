@@ -40,9 +40,23 @@ public sealed record IssueExitAuthorizationDbRequest
     public Guid ParkingSessionId { get; init; }
 
     /// <summary>
-    /// Confirmed payment attempt identifier backing the authorization.
+    /// Confirmed payment attempt identifier backing paid authorization; null for statutory zero-payable completion.
     /// </summary>
-    public Guid PaymentAttemptId { get; init; }
+    public Guid? PaymentAttemptId { get; init; }
+
+    public string CompletionBasis { get; init; } = CompletionBasisCodes.PaymentFinality;
+
+    public Guid? TariffSnapshotId { get; init; }
+
+    public Guid? StatutoryDiscountDecisionCommandId { get; init; }
+
+    public Guid? StatutoryDiscountPayableBasisApplicationCommandId { get; init; }
+
+    public Guid? StatutoryDiscountValidationId { get; init; }
+
+    public Guid? AppliedPolicyReferenceId { get; init; }
+
+    public Guid? FiscalIssuanceReferenceId { get; init; }
 
     /// <summary>
     /// User or actor identifier requesting issuance.
@@ -73,8 +87,11 @@ public sealed record IssueExitAuthorizationDbRequest
 public sealed record IssueExitAuthorizationDbResult(
     Guid ExitAuthorizationId,
     Guid ParkingSessionId,
-    Guid PaymentAttemptId,
+    Guid? PaymentAttemptId,
     string AuthorizationToken,
     string AuthorizationStatus,
     DateTimeOffset IssuedAt,
-    DateTimeOffset ExpirationTimestamp);
+    DateTimeOffset ExpirationTimestamp,
+    string CompletionBasis = CompletionBasisCodes.PaymentFinality,
+    Guid? TariffSnapshotId = null,
+    Guid? FiscalIssuanceReferenceId = null);

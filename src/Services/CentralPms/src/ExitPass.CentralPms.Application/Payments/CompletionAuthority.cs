@@ -219,7 +219,8 @@ public static class CompletionAuthorityResolver
 
     public static ExitAuthorizationEligibility EvaluateZeroPayableExitAuthorizationEligibility(
         CompletionAuthority authority,
-        bool fiscalPrerequisiteSatisfied = false)
+        bool fiscalPrerequisiteSatisfied = false,
+        bool issuancePathAvailable = false)
     {
         ArgumentNullException.ThrowIfNull(authority);
 
@@ -232,13 +233,15 @@ public static class CompletionAuthorityResolver
 
         return new ExitAuthorizationEligibility(
             CompletionAuthorityEligible: true,
-            ExitAuthorizationIssuanceAllowed: false,
+            ExitAuthorizationIssuanceAllowed: fiscalPrerequisiteSatisfied && issuancePathAvailable,
             Status: fiscalPrerequisiteSatisfied
                 ? ExitAuthorizationEligibilityStatuses.ZeroPayableFiscalPrerequisiteSatisfied
                 : ExitAuthorizationEligibilityStatuses.ZeroPayableCompletionAuthorityReady,
-            BlockedReason: fiscalPrerequisiteSatisfied
-                ? ExitAuthorizationEligibilityBlockedReasons.ZeroPayableExitAuthorizationIssuancePathUnavailable
-                : ExitAuthorizationEligibilityBlockedReasons.ZeroPayableFiscalPrerequisiteUnresolved,
+            BlockedReason: !fiscalPrerequisiteSatisfied
+                ? ExitAuthorizationEligibilityBlockedReasons.ZeroPayableFiscalPrerequisiteUnresolved
+                : issuancePathAvailable
+                    ? null
+                    : ExitAuthorizationEligibilityBlockedReasons.ZeroPayableExitAuthorizationIssuancePathUnavailable,
             CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality);
     }
 

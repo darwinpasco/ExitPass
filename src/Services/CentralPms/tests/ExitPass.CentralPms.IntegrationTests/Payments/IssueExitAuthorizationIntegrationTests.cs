@@ -1,3 +1,4 @@
+using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using Npgsql;
 using Xunit;
@@ -23,6 +24,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Payments;
 /// - ExitAuthorization must not be issued from non-confirmed attempts
 /// - ExitAuthorization issuance must be deterministic for the same confirmed attempt
 /// </summary>
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class IssueExitAuthorizationIntegrationTests
 {
     private static string ConnectionString =>

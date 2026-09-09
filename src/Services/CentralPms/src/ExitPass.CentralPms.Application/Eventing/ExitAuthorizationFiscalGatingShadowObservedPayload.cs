@@ -11,9 +11,9 @@ public sealed class ExitAuthorizationFiscalGatingShadowObservedPayload
     public Guid ParkingSessionId { get; init; }
 
     /// <summary>
-    /// Gets the payment attempt identifier from the ExitAuthorization command.
+    /// Gets the payment attempt identifier from the ExitAuthorization command when payment-backed.
     /// </summary>
-    public Guid PaymentAttemptId { get; init; }
+    public Guid? PaymentAttemptId { get; init; }
 
     /// <summary>
     /// Gets the payment confirmation identifier when a fiscal reference was available.

@@ -32,7 +32,15 @@ public sealed class ExitAuthorizationFiscalGatingShadowEvaluator : IExitAuthoriz
         }
 
         var fiscalReference = context.FiscalReference;
-        if (fiscalReference is null && _repository is not null && context.PaymentAttemptId != Guid.Empty)
+        if (fiscalReference is null && _repository is not null &&
+            context.CompletionBasis == Payments.CompletionBasisCodes.ZeroPayableStatutoryFinality &&
+            context.StatutoryDiscountPayableBasisApplicationCommandId.HasValue)
+        {
+            fiscalReference = await _repository.FindByStatutoryApplicationCommandIdAsync(
+                context.StatutoryDiscountPayableBasisApplicationCommandId.Value,
+                cancellationToken);
+        }
+        else if (fiscalReference is null && _repository is not null && context.PaymentAttemptId != Guid.Empty)
         {
             fiscalReference = await _repository.FindLatestByPaymentAttemptIdAsync(
                 context.PaymentAttemptId,
@@ -44,12 +52,44 @@ public sealed class ExitAuthorizationFiscalGatingShadowEvaluator : IExitAuthoriz
             return FiscalGatingShadowEvaluation.NotEvaluatedMissingFiscalContext();
         }
 
+        if (context.CompletionBasis == Payments.CompletionBasisCodes.ZeroPayableStatutoryFinality &&
+            (fiscalReference.CompletionBasis != Payments.CompletionBasisCodes.ZeroPayableStatutoryFinality ||
+             fiscalReference.ParkingSessionId != context.ParkingSessionId ||
+             fiscalReference.StatutoryDiscountPayableBasisApplicationCommandId !=
+                context.StatutoryDiscountPayableBasisApplicationCommandId ||
+             fiscalReference.PaymentAttemptId is not null ||
+             fiscalReference.PaymentConfirmationId is not null))
+        {
+            return FiscalGatingShadowEvaluation.FromGatingEvaluation(
+                new FiscalIssuanceGatingEvaluation(
+                    false,
+                    "zero_payable_fiscal_ancestry_mismatch",
+                    fiscalReference.FiscalIssuanceState,
+                    false,
+                    false),
+                fiscalReference);
+        }
+
         var evaluation = FiscalIssuanceExitAuthorizationGateEvaluator.Evaluate(
             fiscalReference,
             new FiscalIssuanceGatingEvaluationContext(
                 IsPaymentFinalityVerified: context.IsPaymentFinalityVerified,
                 IsNoFiscalRequiredPolicyApproved: context.IsNoFiscalRequiredPolicyApproved,
-                IsReconciledFiscalEvidencePolicyApproved: context.IsReconciledFiscalEvidencePolicyApproved));
+                IsReconciledFiscalEvidencePolicyApproved: context.IsReconciledFiscalEvidencePolicyApproved,
+                IsStatutoryCompletionAuthorityEstablished:
+                    context.IsStatutoryCompletionAuthorityEstablished));
+
+        if (evaluation.IsReadyForNormalExitAuthorization &&
+            context.CompletionBasis == Payments.CompletionBasisCodes.ZeroPayableStatutoryFinality &&
+            string.IsNullOrWhiteSpace(fiscalReference.ElectronicJournalEventReference))
+        {
+            evaluation = new FiscalIssuanceGatingEvaluation(
+                false,
+                "electronic_journal_not_recorded",
+                fiscalReference.FiscalIssuanceState,
+                false,
+                false);
+        }
 
         return FiscalGatingShadowEvaluation.FromGatingEvaluation(evaluation, fiscalReference);
     }
@@ -63,7 +103,10 @@ public sealed record ExitAuthorizationFiscalGatingShadowContext(
     FiscalIssuanceReferenceRecord? FiscalReference = null,
     bool IsFiscalIssuanceNotRequiredByPolicy = false,
     bool IsNoFiscalRequiredPolicyApproved = false,
-    bool IsReconciledFiscalEvidencePolicyApproved = false);
+    bool IsReconciledFiscalEvidencePolicyApproved = false,
+    string CompletionBasis = Payments.CompletionBasisCodes.PaymentFinality,
+    bool IsStatutoryCompletionAuthorityEstablished = false,
+    Guid? StatutoryDiscountPayableBasisApplicationCommandId = null);
 
 public sealed record FiscalGatingShadowEvaluation(
     string Status,

@@ -16,9 +16,19 @@ public sealed class ExitAuthorizationIssuedPayload
     public Guid ParkingSessionId { get; init; }
 
     /// <summary>
-    /// Gets the payment attempt identifier that authorized exit.
+    /// Gets the payment attempt identifier that authorized paid exit; null for statutory zero-payable completion.
     /// </summary>
-    public Guid PaymentAttemptId { get; init; }
+    public Guid? PaymentAttemptId { get; init; }
+
+    /// <summary>
+    /// Gets the canonical completion basis used for issuance.
+    /// </summary>
+    public string CompletionBasis { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets whether monetary payment was required for this completion.
+    /// </summary>
+    public bool PaymentRequired { get; init; }
 
     /// <summary>
     /// Gets the authorization status.

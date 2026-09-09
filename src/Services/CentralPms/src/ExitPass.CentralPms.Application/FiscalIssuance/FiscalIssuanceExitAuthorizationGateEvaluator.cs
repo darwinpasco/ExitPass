@@ -8,7 +8,7 @@ public static class FiscalIssuanceExitAuthorizationGateEvaluator
         FiscalIssuanceReferenceRecord? reference,
         FiscalIssuanceGatingEvaluationContext context)
     {
-        if (!context.IsPaymentFinalityVerified)
+        if (!context.IsPaymentFinalityVerified && !context.IsStatutoryCompletionAuthorityEstablished)
         {
             return Blocked(
                 reference?.FiscalIssuanceState,
@@ -146,7 +146,8 @@ public static class FiscalIssuanceExitAuthorizationGateEvaluator
 public sealed record FiscalIssuanceGatingEvaluationContext(
     bool IsPaymentFinalityVerified,
     bool IsNoFiscalRequiredPolicyApproved = false,
-    bool IsReconciledFiscalEvidencePolicyApproved = false);
+    bool IsReconciledFiscalEvidencePolicyApproved = false,
+    bool IsStatutoryCompletionAuthorityEstablished = false);
 
 public sealed record FiscalIssuanceGatingEvaluation(
     bool IsReadyForNormalExitAuthorization,

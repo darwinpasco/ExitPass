@@ -16,12 +16,15 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
 
 [Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntentApiIntegrationTests
 {
+    private readonly ITestOutputHelper _output;
+
     private const string SharedDecisionEndpoint = "/v1/statutory-discounts/decisions";
     private const string SharedReadbackEndpointTemplate = "/v1/statutory-discounts/decisions/{0}";
     private const string ReviewDecisionEndpointTemplate = "/v1/ops/operator-console/statutory-discounts/reviews/{0}/decision";
@@ -32,6 +35,12 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     private static readonly Guid AccessEvaluationId = Guid.Parse("9b000000-0000-0000-0000-000000000004");
     private static readonly Guid WebPayServiceIdentityId = Guid.Parse("9b000000-0000-0000-0000-000000000005");
     private static readonly Guid AptServiceIdentityId = Guid.Parse("9b000000-0000-0000-0000-000000000006");
+
+    public StatutoryDiscountServiceChannelPostApprovalApplicationIntentApiIntegrationTests(
+        ITestOutputHelper output)
+    {
+        _output = output;
+    }
 
     [Theory]
     [InlineData(StatutoryDiscountSourceChannels.WebPay)]
@@ -246,10 +255,10 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     }
 
     [Fact]
-    public async Task WebPayFullFeeExemption_AfterApproval_AppliesZeroPayableBasisWithoutDownstreamSideEffects()
+    public async Task WebPayFullFeeExemption_AfterApproval_IssuesExitAuthorizationWithoutPaymentArtifacts()
     {
         var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
-            nameof(WebPayFullFeeExemption_AfterApproval_AppliesZeroPayableBasisWithoutDownstreamSideEffects),
+            nameof(WebPayFullFeeExemption_AfterApproval_IssuesExitAuthorizationWithoutPaymentArtifacts),
             benefitType: OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionBenefitType,
             discountBaseScope: OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionDiscountBaseScope,
             fullFeeExempt: true);
@@ -307,6 +316,19 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             (application.StatutoryDiscountAmountMinorUnits + application.VatAmountMinorUnits)
                 .Should().Be(application.GrossAmountMinorUnits);
             application.PayableBasisReady.Should().BeTrue();
+            application.PaymentRequired.Should().BeFalse();
+            application.ExitAuthorization.Should().NotBeNull();
+            var zeroPayableAuthorization = application.ExitAuthorization!;
+            zeroPayableAuthorization.ParkingSessionId.Should().Be(context.ParkingSessionId);
+            zeroPayableAuthorization.PaymentAttemptId.Should().BeNull();
+            zeroPayableAuthorization.CompletionBasis.Should().Be("ZERO_PAYABLE_STATUTORY_FINALITY");
+            zeroPayableAuthorization.PaymentRequired.Should().BeFalse();
+            zeroPayableAuthorization.AuthorizationStatus.Should().Be("ISSUED");
+            zeroPayableAuthorization.TariffSnapshotId.Should().Be(application.AppliedTariffSnapshotId);
+            zeroPayableAuthorization.FiscalIssuanceReferenceId.Should().NotBeNull();
+            _output.WriteLine(
+                "ZERO_PAYABLE_EXIT_AUTHORIZATION_ID={0}",
+                zeroPayableAuthorization.ExitAuthorizationId);
 
             var beforeReadback = await StatutoryDiscountReviewIntegrationTestSupport.WorkflowBoundaryRowCountsAsync(
                 context.ParkingSessionId,
@@ -357,11 +379,10 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
 
             finalityReadback.ExitAuthorizationEligibility.Should().NotBeNull();
             finalityReadback.ExitAuthorizationEligibility!.CompletionAuthorityEligible.Should().BeTrue();
-            finalityReadback.ExitAuthorizationEligibility.ExitAuthorizationIssuanceAllowed.Should().BeFalse();
+            finalityReadback.ExitAuthorizationEligibility.ExitAuthorizationIssuanceAllowed.Should().BeTrue();
             finalityReadback.ExitAuthorizationEligibility.Status.Should()
                 .Be("ZERO_PAYABLE_FISCAL_PREREQUISITE_SATISFIED");
-            finalityReadback.ExitAuthorizationEligibility.BlockedReason.Should()
-                .Be("ZERO_PAYABLE_EXIT_AUTHORIZATION_ISSUANCE_PATH_UNAVAILABLE");
+            finalityReadback.ExitAuthorizationEligibility.BlockedReason.Should().BeNull();
             repeatedReadback.ExitAuthorizationEligibility.Should()
                 .BeEquivalentTo(finalityReadback.ExitAuthorizationEligibility);
             finalityReadback.ZeroPayableFiscalCompletion.Should().NotBeNull();
@@ -393,6 +414,8 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             replay.StatutoryDiscountPayableBasisApplicationCommandId.Should()
                 .Be(application.StatutoryDiscountPayableBasisApplicationCommandId);
             replay.AppliedTariffSnapshotId.Should().Be(application.AppliedTariffSnapshotId);
+            replay.ExitAuthorization.Should().NotBeNull();
+            replay.ExitAuthorization!.ExitAuthorizationId.Should().Be(zeroPayableAuthorization.ExitAuthorizationId);
 
             var counts = await StatutoryDiscountReviewIntegrationTestSupport.WorkflowBoundaryRowCountsAsync(
                 context.ParkingSessionId,
@@ -407,7 +430,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             counts.TerminalCashCommandCount.Should().Be(0);
             counts.TerminalCashCommandAuditCount.Should().Be(0);
             counts.FiscalIssuanceReferenceCount.Should().Be(1);
-            counts.ExitAuthorizationCount.Should().Be(0);
+            counts.ExitAuthorizationCount.Should().Be(1);
             counts.VendorPaymentAcknowledgmentCount.Should().Be(0);
 
             await AssertFiscalCompletionAncestryConstraintsAsync(context.ParkingSessionId);
@@ -1103,24 +1126,13 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         StatutoryDiscountDecisionResponse application)
     {
         await AssertInsertAsync(
-            completionBasis: "ZERO_PAYABLE_STATUTORY_FINALITY",
-            paymentAttemptId: null,
-            paymentConfirmationId: null,
-            statutoryDiscountDecisionCommandId,
-            application.StatutoryDiscountPayableBasisApplicationCommandId,
-            application.StatutoryDiscountValidationId,
-            application.AppliedPolicyReferenceId,
-            shouldSucceed: true);
-
-        await AssertInsertAsync(
             completionBasis: null,
             paymentAttemptId: null,
             paymentConfirmationId: null,
             statutoryDiscountDecisionCommandId: null,
             statutoryDiscountPayableBasisApplicationCommandId: null,
             statutoryDiscountValidationId: null,
-            appliedPolicyReferenceId: null,
-            shouldSucceed: false);
+            appliedPolicyReferenceId: null);
 
         await AssertInsertAsync(
             completionBasis: "ZERO_PAYABLE_STATUTORY_FINALITY",
@@ -1129,8 +1141,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             statutoryDiscountDecisionCommandId,
             application.StatutoryDiscountPayableBasisApplicationCommandId,
             application.StatutoryDiscountValidationId,
-            application.AppliedPolicyReferenceId,
-            shouldSucceed: false);
+            application.AppliedPolicyReferenceId);
 
         async Task AssertInsertAsync(
             string? completionBasis,
@@ -1139,8 +1150,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             Guid? statutoryDiscountDecisionCommandId,
             Guid? statutoryDiscountPayableBasisApplicationCommandId,
             Guid? statutoryDiscountValidationId,
-            Guid? appliedPolicyReferenceId,
-            bool shouldSucceed)
+            Guid? appliedPolicyReferenceId)
         {
             await using var connection = new Npgsql.NpgsqlConnection(
                 StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
@@ -1210,12 +1220,6 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 (object?)statutoryDiscountValidationId ?? DBNull.Value;
             command.Parameters.Add("policy_reference_id", NpgsqlTypes.NpgsqlDbType.Uuid).Value =
                 (object?)appliedPolicyReferenceId ?? DBNull.Value;
-
-            if (shouldSucceed)
-            {
-                (await command.ExecuteNonQueryAsync()).Should().Be(1);
-                return;
-            }
 
             var action = async () => await command.ExecuteNonQueryAsync();
             await action.Should().ThrowAsync<Npgsql.PostgresException>();

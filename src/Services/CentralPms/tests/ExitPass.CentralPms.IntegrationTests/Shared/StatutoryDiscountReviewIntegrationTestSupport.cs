@@ -125,6 +125,12 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
             DELETE FROM operator_console.statutory_discount_service_channel_reviews
             WHERE parking_session_id = @parking_session_id;
 
+            DELETE FROM core.exit_authorizations
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM core.fiscal_issuance_references
+            WHERE parking_session_id = @parking_session_id;
+
             DELETE FROM discounts.statutory_discount_payable_basis_application_commands
             WHERE parking_session_id = @parking_session_id;
 
@@ -344,6 +350,12 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         await using var command = new NpgsqlCommand(
             """
             DELETE FROM operator_console.statutory_discount_service_channel_reviews
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM core.exit_authorizations
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM core.fiscal_issuance_references
             WHERE parking_session_id = @parking_session_id;
 
             DELETE FROM discounts.statutory_discount_payable_basis_application_commands

@@ -146,7 +146,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         ConfigureGatewaySuccess(now);
         var command = ValidCommand();
         var reader = Substitute.For<IPaymentFinalityCompletionAuthorityReader>();
-        reader.ReadAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+        reader.ReadAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(PaymentCompletionCandidate(command, now));
 
         var result = await CreateSut(completionAuthorityReader: reader)
@@ -166,7 +166,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         ConfigureGatewaySuccess(now);
         var command = ValidCommand();
         var reader = Substitute.For<IPaymentFinalityCompletionAuthorityReader>();
-        reader.ReadAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+        reader.ReadAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns((PaymentFinalityCompletionCandidate?)null);
 
         await Assert.ThrowsAsync<KeyNotFoundException>(() =>
@@ -188,7 +188,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         ConfigureGatewaySuccess(now);
         var command = ValidCommand();
         var reader = Substitute.For<IPaymentFinalityCompletionAuthorityReader>();
-        reader.ReadAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+        reader.ReadAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(PaymentCompletionCandidate(command, now) with { AttemptStatus = attemptStatus });
 
         var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
@@ -363,7 +363,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
         var fiscalReference = CompleteFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
         repository
-            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(fiscalReference);
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
@@ -380,7 +380,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         AssertTag(activity, "fiscal_gating_shadow.would_allow_normal_exit_authorization", true);
         AssertTag(activity, "fiscal_gating_shadow.enforcement_wired_for_blocking", true);
         await repository.Received(1).FindLatestByPaymentAttemptIdAsync(
-            command.PaymentAttemptId,
+            command.PaymentAttemptId!.Value,
             Arg.Any<CancellationToken>());
         await _eventPublisher.Received(1).PublishAsync(
             Arg.Is<IntegrationEventEnvelope>(x => IsReadyShadowObservation(x, command, fiscalReference)),
@@ -397,7 +397,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         var command = ValidCommand();
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
         repository
-            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(MinimalFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceUnknown));
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
@@ -428,7 +428,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         var command = ValidCommand();
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
         repository
-            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns<Task<FiscalIssuanceReferenceRecord?>>(_ => throw new InvalidOperationException("lookup failed"));
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
@@ -457,7 +457,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         };
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
         repository
-            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(fiscalReference);
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
@@ -633,7 +633,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         var fiscalReference = CompleteFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
         repository
-            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(fiscalReference);
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
@@ -652,6 +652,105 @@ public sealed class IssueExitAuthorizationHandlerTests
         Assert.DoesNotContain("cvv", serializedPayload);
         Assert.DoesNotContain("secret", serializedPayload);
         Assert.DoesNotContain("token", serializedPayload);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenZeroPayableStatutoryFiscalCompletionIsAuthoritative_IssuesWithoutPaymentAncestry()
+    {
+        var now = new DateTimeOffset(2026, 9, 9, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        var command = StatutoryCommand();
+        var reference = StatutoryFiscalReference(command, includeElectronicJournal: true);
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByStatutoryApplicationCommandIdAsync(
+                command.CompletionAuthority!.StatutoryDiscountPayableBasisApplicationCommandId!.Value,
+                Arg.Any<CancellationToken>())
+            .Returns(reference);
+        var authorizationId = Guid.NewGuid();
+        _gateway.IssueAsync(Arg.Any<IssueExitAuthorizationDbRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new IssueExitAuthorizationDbResult(
+                authorizationId,
+                command.ParkingSessionId,
+                null,
+                "AUTH-ZERO-001",
+                "ISSUED",
+                now,
+                now.AddMinutes(15),
+                CompletionBasisCodes.ZeroPayableStatutoryFinality,
+                command.CompletionAuthority.TariffSnapshotId,
+                reference.FiscalIssuanceReferenceId));
+
+        var result = await CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository))
+            .ExecuteAsync(command, CancellationToken.None);
+
+        Assert.Equal(authorizationId, result.ExitAuthorizationId);
+        Assert.Null(result.PaymentAttemptId);
+        Assert.False(result.PaymentRequired);
+        Assert.Equal(CompletionBasisCodes.ZeroPayableStatutoryFinality, result.CompletionBasis);
+        await _gateway.Received(1).IssueAsync(
+            Arg.Is<IssueExitAuthorizationDbRequest>(request =>
+                request.PaymentAttemptId == null &&
+                request.CompletionBasis == CompletionBasisCodes.ZeroPayableStatutoryFinality &&
+                request.TariffSnapshotId == command.CompletionAuthority.TariffSnapshotId &&
+                request.FiscalIssuanceReferenceId == reference.FiscalIssuanceReferenceId),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenZeroPayableCompletionAuthorityIsMissing_BlocksBeforeIssuance()
+    {
+        var command = StatutoryCommand() with { CompletionAuthority = null };
+
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            CreateSut().ExecuteAsync(command, CancellationToken.None));
+
+        Assert.Equal("completion_authority_not_verified", ex.ErrorCode);
+        await _gateway.DidNotReceive().IssueAsync(
+            Arg.Any<IssueExitAuthorizationDbRequest>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenZeroPayableFiscalDocumentIsMissing_BlocksBeforeIssuance()
+    {
+        var command = StatutoryCommand();
+        var reference = StatutoryFiscalReference(command, includeElectronicJournal: true) with
+        {
+            PosServerFiscalDocumentId = null
+        };
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByStatutoryApplicationCommandIdAsync(
+                command.CompletionAuthority!.StatutoryDiscountPayableBasisApplicationCommandId!.Value,
+                Arg.Any<CancellationToken>())
+            .Returns(reference);
+
+        await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository))
+                .ExecuteAsync(command, CancellationToken.None));
+
+        await _gateway.DidNotReceive().IssueAsync(
+            Arg.Any<IssueExitAuthorizationDbRequest>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenZeroPayableElectronicJournalIsMissing_BlocksBeforeIssuance()
+    {
+        var command = StatutoryCommand();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByStatutoryApplicationCommandIdAsync(
+                command.CompletionAuthority!.StatutoryDiscountPayableBasisApplicationCommandId!.Value,
+                Arg.Any<CancellationToken>())
+            .Returns(StatutoryFiscalReference(command, includeElectronicJournal: false));
+
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository))
+                .ExecuteAsync(command, CancellationToken.None));
+
+        Assert.Equal("electronic_journal_not_recorded", ex.ErrorCode);
+        await _gateway.DidNotReceive().IssueAsync(
+            Arg.Any<IssueExitAuthorizationDbRequest>(),
+            Arg.Any<CancellationToken>());
     }
 
     /// <summary>
@@ -810,11 +909,62 @@ public sealed class IssueExitAuthorizationHandlerTests
             RequestedByUserId: Guid.Parse("10000000-0000-0000-0000-000000000003"),
             CorrelationId: Guid.Parse("10000000-0000-0000-0000-000000000004"));
 
+    private static IssueExitAuthorizationCommand StatutoryCommand()
+    {
+        var parkingSessionId = Guid.Parse("20000000-0000-0000-0000-000000000001");
+        var tariffSnapshotId = Guid.Parse("20000000-0000-0000-0000-000000000002");
+        var applicationCommandId = Guid.Parse("20000000-0000-0000-0000-000000000003");
+        var correlationId = Guid.Parse("20000000-0000-0000-0000-000000000004");
+        var authority = new CompletionAuthority(
+            parkingSessionId,
+            tariffSnapshotId,
+            Guid.Parse("20000000-0000-0000-0000-000000000005"),
+            Guid.Parse("20000000-0000-0000-0000-000000000006"),
+            CompletionBasisCodes.ZeroPayableStatutoryFinality,
+            applicationCommandId,
+            DateTimeOffset.Parse("2026-09-09T09:00:00Z"),
+            correlationId,
+            0,
+            "PHP",
+            StatutoryDiscountDecisionCommandId: Guid.Parse("20000000-0000-0000-0000-000000000007"),
+            StatutoryDiscountPayableBasisApplicationCommandId: applicationCommandId,
+            StatutoryDiscountValidationId: Guid.Parse("20000000-0000-0000-0000-000000000008"),
+            AppliedPolicyReferenceId: Guid.Parse("20000000-0000-0000-0000-000000000009"));
+        return new IssueExitAuthorizationCommand(
+            parkingSessionId,
+            null,
+            Guid.Parse("20000000-0000-0000-0000-00000000000a"),
+            correlationId,
+            CompletionBasisCodes.ZeroPayableStatutoryFinality,
+            authority,
+            Guid.Parse("20000000-0000-0000-0000-00000000000b"));
+    }
+
+    private static FiscalIssuanceReferenceRecord StatutoryFiscalReference(
+        IssueExitAuthorizationCommand command,
+        bool includeElectronicJournal) =>
+        CompleteFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+        {
+            FiscalIssuanceReferenceId = command.FiscalIssuanceReferenceId!.Value,
+            PaymentAttemptId = null,
+            PaymentConfirmationId = null,
+            TariffSnapshotId = command.CompletionAuthority!.TariffSnapshotId,
+            SiteId = command.CompletionAuthority.SiteId,
+            CompletionBasis = CompletionBasisCodes.ZeroPayableStatutoryFinality,
+            CompletionAuthorityReferenceId = command.CompletionAuthority.DurableSourceReferenceId,
+            StatutoryDiscountDecisionCommandId = command.CompletionAuthority.StatutoryDiscountDecisionCommandId,
+            StatutoryDiscountPayableBasisApplicationCommandId =
+                command.CompletionAuthority.StatutoryDiscountPayableBasisApplicationCommandId,
+            StatutoryDiscountValidationId = command.CompletionAuthority.StatutoryDiscountValidationId,
+            AppliedPolicyReferenceId = command.CompletionAuthority.AppliedPolicyReferenceId,
+            ElectronicJournalEventReference = includeElectronicJournal ? "EJ:ZERO:001" : null
+        };
+
     private static PaymentFinalityCompletionCandidate PaymentCompletionCandidate(
         IssueExitAuthorizationCommand command,
         DateTimeOffset establishedAt) =>
         new(
-            command.PaymentAttemptId,
+            command.PaymentAttemptId!.Value,
             command.ParkingSessionId,
             Guid.Parse("10000000-0000-0000-0000-000000000005"),
             Guid.Parse("10000000-0000-0000-0000-000000000006"),

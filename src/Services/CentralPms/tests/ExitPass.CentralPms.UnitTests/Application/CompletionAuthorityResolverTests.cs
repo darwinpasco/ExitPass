@@ -167,6 +167,23 @@ public sealed class CompletionAuthorityResolverTests
         eligibility.CompletionBasis.Should().Be(CompletionBasisCodes.ZeroPayableStatutoryFinality);
     }
 
+    [Fact]
+    public void EvaluateZeroPayableExitAuthorizationEligibility_WhenFiscalAndIssuancePathExist_AllowsIssuance()
+    {
+        var authority = ResolveZero().Authority!;
+
+        var eligibility = CompletionAuthorityResolver.EvaluateZeroPayableExitAuthorizationEligibility(
+            authority,
+            fiscalPrerequisiteSatisfied: true,
+            issuancePathAvailable: true);
+
+        eligibility.CompletionAuthorityEligible.Should().BeTrue();
+        eligibility.ExitAuthorizationIssuanceAllowed.Should().BeTrue();
+        eligibility.Status.Should().Be(ExitAuthorizationEligibilityStatuses.ZeroPayableFiscalPrerequisiteSatisfied);
+        eligibility.BlockedReason.Should().BeNull();
+        eligibility.CompletionBasis.Should().Be(CompletionBasisCodes.ZeroPayableStatutoryFinality);
+    }
+
     private static CompletionAuthorityResolution ResolveZero(
         Guid? expectedParkingSessionId = null,
         Guid? expectedTariffSnapshotId = null,
