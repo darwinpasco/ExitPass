@@ -85,8 +85,8 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
             FiscalDocumentStatusCodeId: context.FiscalDocumentStatusCodeId,
             BusinessDayDate: context.BusinessDayDate,
             CentralPmsParkingSessionRef: context.CentralPmsParkingSessionRef.Trim(),
-            CentralPmsPaymentAttemptRef: context.CentralPmsPaymentAttemptRef.Trim(),
-            CentralPmsPaymentConfirmationRef: context.CentralPmsPaymentConfirmationRef.Trim(),
+            CentralPmsPaymentAttemptRef: TrimToNull(context.CentralPmsPaymentAttemptRef),
+            CentralPmsPaymentConfirmationRef: TrimToNull(context.CentralPmsPaymentConfirmationRef),
             UpstreamFinalityRef: context.PayableBasis.UpstreamFinalityRef.Trim(),
             PaymentFinalityRef: TrimToNull(context.PaymentFinalityRef),
             VendorAckRef: TrimToNull(context.VendorAckRef),
@@ -136,7 +136,9 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
                 .ToArray(),
             ReferenceContext: NormalizeDictionary(context.ReferenceContext),
             AppliedStatutoryFiscalFacts: MapAppliedStatutoryFiscalFacts(context.AppliedStatutoryFiscalFacts),
-            SiteId: context.SiteId);
+            SiteId: context.SiteId,
+            CompletionBasis: context.CompletionBasis.Trim().ToUpperInvariant(),
+            CompletionAuthorityRef: TrimToNull(context.CompletionAuthorityRef));
     }
 
     private static IReadOnlyList<string> Validate(CentralPmsFiscalDocumentMappingContext context)
@@ -158,14 +160,40 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
             errors.Add("central_pms_parking_session_ref_required");
         }
 
-        if (string.IsNullOrWhiteSpace(context.CentralPmsPaymentAttemptRef))
+        var completionBasis = context.CompletionBasis?.Trim().ToUpperInvariant();
+        var zeroPayable = completionBasis == FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality;
+        if (completionBasis == FiscalCompletionBasisCodes.PaymentFinality)
         {
-            errors.Add("central_pms_payment_attempt_ref_required");
-        }
+            if (string.IsNullOrWhiteSpace(context.CentralPmsPaymentAttemptRef))
+            {
+                errors.Add("central_pms_payment_attempt_ref_required");
+            }
 
-        if (string.IsNullOrWhiteSpace(context.CentralPmsPaymentConfirmationRef))
+            if (string.IsNullOrWhiteSpace(context.CentralPmsPaymentConfirmationRef))
+            {
+                errors.Add("central_pms_payment_confirmation_ref_required");
+            }
+
+            if (context.Tenders.Count == 0)
+            {
+                errors.Add("tender_required");
+            }
+        }
+        else if (zeroPayable)
         {
-            errors.Add("central_pms_payment_confirmation_ref_required");
+            if (string.IsNullOrWhiteSpace(context.CompletionAuthorityRef) ||
+                !string.IsNullOrWhiteSpace(context.CentralPmsPaymentAttemptRef) ||
+                !string.IsNullOrWhiteSpace(context.CentralPmsPaymentConfirmationRef) ||
+                !string.IsNullOrWhiteSpace(context.PaymentFinalityRef) ||
+                context.Tenders.Count != 0 ||
+                context.AppliedStatutoryFiscalFacts is null)
+            {
+                errors.Add("zero_payable_completion_ancestry_invalid");
+            }
+        }
+        else
+        {
+            errors.Add("completion_basis_unsupported");
         }
 
         if (context.PayableBasis is null)
@@ -174,7 +202,7 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
         }
         else
         {
-            ValidatePayableBasis(context.PayableBasis, errors);
+            ValidatePayableBasis(context.PayableBasis, zeroPayable, errors);
         }
 
         if (context.DocumentLines.Count == 0)
@@ -182,17 +210,15 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
             errors.Add("document_line_required");
         }
 
-        if (context.Tenders.Count == 0)
-        {
-            errors.Add("tender_required");
-        }
-
         ValidateNoSensitivePayloadTerms(context, errors);
         ValidateAppliedStatutoryFacts(context, errors);
         return errors;
     }
 
-    private static void ValidatePayableBasis(CentralPmsPayableBasisContext payableBasis, List<string> errors)
+    private static void ValidatePayableBasis(
+        CentralPmsPayableBasisContext payableBasis,
+        bool zeroPayable,
+        List<string> errors)
     {
         if (string.IsNullOrWhiteSpace(payableBasis.PayableBasisRef))
         {
@@ -209,7 +235,8 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
             errors.Add("currency_code_required");
         }
 
-        if (payableBasis.PayableAmountMinorUnits <= 0)
+        if ((!zeroPayable && payableBasis.PayableAmountMinorUnits <= 0) ||
+            (zeroPayable && payableBasis.PayableAmountMinorUnits != 0))
         {
             errors.Add("payable_amount_minor_units_required");
         }
@@ -222,6 +249,7 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
         var values = new List<string?>
         {
             context.PaymentFinalityRef,
+            context.CompletionAuthorityRef,
             context.VendorAckRef,
             context.CentralPmsParkingSessionRef,
             context.CentralPmsPaymentAttemptRef,
@@ -318,6 +346,23 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
         if (!string.Equals(facts.ParkingSessionId.ToString("D"), context.CentralPmsParkingSessionRef, StringComparison.OrdinalIgnoreCase))
         {
             errors.Add("applied_statutory_fiscal_facts_must_match_parking_session");
+        }
+
+        if (string.Equals(
+                context.CompletionBasis,
+                FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality,
+                StringComparison.OrdinalIgnoreCase) &&
+            (!string.Equals(facts.BenefitClassification, "FREE_PARKING", StringComparison.Ordinal) ||
+             facts.OriginalAmountMinorUnits <= 0 ||
+             facts.FinalPayableAmountMinorUnits != 0 ||
+             facts.StatutoryDiscountAmountMinorUnits != facts.VatExclusiveBasisAmountMinorUnits ||
+             facts.VatExclusiveBasisAmountMinorUnits + facts.VatAmountMinorUnits != facts.OriginalAmountMinorUnits ||
+             !string.Equals(
+                 facts.AppliedTariffSnapshotId.ToString("D"),
+                 context.PayableBasis.PayableBasisRef,
+                 StringComparison.OrdinalIgnoreCase)))
+        {
+            errors.Add("zero_payable_statutory_fiscal_facts_do_not_reconcile");
         }
     }
 

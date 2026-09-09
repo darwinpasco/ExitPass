@@ -56,7 +56,10 @@ public static class PosServerFiscalDocumentResponseParser
                     FiscalNumberSuffixText: envelope.FiscalNumberSuffixText,
                     FiscalNumberAssignedAt: envelope.FiscalNumberAssignedAt,
                     FiscalNumberAssignedByRef: envelope.FiscalNumberAssignedByRef,
-                    ErrorPosture: FiscalIssuanceErrorPosture.RetryAfterServiceRecovery);
+                    ErrorPosture: FiscalIssuanceErrorPosture.RetryAfterServiceRecovery,
+                    CompletionBasis: envelope.CompletionBasis,
+                    CompletionAuthorityRef: envelope.CompletionAuthorityRef,
+                    ElectronicJournalEventReference: envelope.ElectronicJournalEventReference);
             }
 
             return new PosServerFiscalDocumentCreateResult(
@@ -79,7 +82,10 @@ public static class PosServerFiscalDocumentResponseParser
                 FiscalNumberSuffixText: envelope.FiscalNumberSuffixText,
                 FiscalNumberAssignedAt: envelope.FiscalNumberAssignedAt,
                 FiscalNumberAssignedByRef: envelope.FiscalNumberAssignedByRef,
-                ErrorPosture: null);
+                ErrorPosture: null,
+                CompletionBasis: envelope.CompletionBasis,
+                CompletionAuthorityRef: envelope.CompletionAuthorityRef,
+                ElectronicJournalEventReference: envelope.ElectronicJournalEventReference);
         }
 
         return new PosServerFiscalDocumentCreateResult(
@@ -102,7 +108,10 @@ public static class PosServerFiscalDocumentResponseParser
             FiscalNumberSuffixText: envelope.FiscalNumberSuffixText,
             FiscalNumberAssignedAt: envelope.FiscalNumberAssignedAt,
             FiscalNumberAssignedByRef: envelope.FiscalNumberAssignedByRef,
-            ErrorPosture: errorPosture);
+            ErrorPosture: errorPosture,
+            CompletionBasis: envelope.CompletionBasis,
+            CompletionAuthorityRef: envelope.CompletionAuthorityRef,
+            ElectronicJournalEventReference: envelope.ElectronicJournalEventReference);
     }
 
     public static PosServerFiscalDocumentReadResult ParseReadResponse(
@@ -171,7 +180,10 @@ public static class PosServerFiscalDocumentResponseParser
             FiscalNumberAssignedByRef: envelope.FiscalNumberAssignedByRef ?? envelope.Document?.FiscalNumberAssignedByRef,
             VoidStatus: envelope.VoidStatus ?? envelope.Document?.VoidStatus,
             VoidReasonCode: envelope.VoidReasonCode ?? envelope.Document?.VoidReasonCode,
-            VoidedAt: envelope.VoidedAt ?? envelope.Document?.VoidedAt);
+            VoidedAt: envelope.VoidedAt ?? envelope.Document?.VoidedAt,
+            CompletionBasis: envelope.CompletionBasis ?? envelope.Document?.CompletionBasis,
+            CompletionAuthorityRef: envelope.CompletionAuthorityRef ?? envelope.Document?.CompletionAuthorityRef,
+            ElectronicJournalEventReference: envelope.ElectronicJournalEventReference ?? envelope.Document?.ElectronicJournalEventReference);
     }
 
     public static PosServerFiscalDocumentPresentationReadResult ParsePresentationResponse(
@@ -510,6 +522,9 @@ public static class PosServerFiscalDocumentResponseParser
         string? FiscalNumberSuffixText,
         DateTimeOffset? FiscalNumberAssignedAt,
         string? FiscalNumberAssignedByRef,
+        string? CompletionBasis,
+        string? CompletionAuthorityRef,
+        string? ElectronicJournalEventReference,
         string? ErrorPosture);
 
     private sealed record PosServerReadResponseEnvelope(
@@ -538,7 +553,10 @@ public static class PosServerFiscalDocumentResponseParser
         string? FiscalNumberAssignedByRef,
         string? VoidStatus,
         string? VoidReasonCode,
-        DateTimeOffset? VoidedAt);
+        DateTimeOffset? VoidedAt,
+        string? CompletionBasis,
+        string? CompletionAuthorityRef,
+        string? ElectronicJournalEventReference);
 
     private sealed record PosServerReadDocumentEnvelope(
         Guid? FiscalDocumentId,
@@ -561,7 +579,10 @@ public static class PosServerFiscalDocumentResponseParser
         string? FiscalNumberAssignedByRef,
         string? VoidStatus,
         string? VoidReasonCode,
-        DateTimeOffset? VoidedAt);
+        DateTimeOffset? VoidedAt,
+        string? CompletionBasis,
+        string? CompletionAuthorityRef,
+        string? ElectronicJournalEventReference);
 
     private sealed record PosServerVoidResponseEnvelope(
         bool Succeeded,

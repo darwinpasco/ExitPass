@@ -32,6 +32,12 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             INSERT INTO core.fiscal_issuance_references (
                 payment_confirmation_id,
                 payment_attempt_id,
+                completion_basis,
+                completion_authority_reference_id,
+                statutory_discount_decision_command_id,
+                statutory_discount_payable_basis_application_command_id,
+                statutory_discount_validation_id,
+                applied_policy_reference_id,
                 parking_session_id,
                 tariff_snapshot_id,
                 site_id,
@@ -51,6 +57,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 fiscal_number_suffix_text,
                 fiscal_number_assigned_at,
                 fiscal_number_assigned_by_ref,
+                electronic_journal_event_reference,
                 fiscal_document_status_code_id,
                 result_classification,
                 fiscal_issuance_evidence_status,
@@ -66,6 +73,12 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             VALUES (
                 @payment_confirmation_id,
                 @payment_attempt_id,
+                @completion_basis,
+                @completion_authority_reference_id,
+                @statutory_discount_decision_command_id,
+                @statutory_discount_payable_basis_application_command_id,
+                @statutory_discount_validation_id,
+                @applied_policy_reference_id,
                 @parking_session_id,
                 @tariff_snapshot_id,
                 @site_id,
@@ -85,6 +98,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 @fiscal_number_suffix_text,
                 @fiscal_number_assigned_at,
                 @fiscal_number_assigned_by_ref,
+                @electronic_journal_event_reference,
                 @fiscal_document_status_code_id,
                 @result_classification,
                 @fiscal_issuance_evidence_status,
@@ -120,6 +134,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 fiscal_number_suffix_text,
                 fiscal_number_assigned_at,
                 fiscal_number_assigned_by_ref,
+                electronic_journal_event_reference,
                 fiscal_document_status_code_id,
                 result_classification,
                 fiscal_issuance_evidence_status,
@@ -139,7 +154,13 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 semantic_request_hash_source_version,
                 semantic_request_hash_source_fact_count,
                 semantic_request_hash_safe_summary,
-                semantic_request_hash_recorded_at;
+                semantic_request_hash_recorded_at,
+                completion_basis,
+                completion_authority_reference_id,
+                statutory_discount_decision_command_id,
+                statutory_discount_payable_basis_application_command_id,
+                statutory_discount_validation_id,
+                applied_policy_reference_id;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -192,6 +213,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 fiscal_number_suffix_text = @fiscal_number_suffix_text,
                 fiscal_number_assigned_at = @fiscal_number_assigned_at,
                 fiscal_number_assigned_by_ref = @fiscal_number_assigned_by_ref,
+                electronic_journal_event_reference = COALESCE(@electronic_journal_event_reference, electronic_journal_event_reference),
                 fiscal_document_status_code_id = @fiscal_document_status_code_id,
                 result_classification = @result_classification,
                 fiscal_issuance_evidence_status = @fiscal_issuance_evidence_status,
@@ -229,6 +251,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 fiscal_number_suffix_text,
                 fiscal_number_assigned_at,
                 fiscal_number_assigned_by_ref,
+                electronic_journal_event_reference,
                 fiscal_document_status_code_id,
                 result_classification,
                 fiscal_issuance_evidence_status,
@@ -248,7 +271,13 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 semantic_request_hash_source_version,
                 semantic_request_hash_source_fact_count,
                 semantic_request_hash_safe_summary,
-                semantic_request_hash_recorded_at;
+                semantic_request_hash_recorded_at,
+                completion_basis,
+                completion_authority_reference_id,
+                statutory_discount_decision_command_id,
+                statutory_discount_payable_basis_application_command_id,
+                statutory_discount_validation_id,
+                applied_policy_reference_id;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -338,6 +367,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 fiscal_number_suffix_text,
                 fiscal_number_assigned_at,
                 fiscal_number_assigned_by_ref,
+                electronic_journal_event_reference,
                 fiscal_document_status_code_id,
                 result_classification,
                 fiscal_issuance_evidence_status,
@@ -357,7 +387,13 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 semantic_request_hash_source_version,
                 semantic_request_hash_source_fact_count,
                 semantic_request_hash_safe_summary,
-                semantic_request_hash_recorded_at;
+                semantic_request_hash_recorded_at,
+                completion_basis,
+                completion_authority_reference_id,
+                statutory_discount_decision_command_id,
+                statutory_discount_payable_basis_application_command_id,
+                statutory_discount_validation_id,
+                applied_policy_reference_id;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -427,6 +463,16 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
         QuerySingleAsync(
             "WHERE payment_attempt_id = @payment_attempt_id AND is_active = true",
             command => command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId),
+            cancellationToken);
+
+    public Task<FiscalIssuanceReferenceRecord?> FindByStatutoryApplicationCommandIdAsync(
+        Guid statutoryDiscountPayableBasisApplicationCommandId,
+        CancellationToken cancellationToken) =>
+        QuerySingleAsync(
+            "WHERE statutory_discount_payable_basis_application_command_id = @application_command_id AND is_active = true AND is_superseded = false",
+            command => command.Parameters.AddWithValue(
+                "application_command_id",
+                statutoryDiscountPayableBasisApplicationCommandId),
             cancellationToken);
 
     public Task<FiscalIssuanceReferenceRecord?> FindByUpstreamFinalityReferenceAsync(
@@ -546,6 +592,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 fiscal_number_suffix_text,
                 fiscal_number_assigned_at,
                 fiscal_number_assigned_by_ref,
+                electronic_journal_event_reference,
                 fiscal_document_status_code_id,
                 result_classification,
                 fiscal_issuance_evidence_status,
@@ -565,7 +612,13 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 semantic_request_hash_source_version,
                 semantic_request_hash_source_fact_count,
                 semantic_request_hash_safe_summary,
-                semantic_request_hash_recorded_at
+                semantic_request_hash_recorded_at,
+                completion_basis,
+                completion_authority_reference_id,
+                statutory_discount_decision_command_id,
+                statutory_discount_payable_basis_application_command_id,
+                statutory_discount_validation_id,
+                applied_policy_reference_id
             FROM core.fiscal_issuance_references
             {whereClause}
             ORDER BY first_recorded_at DESC
@@ -617,6 +670,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 fiscal_number_suffix_text,
                 fiscal_number_assigned_at,
                 fiscal_number_assigned_by_ref,
+                electronic_journal_event_reference,
                 fiscal_document_status_code_id,
                 result_classification,
                 fiscal_issuance_evidence_status,
@@ -636,7 +690,13 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 semantic_request_hash_source_version,
                 semantic_request_hash_source_fact_count,
                 semantic_request_hash_safe_summary,
-                semantic_request_hash_recorded_at
+                semantic_request_hash_recorded_at,
+                completion_basis,
+                completion_authority_reference_id,
+                statutory_discount_decision_command_id,
+                statutory_discount_payable_basis_application_command_id,
+                statutory_discount_validation_id,
+                applied_policy_reference_id
             FROM core.fiscal_issuance_references
             {whereClause};
             """;
@@ -663,8 +723,17 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
 
     private static void AddCreateParameters(NpgsqlCommand command, CreateFiscalIssuanceReferenceRequest request)
     {
-        command.Parameters.AddWithValue("payment_confirmation_id", request.PaymentConfirmationId);
-        command.Parameters.AddWithValue("payment_attempt_id", request.PaymentAttemptId);
+        AddNullable(command, "payment_confirmation_id", request.PaymentConfirmationId);
+        AddNullable(command, "payment_attempt_id", request.PaymentAttemptId);
+        command.Parameters.AddWithValue("completion_basis", request.CompletionBasis.Trim().ToUpperInvariant());
+        AddNullable(
+            command,
+            "completion_authority_reference_id",
+            request.CompletionAuthorityReferenceId ?? request.PaymentConfirmationId);
+        AddNullable(command, "statutory_discount_decision_command_id", request.StatutoryDiscountDecisionCommandId);
+        AddNullable(command, "statutory_discount_payable_basis_application_command_id", request.StatutoryDiscountPayableBasisApplicationCommandId);
+        AddNullable(command, "statutory_discount_validation_id", request.StatutoryDiscountValidationId);
+        AddNullable(command, "applied_policy_reference_id", request.AppliedPolicyReferenceId);
         command.Parameters.AddWithValue("parking_session_id", request.ParkingSessionId);
         AddNullable(command, "tariff_snapshot_id", request.TariffSnapshotId);
         AddNullable(command, "site_id", request.SiteId);
@@ -684,6 +753,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
         AddNullable(command, "fiscal_number_suffix_text", request.FiscalNumberSuffixText);
         AddNullable(command, "fiscal_number_assigned_at", request.FiscalNumberAssignedAt);
         AddNullable(command, "fiscal_number_assigned_by_ref", request.FiscalNumberAssignedByRef);
+        AddNullable(command, "electronic_journal_event_reference", null as string);
         AddNullable(command, "fiscal_document_status_code_id", request.FiscalDocumentStatusCodeId);
         AddNullable(command, "result_classification", ToDatabaseValue(request.ResultClassification));
         AddNullable(command, "fiscal_issuance_evidence_status", ToDatabaseValue(request.FiscalIssuanceEvidenceStatus));
@@ -709,6 +779,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
         AddNullable(command, "fiscal_number_suffix_text", request.FiscalNumberSuffixText);
         AddNullable(command, "fiscal_number_assigned_at", request.FiscalNumberAssignedAt);
         AddNullable(command, "fiscal_number_assigned_by_ref", request.FiscalNumberAssignedByRef);
+        AddNullable(command, "electronic_journal_event_reference", request.ElectronicJournalEventReference);
         AddNullable(command, "fiscal_document_status_code_id", request.FiscalDocumentStatusCodeId);
         AddNullable(command, "result_classification", ToDatabaseValue(request.ResultClassification));
         AddNullable(command, "fiscal_issuance_evidence_status", ToDatabaseValue(request.FiscalIssuanceEvidenceStatus));
@@ -725,8 +796,8 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
     private static FiscalIssuanceReferenceRecord MapReference(NpgsqlDataReader reader) =>
         new(
             reader.GetGuid(reader.GetOrdinal("fiscal_issuance_reference_id")),
-            reader.GetGuid(reader.GetOrdinal("payment_confirmation_id")),
-            reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
+            GetNullableGuid(reader, "payment_confirmation_id"),
+            GetNullableGuid(reader, "payment_attempt_id"),
             reader.GetGuid(reader.GetOrdinal("parking_session_id")),
             GetNullableGuid(reader, "tariff_snapshot_id"),
             GetNullableGuid(reader, "site_id"),
@@ -765,7 +836,14 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             SemanticRequestHashSourceVersion: GetNullableString(reader, "semantic_request_hash_source_version"),
             SemanticRequestHashSourceFactCount: GetNullableInt32(reader, "semantic_request_hash_source_fact_count"),
             SemanticRequestHashSafeSummary: GetNullableString(reader, "semantic_request_hash_safe_summary"),
-            SemanticRequestHashRecordedAt: GetNullableDateTimeOffset(reader, "semantic_request_hash_recorded_at"));
+            SemanticRequestHashRecordedAt: GetNullableDateTimeOffset(reader, "semantic_request_hash_recorded_at"),
+            CompletionBasis: GetNullableString(reader, "completion_basis") ?? FiscalCompletionBasisCodes.PaymentFinality,
+            CompletionAuthorityReferenceId: GetNullableGuid(reader, "completion_authority_reference_id"),
+            StatutoryDiscountDecisionCommandId: GetNullableGuid(reader, "statutory_discount_decision_command_id"),
+            StatutoryDiscountPayableBasisApplicationCommandId: GetNullableGuid(reader, "statutory_discount_payable_basis_application_command_id"),
+            StatutoryDiscountValidationId: GetNullableGuid(reader, "statutory_discount_validation_id"),
+            AppliedPolicyReferenceId: GetNullableGuid(reader, "applied_policy_reference_id"),
+            ElectronicJournalEventReference: GetNullableString(reader, "electronic_journal_event_reference"));
 
     private static void AddNullable<T>(NpgsqlCommand command, string name, T? value)
     {

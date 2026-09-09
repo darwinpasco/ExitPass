@@ -4,8 +4,8 @@ namespace ExitPass.CentralPms.Application.FiscalIssuance;
 
 public sealed record FiscalIssuanceReferenceRecord(
     Guid FiscalIssuanceReferenceId,
-    Guid PaymentConfirmationId,
-    Guid PaymentAttemptId,
+    Guid? PaymentConfirmationId,
+    Guid? PaymentAttemptId,
     Guid ParkingSessionId,
     Guid? TariffSnapshotId,
     Guid? SiteId,
@@ -44,11 +44,18 @@ public sealed record FiscalIssuanceReferenceRecord(
     string? SemanticRequestHashSourceVersion = null,
     int? SemanticRequestHashSourceFactCount = null,
     string? SemanticRequestHashSafeSummary = null,
-    DateTimeOffset? SemanticRequestHashRecordedAt = null);
+    DateTimeOffset? SemanticRequestHashRecordedAt = null,
+    string CompletionBasis = FiscalCompletionBasisCodes.PaymentFinality,
+    Guid? CompletionAuthorityReferenceId = null,
+    Guid? StatutoryDiscountDecisionCommandId = null,
+    Guid? StatutoryDiscountPayableBasisApplicationCommandId = null,
+    Guid? StatutoryDiscountValidationId = null,
+    Guid? AppliedPolicyReferenceId = null,
+    string? ElectronicJournalEventReference = null);
 
 public sealed record CreateFiscalIssuanceReferenceRequest(
-    Guid PaymentConfirmationId,
-    Guid PaymentAttemptId,
+    Guid? PaymentConfirmationId,
+    Guid? PaymentAttemptId,
     Guid ParkingSessionId,
     Guid? TariffSnapshotId,
     Guid? SiteId,
@@ -78,20 +85,53 @@ public sealed record CreateFiscalIssuanceReferenceRequest(
     FiscalIssuanceErrorPosture? LatestErrorPosture,
     Guid? CorrelationId,
     DateTimeOffset? PosServerResponseTimestamp,
-    Guid? RecordedByServiceIdentityId)
+    Guid? RecordedByServiceIdentityId,
+    string CompletionBasis = FiscalCompletionBasisCodes.PaymentFinality,
+    Guid? CompletionAuthorityReferenceId = null,
+    Guid? StatutoryDiscountDecisionCommandId = null,
+    Guid? StatutoryDiscountPayableBasisApplicationCommandId = null,
+    Guid? StatutoryDiscountValidationId = null,
+    Guid? AppliedPolicyReferenceId = null)
 {
     public IReadOnlyList<string> Validate()
     {
         var errors = new List<string>();
 
-        if (PaymentConfirmationId == Guid.Empty)
+        var completionBasis = CompletionBasis?.Trim().ToUpperInvariant();
+        if (completionBasis == FiscalCompletionBasisCodes.PaymentFinality)
         {
-            errors.Add("payment_confirmation_id_required");
-        }
+            if (PaymentConfirmationId is null || PaymentConfirmationId == Guid.Empty)
+            {
+                errors.Add("payment_confirmation_id_required");
+            }
 
-        if (PaymentAttemptId == Guid.Empty)
+            if (PaymentAttemptId is null || PaymentAttemptId == Guid.Empty)
+            {
+                errors.Add("payment_attempt_id_required");
+            }
+
+            if (CompletionAuthorityReferenceId is not null &&
+                CompletionAuthorityReferenceId != PaymentConfirmationId)
+            {
+                errors.Add("payment_completion_authority_mismatch");
+            }
+        }
+        else if (completionBasis == FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality)
         {
-            errors.Add("payment_attempt_id_required");
+            if (PaymentConfirmationId is not null || PaymentAttemptId is not null ||
+                CompletionAuthorityReferenceId is null || CompletionAuthorityReferenceId == Guid.Empty ||
+                StatutoryDiscountDecisionCommandId is null || StatutoryDiscountDecisionCommandId == Guid.Empty ||
+                StatutoryDiscountPayableBasisApplicationCommandId is null || StatutoryDiscountPayableBasisApplicationCommandId == Guid.Empty ||
+                StatutoryDiscountValidationId is null || StatutoryDiscountValidationId == Guid.Empty ||
+                AppliedPolicyReferenceId is null || AppliedPolicyReferenceId == Guid.Empty ||
+                CompletionAuthorityReferenceId != StatutoryDiscountPayableBasisApplicationCommandId)
+            {
+                errors.Add("zero_payable_completion_ancestry_invalid");
+            }
+        }
+        else
+        {
+            errors.Add("completion_basis_unsupported");
         }
 
         if (ParkingSessionId == Guid.Empty)
@@ -212,7 +252,8 @@ public sealed record FiscalIssuanceStateTransitionRequest(
     FiscalIssuanceErrorPosture? LatestErrorPosture,
     Guid? CorrelationId,
     DateTimeOffset? PosServerResponseTimestamp,
-    Guid? UpdatedByServiceIdentityId)
+    Guid? UpdatedByServiceIdentityId,
+    string? ElectronicJournalEventReference = null)
 {
     public IReadOnlyList<string> Validate()
     {
@@ -298,6 +339,11 @@ public interface IFiscalIssuanceReferenceRepository
     Task<FiscalIssuanceReferenceRecord?> FindLatestByPaymentAttemptIdAsync(
         Guid paymentAttemptId,
         CancellationToken cancellationToken);
+
+    Task<FiscalIssuanceReferenceRecord?> FindByStatutoryApplicationCommandIdAsync(
+        Guid statutoryDiscountPayableBasisApplicationCommandId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<FiscalIssuanceReferenceRecord?>(null);
 
     Task<FiscalIssuanceReferenceRecord?> FindByUpstreamFinalityReferenceAsync(
         string upstreamFinalityReference,

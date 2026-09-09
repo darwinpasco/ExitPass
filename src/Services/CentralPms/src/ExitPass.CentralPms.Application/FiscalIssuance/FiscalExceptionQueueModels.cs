@@ -290,8 +290,8 @@ public sealed record FiscalExceptionQueueQuery(
 public sealed record FiscalExceptionQueueCaseSummary(
     Guid CaseId,
     Guid FiscalIssuanceReferenceId,
-    Guid PaymentConfirmationId,
-    Guid PaymentAttemptId,
+    Guid? PaymentConfirmationId,
+    Guid? PaymentAttemptId,
     Guid ParkingSessionId,
     Guid? SiteId,
     Guid? SitePosServerId,

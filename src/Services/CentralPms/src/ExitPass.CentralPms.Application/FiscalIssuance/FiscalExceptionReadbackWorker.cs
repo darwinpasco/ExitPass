@@ -375,11 +375,16 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
         Guid? serviceIdentityId,
         CancellationToken cancellationToken)
     {
+        if (!detail.Summary.PaymentConfirmationId.HasValue)
+        {
+            throw new InvalidOperationException("payment_finality_readback_attempt_not_applicable_to_non_payment_completion");
+        }
+
         var identifierValue = detail.PosServerFiscalDocumentId?.ToString("D");
         return await _readbackAttemptRepository.RecordAsync(
             new FiscalExceptionReadbackAttemptWrite(
                 FiscalIssuanceReferenceId: detail.Summary.FiscalIssuanceReferenceId,
-                PaymentConfirmationId: detail.Summary.PaymentConfirmationId,
+                PaymentConfirmationId: detail.Summary.PaymentConfirmationId.Value,
                 AttemptedAt: attemptedAt,
                 Classification: classification,
                 IdentifierType: detail.PosServerFiscalDocumentId is null

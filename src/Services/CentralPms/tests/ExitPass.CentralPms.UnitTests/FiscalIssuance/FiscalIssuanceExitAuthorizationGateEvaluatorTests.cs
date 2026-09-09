@@ -588,7 +588,7 @@ public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
         var reference = CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
         repository
-            .FindLatestByPaymentAttemptIdAsync(reference.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .FindLatestByPaymentAttemptIdAsync(reference.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(reference);
         var sut = new ExitAuthorizationFiscalGatingShadowEvaluator(repository);
 
@@ -599,7 +599,7 @@ public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
         result.Status.Should().Be(FiscalGatingShadowEvaluationStatuses.EvaluatedReady);
         result.IsReadyForNormalExitAuthorization.Should().BeTrue();
         await repository.Received(1).FindLatestByPaymentAttemptIdAsync(
-            reference.PaymentAttemptId,
+            reference.PaymentAttemptId!.Value,
             Arg.Any<CancellationToken>());
     }
 
@@ -609,7 +609,7 @@ public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
         var reference = MinimalReference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
         repository
-            .FindLatestByPaymentAttemptIdAsync(reference.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .FindLatestByPaymentAttemptIdAsync(reference.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(reference);
         var sut = new ExitAuthorizationFiscalGatingShadowEvaluator(repository);
 

@@ -121,6 +121,20 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
                 code: "pos_server_unavailable");
         }
 
+        if (posServerResult.Outcome == PosServerFiscalDocumentOutcome.Accepted &&
+            posServerResult.Succeeded &&
+            !HasMatchingCompletionEvidence(request, posServerResult))
+        {
+            posServerResult = posServerResult with
+            {
+                Outcome = PosServerFiscalDocumentOutcome.InvalidResponse,
+                Succeeded = false,
+                Code = "pos_server_completion_evidence_mismatch",
+                Message = "POS Server response did not preserve the requested completion authority.",
+                ErrorPosture = FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange
+            };
+        }
+
         var appliedReference = posServerResult.Outcome == PosServerFiscalDocumentOutcome.Accepted &&
             posServerResult.Succeeded
             ? await _orchestrationService.ApplyPosServerCreateResultAsync(
@@ -138,6 +152,24 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
             request,
             posServerResult,
             appliedReference);
+    }
+
+    private static bool HasMatchingCompletionEvidence(
+        PosServerFiscalDocumentCreateRequest request,
+        PosServerFiscalDocumentCreateResult result)
+    {
+        if (request.CompletionBasis != FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality)
+        {
+            return true;
+        }
+
+        if (!string.Equals(request.CompletionBasis, result.CompletionBasis, StringComparison.Ordinal) ||
+            !string.Equals(request.CompletionAuthorityRef, result.CompletionAuthorityRef, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return !string.IsNullOrWhiteSpace(result.ElectronicJournalEventReference);
     }
 
     private static PosServerFiscalDocumentCreateResult CreateRetryableTransportFailure(

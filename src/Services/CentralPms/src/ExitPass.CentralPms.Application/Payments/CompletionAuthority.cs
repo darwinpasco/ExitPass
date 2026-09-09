@@ -17,12 +17,15 @@ public static class ExitAuthorizationEligibilityStatuses
 {
     public const string PaymentCompletionAuthorityReady = "PAYMENT_COMPLETION_AUTHORITY_READY";
     public const string ZeroPayableCompletionAuthorityReady = "ZERO_PAYABLE_COMPLETION_AUTHORITY_READY";
+    public const string ZeroPayableFiscalPrerequisiteSatisfied = "ZERO_PAYABLE_FISCAL_PREREQUISITE_SATISFIED";
 }
 
 public static class ExitAuthorizationEligibilityBlockedReasons
 {
     public const string ZeroPayableFiscalPrerequisiteUnresolved =
         "ZERO_PAYABLE_FISCAL_PREREQUISITE_UNRESOLVED";
+    public const string ZeroPayableExitAuthorizationIssuancePathUnavailable =
+        "ZERO_PAYABLE_EXIT_AUTHORIZATION_ISSUANCE_PATH_UNAVAILABLE";
 }
 
 public sealed record CompletionAuthority(
@@ -215,7 +218,8 @@ public static class CompletionAuthorityResolver
     }
 
     public static ExitAuthorizationEligibility EvaluateZeroPayableExitAuthorizationEligibility(
-        CompletionAuthority authority)
+        CompletionAuthority authority,
+        bool fiscalPrerequisiteSatisfied = false)
     {
         ArgumentNullException.ThrowIfNull(authority);
 
@@ -229,8 +233,12 @@ public static class CompletionAuthorityResolver
         return new ExitAuthorizationEligibility(
             CompletionAuthorityEligible: true,
             ExitAuthorizationIssuanceAllowed: false,
-            Status: ExitAuthorizationEligibilityStatuses.ZeroPayableCompletionAuthorityReady,
-            BlockedReason: ExitAuthorizationEligibilityBlockedReasons.ZeroPayableFiscalPrerequisiteUnresolved,
+            Status: fiscalPrerequisiteSatisfied
+                ? ExitAuthorizationEligibilityStatuses.ZeroPayableFiscalPrerequisiteSatisfied
+                : ExitAuthorizationEligibilityStatuses.ZeroPayableCompletionAuthorityReady,
+            BlockedReason: fiscalPrerequisiteSatisfied
+                ? ExitAuthorizationEligibilityBlockedReasons.ZeroPayableExitAuthorizationIssuancePathUnavailable
+                : ExitAuthorizationEligibilityBlockedReasons.ZeroPayableFiscalPrerequisiteUnresolved,
             CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality);
     }
 

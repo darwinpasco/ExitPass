@@ -286,7 +286,8 @@ public sealed record StatutoryDiscountDecisionResult(
     string? PayableBasisReadinessAction = null,
     StatutoryDiscountZeroPayableFinality? ZeroPayableStatutoryFinality = null,
     CompletionAuthority? CompletionAuthority = null,
-    ExitAuthorizationEligibility? ExitAuthorizationEligibility = null);
+    ExitAuthorizationEligibility? ExitAuthorizationEligibility = null,
+    ZeroPayableStatutoryFiscalIssuanceResult? ZeroPayableFiscalCompletion = null);
 
 /// <summary>
 /// Controlled rejection from the shared statutory-discount facade.

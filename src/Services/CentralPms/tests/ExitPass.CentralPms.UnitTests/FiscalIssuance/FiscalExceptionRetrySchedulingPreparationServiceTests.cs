@@ -303,8 +303,8 @@ public sealed class FiscalExceptionRetrySchedulingPreparationServiceTests
             SafeSummary: "retry_command_prepared_non_executable",
             Command: new FiscalExceptionRetryCommandEnvelope(
                 FiscalIssuanceReferenceId: detail.Summary.FiscalIssuanceReferenceId,
-                PaymentConfirmationId: detail.Summary.PaymentConfirmationId,
-                PaymentAttemptId: detail.Summary.PaymentAttemptId,
+            PaymentConfirmationId: detail.Summary.PaymentConfirmationId!.Value,
+            PaymentAttemptId: detail.Summary.PaymentAttemptId!.Value,
                 ParkingSessionId: detail.Summary.ParkingSessionId,
                 SiteId: detail.Summary.SiteId,
                 SitePosServerId: detail.Summary.SitePosServerId,

@@ -163,6 +163,15 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
                 idempotencyStatus);
         }
 
+        if (!summary.PaymentConfirmationId.HasValue || !summary.PaymentAttemptId.HasValue)
+        {
+            return Blocked(
+                "payment_finality_retry_path_not_applicable",
+                "retry_command_blocked_non_payment_completion_basis",
+                detail,
+                idempotencyStatus);
+        }
+
         return Result(
             FiscalExceptionRetryCommandPreparationStatus.PreparedNonExecutable,
             blockReasonCode: null,
@@ -171,8 +180,8 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
             idempotencyStatus,
             command: new FiscalExceptionRetryCommandEnvelope(
                 FiscalIssuanceReferenceId: summary.FiscalIssuanceReferenceId,
-                PaymentConfirmationId: summary.PaymentConfirmationId,
-                PaymentAttemptId: summary.PaymentAttemptId,
+                PaymentConfirmationId: summary.PaymentConfirmationId.Value,
+                PaymentAttemptId: summary.PaymentAttemptId.Value,
                 ParkingSessionId: summary.ParkingSessionId,
                 SiteId: summary.SiteId,
                 SitePosServerId: summary.SitePosServerId,

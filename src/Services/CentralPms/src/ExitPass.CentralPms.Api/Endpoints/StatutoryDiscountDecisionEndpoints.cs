@@ -424,7 +424,20 @@ public static class StatutoryDiscountDecisionEndpoints
                     result.ExitAuthorizationEligibility.ExitAuthorizationIssuanceAllowed,
                     result.ExitAuthorizationEligibility.Status,
                     result.ExitAuthorizationEligibility.BlockedReason,
-                    result.ExitAuthorizationEligibility.CompletionBasis));
+                    result.ExitAuthorizationEligibility.CompletionBasis),
+            result.ZeroPayableFiscalCompletion is null
+                ? null
+                : new ZeroPayableStatutoryFiscalCompletionResponse(
+                    result.ZeroPayableFiscalCompletion.FiscalIssuanceReferenceId,
+                    result.ZeroPayableFiscalCompletion.FiscalPrerequisiteSatisfied,
+                    result.ZeroPayableFiscalCompletion.PosServerCallAttempted,
+                    result.ZeroPayableFiscalCompletion.FiscalIssuanceState.ToString(),
+                    result.ZeroPayableFiscalCompletion.PosServerFiscalDocumentId,
+                    result.ZeroPayableFiscalCompletion.FiscalDocumentNumber,
+                    result.ZeroPayableFiscalCompletion.ElectronicJournalEventReference,
+                    result.ZeroPayableFiscalCompletion.CompletionBasis,
+                    result.ZeroPayableFiscalCompletion.CompletionAuthorityReferenceId,
+                    result.ZeroPayableFiscalCompletion.SafeErrorCode));
 
     private static StatutoryDiscountParkingAvailabilityResponse ToAvailabilityResponse(
         StatutoryDiscountParkingAvailabilityResult result) =>

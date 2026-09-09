@@ -3,6 +3,12 @@ using ExitPass.CentralPms.Domain.FiscalIssuance;
 
 namespace ExitPass.CentralPms.Application.FiscalIssuance;
 
+public static class FiscalCompletionBasisCodes
+{
+    public const string PaymentFinality = "PAYMENT_FINALITY";
+    public const string ZeroPayableStatutoryFinality = "ZERO_PAYABLE_STATUTORY_FINALITY";
+}
+
 public interface IPosServerFiscalDocumentClient
 {
     Task<PosServerFiscalDocumentCreateResult> CreateFiscalDocumentAsync(
@@ -55,8 +61,8 @@ public sealed record CentralPmsFiscalDocumentMappingContext(
     Guid? FiscalDocumentStatusCodeId,
     DateOnly? BusinessDayDate,
     string CentralPmsParkingSessionRef,
-    string CentralPmsPaymentAttemptRef,
-    string CentralPmsPaymentConfirmationRef,
+    string? CentralPmsPaymentAttemptRef,
+    string? CentralPmsPaymentConfirmationRef,
     CentralPmsPayableBasisContext PayableBasis,
     IReadOnlyList<CentralPmsFiscalDocumentLineContext> DocumentLines,
     IReadOnlyList<CentralPmsFiscalTenderContext> Tenders,
@@ -67,7 +73,9 @@ public sealed record CentralPmsFiscalDocumentMappingContext(
     string? PaymentFinalityRef,
     string? VendorAckRef,
     CentralPmsAppliedStatutoryFiscalFactsContext? AppliedStatutoryFiscalFacts = null,
-    Guid? SiteId = null);
+    Guid? SiteId = null,
+    string CompletionBasis = FiscalCompletionBasisCodes.PaymentFinality,
+    string? CompletionAuthorityRef = null);
 
 public sealed record CentralPmsAppliedStatutoryFiscalFactsContext(
     Guid StatutoryDiscountDecisionCommandId,
@@ -203,8 +211,8 @@ public sealed record PosServerFiscalDocumentCreateRequest(
     Guid? FiscalDocumentStatusCodeId,
     DateOnly? BusinessDayDate,
     string CentralPmsParkingSessionRef,
-    string CentralPmsPaymentAttemptRef,
-    string CentralPmsPaymentConfirmationRef,
+    string? CentralPmsPaymentAttemptRef,
+    string? CentralPmsPaymentConfirmationRef,
     string UpstreamFinalityRef,
     string? PaymentFinalityRef,
     string? VendorAckRef,
@@ -216,7 +224,9 @@ public sealed record PosServerFiscalDocumentCreateRequest(
     IReadOnlyList<PosServerFiscalTotalRequest> Totals,
     IReadOnlyDictionary<string, string> ReferenceContext,
     PosServerAppliedStatutoryFiscalFactsRequest? AppliedStatutoryFiscalFacts = null,
-    Guid? SiteId = null);
+    Guid? SiteId = null,
+    string CompletionBasis = FiscalCompletionBasisCodes.PaymentFinality,
+    string? CompletionAuthorityRef = null);
 
 public sealed record PosServerAppliedStatutoryFiscalFactsRequest(
     Guid StatutoryDiscountDecisionCommandId,
@@ -372,7 +382,10 @@ public sealed record PosServerFiscalDocumentCreateResult(
     string? FiscalNumberSuffixText,
     DateTimeOffset? FiscalNumberAssignedAt,
     string? FiscalNumberAssignedByRef,
-    FiscalIssuanceErrorPosture? ErrorPosture);
+    FiscalIssuanceErrorPosture? ErrorPosture,
+    string? CompletionBasis = null,
+    string? CompletionAuthorityRef = null,
+    string? ElectronicJournalEventReference = null);
 
 public sealed record PosServerFiscalDocumentReadResult(
     PosServerFiscalDocumentOutcome Outcome,
@@ -402,7 +415,10 @@ public sealed record PosServerFiscalDocumentReadResult(
     string? FiscalNumberAssignedByRef = null,
     string? VoidStatus = null,
     string? VoidReasonCode = null,
-    DateTimeOffset? VoidedAt = null);
+    DateTimeOffset? VoidedAt = null,
+    string? CompletionBasis = null,
+    string? CompletionAuthorityRef = null,
+    string? ElectronicJournalEventReference = null);
 
 public sealed record PosServerFiscalDocumentPresentationReadResult(
     PosServerFiscalDocumentOutcome Outcome,
