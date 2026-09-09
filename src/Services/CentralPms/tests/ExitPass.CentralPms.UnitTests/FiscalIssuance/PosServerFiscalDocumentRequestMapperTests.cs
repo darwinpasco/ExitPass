@@ -414,6 +414,32 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
     }
 
     [Fact]
+    public void Map_WhenZeroPayableStatutoryCompletion_PreservesNonPaymentAncestryAndZeroFiscalFacts()
+    {
+        var result = _sut.Map(ZeroPayableContext());
+
+        result.CompletionBasis.Should().Be(FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality);
+        result.CompletionAuthorityRef.Should().Be(StatutoryApplicationCommandId.ToString("D"));
+        result.CentralPmsPaymentAttemptRef.Should().BeNull();
+        result.CentralPmsPaymentConfirmationRef.Should().BeNull();
+        result.PaymentFinalityRef.Should().BeNull();
+        result.Tenders.Should().BeEmpty();
+        result.PayableBasis.PayableAmountMinorUnits.Should().Be(0);
+        result.DocumentLines.Should().ContainSingle().Which.Should().Match<PosServerFiscalDocumentLineRequest>(line =>
+            line.UnitAmountMinorUnits == 2_679 &&
+            line.GrossAmountMinorUnits == 2_679 &&
+            line.DiscountAmountMinorUnits == 2_679 &&
+            line.TaxAmountMinorUnits == 0 &&
+            line.NetAmountMinorUnits == 0);
+        result.TaxDetails.Should().ContainSingle().Which.Should().Match<PosServerFiscalTaxDetailRequest>(tax =>
+            tax.TaxableAmountMinorUnits == 2_679 && tax.TaxAmountMinorUnits == 321);
+        result.Totals.Should().ContainSingle().Which.AmountMinorUnits.Should().Be(0);
+        result.AppliedStatutoryFiscalFacts.Should().NotBeNull();
+        result.AppliedStatutoryFiscalFacts!.BenefitClassification.Should().Be("FREE_PARKING");
+        result.AppliedStatutoryFiscalFacts.FinalPayableAmountMinorUnits.Should().Be(0);
+    }
+
+    [Fact]
     public void Map_WhenTendersAreMissing_RejectsRequest()
     {
         var context = ValidContext() with { Tenders = Array.Empty<CentralPmsFiscalTenderContext>() };
@@ -555,6 +581,61 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
                 }
             ],
             AppliedStatutoryFiscalFacts = StatutoryFacts(sourcePaymentChannel, terminalCashTenderId)
+        };
+
+    internal static CentralPmsFiscalDocumentMappingContext ZeroPayableContext() =>
+        StatutoryContext("WEBPAY") with
+        {
+            CentralPmsPaymentAttemptRef = null,
+            CentralPmsPaymentConfirmationRef = null,
+            PaymentFinalityRef = null,
+            CompletionBasis = FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality,
+            CompletionAuthorityRef = StatutoryApplicationCommandId.ToString("D"),
+            PayableBasis = StatutoryContext("WEBPAY").PayableBasis with
+            {
+                UpstreamFinalityRef = $"ZERO_PAYABLE_STATUTORY_FINALITY:{StatutoryApplicationCommandId:D}",
+                PayableAmountMinorUnits = 0
+            },
+            DocumentLines =
+            [
+                StatutoryContext("WEBPAY").DocumentLines[0] with
+                {
+                    UnitAmountMinorUnits = 2_679,
+                    GrossAmountMinorUnits = 2_679,
+                    DiscountAmountMinorUnits = 2_679,
+                    TaxAmountMinorUnits = 0,
+                    NetAmountMinorUnits = 0
+                }
+            ],
+            Tenders = [],
+            TaxDetails =
+            [
+                StatutoryContext("WEBPAY").TaxDetails[0] with
+                {
+                    TaxableAmountMinorUnits = 2_679,
+                    TaxAmountMinorUnits = 321
+                }
+            ],
+            DiscountPrivilegeDetails =
+            [
+                StatutoryContext("WEBPAY").DiscountPrivilegeDetails[0] with
+                {
+                    BasisAmountMinorUnits = 2_679,
+                    DiscountAmountMinorUnits = 2_679,
+                    VatPrivilegeAmountMinorUnits = 321
+                }
+            ],
+            Totals = [StatutoryContext("WEBPAY").Totals[0] with { AmountMinorUnits = 0 }],
+            AppliedStatutoryFiscalFacts = StatutoryFacts("WEBPAY") with
+            {
+                BenefitClassification = "FREE_PARKING",
+                OriginalAmountMinorUnits = 3_000,
+                VatExclusiveBasisAmountMinorUnits = 2_679,
+                VatAmountMinorUnits = 321,
+                VatTreatment = "VAT_EXCLUSIVE",
+                StatutoryDiscountAmountMinorUnits = 2_679,
+                FinalPayableAmountMinorUnits = 0
+            }
         };
 
     internal static CentralPmsAppliedStatutoryFiscalFactsContext StatutoryFacts(

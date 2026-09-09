@@ -93,8 +93,8 @@ public sealed class WebPayReceiptPresentationService : IWebPayReceiptPresentatio
         EnsurePosPresentationAvailable(reference, posPresentation);
 
         return new WebPayReceiptPresentationResult(
-            reference.PaymentAttemptId,
-            reference.PaymentConfirmationId,
+            reference.PaymentAttemptId!.Value,
+            reference.PaymentConfirmationId!.Value,
             reference.FiscalIssuanceReferenceId,
             reference.FiscalIssuanceState,
             reference.PosServerFiscalDocumentId.Value,

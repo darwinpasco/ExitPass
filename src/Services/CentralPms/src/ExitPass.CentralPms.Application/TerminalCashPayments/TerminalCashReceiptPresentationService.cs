@@ -114,8 +114,8 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
 
         return new TerminalCashReceiptPresentationResult(
             cashPayment.TerminalCashTenderId,
-            reference.PaymentAttemptId,
-            reference.PaymentConfirmationId,
+            reference.PaymentAttemptId!.Value,
+            reference.PaymentConfirmationId!.Value,
             cashPayment.CanonicalPaymentStatus,
             reference.FiscalIssuanceReferenceId,
             reference.FiscalIssuanceState,

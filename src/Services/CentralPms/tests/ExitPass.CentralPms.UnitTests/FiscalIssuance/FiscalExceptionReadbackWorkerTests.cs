@@ -436,7 +436,7 @@ public sealed class FiscalExceptionReadbackWorkerTests
             new FiscalExceptionReadbackAttemptRecord(
                 ReadbackAttemptId: Guid.NewGuid(),
                 FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
-                PaymentConfirmationId: reference.PaymentConfirmationId,
+            PaymentConfirmationId: reference.PaymentConfirmationId!.Value,
                 AttemptedAt: attemptedAt,
                 Classification: FiscalExceptionReadbackClassification.Unknown,
                 SafeResultCode: "unknown",

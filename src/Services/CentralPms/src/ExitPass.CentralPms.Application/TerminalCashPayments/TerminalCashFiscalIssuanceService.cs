@@ -715,8 +715,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         bool exitAuthorizationIssued = false) =>
         new(
             TerminalCashTenderId: cashPayment.TerminalCashTenderId,
-            PaymentAttemptId: reference.PaymentAttemptId,
-            PaymentConfirmationId: reference.PaymentConfirmationId,
+            PaymentAttemptId: reference.PaymentAttemptId!.Value,
+            PaymentConfirmationId: reference.PaymentConfirmationId!.Value,
             FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
             FiscalIssuanceState: reference.FiscalIssuanceState,
             ResultClassification: reference.ResultClassification,

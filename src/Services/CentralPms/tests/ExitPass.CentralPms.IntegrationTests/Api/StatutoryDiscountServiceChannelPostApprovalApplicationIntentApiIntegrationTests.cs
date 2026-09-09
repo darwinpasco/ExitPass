@@ -7,6 +7,7 @@ using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
+using ExitPass.CentralPms.Domain.FiscalIssuance;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.Infrastructure.TerminalCashPayments;
@@ -239,6 +240,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         finally
         {
             await CleanupServiceAssignmentsAsync(context);
+            await CleanupFiscalIssuanceReferencesAsync(context.ParkingSessionId);
             await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
         }
     }
@@ -255,7 +257,8 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
 
         try
         {
-            using var factory = CreateFactory(context);
+            var zeroPayablePosEvidence = new ZeroPayablePosCallEvidence();
+            using var factory = CreateFactory(context, zeroPayablePosEvidence);
             using var serviceClient = factory.CreateClient();
             using var operatorClient = factory.CreateClient();
             AddServiceHeaders(serviceClient, StatutoryDiscountSourceChannels.WebPay);
@@ -356,11 +359,25 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             finalityReadback.ExitAuthorizationEligibility!.CompletionAuthorityEligible.Should().BeTrue();
             finalityReadback.ExitAuthorizationEligibility.ExitAuthorizationIssuanceAllowed.Should().BeFalse();
             finalityReadback.ExitAuthorizationEligibility.Status.Should()
-                .Be("ZERO_PAYABLE_COMPLETION_AUTHORITY_READY");
+                .Be("ZERO_PAYABLE_FISCAL_PREREQUISITE_SATISFIED");
             finalityReadback.ExitAuthorizationEligibility.BlockedReason.Should()
-                .Be("ZERO_PAYABLE_FISCAL_PREREQUISITE_UNRESOLVED");
+                .Be("ZERO_PAYABLE_EXIT_AUTHORIZATION_ISSUANCE_PATH_UNAVAILABLE");
             repeatedReadback.ExitAuthorizationEligibility.Should()
                 .BeEquivalentTo(finalityReadback.ExitAuthorizationEligibility);
+            finalityReadback.ZeroPayableFiscalCompletion.Should().NotBeNull();
+            finalityReadback.ZeroPayableFiscalCompletion!.FiscalPrerequisiteSatisfied.Should().BeTrue();
+            finalityReadback.ZeroPayableFiscalCompletion.CompletionBasis.Should()
+                .Be("ZERO_PAYABLE_STATUTORY_FINALITY");
+            finalityReadback.ZeroPayableFiscalCompletion.ElectronicJournalEventReference.Should()
+                .Be(ZeroPayablePosCallEvidence.ElectronicJournalReference);
+            repeatedReadback.ZeroPayableFiscalCompletion.Should()
+                .BeEquivalentTo(finalityReadback.ZeroPayableFiscalCompletion);
+            zeroPayablePosEvidence.IssueCount.Should().Be(1);
+            zeroPayablePosEvidence.LastMapping.Should().NotBeNull();
+            zeroPayablePosEvidence.LastMapping!.Tenders.Should().BeEmpty();
+            zeroPayablePosEvidence.LastMapping.CentralPmsPaymentAttemptRef.Should().BeNull();
+            zeroPayablePosEvidence.LastMapping.CentralPmsPaymentConfirmationRef.Should().BeNull();
+            zeroPayablePosEvidence.LastMapping.PaymentFinalityRef.Should().BeNull();
 
             var afterReadback = await StatutoryDiscountReviewIntegrationTestSupport.WorkflowBoundaryRowCountsAsync(
                 context.ParkingSessionId,
@@ -389,10 +406,11 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             counts.ProviderOutcomeCount.Should().Be(0);
             counts.TerminalCashCommandCount.Should().Be(0);
             counts.TerminalCashCommandAuditCount.Should().Be(0);
-            counts.FiscalIssuanceReferenceCount.Should().Be(0);
+            counts.FiscalIssuanceReferenceCount.Should().Be(1);
             counts.ExitAuthorizationCount.Should().Be(0);
             counts.VendorPaymentAcknowledgmentCount.Should().Be(0);
 
+            await AssertFiscalCompletionAncestryConstraintsAsync(context.ParkingSessionId);
             await AssertZeroPayableReaderCardinalityConstraintsAsync();
             await AssertExitAuthorizationStatutoryAncestryConstraintsAsync(
                 context,
@@ -416,6 +434,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         finally
         {
             await CleanupServiceAssignmentsAsync(context);
+            await CleanupFiscalIssuanceReferencesAsync(context.ParkingSessionId);
             await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
         }
     }
@@ -1046,6 +1065,38 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             "a decision must identify at most one authoritative policy-version row");
     }
 
+    private static async Task AssertFiscalCompletionAncestryConstraintsAsync(Guid parkingSessionId)
+    {
+        await AssertUpdateRejectedAsync(
+            "completion_authority_reference_id = NULL",
+            "a fiscal issuance reference cannot omit its completion source");
+        await AssertUpdateRejectedAsync(
+            "completion_basis = 'PAYMENT_FINALITY'",
+            "payment completion cannot retain zero-payable statutory ancestry");
+
+        async Task AssertUpdateRejectedAsync(string assignment, string reason)
+        {
+            await using var connection = new Npgsql.NpgsqlConnection(
+                StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+            await connection.OpenAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await using var command = new Npgsql.NpgsqlCommand(
+                $"""
+                UPDATE core.fiscal_issuance_references
+                SET {assignment}
+                WHERE parking_session_id = @parking_session_id
+                  AND completion_basis = 'ZERO_PAYABLE_STATUTORY_FINALITY';
+                """,
+                connection,
+                transaction);
+            command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+
+            var action = async () => await command.ExecuteNonQueryAsync();
+            await action.Should().ThrowAsync<Npgsql.PostgresException>(reason);
+            await transaction.RollbackAsync();
+        }
+    }
+
     private static async Task AssertExitAuthorizationStatutoryAncestryConstraintsAsync(
         PaymentTestContext context,
         Guid statutoryDiscountDecisionCommandId,
@@ -1312,6 +1363,18 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         await command.ExecuteNonQueryAsync();
     }
 
+    private static async Task CleanupFiscalIssuanceReferencesAsync(Guid parkingSessionId)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(
+            StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new Npgsql.NpgsqlCommand(
+            "DELETE FROM core.fiscal_issuance_references WHERE parking_session_id = @parking_session_id;",
+            connection);
+        command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+        await command.ExecuteNonQueryAsync();
+    }
+
     private static async Task InvalidateServiceAuthorizationAsync(PaymentTestContext context, string invalidation)
     {
         var sql = invalidation switch
@@ -1400,7 +1463,9 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         client.DefaultRequestHeaders.Add("X-Site-Group-Id", context.SiteGroupId.ToString());
     }
 
-    private static CustomWebApplicationFactory CreateFactory(PaymentTestContext context) =>
+    private static CustomWebApplicationFactory CreateFactory(
+        PaymentTestContext context,
+        ZeroPayablePosCallEvidence? zeroPayablePosEvidence = null) =>
         new CustomWebApplicationFactory()
             .WithServiceOverrides(services =>
             {
@@ -1409,7 +1474,126 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 services.RemoveAll<IOperatorConsoleAccessEvaluationWriter>();
                 services.AddSingleton<IOperatorConsoleAccessEvaluationService>(new FakeAccessEvaluationService(access));
                 services.AddSingleton<IOperatorConsoleAccessEvaluationWriter>(new FakeAccessEvaluationWriter(access));
+                if (zeroPayablePosEvidence is not null)
+                {
+                    var sitePosServerId = Guid.Parse("9b000000-0000-0000-0000-000000000007");
+                    services.RemoveAll<FiscalIssuancePosServerIntegrationOptions>();
+                    services.AddSingleton(new FiscalIssuancePosServerIntegrationOptions
+                    {
+                        RuntimeEnvironment = "IntegrationTest",
+                        EnablePosServerFiscalIssuanceLiveCall = true,
+                        EnableLiveFiscalIssuanceFromPaymentFlow = true,
+                        Endpoints =
+                        [
+                            new SitePosServerEndpointOptions
+                            {
+                                SiteId = context.SiteId,
+                                SitePosServerId = sitePosServerId,
+                                SitePosServerRef = "IST-ZERO-PAYABLE-POS",
+                                BaseUrl = "http://zero-payable-pos.invalid/",
+                                ApiKeyFile = "integration-test-only",
+                                Environment = "IntegrationTest",
+                                Enabled = true,
+                                FiscalDocumentTypeCodeId = Guid.Parse("9b000000-0000-0000-0000-000000000010"),
+                                FiscalDocumentStatusCodeId = Guid.Parse("9b000000-0000-0000-0000-000000000011"),
+                                FiscalLineTypeCodeId = Guid.Parse("9b000000-0000-0000-0000-000000000012"),
+                                FiscalTenderTypeCodeId = Guid.Parse("9b000000-0000-0000-0000-000000000013"),
+                                FiscalTaxTypeCodeId = Guid.Parse("9b000000-0000-0000-0000-000000000014"),
+                                FiscalTaxClassificationCodeId = Guid.Parse("9b000000-0000-0000-0000-000000000015"),
+                                FiscalDiscountPrivilegeTypeCodeId = Guid.Parse("9b000000-0000-0000-0000-000000000016"),
+                                FiscalTotalTypeCodeId = Guid.Parse("9b000000-0000-0000-0000-000000000017")
+                            }
+                        ]
+                    });
+                    services.RemoveAll<IFiscalIssuancePosServerLiveIntegrationService>();
+                    services.AddScoped<IFiscalIssuancePosServerLiveIntegrationService>(provider =>
+                        new RecordingZeroPayablePosIntegration(
+                            provider.GetRequiredService<IFiscalIssuanceOrchestrationService>(),
+                            zeroPayablePosEvidence));
+                }
             });
+
+    private sealed class ZeroPayablePosCallEvidence
+    {
+        public const string ElectronicJournalReference = "EJ:zero-payable-integration-test";
+
+        public int IssueCount { get; private set; }
+
+        public CentralPmsFiscalDocumentMappingContext? LastMapping { get; private set; }
+
+        public void Record(CentralPmsFiscalDocumentMappingContext mapping)
+        {
+            IssueCount++;
+            LastMapping = mapping;
+        }
+    }
+
+    private sealed class RecordingZeroPayablePosIntegration : IFiscalIssuancePosServerLiveIntegrationService
+    {
+        private readonly IFiscalIssuanceOrchestrationService _orchestration;
+        private readonly ZeroPayablePosCallEvidence _evidence;
+
+        public RecordingZeroPayablePosIntegration(
+            IFiscalIssuanceOrchestrationService orchestration,
+            ZeroPayablePosCallEvidence evidence)
+        {
+            _orchestration = orchestration;
+            _evidence = evidence;
+        }
+
+        public async Task<FiscalIssuancePosServerLiveIntegrationResult> TryIssueFiscalDocumentViaPosServerAsync(
+            Guid fiscalIssuanceReferenceId,
+            CentralPmsFiscalDocumentMappingContext fiscalContext,
+            PosServerCreateResultRecordingContext recordingContext,
+            CancellationToken cancellationToken)
+        {
+            _evidence.Record(fiscalContext);
+            await _orchestration.MarkRequestedAsync(
+                fiscalIssuanceReferenceId,
+                new FiscalIssuanceTransitionContext(recordingContext.CorrelationId, recordingContext.ServiceIdentityId),
+                cancellationToken);
+            var result = new PosServerFiscalDocumentCreateResult(
+                PosServerFiscalDocumentOutcome.Accepted,
+                Succeeded: true,
+                HttpStatusCode: 201,
+                Code: "fiscal_document_created",
+                Message: "Fiscal document created.",
+                FiscalDocumentId: Guid.Parse("9b000000-0000-0000-0000-000000000009"),
+                ResultClassification: FiscalIssuanceResultClassification.NewlyCreated,
+                FiscalIssuanceEvidenceStatus: FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned,
+                FiscalNumberAssignmentState: FiscalNumberAssignmentState.Assigned,
+                FiscalIdentityId: Guid.Parse("9b000000-0000-0000-0000-000000000018"),
+                FiscalDocumentStatusCodeId: Guid.Parse("9b000000-0000-0000-0000-000000000011"),
+                FiscalSequencePolicyId: Guid.Parse("9b000000-0000-0000-0000-000000000019"),
+                FiscalSequenceValue: 1,
+                FiscalDocumentNumber: "SI-ZERO-000001",
+                FiscalSeries: "SI",
+                FiscalNumberPrefixText: "SI-ZERO-",
+                FiscalNumberSuffixText: null,
+                FiscalNumberAssignedAt: DateTimeOffset.UtcNow,
+                FiscalNumberAssignedByRef: "pos-server-integration-test",
+                ErrorPosture: null,
+                CompletionBasis: FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality,
+                CompletionAuthorityRef: fiscalContext.CompletionAuthorityRef,
+                ElectronicJournalEventReference: ZeroPayablePosCallEvidence.ElectronicJournalReference);
+            var reference = await _orchestration.ApplyPosServerCreateResultAsync(
+                fiscalIssuanceReferenceId,
+                result,
+                recordingContext,
+                cancellationToken);
+            return FiscalIssuancePosServerLiveIntegrationResult.Applied(
+                new PosServerFiscalDocumentRequestMapper().Map(fiscalContext),
+                result,
+                reference);
+        }
+
+        public Task<FiscalIssuancePosServerDiagnosticResult> RunPosServerFiscalIssuanceDiagnosticAsync(
+            Guid fiscalIssuanceReferenceId,
+            CentralPmsFiscalDocumentMappingContext fiscalContext,
+            PosServerCreateResultRecordingContext recordingContext,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Diagnostics are not used by this zero-payable integration test.");
+    }
 
     private static OperatorConsoleAccessEvaluationResult AllowedResult(Guid siteId, Guid siteGroupId, Guid reviewerUserId) =>
         new(

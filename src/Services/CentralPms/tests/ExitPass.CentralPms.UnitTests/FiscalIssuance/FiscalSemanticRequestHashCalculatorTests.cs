@@ -194,6 +194,34 @@ public sealed class FiscalSemanticRequestHashCalculatorTests
     }
 
     [Fact]
+    public void Calculate_WhenZeroPayableCompletionIsMapped_UsesCompletionHashAndIncludesExplicitAuthority()
+    {
+        var request = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.ZeroPayableContext());
+
+        var result = _sut.InspectCanonicalSource(request);
+
+        result.Status.Should().Be(FiscalSemanticRequestHashSourceStatus.Available);
+        result.HashSourceVersion.Should().Be(FiscalSemanticRequestHashCalculator.CurrentCompletionHashSourceVersion);
+        result.CanonicalSourceText.Should().Contain("\"completion_basis\":\"ZERO_PAYABLE_STATUTORY_FINALITY\"");
+        result.CanonicalSourceText.Should().Contain("\"completion_authority_ref\"");
+        result.CanonicalSourceText.Should().Contain("\"tenders\":[]");
+    }
+
+    [Fact]
+    public void Calculate_WhenZeroPayableCompletionAuthorityChanges_ReturnsDifferentHash()
+    {
+        var baseline = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.ZeroPayableContext());
+        var changed = baseline with { CompletionAuthorityRef = Guid.NewGuid().ToString("D") };
+
+        var baselineResult = _sut.Calculate(baseline);
+        var changedResult = _sut.Calculate(changed);
+
+        baselineResult.Status.Should().Be(FiscalSemanticRequestHashSourceStatus.Available);
+        changedResult.Status.Should().Be(FiscalSemanticRequestHashSourceStatus.Available);
+        changedResult.HashValue.Should().NotBe(baselineResult.HashValue);
+    }
+
+    [Fact]
     public void Calculate_WhenPosServerSemanticScopeFieldChannelTerminalChanges_ReturnsDifferentHash()
     {
         var baseline = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.ValidContext());

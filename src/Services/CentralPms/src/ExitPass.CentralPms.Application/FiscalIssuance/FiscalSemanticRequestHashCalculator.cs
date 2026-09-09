@@ -10,6 +10,7 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
     public const string CurrentHashAlgorithm = "SHA-256";
     public const string CurrentHashSourceVersion = "sha256:v1";
     public const string CurrentStatutoryHashSourceVersion = "pos-server-fiscal-document-create:sha256:v2";
+    public const string CurrentCompletionHashSourceVersion = "pos-server-fiscal-document-create:sha256:v3";
 
     private static readonly JsonWriterOptions CanonicalJsonOptions = new()
     {
@@ -79,7 +80,9 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
             AddIfMissing(missing, request.PayableBasis.PayableBasisRef, "payable_basis_ref_required");
             AddIfMissing(missing, request.PayableBasis.UpstreamFinalityRef, "upstream_finality_reference_required");
             AddIfMissing(missing, request.PayableBasis.CurrencyCode, "payable_basis_currency_required");
-            if (request.PayableBasis.PayableAmountMinorUnits <= 0)
+            if (request.PayableBasis.PayableAmountMinorUnits < 0 ||
+                request.PayableBasis.PayableAmountMinorUnits == 0 &&
+                request.CompletionBasis != FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality)
             {
                 missing.Add("payable_amount_minor_units_required");
             }
@@ -96,8 +99,19 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
         }
 
         AddIfMissing(missing, request.CentralPmsParkingSessionRef, "parking_session_ref_required");
-        AddIfMissing(missing, request.CentralPmsPaymentAttemptRef, "payment_attempt_ref_required");
-        AddIfMissing(missing, request.CentralPmsPaymentConfirmationRef, "payment_confirmation_ref_required");
+        if (request.CompletionBasis == FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality)
+        {
+            AddIfMissing(missing, request.CompletionAuthorityRef, "completion_authority_ref_required");
+            if (request.Tenders.Count != 0)
+            {
+                missing.Add("zero_payable_tender_prohibited");
+            }
+        }
+        else
+        {
+            AddIfMissing(missing, request.CentralPmsPaymentAttemptRef, "payment_attempt_ref_required");
+            AddIfMissing(missing, request.CentralPmsPaymentConfirmationRef, "payment_confirmation_ref_required");
+        }
         AddIfMissing(missing, request.UpstreamFinalityRef, "upstream_finality_reference_required");
 
         if (request.DocumentLines.Count == 0)
@@ -105,7 +119,8 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
             missing.Add("document_line_required");
         }
 
-        if (request.Tenders.Count == 0)
+        if (request.Tenders.Count == 0 &&
+            request.CompletionBasis != FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality)
         {
             missing.Add("tender_required");
         }
@@ -129,6 +144,11 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
             WriteString(writer, "central_pms_payment_attempt_ref", request.CentralPmsPaymentAttemptRef);
             WriteString(writer, "central_pms_payment_confirmation_ref", request.CentralPmsPaymentConfirmationRef);
             WriteString(writer, "channel_terminal_id", request.ChannelTerminalId);
+            if (request.CompletionBasis == FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality)
+            {
+                WriteString(writer, "completion_authority_ref", request.CompletionAuthorityRef);
+                WriteString(writer, "completion_basis", request.CompletionBasis);
+            }
             WriteDiscountPrivileges(writer, request.DiscountPrivilegeDetails);
             WriteDocumentLines(writer, request.DocumentLines);
             writer.WritePropertyName("document_links");
@@ -482,7 +502,9 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
     }
 
     private static string HashSourceVersion(PosServerFiscalDocumentCreateRequest request) =>
-        request.AppliedStatutoryFiscalFacts is null
+        request.CompletionBasis == FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality
+            ? CurrentCompletionHashSourceVersion
+            : request.AppliedStatutoryFiscalFacts is null
             ? CurrentHashSourceVersion
             : CurrentStatutoryHashSourceVersion;
 
@@ -492,6 +514,12 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
         if (request.AppliedStatutoryFiscalFacts is not null)
         {
             facts.Add("applied_statutory_fiscal_facts");
+        }
+
+        if (request.CompletionBasis == FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality)
+        {
+            facts.Add("completion_authority_ref");
+            facts.Add("completion_basis");
         }
 
         facts.AddRange(

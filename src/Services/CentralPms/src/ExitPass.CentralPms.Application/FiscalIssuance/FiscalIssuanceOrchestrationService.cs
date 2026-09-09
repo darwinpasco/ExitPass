@@ -316,7 +316,8 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
             FiscalDocumentStatusCodeId: result.FiscalDocumentStatusCodeId,
             CorrelationId: context.CorrelationId,
             PosServerResponseTimestamp: context.PosServerResponseTimestamp,
-            ServiceIdentityId: context.ServiceIdentityId);
+            ServiceIdentityId: context.ServiceIdentityId,
+            ElectronicJournalEventReference: result.ElectronicJournalEventReference);
 
         return result.ResultClassification switch
         {
@@ -641,7 +642,8 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
                 LatestErrorPosture: null,
                 CorrelationId: evidence.CorrelationId,
                 PosServerResponseTimestamp: evidence.PosServerResponseTimestamp,
-                UpdatedByServiceIdentityId: evidence.ServiceIdentityId),
+                UpdatedByServiceIdentityId: evidence.ServiceIdentityId,
+                ElectronicJournalEventReference: evidence.ElectronicJournalEventReference),
             cancellationToken);
 
     private Task<FiscalIssuanceReferenceRecord> TransitionAsync(
@@ -911,8 +913,8 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
 }
 
 public sealed record PrepareFiscalIssuanceCommand(
-    Guid PaymentConfirmationId,
-    Guid PaymentAttemptId,
+    Guid? PaymentConfirmationId,
+    Guid? PaymentAttemptId,
     Guid ParkingSessionId,
     Guid? TariffSnapshotId,
     Guid? SiteId,
@@ -923,20 +925,46 @@ public sealed record PrepareFiscalIssuanceCommand(
     string? PayableBasisRef,
     string UpstreamFinalityReference,
     Guid? CorrelationId,
-    Guid? ServiceIdentityId)
+    Guid? ServiceIdentityId,
+    string CompletionBasis = FiscalCompletionBasisCodes.PaymentFinality,
+    Guid? CompletionAuthorityReferenceId = null,
+    Guid? StatutoryDiscountDecisionCommandId = null,
+    Guid? StatutoryDiscountPayableBasisApplicationCommandId = null,
+    Guid? StatutoryDiscountValidationId = null,
+    Guid? AppliedPolicyReferenceId = null)
 {
     public IReadOnlyList<string> Validate()
     {
         var errors = new List<string>();
 
-        if (PaymentConfirmationId == Guid.Empty)
+        var completionBasis = CompletionBasis?.Trim().ToUpperInvariant();
+        if (completionBasis == FiscalCompletionBasisCodes.PaymentFinality)
         {
-            errors.Add("payment_confirmation_id_required");
-        }
+            if (PaymentConfirmationId is null || PaymentConfirmationId == Guid.Empty)
+            {
+                errors.Add("payment_confirmation_id_required");
+            }
 
-        if (PaymentAttemptId == Guid.Empty)
+            if (PaymentAttemptId is null || PaymentAttemptId == Guid.Empty)
+            {
+                errors.Add("payment_attempt_id_required");
+            }
+        }
+        else if (completionBasis == FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality)
         {
-            errors.Add("payment_attempt_id_required");
+            if (PaymentConfirmationId is not null || PaymentAttemptId is not null ||
+                CompletionAuthorityReferenceId is null || CompletionAuthorityReferenceId == Guid.Empty ||
+                StatutoryDiscountPayableBasisApplicationCommandId != CompletionAuthorityReferenceId ||
+                StatutoryDiscountDecisionCommandId is null || StatutoryDiscountDecisionCommandId == Guid.Empty ||
+                StatutoryDiscountValidationId is null || StatutoryDiscountValidationId == Guid.Empty ||
+                AppliedPolicyReferenceId is null || AppliedPolicyReferenceId == Guid.Empty)
+            {
+                errors.Add("zero_payable_completion_ancestry_invalid");
+            }
+        }
+        else
+        {
+            errors.Add("completion_basis_unsupported");
         }
 
         if (ParkingSessionId == Guid.Empty)
@@ -995,7 +1023,13 @@ public sealed record PrepareFiscalIssuanceCommand(
             LatestErrorPosture: null,
             CorrelationId: CorrelationId,
             PosServerResponseTimestamp: null,
-            RecordedByServiceIdentityId: ServiceIdentityId);
+            RecordedByServiceIdentityId: ServiceIdentityId,
+            CompletionBasis: CompletionBasis,
+            CompletionAuthorityReferenceId: CompletionAuthorityReferenceId,
+            StatutoryDiscountDecisionCommandId: StatutoryDiscountDecisionCommandId,
+            StatutoryDiscountPayableBasisApplicationCommandId: StatutoryDiscountPayableBasisApplicationCommandId,
+            StatutoryDiscountValidationId: StatutoryDiscountValidationId,
+            AppliedPolicyReferenceId: AppliedPolicyReferenceId);
 }
 
 public sealed record FiscalIssuanceTransitionContext(
@@ -1023,7 +1057,8 @@ public sealed record FiscalIssuanceEvidenceInput(
     Guid? FiscalDocumentStatusCodeId,
     Guid? CorrelationId,
     DateTimeOffset? PosServerResponseTimestamp,
-    Guid? ServiceIdentityId);
+    Guid? ServiceIdentityId,
+    string? ElectronicJournalEventReference = null);
 
 public sealed record PosServerCreateResultRecordingContext(
     string UpstreamFinalityReference,

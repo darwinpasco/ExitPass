@@ -153,6 +153,18 @@ public sealed record ExitAuthorizationEligibilityResponse(
     string? BlockedReason,
     string CompletionBasis);
 
+public sealed record ZeroPayableStatutoryFiscalCompletionResponse(
+    Guid FiscalIssuanceReferenceId,
+    bool FiscalPrerequisiteSatisfied,
+    bool PosServerCallAttempted,
+    string FiscalIssuanceState,
+    Guid? PosServerFiscalDocumentId,
+    string? FiscalDocumentNumber,
+    string? ElectronicJournalEventReference,
+    string CompletionBasis,
+    Guid? CompletionAuthorityReferenceId,
+    string? SafeErrorCode);
+
 /// <summary>
 /// Canonical Central PMS statutory-discount result and readback response.
 /// </summary>
@@ -223,4 +235,5 @@ public sealed record StatutoryDiscountDecisionResponse(
     string? PayableBasisReadinessAction = null,
     StatutoryDiscountZeroPayableFinalityResponse? ZeroPayableStatutoryFinality = null,
     CompletionAuthorityResponse? CompletionAuthority = null,
-    ExitAuthorizationEligibilityResponse? ExitAuthorizationEligibility = null);
+    ExitAuthorizationEligibilityResponse? ExitAuthorizationEligibility = null,
+    ZeroPayableStatutoryFiscalCompletionResponse? ZeroPayableFiscalCompletion = null);

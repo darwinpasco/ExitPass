@@ -198,7 +198,10 @@ public sealed class FiscalIssuanceStatusReadService : IFiscalIssuanceStatusReadS
             LatestExceptionReason: ToWireValue(reference.LatestExceptionReason),
             FirstRecordedAt: reference.FirstRecordedAt,
             LastUpdatedAt: reference.LastUpdatedAt,
-            CorrelationId: reference.CorrelationId);
+            CorrelationId: reference.CorrelationId,
+            CompletionBasis: reference.CompletionBasis,
+            CompletionAuthorityReferenceId: reference.CompletionAuthorityReferenceId,
+            ElectronicJournalEventReference: reference.ElectronicJournalEventReference);
 
     private static string ToWireValue(FiscalIssuanceIntegrationState value) =>
         value switch
@@ -297,8 +300,8 @@ public sealed record FiscalIssuanceStatusReadModel(
     string? FiscalIssuanceEvidenceStatus,
     string FiscalNumberAssignmentState,
     string UpstreamFinalityReference,
-    Guid PaymentConfirmationId,
-    Guid PaymentAttemptId,
+    Guid? PaymentConfirmationId,
+    Guid? PaymentAttemptId,
     Guid ParkingSessionId,
     Guid? SiteId,
     Guid? SitePosServerId,
@@ -330,7 +333,10 @@ public sealed record FiscalIssuanceStatusReadModel(
     string? PosServerFiscalDocumentStatusCodeKey = null,
     string? PosServerVoidStatus = null,
     string? PosServerVoidReasonCode = null,
-    DateTimeOffset? PosServerVoidedAt = null);
+    DateTimeOffset? PosServerVoidedAt = null,
+    string CompletionBasis = FiscalCompletionBasisCodes.PaymentFinality,
+    Guid? CompletionAuthorityReferenceId = null,
+    string? ElectronicJournalEventReference = null);
 
 public sealed record FiscalIssuanceStatusLookupResult(
     FiscalIssuanceStatusLookupOutcome Outcome,

@@ -637,6 +637,7 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentOpsService, VendorPaymentAcknowledgmentOpsService>();
 
     builder.Services.AddScoped<IDigitalPaymentFiscalIssuanceService, DigitalPaymentFiscalIssuanceService>();
+    builder.Services.AddScoped<IZeroPayableStatutoryFiscalIssuanceService, ZeroPayableStatutoryFiscalIssuanceService>();
 
     builder.Services.AddScoped<IReportVerifiedPaymentOutcomeUseCase, ReportVerifiedPaymentOutcomeHandler>();
 
