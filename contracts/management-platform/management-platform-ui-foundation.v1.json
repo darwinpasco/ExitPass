@@ -18,7 +18,7 @@
     }
   ],
   "authenticationAbstraction": {
-    "safeFields": ["authenticated", "subjectRef", "displayName", "permissions", "authorizedSites", "loadingPosture"],
+    "safeFields": ["authenticated", "subjectRef", "displayName", "permissions", "authorizedSites", "authorizedReportScopes", "loadingPosture"],
     "forbiddenFields": ["tokens", "cookies", "apiKeys", "rawClaims", "authorizationHeaders"]
   },
   "permissionAbstraction": {

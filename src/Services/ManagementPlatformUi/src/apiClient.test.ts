@@ -45,6 +45,15 @@ describe("ManagementPlatformUi Central PMS API client foundation", () => {
     expect(mapErrorResponse(status, { code: `HTTP_${status}` }, "corr", false).kind).toBe(expectedKind);
   });
 
+  it("maps the fiscal reporting feature control to a distinct disabled posture", () => {
+    expect(mapErrorResponse(503, { errorCode: "MANAGEMENT_FISCAL_EXCEPTION_REPORTING_DISABLED" }, "corr-disabled", false)).toMatchObject({
+      kind: "feature-disabled",
+      code: "MANAGEMENT_FISCAL_EXCEPTION_REPORTING_DISABLED",
+      retryable: false,
+      mutationUncertain: false
+    });
+  });
+
   it("maps timeout mutation failures to uncertain-result posture without retrying", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ code: "TIMEOUT" }, 504, "corr-timeout"));
     const client = createCentralPmsApiClient({ fetchImpl });

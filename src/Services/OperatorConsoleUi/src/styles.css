@@ -1663,3 +1663,23 @@ dd {
     max-height: calc(100vh - 290px);
   }
 }
+.fiscalReporting .reportFilters { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin: 1rem 0; }
+.fiscalReporting, .fiscalPane, .tableViewport { min-width: 0; }
+.fiscalReporting .reportFilters label, .siteSelector { display: grid; gap: .35rem; min-width: 14rem; max-width: 100%; }
+.siteSelector select { min-width: 0; width: 100%; }
+.reportTabs { display: flex; gap: .5rem; border-bottom: 1px solid #d8dee8; margin: 1rem 0; }
+.reportTabs button[aria-selected="true"] { background: #173f6b; color: #fff; }
+.fiscalPane { display: grid; gap: 1rem; }
+.invoiceText { border: 1px solid #cbd5e1; border-radius: .6rem; overflow: hidden; }
+.invoiceText header { display: flex; justify-content: space-between; padding: .75rem; background: #eef4fa; }
+.invoiceText pre { margin: 0; padding: 1rem; max-width: 100%; overflow: auto; white-space: pre; font: 14px/1.45 Consolas, monospace; }
+.readingTitle { display: flex; justify-content: space-between; gap: 1rem; align-items: start; }
+.periodCard { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.periodCard div { background: #f3f7fb; padding: .8rem; border-radius: .5rem; }
+.periodCard dt { font-size: .78rem; text-transform: uppercase; }
+.periodCard dd { margin: .25rem 0 0; }
+.tableViewport { max-width: 100%; width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+.zConfirmation { border: 2px solid #a11b1b; background: #fff1f1; padding: 1rem; border-radius: .6rem; }
+.dangerButton { background: #a11b1b; color: white; }
+.primaryButton { display: inline-flex; align-items: center; padding: .6rem .8rem; background: #173f6b; color: #fff; border-radius: .35rem; text-decoration: none; }
+@media (max-width: 720px) { .periodCard { grid-template-columns: 1fr; } .readingTitle, .fiscalReporting .reportFilters { display: grid; } .fiscalReporting .reportFilters label { min-width: 0; } }

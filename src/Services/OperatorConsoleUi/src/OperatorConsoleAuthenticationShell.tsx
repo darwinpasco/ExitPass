@@ -7,6 +7,7 @@ import {
   type OperatorConsoleHumanSession
 } from "./humanAuthentication";
 import { createOperatorConsoleApiClient, type OperatorConsoleApiClient } from "./apiClient";
+import { createOperatorFiscalReportingClient } from "./fiscalReporting";
 
 type ShellState =
   | { status: "bootstrapping" }
@@ -162,6 +163,9 @@ export function OperatorConsoleAuthenticationShell({
     return (
       <App
         apiClient={workspaceClient}
+        fiscalReportingClient={import.meta.env.DEV && new URLSearchParams(window.location.search).get("operatorFiscalReportingScenario") === "ready"
+          ? undefined
+          : createOperatorFiscalReportingClient(fetch, () => authClient.getCsrfToken())}
         initialPath={initialPath}
         session={state.session}
         logoutPending={logoutPending}

@@ -278,6 +278,38 @@ Use these URLs with the local dev server. They are active only while `import.met
 - `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=disabled-manage`
 - `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=unavailable-manage`
 
+## Fiscal exception reporting console
+
+Route:
+
+```text
+/management-platform/reports/fiscal-exceptions
+```
+
+Required permission:
+
+```text
+sales-invoice-report.view
+```
+
+The console is read-only and calls `GET /v1/management-platform/dashboard/fiscal-exception-summary` with an explicit authorized Site or Site Group and explicit half-open UTC period of no more than 31 days. It displays per-currency expected issuance aggregates, normalized lifecycle counts, supported exception categories, source coverage, freshness, warnings, limitations, and unavailable facts. It never combines currencies, calls POS Server directly, retries issuance, resolves exceptions, exports data, or claims that Central PMS coordination evidence proves printing, delivery, or BIR compliance.
+
+Development-only scenarios use `mpFiscalScenario=activity`, `no-activity`, `disabled`, or `unavailable`. For example:
+
+```text
+http://127.0.0.1:5176/management-platform/reports/fiscal-exceptions?mpScenario=multi-site&mpFiscalScenario=activity
+```
+
+These scenarios are in-memory, write nothing to browser storage, and are ignored by production builds.
+
+## POS-authoritative fiscal reporting
+
+`/management-platform/fiscal-reporting` provides governed Site and Site Group access to Electronic Journal invoice text, authoritative `.txt` download, X Reading history/generation/output, and privileged Z Reading history/generation/output. Central PMS resolves the selected Site's unique active POS Server binding. The browser does not calculate report totals, construct the EJ artifact, select the Z period, increment sequences, or close reporting-period rows.
+
+The six capabilities are independently permissioned with `fiscal-reporting.ej.read`, `fiscal-reporting.ej.export`, `fiscal-reporting.x.read`, `fiscal-reporting.x.generate`, `fiscal-reporting.z.read`, and `fiscal-reporting.z.generate`. Z generation requires an explicit warning and confirmation.
+
+For local visual validation only, use `mpFiscalReportingScenario=ready`. The scenario is guarded by `import.meta.env.DEV` and is ignored by production builds.
+
 ## Playwright E2E validation
 
 Install the Chromium browser managed by Playwright once per machine or agent image:

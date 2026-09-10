@@ -27,6 +27,7 @@ using ExitPass.CentralPms.Api.Validation;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.FiscalReporting;
 using ExitPass.CentralPms.Application.Gates;
 using ExitPass.CentralPms.Application.HumanAuthentication;
 using ExitPass.CentralPms.Application.ManagementPlatform;
@@ -51,6 +52,7 @@ using ExitPass.CentralPms.Infrastructure.Common;
 using ExitPass.CentralPms.Infrastructure.Auditing;
 using ExitPass.CentralPms.Infrastructure.Eventing;
 using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
+using ExitPass.CentralPms.Infrastructure.FiscalReporting;
 using ExitPass.CentralPms.Infrastructure.Gates;
 using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
 using ExitPass.CentralPms.Infrastructure.ManagementPlatform;
@@ -169,6 +171,7 @@ app.MapOperatorConsoleAccessReadinessEndpoints();
 app.MapOperatorConsoleDeviceBindingEndpoints();
 app.MapOperatorConsoleSessionLookupEndpoints();
 app.MapOperatorConsoleFiscalIssuanceStatusEndpoints();
+app.MapFiscalReportingEndpoints();
 app.MapOperatorConsoleFiscalStatusViewAuditReportEndpoints();
 app.MapOperatorConsoleFiscalVoidActionAuditReportEndpoints();
 app.MapTicketSessionSummaryEndpoints();
@@ -885,6 +888,7 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IOptions<ManagementDashboardReportingOptions>>().Value,
             serviceProvider.GetRequiredService<IOptions<ManagementFiscalExceptionReportingOptions>>().Value,
             serviceProvider.GetRequiredService<TimeProvider>()));
+    builder.Services.AddHttpClient<IFiscalReportingPosServerGateway, HttpFiscalReportingPosServerGateway>();
     builder.Services.AddScoped<IManagementPlatformIdentityAdministrationRepository>(_ =>
         new PostgresManagementPlatformIdentityAdministrationRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IHumanAuthenticationAdministrationGateway, HumanAuthenticationAdministrationGateway>();

@@ -51,6 +51,13 @@ import {
 } from "./CanonicalStatutoryReview";
 import type { CanonicalStatutoryReviewFilters } from "./types";
 import { ShiftManagement } from "./ShiftManagement";
+import { OperatorFiscalReportingPage } from "./OperatorFiscalReportingPage";
+import {
+  createOperatorFiscalReportingClient,
+  createOperatorFiscalReportingFixture,
+  fiscalReportingPermissions,
+  type OperatorFiscalReportingClient
+} from "./fiscalReporting";
 
 const routes = {
   home: "/operator-console",
@@ -64,7 +71,8 @@ const routes = {
   vendorAcknowledgments: "/operator-console/vendor-acknowledgments",
   vendorProjectionHealth: "/operator-console/vendor-session-projections/health",
   policyImportReview: "/operator-console/production-policy-import-review",
-  shiftManagement: "/operator-console/shift-management"
+  shiftManagement: "/operator-console/shift-management",
+  fiscalReporting: "/operator-console/fiscal-reporting"
 };
 
 interface AppProps {
@@ -74,10 +82,16 @@ interface AppProps {
   logoutPending?: boolean;
   logoutMessage?: string;
   onLogout?: () => void;
+  fiscalReportingClient?: OperatorFiscalReportingClient;
 }
 
-export function App({ apiClient, initialPath, session, logoutPending = false, logoutMessage, onLogout }: AppProps) {
+export function App({ apiClient, initialPath, session, logoutPending = false, logoutMessage, onLogout, fiscalReportingClient }: AppProps) {
   const client = useMemo(() => apiClient ?? createOperatorConsoleApiClient(), [apiClient]);
+  const fiscalClient = useMemo(() => fiscalReportingClient ?? (
+    import.meta.env.DEV && new URLSearchParams(window.location.search).get("operatorFiscalReportingScenario") === "ready"
+      ? createOperatorFiscalReportingFixture()
+      : createOperatorFiscalReportingClient()
+  ), [fiscalReportingClient]);
   const [path, setPath] = useState(initialPath ?? normalizePath(window.location.pathname));
   const [readinessState, setReadinessState] = useState<LoadState<AccessReadinessResponse>>({ status: "idle" });
   const [statutoryReviewFilters, setStatutoryReviewFilters] = useState<CanonicalStatutoryReviewFilters>(defaultCanonicalStatutoryReviewFilters);
@@ -134,6 +148,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
   const draftId = path.startsWith(routes.detail) ? path.slice(routes.detail.length) : null;
   const readiness = readinessState.status === "loaded" ? readinessState.data : null;
   const readinessBlockReason = readiness && !readiness.accessAllowed ? readinessBlockedActionReason(readiness) : null;
+  const canViewFiscalReporting = Object.values(fiscalReportingPermissions).some((permission) => session?.permissions.includes(permission));
 
   return (
     <main className="appShell" aria-labelledby="app-title">
@@ -199,6 +214,14 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
             >
               Fiscal Status
             </button>
+            {canViewFiscalReporting && <button
+              aria-current={path === routes.fiscalReporting ? "page" : undefined}
+              className={`navLink ${path === routes.fiscalReporting ? "navLinkActive" : ""}`}
+              type="button"
+              onClick={() => navigate(routes.fiscalReporting)}
+            >
+              Fiscal Reporting / EJ / X / Z
+            </button>}
             <button
               aria-current={path.startsWith(routes.queue) ? "page" : undefined}
               className={`navLink ${path.startsWith(routes.queue) ? "navLinkActive" : ""}`}
@@ -284,6 +307,10 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
             <TicketLookupPage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.fiscalStatus ? (
             <FiscalIssuanceStatusPage client={client} />
+          ) : path === routes.fiscalReporting ? (
+            canViewFiscalReporting && session
+              ? <OperatorFiscalReportingPage client={fiscalClient} siteReferences={session.siteReferences} permissions={session.permissions} />
+              : <section className="stateMessage danger" role="alert"><h2>Permission denied</h2><p>Your operator session cannot access fiscal reporting.</p></section>
           ) : path === routes.queue ? (
             <CanonicalStatutoryReviewQueuePage
               client={client}

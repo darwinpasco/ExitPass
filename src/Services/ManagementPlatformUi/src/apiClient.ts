@@ -97,7 +97,8 @@ export function mapErrorResponse(status: number, body: unknown, correlationId: s
   const safeCode = readSafeString(body, "code") ?? readSafeString(body, "errorCode") ?? `HTTP_${status}`;
   const serverMessage = readSafeString(body, "message");
 
-  if (safeCode === "SALES_INVOICE_PROFILE_ADMINISTRATION_DISABLED") {
+  if (safeCode === "SALES_INVOICE_PROFILE_ADMINISTRATION_DISABLED" ||
+      safeCode === "MANAGEMENT_FISCAL_EXCEPTION_REPORTING_DISABLED") {
     return createUiError("feature-disabled", safeCode, "This administrative feature is not enabled for this environment.", correlationId, status, false, false);
   }
 

@@ -1,0 +1,48 @@
+{
+  "contractId": "management-platform-fiscal-exception-reporting-ui:v1",
+  "route": "/management-platform/reports/fiscal-exceptions",
+  "backendContract": "management-platform-fiscal-exception-reporting:v1",
+  "permission": "sales-invoice-report.view",
+  "scope": {
+    "allowedTypes": ["SITE", "SITE_GROUP"],
+    "referenceSource": "authenticated Management Platform principal context",
+    "freeFormReference": false,
+    "backendAuthorizationRemainsAuthoritative": true
+  },
+  "period": {
+    "explicit": true,
+    "utc": true,
+    "semantics": "[periodStart, periodEnd)",
+    "maximumDays": 31
+  },
+  "surfaces": [
+    "availability and freshness",
+    "effective scope and time basis",
+    "per-currency expected issuance aggregates",
+    "normalized lifecycle counts",
+    "supported exception categories",
+    "source coverage",
+    "warnings, limitations, and unavailable facts"
+  ],
+  "states": [
+    "loading",
+    "partial activity",
+    "no activity",
+    "feature disabled",
+    "source unavailable",
+    "invalid period",
+    "previously loaded data after failed refresh"
+  ],
+  "authorityBoundary": {
+    "source": "Central PMS persisted fiscal issuance coordination evidence",
+    "fiscalAuthority": "resolved Site POS Server",
+    "mutations": false,
+    "directPosServerCalls": false,
+    "birCertificationClaim": false,
+    "printingOrDeliveryClaim": false,
+    "mixedCurrencyTotal": false
+  },
+  "browserStorage": false,
+  "developmentScenarioQuery": "mpFiscalScenario",
+  "productionScenarioSupport": false
+}

@@ -2,6 +2,17 @@
 import { createCentralPmsApiClient } from "./apiClient";
 import { createDevelopmentAuthState } from "./auth";
 import { getManagementPlatformConfig } from "./config";
+import { FiscalExceptionReportPage } from "./FiscalExceptionReportPage";
+import { FiscalReportingPage } from "./FiscalReportingPage";
+import { createFiscalReportingClient, createFiscalReportingFixtureClient, fiscalReportingPermissions, fiscalReportingRoute, type FiscalReportingClient } from "./fiscalReporting";
+import {
+  createFiscalExceptionReportingClient,
+  fiscalExceptionReportPermission,
+  fiscalExceptionReportingRoute,
+  resolveFiscalExceptionReportScenario,
+  type FiscalExceptionReportClient,
+  type FiscalReportScope
+} from "./fiscalExceptionReporting";
 import { resolveManagementPlatformManualScenario, type ManagementPlatformManualScenarioName } from "./manualScenarios";
 import { managementPlatformOverviewPermission, futureSalesInvoiceProfilePermissions, hasPermission } from "./permissions";
 import { SalesInvoiceProfilesPage } from "./SalesInvoiceProfilesPage";
@@ -12,7 +23,9 @@ import type { ManagementPlatformAuthState, ManagementPlatformConfig, ManagementP
 const routes = {
   root: "/management-platform",
   overview: "/management-platform/overview",
-  salesInvoiceProfiles: salesInvoiceProfileReadRoute
+  salesInvoiceProfiles: salesInvoiceProfileReadRoute,
+  fiscalExceptions: fiscalExceptionReportingRoute,
+  fiscalReporting: fiscalReportingRoute
 };
 
 interface AppProps {
@@ -20,8 +33,11 @@ interface AppProps {
   initialPath?: string;
   config?: ManagementPlatformConfig;
   salesInvoiceProfilesClient?: SalesInvoiceProfileClient;
+  fiscalExceptionClient?: FiscalExceptionReportClient;
+  fiscalReportingClient?: FiscalReportingClient;
   developmentScenariosEnabled?: boolean;
   profileScenariosEnabled?: boolean;
+  fiscalScenariosEnabled?: boolean;
 }
 
 export function App({
@@ -29,8 +45,11 @@ export function App({
   initialPath,
   config,
   salesInvoiceProfilesClient,
+  fiscalExceptionClient,
+  fiscalReportingClient,
   developmentScenariosEnabled = import.meta.env.DEV,
-  profileScenariosEnabled = import.meta.env.DEV
+  profileScenariosEnabled = import.meta.env.DEV,
+  fiscalScenariosEnabled = import.meta.env.DEV
 }: AppProps) {
   const resolvedConfig = useMemo(() => config ?? getManagementPlatformConfig(), [config]);
   const manualScenario = useMemo(
@@ -49,6 +68,19 @@ export function App({
     () => salesInvoiceProfilesClient ?? profileScenario?.client ?? createSalesInvoiceProfileReadClient(centralPmsClient),
     [salesInvoiceProfilesClient, profileScenario?.client, centralPmsClient]
   );
+  const fiscalScenario = useMemo(
+    () => fiscalExceptionClient ? undefined : resolveFiscalExceptionReportScenario(fiscalScenariosEnabled, window.location.search),
+    [fiscalExceptionClient, fiscalScenariosEnabled]
+  );
+  const fiscalClient = useMemo(
+    () => fiscalExceptionClient ?? fiscalScenario?.client ?? createFiscalExceptionReportingClient(centralPmsClient),
+    [fiscalExceptionClient, fiscalScenario?.client, centralPmsClient]
+  );
+  const governedFiscalClient = useMemo(() => fiscalReportingClient ?? (
+    import.meta.env.DEV && new URLSearchParams(window.location.search).get("mpFiscalReportingScenario") === "ready"
+      ? createFiscalReportingFixtureClient()
+      : createFiscalReportingClient(centralPmsClient)
+  ), [fiscalReportingClient, centralPmsClient]);
   const state = authState ?? manualScenario?.authState ?? createDevelopmentAuthState();
   const scenarioInitialPath = authState ? undefined : manualScenario?.initialPath;
   const [path, setPath] = useState(initialPath ?? scenarioInitialPath ?? normalizePath(window.location.pathname));
@@ -96,7 +128,12 @@ export function App({
   const canReadSalesInvoiceProfiles = hasPermission(principal.permissions, futureSalesInvoiceProfilePermissions.read);
   const canManageSalesInvoiceProfiles = hasPermission(principal.permissions, futureSalesInvoiceProfilePermissions.manage);
   const canApproveSalesInvoiceProfiles = hasPermission(principal.permissions, futureSalesInvoiceProfilePermissions.approve);
-  const isKnownRoute = path === routes.root || path === routes.overview || path === routes.salesInvoiceProfiles;
+  const canViewFiscalExceptions = hasPermission(principal.permissions, fiscalExceptionReportPermission);
+  const canViewFiscalReporting = Object.values(fiscalReportingPermissions).some(permission => hasPermission(principal.permissions, permission));
+  const fiscalReportScopes: FiscalReportScope[] = principal.authorizedReportScopes?.length
+    ? principal.authorizedReportScopes
+    : principal.authorizedSites.map((site) => ({ scopeType: "SITE", scopeReference: site.siteId, displayName: site.displayName }));
+  const isKnownRoute = path === routes.root || path === routes.overview || path === routes.salesInvoiceProfiles || path === routes.fiscalExceptions || path === routes.fiscalReporting;
   const shellProps = {
     principalName: principal.displayName,
     siteSelection,
@@ -104,6 +141,8 @@ export function App({
     navigate,
     canViewOverview,
     canReadSalesInvoiceProfiles,
+    canViewFiscalExceptions,
+    canViewFiscalReporting,
     salesInvoiceFormState,
     environmentName: resolvedConfig.environmentName,
     scenarioIndicator
@@ -120,6 +159,11 @@ export function App({
   if (path === routes.salesInvoiceProfiles && !canReadSalesInvoiceProfiles) {
     return <Shell {...shellProps}><PermissionDenied /></Shell>;
   }
+
+  if (path === routes.fiscalExceptions && !canViewFiscalExceptions) {
+    return <Shell {...shellProps}><PermissionDenied /></Shell>;
+  }
+  if (path === routes.fiscalReporting && !canViewFiscalReporting) return <Shell {...shellProps}><PermissionDenied /></Shell>;
 
   if (manualScenario?.error) {
     return <Shell {...shellProps}><PageError error={manualScenario.error} /></Shell>;
@@ -140,6 +184,11 @@ export function App({
     );
   }
 
+  if (path === routes.fiscalExceptions) {
+    return <Shell {...shellProps}><FiscalExceptionReportPage client={fiscalClient} availableScopes={fiscalReportScopes} /></Shell>;
+  }
+  if (path === routes.fiscalReporting) return <Shell {...shellProps}><FiscalReportingPage client={governedFiscalClient} sites={principal.authorizedSites} scopes={fiscalReportScopes} permissions={principal.permissions} /></Shell>;
+
   return (
     <Shell {...shellProps}>
       <OverviewPage subjectRef={principal.subjectRef} currentSiteName={siteSelection.currentSite?.displayName} hasSites={siteSelection.hasSites} />
@@ -147,13 +196,15 @@ export function App({
   );
 }
 
-function Shell({ principalName, siteSelection, path, navigate, canViewOverview, canReadSalesInvoiceProfiles, salesInvoiceFormState, environmentName, scenarioIndicator, children }: {
+function Shell({ principalName, siteSelection, path, navigate, canViewOverview, canReadSalesInvoiceProfiles, canViewFiscalExceptions, canViewFiscalReporting, salesInvoiceFormState, environmentName, scenarioIndicator, children }: {
   principalName?: string;
   siteSelection: ReturnType<typeof useManagementPlatformSiteSelection>;
   path: string;
   navigate: (path: string) => void;
   canViewOverview: boolean;
   canReadSalesInvoiceProfiles: boolean;
+  canViewFiscalExceptions: boolean;
+  canViewFiscalReporting: boolean;
   salesInvoiceFormState: { hasUnsavedChanges: boolean; mutationPending: boolean };
   environmentName: string;
   scenarioIndicator?: React.ReactNode;
@@ -193,6 +244,12 @@ function Shell({ principalName, siteSelection, path, navigate, canViewOverview, 
                 Sales Invoice Configuration <span className="navMeta">Sales Invoice Setups</span>
               </button>
             )}
+            {canViewFiscalExceptions && (
+              <button className={`navLink ${path === routes.fiscalExceptions ? "navLinkActive" : ""}`} type="button" onClick={() => navigate(routes.fiscalExceptions)}>
+                Fiscal exceptions <span className="navMeta">Sales Invoice reporting</span>
+              </button>
+            )}
+            {canViewFiscalReporting && <button className={`navLink ${path === routes.fiscalReporting ? "navLinkActive" : ""}`} type="button" onClick={() => navigate(routes.fiscalReporting)}>Fiscal Reporting <span className="navMeta">EJ / X / Z</span></button>}
           </nav>
           <SiteSelector siteSelection={siteSelection} formState={salesInvoiceFormState} />
         </aside>
@@ -313,6 +370,10 @@ function StateMessage({ title, message, tone = "neutral" }: { title: string; mes
 }
 
 function routeTitle(path: string): string {
+  if (path === routes.fiscalReporting) return "Fiscal Reporting - ExitPass Management Platform";
+  if (path === routes.fiscalExceptions) {
+    return "Fiscal Exceptions - ExitPass Management Platform";
+  }
   if (path === routes.salesInvoiceProfiles) {
     return "Sales Invoice Configuration - ExitPass Management Platform";
   }
