@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using ExitPass.CentralPms.Api.Endpoints;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
@@ -454,6 +455,32 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal("TERMINAL_CASH_FISCAL_SEMANTIC_CONFLICT", error!.ErrorCode);
     }
 
+    [Fact]
+    public async Task TerminalCashFiscalRecovery_CanonicalAndLegacyRoutes_CallSameGuardedServiceMethod()
+    {
+        var fake = new FakeTerminalCashFiscalIssuanceService(
+            recoveryResult: new TerminalCashFiscalConflictRecoveryResult(
+                Guid.Parse("21000000-0000-4000-8000-000000000020"),
+                "EXECUTED",
+                RecoveryExecuted: true,
+                IdempotentReadback: false,
+                Result()));
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+
+        using var canonical = await SendRecoveryAsync(client, "configuration-failure");
+        using var legacy = await SendRecoveryAsync(client, "reporting-period-conflict");
+
+        Assert.Equal(HttpStatusCode.OK, canonical.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, legacy.StatusCode);
+        Assert.Equal(2, fake.RecoveryCommands.Count);
+        Assert.All(fake.RecoveryCommands, command =>
+        {
+            Assert.Equal(TerminalCashTenderId, command.TerminalCashTenderId);
+            Assert.Equal("sales_invoice_header_profile_not_found", command.ReasonCode);
+        });
+    }
+
     private static ITerminalCashFiscalIssuanceService CreateService(
         TerminalCashPaymentReadback? cashPayment,
         InMemoryFiscalReferenceRepository? repo = null,
@@ -508,6 +535,38 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
                 services.RemoveAll<ITerminalCashFiscalIssuanceService>();
                 services.AddSingleton(service);
             });
+
+    private static Task<HttpResponseMessage> SendRecoveryAsync(HttpClient client, string routeSuffix)
+    {
+        var fiscalCorrelationId = Guid.Parse("21000000-0000-4000-8000-000000000098");
+        var body = new InternalTerminalCashFiscalRecoveryRequest(
+            FiscalIssuanceReferenceId,
+            PaymentAttemptId,
+            PaymentConfirmationId,
+            ParkingSessionId,
+            TariffSnapshotId,
+            ExpectedAmountMinorUnits: 10_000,
+            ExpectedCurrency: "PHP",
+            ExpectedDeliveryRequestHash: "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            ExpectedFiscalSemanticRequestHash: new string('a', 64),
+            ExpectedUpstreamFinalityReference:
+                $"terminal-cash-payment-confirmation:{PaymentConfirmationId:D}:sales_invoice",
+            ExpectedTransactionCorrelationId: Guid.Parse("21000000-0000-4000-8000-000000000014"),
+            ExpectedFiscalCorrelationId: fiscalCorrelationId,
+            ActorServiceIdentityId: Guid.Parse("21000000-0000-4000-8000-000000000097"),
+            ApprovalReference: "authorized-test-approval",
+            ReasonCode: "sales_invoice_header_profile_not_found",
+            SafeJustification: "The governed Sales Invoice profile configuration is now ready.");
+        var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/internal/v1/terminal-cash-fiscal-recovery/{TerminalCashTenderId:D}/{routeSuffix}")
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.Add("Idempotency-Key", $"terminal-cash-fiscal-{TerminalCashTenderId:N}");
+        request.Headers.Add("X-Correlation-Id", fiscalCorrelationId.ToString("D"));
+        return client.SendAsync(request);
+    }
 
     private static TerminalCashFiscalIssuanceCommand Command(string idempotencyKey = "terminal-cash-fiscal-key") =>
         new(TerminalCashTenderId, idempotencyKey, Guid.Parse("21000000-0000-4000-8000-000000000099"));
@@ -753,11 +812,16 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         private readonly TerminalCashFiscalIssuanceResult? _result;
         private readonly TerminalCashFiscalIssuanceRejectedException? _rejection;
         private readonly TerminalCashFiscalIssuanceResult? _readback;
+        private readonly TerminalCashFiscalConflictRecoveryResult? _recoveryResult;
 
-        public FakeTerminalCashFiscalIssuanceService(TerminalCashFiscalIssuanceResult? result = null, TerminalCashFiscalIssuanceResult? readback = null)
+        public FakeTerminalCashFiscalIssuanceService(
+            TerminalCashFiscalIssuanceResult? result = null,
+            TerminalCashFiscalIssuanceResult? readback = null,
+            TerminalCashFiscalConflictRecoveryResult? recoveryResult = null)
         {
             _result = result;
             _readback = readback ?? result;
+            _recoveryResult = recoveryResult;
         }
 
         public FakeTerminalCashFiscalIssuanceService(TerminalCashFiscalIssuanceRejectedException rejection)
@@ -766,6 +830,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         }
 
         public int IssueCallCount { get; private set; }
+
+        public List<TerminalCashFiscalConflictRecoveryCommand> RecoveryCommands { get; } = [];
 
         public Task<TerminalCashFiscalIssuanceResult> IssueOrReadAsync(
             TerminalCashFiscalIssuanceCommand command,
@@ -786,10 +852,14 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             CancellationToken cancellationToken) =>
             Task.FromResult(_readback);
 
-        public Task<TerminalCashFiscalConflictRecoveryResult> RecoverReportingPeriodConflictAsync(
+        public Task<TerminalCashFiscalConflictRecoveryResult> RecoverConfigurationFailureAsync(
             TerminalCashFiscalConflictRecoveryCommand command,
-            CancellationToken cancellationToken) =>
-            throw new NotSupportedException("Conflict recovery is not used by endpoint issuance tests.");
+            CancellationToken cancellationToken)
+        {
+            RecoveryCommands.Add(command);
+            return Task.FromResult(_recoveryResult ?? throw new NotSupportedException(
+                "Recovery result was not configured for this endpoint test."));
+        }
     }
 
     private sealed class TrackingSitePosServerBindingResolver : ISitePosServerBindingResolver

@@ -155,7 +155,7 @@ app.MapInternalControlledUatFiscalIssuanceEndpoints();
 app.MapInternalFiscalIssuanceVoidEndpoints();
 app.MapFiscalIssuanceStatusEndpoints();
 app.MapInternalFiscalExceptionQueueSemanticHashBackfillEndpoints();
-app.MapInternalTerminalCashFiscalConflictRecoveryEndpoints();
+app.MapInternalTerminalCashFiscalConfigurationRecoveryEndpoints();
 app.MapInternalOutboxDispatcherEndpoints();
 app.MapInternalEventRecoveryEndpoints();
 app.MapInternalVendorSessionProjectionEndpoints();

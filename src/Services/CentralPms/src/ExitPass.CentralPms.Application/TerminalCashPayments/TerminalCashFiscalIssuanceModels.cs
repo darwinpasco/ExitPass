@@ -23,10 +23,10 @@ public interface ITerminalCashFiscalIssuanceService
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Recovers one unchanged terminal-cash fiscal obligation that was blocked solely because
-    /// the POS fiscal reporting period was unavailable. This is not a general conflict retry.
+    /// Recovers one unchanged terminal-cash fiscal obligation whose persisted configuration
+    /// failure is explicitly approved for guarded retry. This is not a general retry API.
     /// </summary>
-    Task<TerminalCashFiscalConflictRecoveryResult> RecoverReportingPeriodConflictAsync(
+    Task<TerminalCashFiscalConflictRecoveryResult> RecoverConfigurationFailureAsync(
         TerminalCashFiscalConflictRecoveryCommand command,
         CancellationToken cancellationToken);
 }
@@ -65,7 +65,7 @@ public sealed record TerminalCashFiscalConflictRecoveryCommand(
     string SafeJustification);
 
 /// <summary>
-/// Audited result of a governed reporting-period conflict recovery.
+/// Audited result of a governed retryable-configuration recovery.
 /// </summary>
 public sealed record TerminalCashFiscalConflictRecoveryResult(
     Guid RecoveryAuditId,
