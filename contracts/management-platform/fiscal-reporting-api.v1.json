@@ -1,0 +1,19 @@
+{
+  "contractVersion": "1.0",
+  "managementPrefix": "/v1/management-platform/fiscal-reporting/sites/{siteId}",
+  "operatorPrefix": "/v1/ops/operator-console/fiscal-reporting/sites/{siteId}",
+  "routes": [
+    "GET /electronic-journal",
+    "GET /electronic-journal/download",
+    "GET /x-readings",
+    "POST /x-readings",
+    "GET /x-readings/{reportReference}/download",
+    "GET /z-readings",
+    "POST /z-readings",
+    "GET /z-readings/{reportReference}/download"
+  ],
+  "routingFailures": ["missing_binding", "inactive_binding", "ambiguous_binding", "unavailable_pos", "invalid_period", "unauthorized_scope"],
+  "zRequest": { "confirmClose": true, "periodSelectedByBrowser": false, "sequenceSelectedByBrowser": false },
+  "downloadPassThrough": true,
+  "correlationHeader": "X-Correlation-Id"
+}

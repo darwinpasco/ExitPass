@@ -1,5 +1,6 @@
 ﻿import type { ManagementPlatformAuthState, ManagementPlatformPrincipal, ManagementPlatformSite } from "./types";
 import { managementPlatformOverviewPermission } from "./permissions";
+import { fiscalReportingPermissions } from "./fiscalReporting";
 
 const defaultSites: ManagementPlatformSite[] = [
   {
@@ -22,7 +23,7 @@ export function createDevelopmentPrincipal(overrides: Partial<ManagementPlatform
     subjectRef: localFallback(import.meta.env.VITE_MANAGEMENT_PLATFORM_SUBJECT_REF, "local-management-platform-user"),
     displayName: localFallback(import.meta.env.VITE_MANAGEMENT_PLATFORM_DISPLAY_NAME, "Management Platform User"),
     permissions: parseList(
-      localFallback(import.meta.env.VITE_MANAGEMENT_PLATFORM_PERMISSIONS, managementPlatformOverviewPermission)
+      localFallback(import.meta.env.VITE_MANAGEMENT_PLATFORM_PERMISSIONS, [managementPlatformOverviewPermission, ...Object.values(fiscalReportingPermissions)].join(","))
     ),
     authorizedSites: defaultSites,
     ...overrides

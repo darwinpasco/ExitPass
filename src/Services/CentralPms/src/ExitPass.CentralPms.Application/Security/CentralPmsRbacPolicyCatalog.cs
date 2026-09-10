@@ -95,6 +95,12 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "sales-invoice-report.view"
             ],
+            ["FiscalReportingElectronicJournalRead"] = ["fiscal-reporting.ej.read"],
+            ["FiscalReportingElectronicJournalExport"] = ["fiscal-reporting.ej.export"],
+            ["FiscalReportingXRead"] = ["fiscal-reporting.x.read"],
+            ["FiscalReportingXGenerate"] = ["fiscal-reporting.x.generate"],
+            ["FiscalReportingZRead"] = ["fiscal-reporting.z.read"],
+            ["FiscalReportingZGenerate"] = ["fiscal-reporting.z.generate"],
             ["ManagementPlatformStatutoryBenefitReviewList"] =
             [
                 "statutory-discounts.review.queue.read"

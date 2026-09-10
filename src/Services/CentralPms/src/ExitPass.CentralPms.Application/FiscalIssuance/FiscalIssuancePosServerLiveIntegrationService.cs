@@ -509,6 +509,10 @@ public sealed class SitePosServerEndpointOptions
 
     public Guid SitePosServerId { get; set; }
 
+    public Guid? FiscalIdentityId { get; set; }
+
+    public string? CurrencyCode { get; set; }
+
     public string? SitePosServerRef { get; set; }
 
     public string? BaseUrl { get; set; }

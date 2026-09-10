@@ -1,0 +1,25 @@
+{
+  "contractVersion": "1.0",
+  "route": "/management-platform/fiscal-reporting",
+  "authorityBoundary": "Browser -> Central PMS -> canonical Site POS binding -> POS Server",
+  "siteScope": ["SITE", "SITE_GROUP"],
+  "permissions": {
+    "electronicJournalRead": "fiscal-reporting.ej.read",
+    "electronicJournalExport": "fiscal-reporting.ej.export",
+    "xRead": "fiscal-reporting.x.read",
+    "xGenerate": "fiscal-reporting.x.generate",
+    "zRead": "fiscal-reporting.z.read",
+    "zGenerate": "fiscal-reporting.z.generate"
+  },
+  "electronicJournal": {
+    "format": "text/plain; charset=utf-8",
+    "extension": ".txt",
+    "maximumPeriodDays": 31,
+    "artifactGeneratedBy": "POS_SERVER",
+    "browserMustNotConstructArtifact": true,
+    "search": ["sales_invoice_number", "transaction_reference"]
+  },
+  "xReading": { "authority": "POS_SERVER", "closesPeriod": false, "history": true, "download": true },
+  "zReading": { "authority": "POS_SERVER", "closesPeriod": true, "history": true, "download": true, "explicitConfirmation": true },
+  "developmentScenario": { "query": "mpFiscalReportingScenario=ready", "productionIgnored": true }
+}

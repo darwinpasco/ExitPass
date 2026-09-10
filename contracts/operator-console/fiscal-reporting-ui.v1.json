@@ -1,0 +1,18 @@
+{
+  "contractVersion": "1.0",
+  "route": "/operator-console/fiscal-reporting",
+  "authorityBoundary": "Browser -> Central PMS -> operator effective Site -> canonical Site POS binding -> POS Server",
+  "scope": "AUTHORIZED_OPERATOR_SITE_ONLY",
+  "permissions": [
+    "fiscal-reporting.ej.read",
+    "fiscal-reporting.ej.export",
+    "fiscal-reporting.x.read",
+    "fiscal-reporting.x.generate",
+    "fiscal-reporting.z.read",
+    "fiscal-reporting.z.generate"
+  ],
+  "zGeneration": { "separateFromRead": true, "explicitConfirmation": true, "warningRequired": true },
+  "browserCalculation": false,
+  "browserArtifactGeneration": false,
+  "developmentScenario": { "query": "operatorFiscalReportingScenario=ready", "productionIgnored": true }
+}

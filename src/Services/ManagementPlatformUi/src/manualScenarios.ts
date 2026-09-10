@@ -1,5 +1,7 @@
 ﻿import { createDevelopmentPrincipal } from "./auth";
 import { futureSalesInvoiceProfilePermissions, managementPlatformOverviewPermission } from "./permissions";
+import { fiscalExceptionReportPermission } from "./fiscalExceptionReporting";
+import { fiscalReportingPermissions } from "./fiscalReporting";
 import type { ManagementPlatformAuthState, ManagementPlatformSite, ManagementPlatformUiError } from "./types";
 
 export type ManagementPlatformManualScenarioName =
@@ -44,7 +46,9 @@ export function resolveManagementPlatformManualScenario(
   const searchParams = new URLSearchParams(search);
   const scenarioName = normalizeScenarioName(searchParams.get("mpScenario"));
   const profileScenarioName = searchParams.get("mpProfileScenario");
-  const scenarioPermissions = resolveDevelopmentPermissions(profileScenarioName);
+  const fiscalScenarioName = searchParams.get("mpFiscalScenario");
+  const fiscalReportingScenarioName = searchParams.get("mpFiscalReportingScenario");
+  const scenarioPermissions = resolveDevelopmentPermissions(profileScenarioName, fiscalScenarioName, fiscalReportingScenarioName);
 
   switch (scenarioName) {
     case "unauthenticated":
@@ -74,7 +78,12 @@ export function resolveManagementPlatformManualScenario(
           principal: createDevelopmentPrincipal({
             displayName: "Development Multi Site User",
             permissions: scenarioPermissions,
-            authorizedSites: [oneSite, secondSite]
+            authorizedSites: [oneSite, secondSite],
+            authorizedReportScopes: [
+              { scopeType: "SITE", scopeReference: oneSite.siteId, displayName: oneSite.displayName },
+              { scopeType: "SITE", scopeReference: secondSite.siteId, displayName: secondSite.displayName },
+              { scopeType: "SITE_GROUP", scopeReference: "71000000-0000-0000-0000-000000000201", displayName: "Development Site Group" }
+            ]
           })
         },
         showIndicator: true
@@ -153,16 +162,25 @@ function normalizeScenarioName(value: string | null): ManagementPlatformManualSc
   }
 }
 
-function resolveDevelopmentPermissions(profileScenarioName: string | null): string[] {
+function resolveDevelopmentPermissions(profileScenarioName: string | null, fiscalScenarioName: string | null, fiscalReportingScenarioName: string | null): string[] {
+  const permissions = fiscalReportingScenarioName === "ready"
+    ? [...defaultDevelopmentPermissions, ...Object.values(fiscalReportingPermissions)]
+    : isFiscalScenario(fiscalScenarioName)
+    ? [...defaultDevelopmentPermissions, fiscalExceptionReportPermission]
+    : defaultDevelopmentPermissions;
   if (isApproveOnlyProfileScenario(profileScenarioName)) {
-    return [...defaultDevelopmentPermissions, futureSalesInvoiceProfilePermissions.approve];
+    return [...permissions, futureSalesInvoiceProfilePermissions.approve];
   }
 
   if (isManageProfileScenario(profileScenarioName)) {
-    return [...defaultDevelopmentPermissions, futureSalesInvoiceProfilePermissions.manage];
+    return [...permissions, futureSalesInvoiceProfilePermissions.manage];
   }
 
-  return defaultDevelopmentPermissions;
+  return permissions;
+}
+
+function isFiscalScenario(value: string | null): boolean {
+  return value === "activity" || value === "no-activity" || value === "disabled" || value === "unavailable";
 }
 
 function isApproveOnlyProfileScenario(value: string | null): boolean {

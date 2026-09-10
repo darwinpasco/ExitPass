@@ -1,7 +1,8 @@
 ﻿import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { App, FeatureUnavailable, MutationUncertainMessage, PageError } from "./App";
+import { fiscalExceptionReportPermission, fiscalExceptionReportingRoute, type FiscalExceptionReportClient } from "./fiscalExceptionReporting";
 import { managementPlatformOverviewPermission, futureSalesInvoiceProfilePermissions, hasAllPermissions, hasAnyPermission, hasPermission } from "./permissions";
 import type { ManagementPlatformAuthState } from "./types";
 
@@ -112,6 +113,39 @@ describe("ManagementPlatformUi foundation shell", () => {
     expect(screen.getByRole("button", { name: /Sales Invoice Configuration Sales Invoice Setups/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Create/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Approve/i })).not.toBeInTheDocument();
+  });
+
+  it("shows and protects the fiscal reporting console with its dedicated permission", async () => {
+    const reportClient: FiscalExceptionReportClient = { getSummary: vi.fn().mockResolvedValue({
+      contractVersion: "management-platform-fiscal-exception-reporting:v1",
+      reportId: "fiscal-exception-summary",
+      requestedScope: { scopeType: "SITE", scopeReference: siteA.siteId, displayName: siteA.displayName },
+      effectiveScope: { scopeType: "SITE", scopeReference: siteA.siteId, displayName: siteA.displayName },
+      periodStart: "2026-08-01T00:00:00Z",
+      periodEnd: "2026-08-08T00:00:00Z",
+      timeBasis: "FISCAL_ISSUANCE_REFERENCE_FIRST_RECORDED_AT",
+      generatedAt: "2026-08-08T00:01:00Z",
+      dataAsOf: null,
+      availability: "NO_ACTIVITY",
+      freshness: "NOT_APPLICABLE",
+      correlationId: "74000000-0000-0000-0000-000000000101",
+      sourceCoverage: [],
+      lifecycleSummaries: [],
+      exceptionSummaries: [],
+      currencySummaries: [],
+      warnings: ["NO_SALES_INVOICE_ISSUANCE_ACTIVITY_IN_PERIOD"],
+      limitations: [],
+      unavailableFacts: [],
+      sourceAuthority: "CENTRAL_PMS_FISCAL_ISSUANCE_REFERENCES"
+    }) };
+    const { rerender } = render(<App authState={authState()} initialPath={fiscalExceptionReportingRoute} fiscalExceptionClient={reportClient} />);
+
+    expect(screen.getByRole("alert", { name: "Permission denied" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Fiscal exceptions/i })).not.toBeInTheDocument();
+
+    rerender(<App authState={authState([managementPlatformOverviewPermission, fiscalExceptionReportPermission])} initialPath={fiscalExceptionReportingRoute} fiscalExceptionClient={reportClient} />);
+    expect(screen.getByRole("button", { name: /Fiscal exceptions/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sales Invoice fiscal exceptions" })).toBeInTheDocument();
   });
 
   it("exposes accessible error, feature-unavailable, and mutation-uncertain components", () => {

@@ -6,6 +6,13 @@ export interface ManagementPlatformPrincipal {
   displayName?: string;
   permissions: string[];
   authorizedSites: ManagementPlatformSite[];
+  authorizedReportScopes?: ManagementPlatformReportScope[];
+}
+
+export interface ManagementPlatformReportScope {
+  scopeType: "SITE" | "SITE_GROUP";
+  scopeReference: string;
+  displayName: string;
 }
 
 export interface ManagementPlatformAuthState {
