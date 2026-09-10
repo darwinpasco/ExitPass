@@ -44,6 +44,7 @@ public sealed class CentralPmsWebPayClientTests
             TariffSnapshotId,
             "AUB_QRPH",
             "QRPH",
+            new CentralPmsInvoiceCustomerInformation("Juan Dela Cruz", "100 Sample Street", "123-456-789", "Sample Trading", null),
             "webpay:test",
             CorrelationId,
             CancellationToken.None);
@@ -57,6 +58,7 @@ public sealed class CentralPmsWebPayClientTests
         using var document = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("AUB_QRPH", document.RootElement.GetProperty("paymentProvider").GetString());
         Assert.Equal("QRPH", document.RootElement.GetProperty("paymentMethod").GetString());
+        Assert.Equal("Juan Dela Cruz", document.RootElement.GetProperty("invoiceCustomerInformation").GetProperty("customerName").GetString());
     }
 
     /// <summary>
@@ -82,6 +84,7 @@ public sealed class CentralPmsWebPayClientTests
             TariffSnapshotId,
             "PAYMONGO_CHECKOUT_SESSION",
             "QRPH",
+            null,
             "webpay:test",
             CorrelationId,
             CancellationToken.None);
@@ -113,6 +116,7 @@ public sealed class CentralPmsWebPayClientTests
             TariffSnapshotId,
             "AUB",
             "QRPH",
+            null,
             "webpay:test",
             CorrelationId,
             CancellationToken.None);
@@ -147,6 +151,7 @@ public sealed class CentralPmsWebPayClientTests
             TariffSnapshotId,
             "AUB_QRPH",
             "QRPH",
+            null,
             "webpay:test",
             CorrelationId,
             CancellationToken.None);

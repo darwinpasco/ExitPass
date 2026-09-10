@@ -93,7 +93,7 @@ test.afterEach(async ({}, testInfo) => {
 });
 
 test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
-  test("confirmed payment displays the authoritative POS Server presentation and no local receipt fallback", async ({ page, browser }) => {
+  test("confirmed payment displays the authoritative POS Server presentation and no local receipt fallback", async ({ page, browser }, testInfo) => {
     const apiRequests = collectApiRequests(page);
 
     await openReturnPage(page, ids.available);
@@ -108,6 +108,7 @@ test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
     await expect(page.getByText("CASHLESS")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: /^exit instruction$/i })).toBeVisible();
     await expect(page.getByText("Proceed to exit")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("completed-payment-sales-invoice.png"), fullPage: true });
     await expect(page.getByText("Additional parking charges will apply if you do not exit by the expiry time.")).toBeVisible();
     await expect(page.getByRole("heading", { name: /^exit qr code$/i })).toBeVisible();
     await expect(page.getByText("Parking Session Summary")).toHaveCount(0);
@@ -274,6 +275,31 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
     await expectApiBoundary(apiRequests);
   });
 
+  test("optional invoice customer information reaches the durable payment request unchanged", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await page.screenshot({ path: testInfo.outputPath("mobile-initial-lookup.png"), fullPage: true });
+    await resolveTicketOnStartPage(page, "WEBPAY-STAT-NO-DISCOUNT");
+    await expect(page.getByLabel("OSCA ID No. / PWD ID No.")).toHaveCount(0);
+    await page.getByLabel("Customer Name").fill("  Juan Dela Cruz  ");
+    await page.getByLabel("Address").fill("  100 Sample Street  ");
+    await page.getByLabel("TIN").fill("  123-456-789  ");
+    await page.getByLabel("Business Style").fill("  Sample Trading  ");
+    await page.screenshot({ path: testInfo.outputPath("mobile-resolved-customer-information.png"), fullPage: true });
+    await page.getByRole("button", { name: /continue to payment/i }).click();
+
+    const state = await getFixtureState();
+    const body = state.latestPaymentIntentRequest!;
+    expect(body.invoiceCustomerInformation).toEqual({
+      customerName: "Juan Dela Cruz",
+      address: "100 Sample Street",
+      tin: "123-456-789",
+      businessStyle: "Sample Trading",
+      statutoryIdNumber: ""
+    });
+    expect(body.expectedAmountMinorUnits).toBe(12900);
+  });
+
   test("Senior Citizen request enters pending review, disables payment, and polls with GET", async ({ page }) => {
     const apiRequests = collectApiRequests(page);
 
@@ -330,7 +356,7 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
     await fetch(`${baseFixtureUrl}/__fixture/reset`, { method: "POST", body: "{}" });
     await submitStatutoryRequest(page, "WEBPAY-STAT-RETRYABLE", "Senior Citizen", "SC-****-1234");
     await expect(page.getByRole("heading", { name: /discount application temporarily unavailable/i })).toBeVisible();
-    await expect(page.getByText(/Retry the same application request/i).first()).toBeVisible();
+    await expect(page.getByText(/Try again after a short wait/i).first()).toBeVisible();
 
     await fetch(`${baseFixtureUrl}/__fixture/reset`, { method: "POST", body: "{}" });
     await submitStatutoryRequest(page, "WEBPAY-STAT-TERMINAL", "Senior Citizen", "SC-****-1234");
@@ -624,7 +650,8 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
 });
 
 test.describe("WebPay statutory discount applied payment browser smoke", () => {
-  test("applied statutory state enables payment using the authoritative applied basis", async ({ page }) => {
+  test("applied statutory state enables payment using the authoritative applied basis", async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 430, height: 932 });
     const apiRequests = collectApiRequests(page);
 
     await submitStatutoryRequest(page, "WEBPAY-STAT-APPLIED-PAYMENT", "Senior Citizen", "SC-****-1234");
@@ -633,12 +660,18 @@ test.describe("WebPay statutory discount applied payment browser smoke", () => {
     await expect(page.getByText("PHP 50.00")).toBeVisible();
     await expect(page.getByText("-PHP 10.00")).toBeVisible();
     await expect(page.getByText("PHP 40.00")).toBeVisible();
-    await expect(page.getByText(/Payment is available using the Central PMS-approved statutory payable basis/i)).toBeVisible();
+    await expect(page.getByText(/approved statutory discount is included in the amount due/i).first()).toBeVisible();
     await expectCustomerVisibleReferencesSafe(page);
+
+    await expect(page.getByLabel("OSCA ID No. / PWD ID No.")).toBeVisible();
+    await page.getByLabel("Customer Name").fill("Maria Santos");
+    await page.getByLabel("OSCA ID No. / PWD ID No.").fill("OSCA-12345");
+    await page.screenshot({ path: testInfo.outputPath("mobile-approved-benefit-customer-information.png"), fullPage: true });
 
     await page.getByRole("button", { name: /continue to payment/i }).click();
 
     await expect(page.getByRole("link", { name: /continue to payment/i })).toHaveAttribute("href", "https://payments.test/handoff");
+    await page.screenshot({ path: testInfo.outputPath("mobile-payment-handoff.png"), fullPage: true });
     const state = await getFixtureState();
     const paymentRequests = state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents");
     expect(paymentRequests).toHaveLength(1);
@@ -649,6 +682,10 @@ test.describe("WebPay statutory discount applied payment browser smoke", () => {
     expect(body.expectedCurrency).toBe("PHP");
     expect(body.statutoryDiscountDecisionCommandId).toBe("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     expect(body.statutoryDiscountPayableBasisApplicationCommandId).toBe("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    expect(body.invoiceCustomerInformation).toMatchObject({
+      customerName: "Maria Santos",
+      statutoryIdNumber: "OSCA-12345"
+    });
     expect(JSON.stringify(body)).not.toContain("statutoryDiscountAmountMinorUnits");
     expect(JSON.stringify(body)).not.toContain("vatAmountMinorUnits");
     expect(JSON.stringify(body)).not.toContain("reviewer");
@@ -673,9 +710,9 @@ test.describe("WebPay statutory discount applied payment browser smoke", () => {
     { name: "rejected", ticketReference: "WEBPAY-STAT-REJECTED", heading: /entitlement not approved/i },
     { name: "retryable", ticketReference: "WEBPAY-STAT-APPLY-RETRYABLE", heading: /entitlement approved/i },
     { name: "terminal", ticketReference: "WEBPAY-STAT-TERMINAL", heading: /statutory discount unavailable/i },
-    { name: "missing applied snapshot", ticketReference: "WEBPAY-STAT-MISSING-SNAPSHOT", heading: /payment basis incomplete/i },
-    { name: "missing final amount", ticketReference: "WEBPAY-STAT-MISSING-AMOUNT", heading: /payment basis incomplete/i },
-    { name: "missing currency", ticketReference: "WEBPAY-STAT-MISSING-CURRENCY", heading: /payment basis incomplete/i }
+    { name: "missing applied snapshot", ticketReference: "WEBPAY-STAT-MISSING-SNAPSHOT", heading: /approved amount not ready/i },
+    { name: "missing final amount", ticketReference: "WEBPAY-STAT-MISSING-AMOUNT", heading: /approved amount not ready/i },
+    { name: "missing currency", ticketReference: "WEBPAY-STAT-MISSING-CURRENCY", heading: /approved amount not ready/i }
   ]) {
     test(`${scenario.name} cannot submit statutory payment`, async ({ page }) => {
       await submitStatutoryRequest(page, scenario.ticketReference, "Senior Citizen", "SC-****-1234");
@@ -762,7 +799,7 @@ test.describe("WebPay statutory discount application-intent browser smoke", () =
     await submitStatutoryRequest(page, "WEBPAY-STAT-APPLY-CONFLICT", "Senior Citizen", "SC-****-1234");
     await page.getByRole("button", { name: /apply approved discount/i }).click();
     await expect(page.getByRole("heading", { name: /statutory discount conflict/i })).toBeVisible();
-    await expect(page.getByText(/canonical decision/i).first()).toBeVisible();
+    await expect(page.getByText(/request details no longer match/i).first()).toBeVisible();
     await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
 
     await fetch(`${baseFixtureUrl}/__fixture/reset`, { method: "POST", body: "{}" });
@@ -877,7 +914,7 @@ test.describe("WebPay statutory discount browser recovery smoke", () => {
   test("malformed and expired recovery records fail closed", async ({ page }) => {
     await page.addInitScript((key) => localStorage.setItem(key, "{broken"), statutoryRecoveryStorageKey);
     await page.goto("/");
-    await expect(page.getByText(/invalid statutory discount recovery record was cleared/i)).toBeVisible();
+    await expect(page.getByText(/expired saved page details were cleared/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /^continue$/i })).toBeEnabled();
 
     const expiredPage = await page.context().newPage();
@@ -985,7 +1022,7 @@ test.describe("WebPay statutory discount browser recovery smoke", () => {
 
     const secondPage = await page.context().newPage();
     await secondPage.goto("/?ticketReference=WEBPAY-STAT-APPLIED-PAYMENT");
-    await expect(secondPage.getByText(/statutory discount workflow is ready for payment/i)).toBeVisible();
+    await expect(secondPage.getByText(/approved discount is ready/i)).toBeVisible();
     await secondPage.getByRole("button", { name: /^continue$/i }).click();
     await expect(secondPage.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
 
@@ -1007,12 +1044,12 @@ test.describe("WebPay statutory discount browser recovery smoke", () => {
       value: record
     });
 
-    await expect(secondPage.getByText(/Another page may be starting payment/i)).toBeVisible();
+    await expect(secondPage.getByText(/Another page may be starting this payment/i)).toBeVisible();
     await expect(secondPage.getByRole("button", { name: /continue to payment/i })).toBeDisabled();
     releaseAuthoritativeReadback();
     await secondPage.unroute(decisionReadPattern, gateDecisionRead);
     await secondPage.reload();
-    await expect(secondPage.getByText(/Another page may be starting payment/i)).toBeVisible();
+    await expect(secondPage.getByText(/Another page may be starting this payment/i)).toBeVisible();
     await secondPage.getByRole("button", { name: /^continue$/i }).click();
     await expect.poll(async () => {
       const state = await getFixtureState();
@@ -1048,10 +1085,10 @@ test.describe("WebPay statutory discount browser recovery smoke", () => {
     expect(storage).toContain("10000000-0000-4000-8000-000000000010");
     expect(storage).toContain("PAYMENT_HANDOFF");
 
-    await page.getByRole("button", { name: /clear browser recovery/i }).click();
+    await page.getByRole("button", { name: /clear saved page details/i }).click();
     storage = await readStatutoryRecoveryStorage(page);
     expect(storage).toBeNull();
-    await expect(page.getByText(/Browser recovery metadata was cleared/i)).toBeVisible();
+    await expect(page.getByText(/saved recovery details were cleared/i)).toBeVisible();
   });
 
   test("no-discount path and authoritative Sales Invoice presentation remain unchanged", async ({ page }) => {

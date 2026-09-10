@@ -47,6 +47,7 @@ public sealed class PaymentAttemptsController : ControllerBase
     private readonly CreatePaymentAttemptRequestValidator _requestValidator;
     private readonly CreatePaymentAttemptHeadersValidator _headersValidator;
     private readonly ILogger<PaymentAttemptsController> _logger;
+    private readonly IInvoiceCustomerInformationStore? _invoiceCustomerInformationStore;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PaymentAttemptsController"/> class.
@@ -55,12 +56,14 @@ public sealed class PaymentAttemptsController : ControllerBase
         ICreateOrReusePaymentAttemptUseCase useCase,
         CreatePaymentAttemptRequestValidator requestValidator,
         CreatePaymentAttemptHeadersValidator headersValidator,
-        ILogger<PaymentAttemptsController> logger)
+        ILogger<PaymentAttemptsController> logger,
+        IInvoiceCustomerInformationStore? invoiceCustomerInformationStore = null)
     {
         _useCase = useCase;
         _requestValidator = requestValidator;
         _headersValidator = headersValidator;
         _logger = logger;
+        _invoiceCustomerInformationStore = invoiceCustomerInformationStore;
     }
 
     /// <summary>
@@ -149,6 +152,26 @@ public sealed class PaymentAttemptsController : ControllerBase
             _logger.LogInformation("Dispatching CreateOrReusePaymentAttempt use case.");
 
             var result = await _useCase.ExecuteAsync(command, cancellationToken);
+
+            if (request.InvoiceCustomerInformation is { } customerInformation)
+            {
+                if (_invoiceCustomerInformationStore is null)
+                {
+                    throw new InvalidOperationException("invoice_customer_information_store_required");
+                }
+
+                await _invoiceCustomerInformationStore.SaveImmutableAsync(
+                    result.PaymentAttemptId,
+                    request.ParkingSessionId,
+                    request.TariffSnapshotId,
+                    new InvoiceCustomerInformation(
+                        customerInformation.CustomerName,
+                        customerInformation.Address,
+                        customerInformation.Tin,
+                        customerInformation.BusinessStyle,
+                        customerInformation.StatutoryIdNumber),
+                    cancellationToken);
+            }
 
             activity?.SetStatus(ActivityStatusCode.Ok);
             activity?.SetTag("payment_attempt_id", result.PaymentAttemptId);

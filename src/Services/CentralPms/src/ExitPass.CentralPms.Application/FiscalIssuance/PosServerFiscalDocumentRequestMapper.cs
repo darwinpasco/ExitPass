@@ -138,7 +138,17 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
             AppliedStatutoryFiscalFacts: MapAppliedStatutoryFiscalFacts(context.AppliedStatutoryFiscalFacts),
             SiteId: context.SiteId,
             CompletionBasis: context.CompletionBasis.Trim().ToUpperInvariant(),
-            CompletionAuthorityRef: TrimToNull(context.CompletionAuthorityRef));
+            CompletionAuthorityRef: TrimToNull(context.CompletionAuthorityRef),
+            InvoiceCustomerInformation: context.InvoiceCustomerInformation is null
+                ? null
+                : new PosServerInvoiceCustomerInformationRequest(
+                    TrimToNull(context.InvoiceCustomerInformation.CustomerName),
+                    TrimToNull(context.InvoiceCustomerInformation.Address),
+                    TrimToNull(context.InvoiceCustomerInformation.Tin),
+                    TrimToNull(context.InvoiceCustomerInformation.BusinessStyle),
+                    context.AppliedStatutoryFiscalFacts is null
+                        ? null
+                        : TrimToNull(context.InvoiceCustomerInformation.StatutoryIdNumber)));
     }
 
     private static IReadOnlyList<string> Validate(CentralPmsFiscalDocumentMappingContext context)

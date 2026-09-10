@@ -208,7 +208,7 @@ test.describe("WebPay statutory evidence I-016 browser consumer", () => {
     ["review-pending", "Awaiting review", /photo was received.*awaiting review/i],
     ["approved", "Approved", /payment-time flow/i],
     ["rejected", "Not approved", /regular parking payment/i],
-    ["applied", "Applied", /authoritative payable basis/i]
+    ["applied", "Applied", /included in the amount due/i]
   ] as const) {
     test(`${scenario} lifecycle remains distinct from approval`, async ({ page }) => {
       await setEvidenceScenario(scenario);

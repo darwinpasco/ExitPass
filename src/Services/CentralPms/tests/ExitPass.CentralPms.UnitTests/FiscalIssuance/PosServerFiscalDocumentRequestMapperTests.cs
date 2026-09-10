@@ -36,6 +36,26 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
     }
 
     [Fact]
+    public void Map_CarriesCustomerInformationButRejectsStatutoryIdWithoutApprovedFacts()
+    {
+        var context = ValidContext() with
+        {
+            InvoiceCustomerInformation = new CentralPmsInvoiceCustomerInformationContext(
+                "  Juan Dela Cruz  ", "  100 Sample Street  ", "  123-456-789  ", "  Sample Trading  ", "PWD-UNAPPROVED")
+        };
+
+        var result = _sut.Map(context);
+
+        result.InvoiceCustomerInformation.Should().NotBeNull();
+        result.InvoiceCustomerInformation!.CustomerName.Should().Be("Juan Dela Cruz");
+        result.InvoiceCustomerInformation.Address.Should().Be("100 Sample Street");
+        result.InvoiceCustomerInformation.Tin.Should().Be("123-456-789");
+        result.InvoiceCustomerInformation.BusinessStyle.Should().Be("Sample Trading");
+        result.InvoiceCustomerInformation.StatutoryIdNumber.Should().BeNull();
+    }
+
+
+    [Fact]
     public void Map_WhenBusinessDayDateIsNull_PreservesNullForPosAssignment()
     {
         var context = ValidContext() with { BusinessDayDate = null };

@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -38,7 +39,12 @@ public sealed class PostgresDigitalPaymentFiscalContextReader :
                 pa.amount,
                 pa.currency_code::text,
                 pc.verified_at AS verified_timestamp,
-                ts.statutory_discount_validation_id
+                ts.statutory_discount_validation_id,
+                ici.customer_name,
+                ici.customer_address,
+                ici.customer_tin,
+                ici.business_style,
+                ici.statutory_id_number
             FROM core.payment_attempts pa
             INNER JOIN core.payment_confirmations pc
                 ON pc.payment_attempt_id = pa.payment_attempt_id
@@ -47,6 +53,8 @@ public sealed class PostgresDigitalPaymentFiscalContextReader :
             INNER JOIN core.tariff_snapshots ts
                 ON ts.tariff_snapshot_id = pa.tariff_snapshot_id
                AND ts.parking_session_id = pa.parking_session_id
+            LEFT JOIN core.payment_attempt_invoice_customer_information ici
+                ON ici.payment_attempt_id = pa.payment_attempt_id
             WHERE pa.payment_attempt_id = @payment_attempt_id
               AND pc.payment_confirmation_id = @payment_confirmation_id
               AND pa.parking_session_id = @parking_session_id
@@ -125,6 +133,13 @@ public sealed class PostgresDigitalPaymentFiscalContextReader :
             statutoryContext = approvedContext;
         }
 
+        var customerInformation = new InvoiceCustomerInformation(
+            ReadOptionalString(reader, "customer_name"),
+            ReadOptionalString(reader, "customer_address"),
+            ReadOptionalString(reader, "customer_tin"),
+            ReadOptionalString(reader, "business_style"),
+            hasStatutoryDiscount ? ReadOptionalString(reader, "statutory_id_number") : null);
+
         return new DigitalPaymentFiscalContext(
             siteId,
             siteGroupId,
@@ -134,7 +149,14 @@ public sealed class PostgresDigitalPaymentFiscalContextReader :
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("verified_timestamp")),
             endpoint.SitePosServerId,
             endpoint.SitePosServerRef!.Trim(),
-            statutoryContext);
+            statutoryContext,
+            customerInformation);
+    }
+
+    private static string? ReadOptionalString(NpgsqlDataReader reader, string column)
+    {
+        var ordinal = reader.GetOrdinal(column);
+        return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     }
 
     public async Task<DigitalPaymentFiscalRecoveryContext?> FindByPaymentAttemptIdAsync(

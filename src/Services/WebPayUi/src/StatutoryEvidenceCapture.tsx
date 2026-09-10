@@ -343,7 +343,7 @@ function getLifecycleCopy(channel: WebPayStatutoryEvidenceChannelResponse | null
     case "REJECTED":
       return { label: "Not approved", message: "The request was not approved. Regular parking payment remains available.", tone: "warning" };
     case "APPLIED":
-      return { label: "Applied", message: "The approved privilege has been applied to the authoritative payable basis.", tone: "success" };
+      return { label: "Applied", message: "The approved privilege is included in the amount due.", tone: "success" };
     default:
       return { label: "Status unavailable", message: "The evidence status could not be confirmed safely. Refresh the status or ask for assistance.", tone: "error" };
   }

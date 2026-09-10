@@ -100,6 +100,51 @@ public sealed class PaymentAttemptsContractTests : IClassFixture<CustomWebApplic
         }
     }
 
+    [Fact]
+    public async Task CreatePaymentAttempt_persists_invoice_customer_information_without_accepting_unapproved_statutory_id()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(CreatePaymentAttempt_persists_invoice_customer_information_without_accepting_unapproved_statutory_id));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for invoice customer information contract test");
+
+        try
+        {
+            using var client = CreateClient();
+            using var response = await PostCreatePaymentAttemptAsync(
+                client,
+                context,
+                idempotencyKey: $"ctest-idem-{Guid.NewGuid():N}",
+                correlationId: context.CorrelationId,
+                invoiceCustomerInformation: new InvoiceCustomerInformationRequest(
+                    "  Juan Dela Cruz  ",
+                    "  100 Sample Street  ",
+                    "  123-456-789  ",
+                    "  Sample Trading  ",
+                    "PWD-UNAPPROVED"));
+
+            var raw = await response.Content.ReadAsStringAsync();
+            response.StatusCode.Should().Be(HttpStatusCode.Created, $"response body: {raw}");
+            var payload = await response.Content.ReadFromJsonAsync<CreatePaymentAttemptResponse>();
+            payload.Should().NotBeNull();
+
+            var stored = await ReadInvoiceCustomerInformationAsync(payload!.PaymentAttemptId);
+            stored.CustomerName.Should().Be("Juan Dela Cruz");
+            stored.Address.Should().Be("100 Sample Street");
+            stored.Tin.Should().Be("123-456-789");
+            stored.BusinessStyle.Should().Be("Sample Trading");
+            stored.StatutoryIdNumber.Should().BeNull();
+        }
+        finally
+        {
+            await DeleteInvoiceCustomerInformationAsync(context.ParkingSessionId);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
     /// <summary>
     /// Verifies BRD 9.13 and SDD 10.7.1 deterministic idempotent replay for the same v1.2 request.
     /// </summary>
@@ -210,7 +255,8 @@ public sealed class PaymentAttemptsContractTests : IClassFixture<CustomWebApplic
         PaymentTestContext context,
         string idempotencyKey,
         Guid correlationId,
-        string paymentMethod = "GCASH")
+        string paymentMethod = "GCASH",
+        InvoiceCustomerInformationRequest? invoiceCustomerInformation = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/public/payment-attempts")
         {
@@ -219,7 +265,8 @@ public sealed class PaymentAttemptsContractTests : IClassFixture<CustomWebApplic
                 ParkingSessionId = context.ParkingSessionId,
                 TariffSnapshotId = context.TariffSnapshotId,
                 PaymentProvider = "GCASH",
-                PaymentMethod = paymentMethod
+                PaymentMethod = paymentMethod,
+                InvoiceCustomerInformation = invoiceCustomerInformation
             })
         };
 
@@ -239,4 +286,44 @@ public sealed class PaymentAttemptsContractTests : IClassFixture<CustomWebApplic
         command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
         return await command.ExecuteScalarAsync() as string;
     }
+
+    private static async Task<InvoiceCustomerInformationRow> ReadInvoiceCustomerInformationAsync(Guid paymentAttemptId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT customer_name, customer_address, customer_tin, business_style, statutory_id_number
+            FROM core.payment_attempt_invoice_customer_information
+            WHERE payment_attempt_id = @payment_attempt_id;
+            """,
+            connection);
+        command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
+        await using var reader = await command.ExecuteReaderAsync();
+        (await reader.ReadAsync()).Should().BeTrue();
+        return new InvoiceCustomerInformationRow(
+            reader.IsDBNull(0) ? null : reader.GetString(0),
+            reader.IsDBNull(1) ? null : reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetString(4));
+    }
+
+    private static async Task DeleteInvoiceCustomerInformationAsync(Guid parkingSessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "DELETE FROM core.payment_attempt_invoice_customer_information WHERE parking_session_id = @parking_session_id;",
+            connection);
+        command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private sealed record InvoiceCustomerInformationRow(
+        string? CustomerName,
+        string? Address,
+        string? Tin,
+        string? BusinessStyle,
+        string? StatutoryIdNumber);
 }

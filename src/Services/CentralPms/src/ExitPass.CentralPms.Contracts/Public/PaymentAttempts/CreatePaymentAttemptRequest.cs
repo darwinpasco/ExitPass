@@ -35,4 +35,16 @@ public sealed class CreatePaymentAttemptRequest
     /// Customer-selected payment method, such as CARD, GCASH, MAYA, or QRPH.
     /// </summary>
     public string? PaymentMethod { get; set; }
+
+    /// <summary>
+    /// Optional customer details to snapshot for the Sales Invoice. These values do not affect the payable amount.
+    /// </summary>
+    public InvoiceCustomerInformationRequest? InvoiceCustomerInformation { get; set; }
 }
+
+public sealed record InvoiceCustomerInformationRequest(
+    string? CustomerName,
+    string? Address,
+    string? Tin,
+    string? BusinessStyle,
+    string? StatutoryIdNumber);

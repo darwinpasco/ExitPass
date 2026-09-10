@@ -526,6 +526,10 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_Core_PaymentAttemptPaymentMethod_v1.3.sql"),
                     ValidatorPath: null),
                 new ApplicationSchemaSource(
+                    "WebPay invoice customer information",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_WebPayInvoiceCustomerInformation_v1.2.sql"),
+                    ValidatorPath: null),
+                new ApplicationSchemaSource(
                     "Operator Console server-owned operating context",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_OperatorConsoleOperatingContext_v1.3.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_OperatorConsoleOperatingContext_v1.3.sql")),

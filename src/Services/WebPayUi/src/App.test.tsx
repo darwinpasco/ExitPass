@@ -248,6 +248,16 @@ const salesInvoicePresentationResponse = {
             { key: "tenders[0000].tenderTypeCodeKey", label: "Tender Type", displayValue: "QRPH" },
             { key: "tenders[0000].amount", label: "Tender Amount", displayValue: "PHP 125.00" }
           ]
+        },
+        {
+          name: "customerInformation",
+          rows: [
+            { key: "customerInformation.customerName", label: "Customer Name", displayValue: "Juan Dela Cruz" },
+            { key: "customerInformation.address", label: "Customer Address", displayValue: "Cebu City" },
+            { key: "customerInformation.tin", label: "Customer TIN", displayValue: "123-456-789-000" },
+            { key: "customerInformation.businessStyle", label: "Business Style", displayValue: "Juan Parking Services" },
+            { key: "customerInformation.statutoryIdNumber", label: "OSCA ID No. / PWD ID No.", displayValue: "OSCA-12345" }
+          ]
         }
       ]
     }
@@ -605,8 +615,8 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
 
     await resolveTicket("TICKET-TEST-027");
-    expect(screen.getByText("Parking Status")).toBeInTheDocument();
-    expect(screen.getByText("PaymentRequired")).toBeInTheDocument();
+    expect(screen.getByText("Parking Session Summary")).toBeInTheDocument();
+    expect(screen.queryByText("PaymentRequired")).not.toBeInTheDocument();
     await continueToPayment();
 
     await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1));
@@ -648,6 +658,62 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.queryByLabelText(/coupon code/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /apply coupon/i })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).not.toContainEqual(expect.stringContaining("/v1/public/coupons/apply"));
+  });
+
+  it("WebPay_WhenSessionResolved_ShowsOptionalEditableSalesInvoiceCustomerFields", async () => {
+    stubWebPayFetch();
+    render(<App />);
+
+    expect(screen.queryByRole("heading", { name: /customer information/i })).not.toBeInTheDocument();
+    await resolveTicket("TICKET-CUSTOMER-001");
+
+    expect(screen.getByRole("heading", { name: /customer information/i })).toBeInTheDocument();
+    expect(screen.getByText("Optional")).toBeInTheDocument();
+    expect(screen.getByLabelText(/customer name/i)).toBeEnabled();
+    expect(screen.getByLabelText(/^address$/i)).toBeEnabled();
+    expect(screen.getByLabelText(/^tin$/i)).toBeEnabled();
+    expect(screen.getByLabelText(/business style/i)).toBeEnabled();
+    expect(screen.queryByLabelText(/OSCA ID No/i)).not.toBeInTheDocument();
+  });
+
+  it("WebPay_WhenCustomerInformationEntered_CarriesTrimmedFieldsAndPreservesPayableAmount", async () => {
+    const fetchMock = stubWebPayFetch();
+    render(<App />);
+    await resolveTicket("TICKET-CUSTOMER-002");
+
+    await userEvent.type(screen.getByLabelText(/customer name/i), "  Juan Dela Cruz  ");
+    await userEvent.type(screen.getByLabelText(/^address$/i), "  Cebu City  ");
+    await userEvent.type(screen.getByLabelText(/^tin$/i), "  123-456-789-000  ");
+    await userEvent.type(screen.getByLabelText(/business style/i), "  Juan Parking Services  ");
+    await continueToPayment();
+
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1));
+    const body = JSON.parse(firstRouteCall(fetchMock, "/v1/webpay/payment-intents")[1]?.body as string);
+    expect(body.invoiceCustomerInformation).toEqual({
+      customerName: "Juan Dela Cruz",
+      address: "Cebu City",
+      tin: "123-456-789-000",
+      businessStyle: "Juan Parking Services",
+      statutoryIdNumber: ""
+    });
+    expect(body.expectedAmountMinorUnits).toBe(successResponse.amountMinorUnits);
+  });
+
+  it("WebPay_WhenApprovedStatutoryBenefitExists_ShowsAndCarriesStatutoryInvoiceIdWithoutCreatingEntitlement", async () => {
+    const fetchMock = stubWebPayFetch({
+      resolvePayload: { ...successResponse, statutoryDiscountStatus: "APPROVED" }
+    });
+    render(<App />);
+    await resolveTicket("TICKET-CUSTOMER-APPROVED");
+
+    const statutoryId = screen.getByLabelText(/OSCA ID No\. \/ PWD ID No\./i);
+    await userEvent.type(statutoryId, "  OSCA-12345  ");
+    await continueToPayment();
+
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1));
+    const body = JSON.parse(firstRouteCall(fetchMock, "/v1/webpay/payment-intents")[1]?.body as string);
+    expect(body.invoiceCustomerInformation.statutoryIdNumber).toBe("OSCA-12345");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/statutory-discounts/decisions"))).toHaveLength(0);
   });
 
   it("WebPay_WhenStatutoryStatusPendingFromBackend_BlocksPaymentInitiation", async () => {
@@ -802,7 +868,7 @@ describe("ExitPass WebPay UI", () => {
     await resolveTicket("TICKET-STAT-REDISCOVER");
 
     expect(await screen.findByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
-    expect(screen.getByText(/existing statutory discount request restored from central pms/i)).toBeInTheDocument();
+    expect(screen.getByText(/existing statutory discount request was restored/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /this continuation link/i })).toHaveAttribute(
       "href",
       "https://pay.example.test/privilege-review/opaque-existing"
@@ -1351,8 +1417,9 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByText("PHP 10.71")).toBeInTheDocument();
     expect(screen.getByText("-PHP 25.00")).toBeInTheDocument();
     expect(screen.getByText("PHP 100.00")).toBeInTheDocument();
-    expect(screen.getByText("VAT Treatment")).toBeInTheDocument();
-    expect(screen.getByText(/Payment is available using the Central PMS-approved statutory payable basis/i)).toBeInTheDocument();
+    expect(screen.queryByText("VAT Treatment")).not.toBeInTheDocument();
+    expect(screen.queryByText("VAT_EXEMPT_WITH_DISCOUNT")).not.toBeInTheDocument();
+    expect(screen.getAllByText(/approved statutory discount is included in the amount due/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
   });
 
@@ -1527,7 +1594,7 @@ describe("ExitPass WebPay UI", () => {
 
     render(<App />);
 
-    expect(screen.getByText(/invalid statutory discount recovery record was cleared/i)).toBeInTheDocument();
+    expect(screen.getByText(/expired saved page details were cleared/i)).toBeInTheDocument();
     expect(localStorage.getItem(statutoryRecoveryStorageKey)).toBeNull();
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/statutory-discounts/decisions/"))).toBe(false);
   });
@@ -1608,11 +1675,11 @@ describe("ExitPass WebPay UI", () => {
 
     render(<App />);
 
-    await screen.findByRole("button", { name: /clear browser recovery/i });
-    await userEvent.click(screen.getByRole("button", { name: /clear browser recovery/i }));
+    await screen.findByRole("button", { name: /clear saved page details/i });
+    await userEvent.click(screen.getByRole("button", { name: /clear saved page details/i }));
 
     expect(localStorage.getItem(statutoryRecoveryStorageKey)).toBeNull();
-    expect(screen.getByText(/does not cancel any Central PMS statutory discount request/i)).toBeInTheDocument();
+    expect(screen.getByText(/submitted request was not cancelled/i)).toBeInTheDocument();
   });
 
   it("WebPay_WhenStatutoryReadyPaymentClickedRapidly_SubmitsOnePaymentIntent", async () => {
@@ -1710,7 +1777,7 @@ describe("ExitPass WebPay UI", () => {
 
     await submitBasicStatutoryRequest();
 
-    expect(await screen.findByRole("heading", { name: /payment basis incomplete/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /approved amount not ready/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: /statutory discount pending/i }));
     expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(0);
@@ -1832,10 +1899,7 @@ describe("ExitPass WebPay UI", () => {
     await resolveTicket("WEBPAY-20260521-FRESH-005");
 
     expect(await screen.findByRole("heading", { name: /payment completed/i })).toBeInTheDocument();
-    expect(screen.getByText("Payment Status")).toBeInTheDocument();
-    expect(screen.getByText("Paid")).toBeInTheDocument();
-    expect(screen.getByText("Parking Status")).toBeInTheDocument();
-    expect(screen.getByText("Payment Completed")).toBeInTheDocument();
+    expect(screen.getAllByText(/payment completed/i).length).toBeGreaterThan(0);
     expect(screen.queryByText("PaymentRequired")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /payment completed/i })).toBeDisabled();
 
@@ -2029,7 +2093,8 @@ describe("ExitPass WebPay UI", () => {
       "https://payments.test/handoff"
     );
     expect(screen.getAllByText("PHP").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("PENDING_PROVIDER").length).toBeGreaterThan(0);
+    expect(screen.getByText("Ready to continue")).toBeInTheDocument();
+    expect(screen.queryByText("PENDING_PROVIDER")).not.toBeInTheDocument();
     expect(screen.getAllByText("125.00").length).toBeGreaterThan(0);
   });
 
@@ -2042,17 +2107,16 @@ describe("ExitPass WebPay UI", () => {
 
     expect(await screen.findByRole("heading", { name: /mactan newtown parking/i })).toBeInTheDocument();
     expect(screen.getByText("Parking Session Summary")).toBeInTheDocument();
-    expect(screen.getByText("Site Group")).toBeInTheDocument();
-    expect(screen.getByText("WebPay Test Site Group 2026-05-19")).toBeInTheDocument();
-    expect(screen.getByText("Site Name")).toBeInTheDocument();
+    expect(screen.queryByText("Site Group")).not.toBeInTheDocument();
+    expect(screen.queryByText("WebPay Test Site Group 2026-05-19")).not.toBeInTheDocument();
     expect(screen.getAllByText("Ticket").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Plate").length).toBeGreaterThan(0);
     expect(screen.getByText("Entry Time")).toBeInTheDocument();
     expect(screen.getByText("Duration")).toBeInTheDocument();
-    expect(screen.getByText("Total Fee")).toBeInTheDocument();
+    expect(screen.getByText("Original parking fee")).toBeInTheDocument();
     expect(screen.getAllByText("Amount Due").length).toBeGreaterThan(0);
-    expect(screen.getByText("Parking Status")).toBeInTheDocument();
-    expect(screen.getByText("Payment Status")).toBeInTheDocument();
+    expect(screen.queryByText("PaymentRequired")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not Started")).not.toBeInTheDocument();
     expect(screen.getByText("Fee Valid Until")).toBeInTheDocument();
     expect(screen.getByText("TICKET-TEST-023")).toBeInTheDocument();
     expect(screen.getByText("ABC 1234")).toBeInTheDocument();
@@ -2119,8 +2183,7 @@ describe("ExitPass WebPay UI", () => {
     await resolveTicket("TICKET-TEST-023");
 
     expect(await screen.findByRole("heading", { name: /^parking site$/i })).toBeInTheDocument();
-    expect(screen.getByText("Site Group")).toBeInTheDocument();
-    expect(screen.getAllByText("Parking Group").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Site Group")).not.toBeInTheDocument();
     expect(screen.getAllByText("Parking Site").length).toBeGreaterThan(0);
     expect(screen.queryByText(/a153da55e9895cdbafb8373eccf589e0/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/bca924a0a27f5b9dacca291bf1391b49/i)).not.toBeInTheDocument();
@@ -2155,7 +2218,7 @@ describe("ExitPass WebPay UI", () => {
     await continueToPayment();
 
     expect((await screen.findAllByText("Payment Status")).length).toBeGreaterThan(0);
-    expect(screen.getByText("Parking Status")).toBeInTheDocument();
+    expect(screen.queryByText("Parking Status")).not.toBeInTheDocument();
     expect(screen.queryByText(/^Status$/)).not.toBeInTheDocument();
   });
 
@@ -2168,7 +2231,7 @@ describe("ExitPass WebPay UI", () => {
     await continueToPayment();
 
     expect(await screen.findByText(/QR payment instructions/i)).toBeInTheDocument();
-    expect(screen.getByText("https://payments.test/qr.png")).toBeInTheDocument();
+    expect(screen.queryByText("https://payments.test/qr.png")).not.toBeInTheDocument();
   });
 
   it("WebPay_WhenApiReturnsError_DisplaysFriendlyError", async () => {
@@ -2334,18 +2397,7 @@ describe("ExitPass WebPay UI", () => {
 
     expect(screen.getByAltText("ExitPass")).toHaveAttribute("src", "/assets/logo/exitpass-logo.svg");
     expect(screen.getByAltText("Pro Parking")).toHaveAttribute("src", "/assets/logo/proparking-logo.png");
-    expect(document.body.innerHTML).toContain("/assets/payment-methods/qrph.png");
-    expect(document.body.innerHTML).toContain("/assets/payment-methods/cards-visa-mastercard.png");
-    expect(document.body.innerHTML).toContain("/assets/payment-methods/gcash.png");
-    expect(document.body.innerHTML).toContain("/assets/payment-methods/maya.png");
-    expect(screen.getByLabelText(/qrph/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/gcash/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/maya/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/card/i)).toBeInTheDocument();
-    expect(screen.getByText("Pay using any QRPh-supported bank or e-wallet")).toBeInTheDocument();
-    expect(screen.getByText("Pay with GCash through PayMongo Checkout")).toBeInTheDocument();
-    expect(screen.getByText("Pay with Maya through PayMongo Checkout")).toBeInTheDocument();
-    expect(screen.getByText("Visa or Mastercard through PayMongo Checkout")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /payment method/i })).not.toBeInTheDocument();
     expect(screen.queryByText("AUB")).not.toBeInTheDocument();
   });
 
@@ -2543,9 +2595,14 @@ describe("ExitPass WebPay UI", () => {
     expect(printableInvoice).toHaveTextContent("PayMongo");
     expect(printableInvoice).toHaveTextContent("VAT BREAKDOWN");
     expect(printableInvoice).toHaveTextContent("VATable Sales");
-    expect(printableInvoice).toHaveTextContent("VAT Exempt");
-    expect(printableInvoice).toHaveTextContent("Zero Rated");
+    expect(printableInvoice).toHaveTextContent("VAT Exempt Sales");
+    expect(printableInvoice).toHaveTextContent("Zero Rated Sales");
     expect(printableInvoice).toHaveTextContent("Customer Information");
+    expect(printableInvoice).toHaveTextContent("NAME: Juan Dela Cruz");
+    expect(printableInvoice).toHaveTextContent("ADDRESS: Cebu City");
+    expect(printableInvoice).toHaveTextContent("TIN: 123-456-789-000");
+    expect(printableInvoice).toHaveTextContent("BUS. STYLE: Juan Parking Services");
+    expect(printableInvoice).toHaveTextContent("OSCA ID No./PWD ID No.: OSCA-12345");
     expect(printableInvoice).toHaveTextContent("ACCR. NO.");
     expect(printableInvoice).toHaveTextContent("PTU Date");
     expect(printableInvoice).toHaveTextContent("===== NOTHING FOLLOWS =====");
