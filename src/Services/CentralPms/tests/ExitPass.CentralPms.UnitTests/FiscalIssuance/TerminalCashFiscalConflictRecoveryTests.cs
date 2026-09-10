@@ -42,10 +42,16 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
         Assert.Equal(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded, result.FiscalIssuance.FiscalIssuanceState);
         await fixture.PosIntegration.Received(1).TryIssueFiscalDocumentViaPosServerAsync(
             ReferenceId,
-            Arg.Any<CentralPmsFiscalDocumentMappingContext>(),
+            Arg.Is<CentralPmsFiscalDocumentMappingContext>(value =>
+                value.SiteId == SiteId &&
+                value.SitePosServerId == PosId),
             Arg.Is<PosServerCreateResultRecordingContext>(value =>
                 value.CorrelationId == FiscalCorrelation && value.ServiceIdentityId == ActorId),
             Arg.Any<CancellationToken>());
+        fixture.HashCalculator.Received(1).Calculate(
+            Arg.Is<PosServerFiscalDocumentCreateRequest>(value =>
+                value.SiteId == SiteId &&
+                value.SitePosServerId == PosId));
         await fixture.AuditRepository.Received(2).RecordAsync(
             Arg.Is<FiscalExceptionControlledRetryExecutionAttemptWrite>(value =>
                 value.FiscalIssuanceReferenceId == ReferenceId &&
@@ -279,7 +285,7 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             guard,
             recoveryLock,
             Substitute.For<IVendorPaymentAcknowledgmentWorkflow>());
-        return new Fixture(service, posIntegration, auditRepository, exitAuthorization);
+        return new Fixture(service, posIntegration, auditRepository, exitAuthorization, hashCalculator);
     }
 
     private static TerminalCashFiscalConflictRecoveryCommand Command() =>
@@ -478,7 +484,8 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
         TerminalCashFiscalIssuanceService Service,
         IFiscalIssuancePosServerLiveIntegrationService PosIntegration,
         IFiscalExceptionControlledRetryExecutionAuditRepository AuditRepository,
-        IIssueExitAuthorizationUseCase ExitAuthorization);
+        IIssueExitAuthorizationUseCase ExitAuthorization,
+        IFiscalSemanticRequestHashCalculator HashCalculator);
 
     private sealed class NoopLease : IAsyncDisposable
     {
