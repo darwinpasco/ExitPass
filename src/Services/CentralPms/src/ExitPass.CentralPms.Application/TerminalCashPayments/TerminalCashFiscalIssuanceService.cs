@@ -16,10 +16,12 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     private const string ConfirmedCanonicalPaymentStatus = "CONFIRMED";
     private const string RecordedPaymentConfirmationStatus = "RECORDED";
     private const string FiscalDocumentTypeCodeKey = "sales_invoice";
-    private static readonly HashSet<string> RecoverableReportingPeriodErrorCodes = new(StringComparer.Ordinal)
+    private const string SalesInvoiceHeaderProfileNotFound = "sales_invoice_header_profile_not_found";
+    private static readonly HashSet<string> ApprovedRetryableConfigurationErrorCodes = new(StringComparer.Ordinal)
     {
         "fiscal_reporting_period_unavailable",
-        "fiscal_reporting_period_assignment_mismatch"
+        "fiscal_reporting_period_assignment_mismatch",
+        SalesInvoiceHeaderProfileNotFound
     };
     private static readonly string CanonicalDeliveryRequestHash = Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes("{}"))).ToLowerInvariant();
@@ -177,7 +179,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             exitAuthorizationIssued: exitAuthorizationIssued);
     }
 
-    public async Task<TerminalCashFiscalConflictRecoveryResult> RecoverReportingPeriodConflictAsync(
+    public async Task<TerminalCashFiscalConflictRecoveryResult> RecoverConfigurationFailureAsync(
         TerminalCashFiscalConflictRecoveryCommand command,
         CancellationToken cancellationToken)
     {
@@ -297,7 +299,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 command,
                 reference,
                 FiscalExceptionControlledRetryExecutionStatus.DryRunReady,
-                "terminal_cash_reporting_period_conflict_recovery_authorized",
+                "terminal_cash_configuration_failure_recovery_authorized",
                 posServerResult: null,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -987,13 +989,15 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 FiscalIssuanceIntegrationState.FiscalIssuanceConflict or
                 FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration) ||
             reference.LatestErrorCode is null ||
-            !RecoverableReportingPeriodErrorCodes.Contains(reference.LatestErrorCode) ||
-            !RecoverableReportingPeriodErrorCodes.Contains(command.ReasonCode) ||
-            !string.Equals(reference.LatestErrorCode, command.ReasonCode, StringComparison.Ordinal))
+            !ApprovedRetryableConfigurationErrorCodes.Contains(reference.LatestErrorCode) ||
+            !ApprovedRetryableConfigurationErrorCodes.Contains(command.ReasonCode) ||
+            !string.Equals(reference.LatestErrorCode, command.ReasonCode, StringComparison.Ordinal) ||
+            string.Equals(reference.LatestErrorCode, SalesInvoiceHeaderProfileNotFound, StringComparison.Ordinal) &&
+            reference.LatestErrorPosture != FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection)
         {
             throw Rejected(
                 "TERMINAL_CASH_FISCAL_RECOVERY_REASON_NOT_APPROVED",
-                "Only an unchanged fiscal_reporting_period_unavailable or fiscal_reporting_period_assignment_mismatch obligation is approved for reporting-period recovery.");
+                "Only an unchanged explicitly approved retryable configuration failure is eligible for guarded recovery.");
         }
     }
 
@@ -1127,7 +1131,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     {
         var summary = string.Join(
             ';',
-            "terminal_cash_reporting_period_conflict_recovery",
+            "terminal_cash_configuration_failure_recovery",
             $"reason={command.ReasonCode.Trim()}",
             $"approval={command.ApprovalReference.Trim()}",
             $"result={safeResultCode}",

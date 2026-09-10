@@ -5,16 +5,23 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 
 /// <summary>
 /// Internal, single-record recovery for an unchanged terminal-cash fiscal obligation whose
-/// only approved blocker was an unavailable POS fiscal reporting period.
+/// persisted configuration failure is explicitly approved for guarded retry.
 /// </summary>
-public static class InternalTerminalCashFiscalConflictRecoveryEndpoints
+public static class InternalTerminalCashFiscalConfigurationRecoveryEndpoints
 {
-    public static IEndpointRouteBuilder MapInternalTerminalCashFiscalConflictRecoveryEndpoints(
+    public static IEndpointRouteBuilder MapInternalTerminalCashFiscalConfigurationRecoveryEndpoints(
         this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/internal/v1/terminal-cash-fiscal-recovery")
             .WithTags("InternalTerminalCashFiscalRecovery")
             .RequireInternalServiceMtls();
+
+        group.MapPost("/{terminalCashTenderId:guid}/configuration-failure", RecoverAsync)
+            .WithName("RecoverTerminalCashFiscalConfigurationFailure")
+            .Produces<TerminalCashFiscalConflictRecoveryResult>(StatusCodes.Status200OK)
+            .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status400BadRequest)
+            .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status404NotFound)
+            .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status409Conflict);
 
         group.MapPost("/{terminalCashTenderId:guid}/reporting-period-conflict", RecoverAsync)
             .WithName("RecoverTerminalCashFiscalReportingPeriodConflict")
@@ -47,7 +54,7 @@ public static class InternalTerminalCashFiscalConflictRecoveryEndpoints
 
         try
         {
-            var result = await service.RecoverReportingPeriodConflictAsync(
+            var result = await service.RecoverConfigurationFailureAsync(
                     new TerminalCashFiscalConflictRecoveryCommand(
                         terminalCashTenderId,
                         body.FiscalIssuanceReferenceId,
