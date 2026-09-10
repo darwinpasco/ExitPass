@@ -16,6 +16,11 @@ $posDatabaseVolume = 'exitpass-pos-ist-persistent-data'
 $wireMockContainer = 'exitpass-mock-hikcentral'
 $mockAdapterContainer = 'exitpass-mock-pitx-site-adapter'
 $wireMockImage = 'wiremock/wiremock:3.9.2'
+$standardCentralPmsContainer = 'exitpass-central-pms-pitx-local'
+$standardCentralPmsAlias = 'exitpass-central-pms-pitx-local'
+$legacyCentralPmsContainer = 'exitpass-r41-central-pms'
+$centralPmsRuntimeLabel = 'com.exitpass.local-runtime'
+$centralPmsRuntimeLabelValue = 'persistent-pitx-central-pms'
 $expectedSiteId = '2d1dcdf8-f563-537c-8542-0bde7cc9da97'
 $expectedSiteGroupId = 'a6dbadf6-68b5-5bed-a7e0-a75faee70841'
 $expectedVendorSystemId = 'afdefaab-6be4-6b25-8f3f-3ad8309662e8'
@@ -96,6 +101,92 @@ function Get-LoopbackContainerUrl($Container, [string] $ContainerPort) {
         throw "Container '$($Container.Name.TrimStart('/'))' does not have one loopback-only $ContainerPort binding."
     }
     return "http://127.0.0.1:$($bindings[0].HostPort)"
+}
+
+function Get-ContainerName($Container) {
+    return ([string]$Container.Name).TrimStart('/')
+}
+
+function Select-CentralPmsRuntime([object[]] $Containers) {
+    $candidates = @()
+    foreach ($container in @($Containers)) {
+        $name = Get-ContainerName $container
+        $attachment = Get-NetworkAttachment $container $networkName
+        $label = Get-ObjectProperty $container.Config.Labels $centralPmsRuntimeLabel
+        $hasStandardName = $name -eq $standardCentralPmsContainer
+        $hasStandardAlias = $null -ne $attachment -and $attachment.Aliases -contains $standardCentralPmsAlias
+        $hasStandardLabel = $label -eq $centralPmsRuntimeLabelValue
+        $hasStandardMarker = $hasStandardName -or $hasStandardAlias -or $hasStandardLabel
+        if ($hasStandardMarker -or $name -eq $legacyCentralPmsContainer) {
+            $candidates += [pscustomobject]@{
+                Container = $container
+                Name = $name
+                Attachment = $attachment
+                Label = $label
+                IsStandardized = $hasStandardMarker
+            }
+        }
+    }
+
+    $running = @($candidates | Where-Object { $_.Container.State.Running })
+    if ($running.Count -eq 0) {
+        if ($candidates.Count -gt 0) {
+            $stoppedNames = @($candidates | ForEach-Object { $_.Name }) -join ', '
+            throw "No approved persistent PITX Central PMS runtime is running. Stopped candidate(s): $stoppedNames."
+        }
+        throw 'No approved persistent PITX Central PMS runtime was found. Start scripts/v1.3/local-runtime/Start-CentralPms.ps1 and retry.'
+    }
+
+    $approved = @()
+    foreach ($candidate in $running) {
+        if ($null -eq $candidate.Attachment) {
+            throw "Central PMS runtime '$($candidate.Name)' is not attached to expected persistent network '$networkName'."
+        }
+        if ($candidate.IsStandardized) {
+            if ($candidate.Label -ne $centralPmsRuntimeLabelValue) {
+                throw "Standardized Central PMS runtime '$($candidate.Name)' has missing or incorrect label '$centralPmsRuntimeLabel=$centralPmsRuntimeLabelValue'."
+            }
+            if ($candidate.Attachment.Aliases -notcontains $standardCentralPmsAlias) {
+                throw "Standardized Central PMS runtime '$($candidate.Name)' does not own expected network alias '$standardCentralPmsAlias'."
+            }
+            $kind = 'standardized'
+        }
+        else {
+            $kind = 'legacy'
+        }
+
+        $approved += [pscustomobject]@{
+            Container = $candidate.Container
+            Name = $candidate.Name
+            Kind = $kind
+            HostUrl = Get-LoopbackContainerUrl $candidate.Container '8080/tcp'
+        }
+    }
+
+    if ($approved.Count -gt 1) {
+        $names = @($approved | ForEach-Object { $_.Name }) -join ', '
+        throw "Multiple approved persistent PITX Central PMS runtimes are running ($names). Stop the duplicate runtime and retry."
+    }
+    return $approved[0]
+}
+
+function Resolve-CentralPmsRuntime([object[]] $Containers, [scriptblock] $ReadinessProbe) {
+    if ($null -eq $Containers) {
+        $names = (Invoke-Docker -Arguments @('ps', '-a', '--format', '{{.Names}}')).Output
+        $Containers = @($names |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { Get-ContainerInspect $_ })
+    }
+
+    $runtime = Select-CentralPmsRuntime $Containers
+    $readyUrl = "$($runtime.HostUrl)/health/ready"
+    if ($null -eq $ReadinessProbe) {
+        Wait-Http $readyUrl
+    }
+    else {
+        & $ReadinessProbe $readyUrl
+    }
+    return $runtime
 }
 
 function Wait-Http([string] $Url, [int] $ExpectedStatus = 200, [int] $Seconds = 60) {
@@ -230,6 +321,15 @@ function Assert-NoWrapperCollision {
     }
     if (Test-Path -LiteralPath $statePath) {
         throw "Mock runtime state already exists at $statePath. Refusing an ambiguous startup."
+    }
+}
+
+function Assert-WrapperResourceOwnership($Container) {
+    $name = Get-ContainerName $Container
+    $owner = Get-ObjectProperty $Container.Config.Labels $wrapperLabel
+    $ownerInvocation = Get-ObjectProperty $Container.Config.Labels $invocationLabel
+    if ($owner -ne 'true' -or $ownerInvocation -ne $invocationId) {
+        throw "Refusing to remove non-wrapper resource '$name'."
     }
 }
 
@@ -418,6 +518,64 @@ function Invoke-SmokeTest([string] $CentralUrl, [string] $AdminUrl) {
 }
 
 function Invoke-SelfTest {
+    function New-TestContainer {
+        param(
+            [Parameter(Mandatory)][string] $Name,
+            [bool] $Running = $true,
+            [bool] $Attached = $true,
+            [string[]] $Aliases = @(),
+            [AllowNull()][string] $RuntimeLabel = $null,
+            [string] $HostPort = '56065',
+            [hashtable] $AdditionalLabels = @{}
+        )
+        $labels = [pscustomobject]@{}
+        if ($null -ne $RuntimeLabel) {
+            $labels | Add-Member -NotePropertyName $centralPmsRuntimeLabel -NotePropertyValue $RuntimeLabel
+        }
+        foreach ($entry in $AdditionalLabels.GetEnumerator()) {
+            $labels | Add-Member -NotePropertyName $entry.Key -NotePropertyValue $entry.Value
+        }
+        $networks = [pscustomobject]@{}
+        if ($Attached) {
+            $networks | Add-Member -NotePropertyName $networkName -NotePropertyValue ([pscustomobject]@{ Aliases = @($Aliases) })
+        }
+        $ports = [pscustomobject]@{}
+        $ports | Add-Member -NotePropertyName '8080/tcp' -NotePropertyValue @([pscustomobject]@{ HostIp = '127.0.0.1'; HostPort = $HostPort })
+        return [pscustomobject]@{
+            Name = "/$Name"
+            State = [pscustomobject]@{ Running = $Running }
+            Config = [pscustomobject]@{ Labels = $labels; Env = @() }
+            NetworkSettings = [pscustomobject]@{ Networks = $networks; Ports = $ports }
+        }
+    }
+
+    function Assert-Test([bool] $Condition, [string] $Message) {
+        if (-not $Condition) { throw $Message }
+    }
+
+    function Assert-Throws([scriptblock] $Action, [string] $Pattern) {
+        try {
+            & $Action
+        }
+        catch {
+            if ($_.Exception.Message -notmatch $Pattern) {
+                throw "Expected error matching '$Pattern', got: $($_.Exception.Message)"
+            }
+            return
+        }
+        throw "Expected error matching '$Pattern', but no error was raised."
+    }
+
+    function Invoke-TestCase([string] $Name, [scriptblock] $Action) {
+        try {
+            & $Action | Out-Null
+            return 1
+        }
+        catch {
+            throw "Self-test '$Name' failed: $($_.Exception.Message)"
+        }
+    }
+
     if ($networkName -eq 'exitpass-dev-synthetic' -or $wireMockContainer -eq $exitPassDatabaseContainer) {
         throw 'Wrapper resource constants violate the persistent PITX boundary.'
     }
@@ -425,7 +583,60 @@ function Invoke-SelfTest {
     if (-not (Test-Path -LiteralPath $creatorPath -PathType Leaf)) { throw 'The on-demand creator script is missing.' }
     $forbidden = Select-String -LiteralPath $creatorPath -Pattern 'psql|Npgsql|payment_attempt|payment_confirmation|exit_authorization|fiscal_document|electronic_journal' -CaseSensitive:$false
     if ($null -ne $forbidden) { throw 'The creator script contains a prohibited database or business-state operation.' }
-    Write-Output 'Mock HikCentral wrapper static self-validation passed.'
+
+    $standard = New-TestContainer -Name $standardCentralPmsContainer -Aliases @($standardCentralPmsAlias) -RuntimeLabel $centralPmsRuntimeLabelValue
+    $legacy = New-TestContainer -Name $legacyCentralPmsContainer -Aliases @('exitpass-r41-central-pms')
+    $testCount = 0
+    $testCount += Invoke-TestCase 'standardized runtime discovery' {
+        $result = Select-CentralPmsRuntime @($standard)
+        Assert-Test ($result.Name -eq $standardCentralPmsContainer -and $result.Kind -eq 'standardized') 'The standardized runtime was not selected.'
+    }
+    $testCount += Invoke-TestCase 'legacy runtime compatibility' {
+        $result = Select-CentralPmsRuntime @($legacy)
+        Assert-Test ($result.Name -eq $legacyCentralPmsContainer -and $result.Kind -eq 'legacy') 'The legacy runtime was not selected.'
+    }
+    $testCount += Invoke-TestCase 'duplicate runtime ambiguity' {
+        Assert-Throws { Select-CentralPmsRuntime @($standard, $legacy) } 'Multiple approved.*Stop the duplicate runtime'
+    }
+    $testCount += Invoke-TestCase 'missing runtime' {
+        Assert-Throws { Select-CentralPmsRuntime @() } 'No approved.*was found'
+    }
+    $testCount += Invoke-TestCase 'stopped runtime' {
+        $stopped = New-TestContainer -Name $standardCentralPmsContainer -Running $false -Aliases @($standardCentralPmsAlias) -RuntimeLabel $centralPmsRuntimeLabelValue
+        Assert-Throws { Select-CentralPmsRuntime @($stopped) } 'No approved.*is running.*Stopped candidate'
+    }
+    $testCount += Invoke-TestCase 'persistent network required' {
+        $detached = New-TestContainer -Name $standardCentralPmsContainer -Attached $false -RuntimeLabel $centralPmsRuntimeLabelValue
+        Assert-Throws { Select-CentralPmsRuntime @($detached) } 'not attached to expected persistent network'
+    }
+    $testCount += Invoke-TestCase 'canonical runtime label required' {
+        $wrongLabel = New-TestContainer -Name $standardCentralPmsContainer -Aliases @($standardCentralPmsAlias) -RuntimeLabel 'wrong-runtime'
+        Assert-Throws { Select-CentralPmsRuntime @($wrongLabel) } 'missing or incorrect label'
+    }
+    $testCount += Invoke-TestCase 'readiness failure prevents resolution' {
+        Assert-Throws { Resolve-CentralPmsRuntime @($standard) { param($Url) throw "Synthetic readiness failure at $Url" } } 'Synthetic readiness failure.*health/ready'
+    }
+    $testCount += Invoke-TestCase 'loopback URL resolution' {
+        $dynamicPort = New-TestContainer -Name $standardCentralPmsContainer -Aliases @($standardCentralPmsAlias) -RuntimeLabel $centralPmsRuntimeLabelValue -HostPort '49123'
+        $result = Select-CentralPmsRuntime @($dynamicPort)
+        Assert-Test ($result.HostUrl -eq 'http://127.0.0.1:49123') 'The published loopback port was not resolved from Docker metadata.'
+    }
+    $testCount += Invoke-TestCase 'adapter restoration remains in finally' {
+        $source = Get-Content -LiteralPath $PSCommandPath -Raw
+        Assert-Test ($source -match '(?s)finally\s*\{.*if \(\$realAdapterStopped.*docker.*start.*Wait-Http \$realAdapterHealthUrl') 'The finally block no longer starts and verifies the ordinary adapter.'
+    }
+    $testCount += Invoke-TestCase 'persisted route invariance' {
+        $source = Get-Content -LiteralPath $PSCommandPath -Raw
+        Assert-Test ($expectedRoute -eq 'http://pitx-site-adapter:8080/') 'The canonical persisted route changed.'
+        Assert-Test (([regex]::Matches($source, 'Get-SiteAdapterRoute\) -ne \$routeBefore')).Count -ge 2) 'Route invariance is not checked during startup and restoration.'
+    }
+    $testCount += Invoke-TestCase 'owned cleanup boundary' {
+        $owned = New-TestContainer -Name $wireMockContainer -AdditionalLabels @{ $wrapperLabel = 'true'; $invocationLabel = $invocationId }
+        Assert-WrapperResourceOwnership $owned
+        $foreign = New-TestContainer -Name $wireMockContainer -AdditionalLabels @{ $wrapperLabel = 'true'; $invocationLabel = [Guid]::NewGuid().ToString('D') }
+        Assert-Throws { Assert-WrapperResourceOwnership $foreign } 'Refusing to remove non-wrapper resource'
+    }
+    Write-Output "MOCK_HIKCENTRAL_SELF_TEST_PASS ($testCount tests)"
 }
 
 if ($SelfTest) {
@@ -460,12 +671,10 @@ try {
     $realAdapterHealthUrl = "$(Get-LoopbackContainerUrl $realAdapter '8080/tcp')/health/ready"
     Wait-Http $realAdapterHealthUrl
 
-    $central = Get-ContainerInspect 'exitpass-r41-central-pms'
-    if (-not $central.State.Running -or $null -eq (Get-NetworkAttachment $central $networkName)) {
-        throw 'The expected persistent Central PMS runtime is not running on the persistent network.'
-    }
-    $centralUrl = Get-LoopbackContainerUrl $central '8080/tcp'
-    Wait-Http "$centralUrl/health/ready"
+    $centralRuntime = Resolve-CentralPmsRuntime
+    $centralUrl = $centralRuntime.HostUrl
+    Write-Output "Central PMS runtime discovered: $($centralRuntime.Name) ($($centralRuntime.Kind))"
+    Write-Output "Central PMS host URL: $centralUrl"
 
     $countsBefore = Get-BusinessCounts
     $posCountsBefore = Get-PosCounts
@@ -523,11 +732,7 @@ finally {
         foreach ($name in @($mockAdapterContainer, $wireMockContainer)) {
             $container = Get-ContainerInspect $name -AllowMissing
             if ($null -ne $container) {
-                $owner = Get-ObjectProperty $container.Config.Labels $wrapperLabel
-                $ownerInvocation = Get-ObjectProperty $container.Config.Labels $invocationLabel
-                if ($owner -ne 'true' -or $ownerInvocation -ne $invocationId) {
-                    throw "Refusing to remove non-wrapper resource '$name'."
-                }
+                Assert-WrapperResourceOwnership $container
                 Invoke-Docker -Arguments @('rm', '--force', $name) | Out-Null
             }
         }
