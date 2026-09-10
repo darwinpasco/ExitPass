@@ -458,6 +458,31 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
         result.LatestErrorPosture.Should().Be(FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection);
     }
 
+    [Theory]
+    [InlineData("fiscal_reporting_period_unavailable", FiscalIssuanceExceptionReason.FiscalReportingPeriodUnavailable)]
+    [InlineData("fiscal_reporting_period_assignment_mismatch", FiscalIssuanceExceptionReason.FiscalReportingPeriodAssignmentMismatch)]
+    public async Task ApplyPosServerFailureResultAsync_WhenReportingPeriodFails_DoesNotBecomeSemanticConflict(
+        string code,
+        FiscalIssuanceExceptionReason expectedReason)
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.ApplyPosServerFailureResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            FailurePosServerCreateResult(
+                PosServerFiscalDocumentOutcome.FailedConfiguration,
+                409,
+                code,
+                FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration);
+        result.LatestExceptionReason.Should().Be(expectedReason);
+        result.LatestErrorCode.Should().Be(code);
+        result.LatestErrorPosture.Should().Be(FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection);
+    }
+
     [Fact]
     public async Task ApplyPosServerFailureResultAsync_WhenServiceFailure_MapsToFailedService()
     {

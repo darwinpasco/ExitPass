@@ -65,6 +65,23 @@ public sealed class PosServerFiscalDocumentResponseParserTests : IDisposable
         result.Succeeded.Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData("fiscal_reporting_period_unavailable", "retry_after_reporting_configuration_correction")]
+    [InlineData("fiscal_reporting_period_assignment_mismatch", "retry_after_reporting_configuration_correction")]
+    [InlineData("fiscal_reporting_period_ambiguous", "retry_after_reporting_configuration_correction")]
+    [InlineData("fiscal_reporting_period_closed", "do_not_retry_for_closed_reporting_period")]
+    public void ParseCreateResponse_WhenReportingPeriodFails_MapsConfigurationFailure(
+        string code,
+        string posture)
+    {
+        var result = PosServerFiscalDocumentResponseParser.ParseCreateResponse(
+            409,
+            FailureResponse(code, posture));
+
+        result.Outcome.Should().Be(PosServerFiscalDocumentOutcome.FailedConfiguration);
+        result.Succeeded.Should().BeFalse();
+    }
+
     [Fact]
     public void ParseCreateResponse_WhenBadRequestWithDoNotRetry_MapsRequestFailure()
     {

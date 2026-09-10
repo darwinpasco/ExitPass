@@ -198,23 +198,24 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 paymentConfirmation.Should().NotBeNull();
 
                 var posServerId = Guid.Parse("9b000000-0000-0000-0000-000000000007");
+                var posServerOptions = new FiscalIssuancePosServerIntegrationOptions
+                {
+                    RuntimeEnvironment = "IntegrationTest",
+                    Endpoints =
+                    [
+                        new SitePosServerEndpointOptions
+                        {
+                            SiteId = context.SiteId,
+                            SitePosServerId = posServerId,
+                            SitePosServerRef = "IST-SITE-POS-WEBPAY",
+                            Environment = "IntegrationTest",
+                            Enabled = true
+                        }
+                    ]
+                };
                 var reader = new PostgresDigitalPaymentFiscalContextReader(
                     StatutoryDiscountReviewIntegrationTestSupport.ConnectionString,
-                    Options.Create(new FiscalIssuancePosServerIntegrationOptions
-                    {
-                        RuntimeEnvironment = "IntegrationTest",
-                        Endpoints =
-                        [
-                            new SitePosServerEndpointOptions
-                            {
-                                SiteId = context.SiteId,
-                                SitePosServerId = posServerId,
-                                SitePosServerRef = "IST-SITE-POS-WEBPAY",
-                                Environment = "IntegrationTest",
-                                Enabled = true
-                            }
-                        ]
-                    }),
+                    new ConfiguredSitePosServerBindingResolver(posServerOptions),
                     new PostgresTerminalCashStatutoryFiscalLinkageReader(
                         StatutoryDiscountReviewIntegrationTestSupport.ConnectionString));
 

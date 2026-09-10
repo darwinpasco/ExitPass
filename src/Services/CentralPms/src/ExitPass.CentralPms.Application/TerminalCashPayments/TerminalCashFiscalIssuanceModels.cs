@@ -21,6 +21,14 @@ public interface ITerminalCashFiscalIssuanceService
         Guid terminalCashTenderId,
         Guid? correlationId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Recovers one unchanged terminal-cash fiscal obligation that was blocked solely because
+    /// the POS fiscal reporting period was unavailable. This is not a general conflict retry.
+    /// </summary>
+    Task<TerminalCashFiscalConflictRecoveryResult> RecoverReportingPeriodConflictAsync(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -30,6 +38,72 @@ public sealed record TerminalCashFiscalIssuanceCommand(
     Guid TerminalCashTenderId,
     string IdempotencyKey,
     Guid CorrelationId);
+
+/// <summary>
+/// Explicit single-record recovery request. Expected values are operator-supplied guards and
+/// must match the current durable payment and fiscal facts exactly.
+/// </summary>
+public sealed record TerminalCashFiscalConflictRecoveryCommand(
+    Guid TerminalCashTenderId,
+    Guid FiscalIssuanceReferenceId,
+    Guid ExpectedPaymentAttemptId,
+    Guid ExpectedPaymentConfirmationId,
+    Guid ExpectedParkingSessionId,
+    Guid ExpectedTariffSnapshotId,
+    long ExpectedAmountMinorUnits,
+    string ExpectedCurrency,
+    string ExpectedDeliveryRequestHash,
+    string ExpectedFiscalSemanticRequestHash,
+    string ExpectedUpstreamFinalityReference,
+    string DeliveryIdempotencyKey,
+    Guid ExpectedTransactionCorrelationId,
+    Guid ExpectedFiscalCorrelationId,
+    Guid RecoveryCorrelationId,
+    Guid ActorServiceIdentityId,
+    string ApprovalReference,
+    string ReasonCode,
+    string SafeJustification);
+
+/// <summary>
+/// Audited result of a governed reporting-period conflict recovery.
+/// </summary>
+public sealed record TerminalCashFiscalConflictRecoveryResult(
+    Guid RecoveryAuditId,
+    string RecoveryStatus,
+    bool RecoveryExecuted,
+    bool IdempotentReadback,
+    TerminalCashFiscalIssuanceResult FiscalIssuance);
+
+/// <summary>
+/// Durable payment/exit facts used to fail closed before fiscal recovery.
+/// </summary>
+public sealed record TerminalCashFiscalConflictRecoveryFacts(
+    Guid PaymentAttemptId,
+    Guid PaymentConfirmationId,
+    Guid ParkingSessionId,
+    Guid TariffSnapshotId,
+    string PaymentAttemptStatus,
+    string PaymentConfirmationStatus,
+    string PaymentAttemptCurrency,
+    long PaymentAttemptAmountMinorUnits,
+    string PaymentConfirmationCurrency,
+    long PaymentConfirmationAmountMinorUnits,
+    int ExitAuthorizationCount);
+
+public interface ITerminalCashFiscalConflictRecoveryGuardRepository
+{
+    Task<TerminalCashFiscalConflictRecoveryFacts?> ReadAsync(
+        Guid paymentAttemptId,
+        Guid paymentConfirmationId,
+        CancellationToken cancellationToken);
+}
+
+public interface ITerminalCashFiscalConflictRecoveryLock
+{
+    Task<IAsyncDisposable?> TryAcquireAsync(
+        Guid fiscalIssuanceReferenceId,
+        CancellationToken cancellationToken);
+}
 
 /// <summary>
 /// Safe terminal cash fiscal issuance response.

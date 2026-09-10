@@ -153,6 +153,7 @@ app.MapInternalControlledUatFiscalIssuanceEndpoints();
 app.MapInternalFiscalIssuanceVoidEndpoints();
 app.MapFiscalIssuanceStatusEndpoints();
 app.MapInternalFiscalExceptionQueueSemanticHashBackfillEndpoints();
+app.MapInternalTerminalCashFiscalConflictRecoveryEndpoints();
 app.MapInternalOutboxDispatcherEndpoints();
 app.MapInternalEventRecoveryEndpoints();
 app.MapInternalVendorSessionProjectionEndpoints();
@@ -475,12 +476,12 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IDigitalPaymentFiscalContextReader>(serviceProvider =>
         new PostgresDigitalPaymentFiscalContextReader(
             mainDatabaseConnectionString,
-            serviceProvider.GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>(),
+            serviceProvider.GetRequiredService<ISitePosServerBindingResolver>(),
             serviceProvider.GetRequiredService<IStatutoryFiscalLinkageReader>()));
     builder.Services.AddScoped<IDigitalPaymentFiscalRecoveryContextReader>(serviceProvider =>
         new PostgresDigitalPaymentFiscalContextReader(
             mainDatabaseConnectionString,
-            serviceProvider.GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>(),
+            serviceProvider.GetRequiredService<ISitePosServerBindingResolver>(),
             serviceProvider.GetRequiredService<IStatutoryFiscalLinkageReader>()));
     builder.Services.AddScoped<IFiscalIssuanceReferenceRepository>(_ =>
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
@@ -571,6 +572,7 @@ static void ConfigureApplicationServices(
         .ValidateOnStart();
     builder.Services.AddSingleton(serviceProvider =>
         serviceProvider.GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>().Value);
+    builder.Services.AddSingleton<ISitePosServerBindingResolver, ConfiguredSitePosServerBindingResolver>();
     builder.Services.AddScoped<IPosServerFiscalDocumentRequestMapper, PosServerFiscalDocumentRequestMapper>();
     builder.Services.AddScoped<IFiscalIssuancePosServerLiveIntegrationService>(serviceProvider =>
         new FiscalIssuancePosServerLiveIntegrationService(
@@ -932,6 +934,10 @@ static void ConfigureApplicationServices(
         new PostgresTerminalCashStatutoryFiscalLinkageReader(mainDatabaseConnectionString));
     builder.Services.AddScoped<IStatutoryFiscalLinkageReader>(_ =>
         new PostgresTerminalCashStatutoryFiscalLinkageReader(mainDatabaseConnectionString));
+    builder.Services.AddScoped<ITerminalCashFiscalConflictRecoveryGuardRepository>(_ =>
+        new PostgresTerminalCashFiscalConflictRecoveryGuardRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<ITerminalCashFiscalConflictRecoveryLock>(_ =>
+        new PostgresTerminalCashFiscalConflictRecoveryLock(mainDatabaseConnectionString));
     builder.Services.AddScoped<ITerminalCashFiscalIssuanceService, TerminalCashFiscalIssuanceService>();
     builder.Services.AddScoped<ITerminalCashReceiptPresentationService, TerminalCashReceiptPresentationService>();
     builder.Services.AddScoped<IWebPayReceiptPresentationService, WebPayReceiptPresentationService>();

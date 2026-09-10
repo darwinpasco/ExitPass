@@ -771,8 +771,6 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
     private static bool IsFiscalDocumentIdempotencyConflict(
         PosServerFiscalDocumentCreateResult result,
         string normalizedCode) =>
-        result.Outcome == PosServerFiscalDocumentOutcome.Conflict ||
-        result.HttpStatusCode == 409 ||
         string.Equals(normalizedCode, "fiscal_document_idempotency_conflict", StringComparison.Ordinal);
 
     private static bool IsFiscalNumberAssignmentIncomplete(string normalizedCode) =>
@@ -827,6 +825,10 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
             "fiscal_sequence_state_not_effective" => FiscalIssuanceExceptionReason.FiscalSequenceStateNotEffective,
             "fiscal_number_allocation_failed" => FiscalIssuanceExceptionReason.FiscalNumberAllocationFailed,
             "fiscal_document_number_format_failed" => FiscalIssuanceExceptionReason.FiscalDocumentNumberFormatFailed,
+            "fiscal_reporting_period_unavailable" => FiscalIssuanceExceptionReason.FiscalReportingPeriodUnavailable,
+            "fiscal_reporting_period_ambiguous" => FiscalIssuanceExceptionReason.FiscalReportingPeriodAmbiguous,
+            "fiscal_reporting_period_closed" => FiscalIssuanceExceptionReason.FiscalReportingPeriodClosed,
+            "fiscal_reporting_period_assignment_mismatch" => FiscalIssuanceExceptionReason.FiscalReportingPeriodAssignmentMismatch,
             "fiscal_document_idempotency_conflict" => FiscalIssuanceExceptionReason.FiscalDocumentIdempotencyConflict,
             "replay_mismatch" => FiscalIssuanceExceptionReason.ReplayMismatch,
             "duplicate_reference_detected" => FiscalIssuanceExceptionReason.DuplicateReferenceDetected,
@@ -858,7 +860,11 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
             or FiscalIssuanceExceptionReason.FiscalSequenceStateNotFound
             or FiscalIssuanceExceptionReason.FiscalSequenceStateNotEffective
             or FiscalIssuanceExceptionReason.FiscalNumberAllocationFailed
-            or FiscalIssuanceExceptionReason.FiscalDocumentNumberFormatFailed;
+            or FiscalIssuanceExceptionReason.FiscalDocumentNumberFormatFailed
+            or FiscalIssuanceExceptionReason.FiscalReportingPeriodUnavailable
+            or FiscalIssuanceExceptionReason.FiscalReportingPeriodAmbiguous
+            or FiscalIssuanceExceptionReason.FiscalReportingPeriodClosed
+            or FiscalIssuanceExceptionReason.FiscalReportingPeriodAssignmentMismatch;
 
     private static bool IsServiceOrUnknownReason(FiscalIssuanceExceptionReason? reason) =>
         reason is FiscalIssuanceExceptionReason.PersistenceNotConfigured

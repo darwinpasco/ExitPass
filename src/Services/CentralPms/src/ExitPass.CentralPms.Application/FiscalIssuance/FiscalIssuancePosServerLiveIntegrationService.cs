@@ -67,7 +67,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
         PosServerFiscalDocumentCreateRequest request;
         try
         {
-            request = _requestMapper.Map(ApplyConfiguredFiscalProfile(fiscalContext));
+            request = _requestMapper.Map(ApplyConfiguredFiscalProfile(_options, fiscalContext));
         }
         catch (ArgumentException ex)
         {
@@ -249,10 +249,11 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
             recordingContext.CorrelationId);
     }
 
-    private CentralPmsFiscalDocumentMappingContext ApplyConfiguredFiscalProfile(
+    internal static CentralPmsFiscalDocumentMappingContext ApplyConfiguredFiscalProfile(
+        FiscalIssuancePosServerIntegrationOptions options,
         CentralPmsFiscalDocumentMappingContext context)
     {
-        var endpoint = _options.Endpoints.SingleOrDefault(candidate =>
+        var endpoint = options.Endpoints.SingleOrDefault(candidate =>
             candidate.SitePosServerId == context.SitePosServerId &&
             string.Equals(candidate.SitePosServerRef?.Trim(), context.SitePosServerRef, StringComparison.Ordinal));
 

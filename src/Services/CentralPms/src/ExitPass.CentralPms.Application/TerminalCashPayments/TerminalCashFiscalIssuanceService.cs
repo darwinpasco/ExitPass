@@ -3,6 +3,8 @@ using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using Microsoft.Extensions.Logging;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace ExitPass.CentralPms.Application.TerminalCashPayments;
 
@@ -12,7 +14,15 @@ namespace ExitPass.CentralPms.Application.TerminalCashPayments;
 public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssuanceService
 {
     private const string ConfirmedCanonicalPaymentStatus = "CONFIRMED";
+    private const string RecordedPaymentConfirmationStatus = "RECORDED";
     private const string FiscalDocumentTypeCodeKey = "sales_invoice";
+    private static readonly HashSet<string> RecoverableReportingPeriodErrorCodes = new(StringComparer.Ordinal)
+    {
+        "fiscal_reporting_period_unavailable",
+        "fiscal_reporting_period_assignment_mismatch"
+    };
+    private static readonly string CanonicalDeliveryRequestHash = Convert.ToHexString(
+        SHA256.HashData(Encoding.UTF8.GetBytes("{}"))).ToLowerInvariant();
     private static readonly Guid StatutoryDiscountPrivilegeTypeCodeId =
         Guid.Parse("10000000-0000-0000-0000-000000000501");
 
@@ -21,9 +31,15 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     private readonly IFiscalIssuanceOrchestrationService _orchestrationService;
     private readonly IFiscalIssuancePosServerLiveIntegrationService _posServerIntegration;
     private readonly ITerminalCashStatutoryFiscalLinkageReader _statutoryFiscalLinkageReader;
-    private readonly FiscalIssuancePosServerIntegrationOptions _posServerOptions;
+    private readonly ISitePosServerBindingResolver _sitePosServerBindingResolver;
     private readonly IIssueExitAuthorizationUseCase _issueExitAuthorizationUseCase;
     private readonly IVendorPaymentAcknowledgmentWorkflow? _vendorPaymentAcknowledgmentWorkflow;
+    private readonly FiscalIssuancePosServerIntegrationOptions _posServerOptions;
+    private readonly IPosServerFiscalDocumentRequestMapper _requestMapper;
+    private readonly IFiscalSemanticRequestHashCalculator _semanticRequestHashCalculator;
+    private readonly IFiscalExceptionControlledRetryExecutionAuditRepository _recoveryAuditRepository;
+    private readonly ITerminalCashFiscalConflictRecoveryGuardRepository _recoveryGuardRepository;
+    private readonly ITerminalCashFiscalConflictRecoveryLock _recoveryLock;
     private readonly ILogger<TerminalCashFiscalIssuanceService> _logger;
 
     public TerminalCashFiscalIssuanceService(
@@ -32,9 +48,15 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         IFiscalIssuanceOrchestrationService orchestrationService,
         IFiscalIssuancePosServerLiveIntegrationService posServerIntegration,
         ITerminalCashStatutoryFiscalLinkageReader statutoryFiscalLinkageReader,
-        FiscalIssuancePosServerIntegrationOptions posServerOptions,
+        ISitePosServerBindingResolver sitePosServerBindingResolver,
         IIssueExitAuthorizationUseCase issueExitAuthorizationUseCase,
         ILogger<TerminalCashFiscalIssuanceService> logger,
+        FiscalIssuancePosServerIntegrationOptions posServerOptions,
+        IPosServerFiscalDocumentRequestMapper requestMapper,
+        IFiscalSemanticRequestHashCalculator semanticRequestHashCalculator,
+        IFiscalExceptionControlledRetryExecutionAuditRepository recoveryAuditRepository,
+        ITerminalCashFiscalConflictRecoveryGuardRepository recoveryGuardRepository,
+        ITerminalCashFiscalConflictRecoveryLock recoveryLock,
         IVendorPaymentAcknowledgmentWorkflow? vendorPaymentAcknowledgmentWorkflow = null)
     {
         _terminalCashPayments = terminalCashPayments;
@@ -42,9 +64,15 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         _orchestrationService = orchestrationService;
         _posServerIntegration = posServerIntegration;
         _statutoryFiscalLinkageReader = statutoryFiscalLinkageReader;
-        _posServerOptions = posServerOptions;
+        _sitePosServerBindingResolver = sitePosServerBindingResolver;
         _issueExitAuthorizationUseCase = issueExitAuthorizationUseCase;
         _vendorPaymentAcknowledgmentWorkflow = vendorPaymentAcknowledgmentWorkflow;
+        _posServerOptions = posServerOptions;
+        _requestMapper = requestMapper;
+        _semanticRequestHashCalculator = semanticRequestHashCalculator;
+        _recoveryAuditRepository = recoveryAuditRepository;
+        _recoveryGuardRepository = recoveryGuardRepository;
+        _recoveryLock = recoveryLock;
         _logger = logger;
     }
 
@@ -147,6 +175,188 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 : issueResult.Status is FiscalIssuancePosServerLiveIntegrationStatus.Applied ? null : issueResult.Code,
             safeErrorPosture: issueResult.PosServerResult?.ErrorPosture?.ToString(),
             exitAuthorizationIssued: exitAuthorizationIssued);
+    }
+
+    public async Task<TerminalCashFiscalConflictRecoveryResult> RecoverReportingPeriodConflictAsync(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        CancellationToken cancellationToken)
+    {
+        ValidateRecovery(command);
+
+        await using var recoveryLease = await _recoveryLock
+            .TryAcquireAsync(command.FiscalIssuanceReferenceId, cancellationToken)
+            .ConfigureAwait(false);
+        if (recoveryLease is null)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_IN_PROGRESS",
+                "A governed recovery is already in progress for this fiscal obligation.");
+        }
+
+        var cashPayment = await ReadConfirmedCashPaymentAsync(command.TerminalCashTenderId, cancellationToken)
+            .ConfigureAwait(false);
+        var reference = await _fiscalReferences.FindByFiscalIssuanceReferenceIdAsync(
+                command.FiscalIssuanceReferenceId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (reference is null)
+        {
+            throw new TerminalCashFiscalIssuanceRejectedException(
+                "TERMINAL_CASH_FISCAL_ISSUANCE_NOT_FOUND",
+                "The governed fiscal obligation was not found.",
+                isNotFound: true);
+        }
+
+        var upstreamFinalityReference = BuildUpstreamFinalityReference(cashPayment);
+        EnsureExistingReferenceMatchesTerminalCashPayment(reference, cashPayment, upstreamFinalityReference);
+        EnsureRecoveryExpectedFacts(command, cashPayment, reference, upstreamFinalityReference);
+
+        if (FiscalIssuanceOrchestrationService.IsNormalExitAuthorizationGatingReady(reference))
+        {
+            var existingExitAuthorizationIssued = await ContinueAfterVerifiedFiscalEvidenceAsync(
+                    cashPayment,
+                    reference,
+                    command.RecoveryCorrelationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            var replayAuditId = await RecordRecoveryAuditAsync(
+                    command,
+                    reference,
+                    FiscalExceptionControlledRetryExecutionStatus.ReplayMatched,
+                    "terminal_cash_fiscal_recovery_already_completed",
+                    posServerResult: null,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return new TerminalCashFiscalConflictRecoveryResult(
+                replayAuditId,
+                "ALREADY_COMPLETED",
+                RecoveryExecuted: false,
+                IdempotentReadback: true,
+                ToResult(
+                    cashPayment,
+                    reference,
+                    command.RecoveryCorrelationId,
+                    posServerCallAttempted: false,
+                    exitAuthorizationIssued: existingExitAuthorizationIssued));
+        }
+
+        EnsureApprovedRecoveryState(command, reference);
+        EnsureReferenceHasNoFiscalEvidence(reference);
+
+        var durableFacts = await _recoveryGuardRepository.ReadAsync(
+                command.ExpectedPaymentAttemptId,
+                command.ExpectedPaymentConfirmationId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        EnsureDurableRecoveryFacts(command, cashPayment, durableFacts);
+
+        var statutoryFiscalLinkage = await _statutoryFiscalLinkageReader
+            .ReadByAppliedTariffSnapshotAsync(cashPayment, cancellationToken)
+            .ConfigureAwait(false);
+        EnsureStatutoryFiscalLinkageCanBeFiscalized(statutoryFiscalLinkage);
+
+        var resolvedEndpoint = ResolvePosServerEndpoint(cashPayment);
+        if (reference.SitePosServerId != resolvedEndpoint.SitePosServerId ||
+            !string.Equals(
+                reference.SitePosServerRef,
+                resolvedEndpoint.SitePosServerRef?.Trim(),
+                StringComparison.Ordinal))
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_POS_BINDING_MISMATCH",
+                "The current Site POS Server binding differs from the original fiscal obligation.");
+        }
+
+        if (!_posServerOptions.EvaluateReadiness().IsReady)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_POS_NOT_READY",
+                "POS Server fiscal integration readiness is not confirmed.");
+        }
+
+        var fiscalContext = BuildFiscalContext(cashPayment, reference, statutoryFiscalLinkage.Context);
+        PosServerFiscalDocumentCreateRequest mappedRequest;
+        try
+        {
+            mappedRequest = _requestMapper.Map(
+                FiscalIssuancePosServerLiveIntegrationService.ApplyConfiguredFiscalProfile(
+                    _posServerOptions,
+                    fiscalContext));
+        }
+        catch (ArgumentException)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_REQUEST_FACTS_INVALID",
+                "The unchanged fiscal request cannot be reconstructed from durable facts.");
+        }
+
+        var recalculatedHash = _semanticRequestHashCalculator.Calculate(mappedRequest);
+        EnsureSemanticRequestUnchanged(command, reference, mappedRequest, recalculatedHash);
+
+        await RecordRecoveryAuditAsync(
+                command,
+                reference,
+                FiscalExceptionControlledRetryExecutionStatus.DryRunReady,
+                "terminal_cash_reporting_period_conflict_recovery_authorized",
+                posServerResult: null,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var recordingContext = new PosServerCreateResultRecordingContext(
+            UpstreamFinalityReference: reference.UpstreamFinalityReference,
+            SitePosServerId: reference.SitePosServerId,
+            FiscalDocumentTypeCodeId: reference.FiscalDocumentTypeCodeId,
+            CorrelationId: command.RecoveryCorrelationId,
+            PosServerResponseTimestamp: DateTimeOffset.UtcNow,
+            ServiceIdentityId: command.ActorServiceIdentityId);
+        var liveResult = await _posServerIntegration.TryIssueFiscalDocumentViaPosServerAsync(
+                reference.FiscalIssuanceReferenceId,
+                fiscalContext,
+                recordingContext,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var recoveredReference = liveResult.FiscalIssuanceReference ?? reference;
+        var executionStatus = liveResult.PosServerResult switch
+        {
+            { Succeeded: true, ResultClassification: FiscalIssuanceResultClassification.IdempotentReplay } =>
+                FiscalExceptionControlledRetryExecutionStatus.ReplayMatched,
+            { Succeeded: true } => FiscalExceptionControlledRetryExecutionStatus.Executed,
+            { Outcome: PosServerFiscalDocumentOutcome.Conflict } =>
+                FiscalExceptionControlledRetryExecutionStatus.Conflict,
+            null => FiscalExceptionControlledRetryExecutionStatus.Failed,
+            _ => FiscalExceptionControlledRetryExecutionStatus.Failed
+        };
+        var finalAuditId = await RecordRecoveryAuditAsync(
+                command,
+                recoveredReference,
+                executionStatus,
+                liveResult.PosServerResult?.Code ?? liveResult.Code,
+                liveResult.PosServerResult,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var exitAuthorizationIssued = await ContinueAfterVerifiedFiscalEvidenceAsync(
+                cashPayment,
+                recoveredReference,
+                command.RecoveryCorrelationId,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return new TerminalCashFiscalConflictRecoveryResult(
+            finalAuditId,
+            executionStatus.ToString().ToUpperInvariant(),
+            RecoveryExecuted: liveResult.MappedRequest is not null && liveResult.PosServerResult is not null,
+            IdempotentReadback: executionStatus == FiscalExceptionControlledRetryExecutionStatus.ReplayMatched,
+            ToResult(
+                cashPayment,
+                recoveredReference,
+                command.RecoveryCorrelationId,
+                posServerCallAttempted: liveResult.MappedRequest is not null && liveResult.PosServerResult is not null,
+                safeErrorCode: liveResult.PosServerResult?.Succeeded == false
+                    ? liveResult.PosServerResult.Code
+                    : null,
+                safeErrorPosture: liveResult.PosServerResult?.ErrorPosture?.ToString(),
+                exitAuthorizationIssued: exitAuthorizationIssued));
     }
 
     private async Task<bool> ContinueAfterVerifiedFiscalEvidenceAsync(
@@ -300,45 +510,38 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
 
     private SitePosServerEndpointOptions ResolvePosServerEndpoint(TerminalCashPaymentReadback cashPayment)
     {
-        var persistedPosServerRef = cashPayment.PosServerId.Trim();
-        var matches = _posServerOptions.Endpoints
-            .Where(endpoint =>
-                endpoint.SiteId == cashPayment.SiteId &&
-                string.Equals(
-                    endpoint.SitePosServerRef?.Trim(),
-                    persistedPosServerRef,
-                    StringComparison.Ordinal))
-            .ToArray();
-
-        if (matches.Length == 0)
+        if (!Guid.TryParse(cashPayment.PosServerId.Trim(), out var persistedPosServerId) ||
+            persistedPosServerId == Guid.Empty)
         {
             throw Rejected(
-                "SITE_POS_SERVER_BINDING_MISSING",
-                "The terminal cash payment POS Server binding is not configured for its Site.");
+                "SITE_POS_SERVER_ID_INVALID",
+                "The terminal cash payment does not contain a canonical POS Server identity.");
         }
 
-        if (matches.Length != 1)
+        var resolution = _sitePosServerBindingResolver.Resolve(
+            new SitePosServerBindingRequest(cashPayment.SiteId, persistedPosServerId));
+        if (!resolution.IsSuccess || resolution.Endpoint is null)
         {
             throw Rejected(
-                "SITE_POS_SERVER_BINDING_AMBIGUOUS",
-                "The terminal cash payment POS Server binding is ambiguous for its Site.");
+                MapBindingErrorCode(resolution.Code),
+                "The terminal cash payment POS Server binding is not valid for its Site and canonical identity.");
         }
 
-        var endpoint = matches[0];
-        if (endpoint.SitePosServerId == Guid.Empty ||
-            !endpoint.Enabled ||
-            !string.Equals(
-                endpoint.Environment?.Trim(),
-                _posServerOptions.RuntimeEnvironment?.Trim(),
-                StringComparison.OrdinalIgnoreCase))
-        {
-            throw Rejected(
-                "SITE_POS_SERVER_BINDING_INACTIVE",
-                "The terminal cash payment POS Server binding is not active for this environment.");
-        }
-
-        return endpoint;
+        return resolution.Endpoint;
     }
+
+    private static string MapBindingErrorCode(string code) => code switch
+    {
+        SitePosServerBindingResolutionCodes.Missing => "SITE_POS_SERVER_BINDING_MISSING",
+        SitePosServerBindingResolutionCodes.Ambiguous => "SITE_POS_SERVER_BINDING_AMBIGUOUS",
+        SitePosServerBindingResolutionCodes.Inactive => "SITE_POS_SERVER_BINDING_INACTIVE",
+        SitePosServerBindingResolutionCodes.SiteMismatch => "SITE_POS_SERVER_SITE_MISMATCH",
+        SitePosServerBindingResolutionCodes.IdentityMissing => "SITE_POS_SERVER_IDENTITY_MISSING",
+        SitePosServerBindingResolutionCodes.IdentityMismatch => "SITE_POS_SERVER_IDENTITY_MISMATCH",
+        SitePosServerBindingResolutionCodes.ReferenceMissing => "SITE_POS_SERVER_ENDPOINT_REFERENCE_MISSING",
+        SitePosServerBindingResolutionCodes.ReferenceMismatch => "SITE_POS_SERVER_ENDPOINT_REFERENCE_MISMATCH",
+        _ => "SITE_POS_SERVER_BINDING_INCONSISTENT"
+    };
 
     private static CentralPmsFiscalDocumentMappingContext BuildFiscalContext(
         TerminalCashPaymentReadback cashPayment,
@@ -733,6 +936,204 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             ExitAuthorizationIssued: exitAuthorizationIssued,
             GateBehaviorTriggered: false);
 
+    private static void EnsureRecoveryExpectedFacts(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        TerminalCashPaymentReadback cashPayment,
+        FiscalIssuanceReferenceRecord reference,
+        string upstreamFinalityReference)
+    {
+        var currency = command.ExpectedCurrency.Trim().ToUpperInvariant();
+        if (cashPayment.PaymentAttemptId != command.ExpectedPaymentAttemptId ||
+            cashPayment.PaymentConfirmationId != command.ExpectedPaymentConfirmationId ||
+            cashPayment.ParkingSessionId != command.ExpectedParkingSessionId ||
+            cashPayment.TariffSnapshotId != command.ExpectedTariffSnapshotId ||
+            cashPayment.AmountDueMinorUnits != command.ExpectedAmountMinorUnits ||
+            !string.Equals(cashPayment.Currency.Trim(), currency, StringComparison.OrdinalIgnoreCase) ||
+            cashPayment.CorrelationId != command.ExpectedTransactionCorrelationId ||
+            reference.PaymentAttemptId != command.ExpectedPaymentAttemptId ||
+            reference.PaymentConfirmationId != command.ExpectedPaymentConfirmationId ||
+            reference.ParkingSessionId != command.ExpectedParkingSessionId ||
+            reference.TariffSnapshotId != command.ExpectedTariffSnapshotId ||
+            reference.SiteId != cashPayment.SiteId ||
+            !string.Equals(reference.PayableBasisRef, command.ExpectedTariffSnapshotId.ToString("D"), StringComparison.Ordinal) ||
+            !string.Equals(reference.FiscalDocumentTypeCodeKey, FiscalDocumentTypeCodeKey, StringComparison.Ordinal) ||
+            !string.Equals(reference.CompletionBasis, FiscalCompletionBasisCodes.PaymentFinality, StringComparison.Ordinal) ||
+            reference.CompletionAuthorityReferenceId != command.ExpectedPaymentConfirmationId ||
+            !string.Equals(reference.UpstreamFinalityReference, upstreamFinalityReference, StringComparison.Ordinal) ||
+            !string.Equals(reference.UpstreamFinalityReference, command.ExpectedUpstreamFinalityReference, StringComparison.Ordinal) ||
+            reference.CorrelationId != command.ExpectedFiscalCorrelationId ||
+            command.RecoveryCorrelationId != command.ExpectedFiscalCorrelationId)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_ANCESTRY_MISMATCH",
+                "The recovery request does not match the unchanged durable payment and fiscal ancestry.");
+        }
+
+        var canonicalDeliveryKey = $"terminal-cash-fiscal-{command.TerminalCashTenderId:N}";
+        if (!string.Equals(command.DeliveryIdempotencyKey, canonicalDeliveryKey, StringComparison.Ordinal))
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_IDEMPOTENCY_KEY_MISMATCH",
+                "The recovery request does not preserve the terminal-cash fiscal delivery idempotency key.");
+        }
+    }
+
+    private static void EnsureApprovedRecoveryState(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        FiscalIssuanceReferenceRecord reference)
+    {
+        if (reference.FiscalIssuanceState is not (
+                FiscalIssuanceIntegrationState.FiscalIssuanceConflict or
+                FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration) ||
+            reference.LatestErrorCode is null ||
+            !RecoverableReportingPeriodErrorCodes.Contains(reference.LatestErrorCode) ||
+            !RecoverableReportingPeriodErrorCodes.Contains(command.ReasonCode) ||
+            !string.Equals(reference.LatestErrorCode, command.ReasonCode, StringComparison.Ordinal))
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_REASON_NOT_APPROVED",
+                "Only an unchanged fiscal_reporting_period_unavailable or fiscal_reporting_period_assignment_mismatch obligation is approved for reporting-period recovery.");
+        }
+    }
+
+    private static void EnsureReferenceHasNoFiscalEvidence(FiscalIssuanceReferenceRecord reference)
+    {
+        if (reference.PosServerFiscalDocumentId is not null ||
+            reference.FiscalIdentityId is not null ||
+            reference.FiscalSequencePolicyId is not null ||
+            reference.FiscalSequenceValue is not null ||
+            !string.IsNullOrWhiteSpace(reference.FiscalDocumentNumber) ||
+            !string.IsNullOrWhiteSpace(reference.ElectronicJournalEventReference) ||
+            reference.FiscalIssuanceEvidenceStatus is not null ||
+            reference.ResultClassification is not null ||
+            reference.FiscalNumberAssignmentState != FiscalNumberAssignmentState.NotAssigned)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_EXISTING_EVIDENCE_AMBIGUOUS",
+                "The fiscal obligation already contains evidence that requires readback or manual reconciliation.");
+        }
+    }
+
+    private static void EnsureDurableRecoveryFacts(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        TerminalCashPaymentReadback cashPayment,
+        TerminalCashFiscalConflictRecoveryFacts? facts)
+    {
+        var currency = command.ExpectedCurrency.Trim().ToUpperInvariant();
+        if (facts is null ||
+            facts.PaymentAttemptId != command.ExpectedPaymentAttemptId ||
+            facts.PaymentConfirmationId != command.ExpectedPaymentConfirmationId ||
+            facts.ParkingSessionId != command.ExpectedParkingSessionId ||
+            facts.TariffSnapshotId != command.ExpectedTariffSnapshotId ||
+            !string.Equals(facts.PaymentAttemptStatus, ConfirmedCanonicalPaymentStatus, StringComparison.Ordinal) ||
+            !string.Equals(facts.PaymentConfirmationStatus, RecordedPaymentConfirmationStatus, StringComparison.Ordinal) ||
+            facts.PaymentAttemptAmountMinorUnits != command.ExpectedAmountMinorUnits ||
+            facts.PaymentConfirmationAmountMinorUnits != command.ExpectedAmountMinorUnits ||
+            !string.Equals(facts.PaymentAttemptCurrency, currency, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(facts.PaymentConfirmationCurrency, currency, StringComparison.OrdinalIgnoreCase) ||
+            facts.PaymentAttemptId != cashPayment.PaymentAttemptId ||
+            facts.PaymentConfirmationId != cashPayment.PaymentConfirmationId)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_PAYMENT_FACTS_MISMATCH",
+                "The canonical payment facts are not eligible for unchanged-request recovery.");
+        }
+
+        if (facts.ExitAuthorizationCount != 0)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_EXIT_ALREADY_AUTHORIZED",
+                "An ExitAuthorization already exists; fiscal recovery requires reconciliation instead of another POST.");
+        }
+    }
+
+    private static void EnsureSemanticRequestUnchanged(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        FiscalIssuanceReferenceRecord reference,
+        PosServerFiscalDocumentCreateRequest mappedRequest,
+        FiscalSemanticRequestHashResult recalculatedHash)
+    {
+        if (recalculatedHash.Status != FiscalSemanticRequestHashSourceStatus.Available ||
+            string.IsNullOrWhiteSpace(recalculatedHash.HashValue) ||
+            reference.SemanticRequestHashStatus != FiscalSemanticRequestHashSourceStatus.Available ||
+            !string.Equals(reference.SemanticRequestHashValue, command.ExpectedFiscalSemanticRequestHash, StringComparison.Ordinal) ||
+            !string.Equals(reference.SemanticRequestHashValue, recalculatedHash.HashValue, StringComparison.Ordinal) ||
+            !string.Equals(reference.SemanticRequestHashAlgorithm, recalculatedHash.HashAlgorithm, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(reference.SemanticRequestHashSourceVersion, recalculatedHash.HashSourceVersion, StringComparison.Ordinal) ||
+            !string.Equals(mappedRequest.UpstreamFinalityRef, command.ExpectedUpstreamFinalityReference, StringComparison.Ordinal) ||
+            !string.Equals(mappedRequest.PayableBasis.UpstreamFinalityRef, command.ExpectedUpstreamFinalityReference, StringComparison.Ordinal) ||
+            mappedRequest.PayableBasis.PayableAmountMinorUnits != command.ExpectedAmountMinorUnits ||
+            !string.Equals(mappedRequest.PayableBasis.CurrencyCode, command.ExpectedCurrency.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_SEMANTIC_HASH_MISMATCH",
+                "The reconstructed fiscal request differs from the original semantic request.");
+        }
+    }
+
+    private async Task<Guid> RecordRecoveryAuditAsync(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        FiscalIssuanceReferenceRecord reference,
+        FiscalExceptionControlledRetryExecutionStatus status,
+        string? resultCode,
+        PosServerFiscalDocumentCreateResult? posServerResult,
+        CancellationToken cancellationToken)
+    {
+        var failed = status is FiscalExceptionControlledRetryExecutionStatus.Conflict or
+            FiscalExceptionControlledRetryExecutionStatus.Blocked or
+            FiscalExceptionControlledRetryExecutionStatus.Unavailable or
+            FiscalExceptionControlledRetryExecutionStatus.Unknown or
+            FiscalExceptionControlledRetryExecutionStatus.Failed;
+        var safeResultCode = string.IsNullOrWhiteSpace(resultCode) ? "none" : resultCode.Trim();
+        var audit = await _recoveryAuditRepository.RecordAsync(
+            new FiscalExceptionControlledRetryExecutionAttemptWrite(
+                FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
+                RetryCommandPreparationAttemptId: null,
+                RetrySchedulePreparationAttemptId: null,
+                ReadbackClassificationBasis: null,
+                SemanticRequestHashValue: reference.SemanticRequestHashValue,
+                SemanticRequestHashAlgorithm: reference.SemanticRequestHashAlgorithm,
+                SemanticRequestHashSourceVersion: reference.SemanticRequestHashSourceVersion,
+                UpstreamFinalityReference: reference.UpstreamFinalityReference,
+                ExecutionStatus: status,
+                BlockReasonCode: failed ? safeResultCode : null,
+                PosServerOutcome: posServerResult?.Outcome,
+                PosServerResultClassification: posServerResult?.ResultClassification,
+                PosServerFiscalDocumentId: posServerResult?.FiscalDocumentId,
+                FiscalDocumentNumber: posServerResult?.FiscalDocumentNumber,
+                FiscalIdentityId: posServerResult?.FiscalIdentityId,
+                FiscalSequencePolicyId: posServerResult?.FiscalSequencePolicyId,
+                FiscalSequenceValue: posServerResult?.FiscalSequenceValue,
+                FiscalSeries: posServerResult?.FiscalSeries,
+                FiscalNumberPrefixText: posServerResult?.FiscalNumberPrefixText,
+                FiscalNumberSuffixText: posServerResult?.FiscalNumberSuffixText,
+                FiscalNumberAssignedAt: posServerResult?.FiscalNumberAssignedAt,
+                FiscalNumberAssignedByRef: posServerResult?.FiscalNumberAssignedByRef,
+                AttemptedAt: DateTimeOffset.UtcNow,
+                CompletedAt: status == FiscalExceptionControlledRetryExecutionStatus.DryRunReady
+                    ? null
+                    : DateTimeOffset.UtcNow,
+                ServiceIdentityId: command.ActorServiceIdentityId,
+                CorrelationId: command.RecoveryCorrelationId,
+                SafeSummary: BuildRecoveryAuditSummary(command, safeResultCode)),
+            cancellationToken).ConfigureAwait(false);
+        return audit.RetryExecutionAttemptId;
+    }
+
+    private static string BuildRecoveryAuditSummary(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        string safeResultCode)
+    {
+        var summary = string.Join(
+            ';',
+            "terminal_cash_reporting_period_conflict_recovery",
+            $"reason={command.ReasonCode.Trim()}",
+            $"approval={command.ApprovalReference.Trim()}",
+            $"result={safeResultCode}",
+            $"justification={command.SafeJustification.Trim().Replace('\r', ' ').Replace('\n', ' ')}");
+        return summary.Length <= 240 ? summary : summary[..240];
+    }
+
     private static void Validate(TerminalCashFiscalIssuanceCommand command)
     {
         if (command.TerminalCashTenderId == Guid.Empty)
@@ -748,6 +1149,44 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         if (command.CorrelationId == Guid.Empty)
         {
             throw Rejected("CORRELATION_ID_REQUIRED", "X-Correlation-Id header is required.");
+        }
+    }
+
+    private static void ValidateRecovery(TerminalCashFiscalConflictRecoveryCommand command)
+    {
+        if (command.TerminalCashTenderId == Guid.Empty ||
+            command.FiscalIssuanceReferenceId == Guid.Empty ||
+            command.ExpectedPaymentAttemptId == Guid.Empty ||
+            command.ExpectedPaymentConfirmationId == Guid.Empty ||
+            command.ExpectedParkingSessionId == Guid.Empty ||
+            command.ExpectedTariffSnapshotId == Guid.Empty ||
+            command.ActorServiceIdentityId == Guid.Empty ||
+            command.ExpectedTransactionCorrelationId == Guid.Empty ||
+            command.ExpectedFiscalCorrelationId == Guid.Empty ||
+            command.RecoveryCorrelationId == Guid.Empty ||
+            command.ExpectedAmountMinorUnits <= 0 ||
+            string.IsNullOrWhiteSpace(command.ExpectedCurrency) ||
+            string.IsNullOrWhiteSpace(command.ExpectedDeliveryRequestHash) ||
+            string.IsNullOrWhiteSpace(command.ExpectedFiscalSemanticRequestHash) ||
+            string.IsNullOrWhiteSpace(command.ExpectedUpstreamFinalityReference) ||
+            string.IsNullOrWhiteSpace(command.DeliveryIdempotencyKey) ||
+            string.IsNullOrWhiteSpace(command.ApprovalReference) ||
+            string.IsNullOrWhiteSpace(command.ReasonCode) ||
+            string.IsNullOrWhiteSpace(command.SafeJustification) ||
+            command.ApprovalReference.Length > 160 ||
+            command.ReasonCode.Length > 80 ||
+            command.SafeJustification.Length > 512)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_REQUEST_INVALID",
+                "The governed fiscal recovery request is incomplete or invalid.");
+        }
+
+        if (!string.Equals(command.ExpectedDeliveryRequestHash, CanonicalDeliveryRequestHash, StringComparison.Ordinal))
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_DELIVERY_HASH_MISMATCH",
+                "The recovery request does not preserve the canonical terminal-cash fiscal delivery payload hash.");
         }
     }
 
