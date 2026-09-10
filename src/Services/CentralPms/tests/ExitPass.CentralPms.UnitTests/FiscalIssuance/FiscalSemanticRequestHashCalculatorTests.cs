@@ -159,6 +159,25 @@ public sealed class FiscalSemanticRequestHashCalculatorTests
     }
 
     [Fact]
+    public void Calculate_WhenOnlyTopLevelSiteIdIsPopulated_PreservesSha256V1SemanticIdentity()
+    {
+        var authoritativeSiteId = Guid.Parse("72000000-0000-4000-8000-000000000001");
+        var context = PosServerFiscalDocumentRequestMapperTests.ValidContext();
+        var requestWithoutSiteId = _mapper.Map(context with { SiteId = null });
+        var requestWithSiteId = _mapper.Map(context with { SiteId = authoritativeSiteId });
+
+        var withoutSiteId = _sut.InspectCanonicalSource(requestWithoutSiteId);
+        var withSiteId = _sut.InspectCanonicalSource(requestWithSiteId);
+
+        withoutSiteId.HashSourceVersion.Should().Be(FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion);
+        withSiteId.HashSourceVersion.Should().Be(FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion);
+        requestWithSiteId.SiteId.Should().Be(authoritativeSiteId);
+        withSiteId.CanonicalSourceText.Should().Be(withoutSiteId.CanonicalSourceText);
+        withSiteId.CanonicalSourceText.Should().NotContain("\"site_id\"");
+        withSiteId.HashValue.Should().Be(withoutSiteId.HashValue);
+    }
+
+    [Fact]
     public void Calculate_WhenAppliedStatutoryFactsArePresent_UsesPosServerStatutoryHashVersion()
     {
         var request = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.StatutoryContext("WEBPAY"));

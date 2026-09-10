@@ -624,7 +624,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             ReferenceContext: referenceContext,
             PaymentFinalityRef: reference.UpstreamFinalityReference,
             VendorAckRef: null,
-            AppliedStatutoryFiscalFacts: BuildAppliedStatutoryFiscalFacts(cashPayment, statutoryContext));
+            AppliedStatutoryFiscalFacts: BuildAppliedStatutoryFiscalFacts(cashPayment, statutoryContext),
+            SiteId: cashPayment.SiteId);
     }
 
     private static void EnsureStatutoryFiscalLinkageCanBeFiscalized(

@@ -119,8 +119,14 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         await service.IssueOrReadAsync(Command(), CancellationToken.None);
 
         Assert.NotNull(posIntegration.LastFiscalContext);
-        Assert.Equal(SitePosServerId, posIntegration.LastFiscalContext!.SitePosServerId);
-        Assert.Equal(SitePosServerRef, posIntegration.LastFiscalContext.SitePosServerRef);
+        var fiscalContext = posIntegration.LastFiscalContext!;
+        Assert.Equal(CashPayment().SiteId, fiscalContext.SiteId);
+        Assert.Equal(SitePosServerId, fiscalContext.SitePosServerId);
+        Assert.Equal(SitePosServerRef, fiscalContext.SitePosServerRef);
+
+        var request = new PosServerFiscalDocumentRequestMapper().Map(fiscalContext);
+        Assert.Equal(CashPayment().SiteId, request.SiteId);
+        Assert.Equal(SitePosServerId, request.SitePosServerId);
     }
 
     [Fact]
