@@ -153,6 +153,45 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
         }
     }
 
+    [Theory]
+    [InlineData(FiscalIssuanceExceptionReason.FiscalReportingPeriodUnavailable, "fiscal_reporting_period_unavailable")]
+    [InlineData(FiscalIssuanceExceptionReason.FiscalReportingPeriodAmbiguous, "fiscal_reporting_period_ambiguous")]
+    [InlineData(FiscalIssuanceExceptionReason.FiscalReportingPeriodClosed, "fiscal_reporting_period_closed")]
+    [InlineData(FiscalIssuanceExceptionReason.FiscalReportingPeriodAssignmentMismatch, "fiscal_reporting_period_assignment_mismatch")]
+    public async Task CreateAsync_WhenReportingPeriodFailure_PersistsAccurateNonIdempotencyReason(
+        FiscalIssuanceExceptionReason reason,
+        string errorCode)
+    {
+        await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);
+        var context = PaymentTestContext.Create($"{nameof(CreateAsync_WhenReportingPeriodFailure_PersistsAccurateNonIdempotencyReason)}-{errorCode}");
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed reporting-period fiscal failure-state test data.");
+
+        try
+        {
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var request = CreatePendingRequest(context, attempt, confirmation) with
+            {
+                FiscalIssuanceState = FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration,
+                LatestExceptionReason = reason,
+                LatestErrorCode = errorCode,
+                LatestErrorPosture = FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection
+            };
+
+            var created = await CreateRepository().CreateAsync(request, CancellationToken.None);
+
+            Assert.Equal(FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration, created.FiscalIssuanceState);
+            Assert.Equal(reason, created.LatestExceptionReason);
+            Assert.Equal(errorCode, created.LatestErrorCode);
+            Assert.NotEqual(FiscalIssuanceExceptionReason.FiscalDocumentIdempotencyConflict, created.LatestExceptionReason);
+        }
+        finally
+        {
+            await CleanupFiscalReferenceRowsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
     [Fact]
     public async Task ShellTables_WhenFiscalReferenceExists_PersistAttemptExceptionAndReadbackRows()
     {

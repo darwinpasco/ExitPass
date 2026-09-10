@@ -26,6 +26,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     private static readonly Guid TariffSnapshotId = Guid.Parse("21000000-0000-4000-8000-000000000005");
     private static readonly Guid FiscalIssuanceReferenceId = Guid.Parse("21000000-0000-4000-8000-000000000006");
     private static readonly Guid PosFiscalDocumentId = Guid.Parse("21000000-0000-4000-8000-000000000007");
+    private static readonly Guid SitePosServerId = Guid.Parse("21000000-0000-4000-8000-000000000015");
+    private const string SitePosServerRef = "DEV-POS-SERVER-ATC-001";
     private static readonly Guid CashierUserId = Guid.Parse("21000000-0000-4000-8000-000000000008");
     private static readonly Guid StatutoryDecisionCommandId = Guid.Parse("21000000-0000-4000-8000-000000000030");
     private static readonly Guid StatutoryApplicationCommandId = Guid.Parse("21000000-0000-4000-8000-000000000031");
@@ -95,7 +97,6 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     [Fact]
     public async Task TerminalCashFiscalIssuance_ConfirmedCashPayment_UsesConfiguredSitePosRoutingIdentity()
     {
-        var sitePosServerId = Guid.Parse("21000000-0000-4000-8000-000000000015");
         var repo = new InMemoryFiscalReferenceRepository();
         var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
         var options = new FiscalIssuancePosServerIntegrationOptions
@@ -106,8 +107,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
                 new SitePosServerEndpointOptions
                 {
                     SiteId = CashPayment().SiteId,
-                    SitePosServerId = sitePosServerId,
-                    SitePosServerRef = CashPayment().PosServerId,
+                    SitePosServerId = SitePosServerId,
+                    SitePosServerRef = SitePosServerRef,
                     Environment = "IntegrationTest",
                     Enabled = true
                 }
@@ -118,8 +119,66 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         await service.IssueOrReadAsync(Command(), CancellationToken.None);
 
         Assert.NotNull(posIntegration.LastFiscalContext);
-        Assert.Equal(sitePosServerId, posIntegration.LastFiscalContext!.SitePosServerId);
-        Assert.Equal("DEV-POS-SERVER-ATC-001", posIntegration.LastFiscalContext.SitePosServerRef);
+        Assert.Equal(SitePosServerId, posIntegration.LastFiscalContext!.SitePosServerId);
+        Assert.Equal(SitePosServerRef, posIntegration.LastFiscalContext.SitePosServerRef);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_EndpointReferenceIsNotTreatedAsCanonicalPosUuid()
+    {
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var service = CreateService(
+            CashPayment(posServerId: SitePosServerRef),
+            repo,
+            posIntegration);
+
+        var exception = await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(
+            () => service.IssueOrReadAsync(Command(), CancellationToken.None));
+
+        Assert.Equal("SITE_POS_SERVER_ID_INVALID", exception.ErrorCode);
+        Assert.Equal(0, repo.CreateCount);
+        Assert.Equal(0, posIntegration.IssueCallCount);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_WrongCanonicalPosIdentity_FailsBeforeFiscalPreparation()
+    {
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var service = CreateService(
+            CashPayment(posServerId: Guid.NewGuid().ToString("D")),
+            repo,
+            posIntegration);
+
+        var exception = await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(
+            () => service.IssueOrReadAsync(Command(), CancellationToken.None));
+
+        Assert.Equal("SITE_POS_SERVER_IDENTITY_MISMATCH", exception.ErrorCode);
+        Assert.Equal(0, repo.CreateCount);
+        Assert.Equal(0, posIntegration.IssueCallCount);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_UsesCanonicalSiteBindingResolver()
+    {
+        var bindingResolver = new TrackingSitePosServerBindingResolver(
+            SitePosServerBindingResolution.Success(new SitePosServerEndpointOptions
+            {
+                SiteId = CashPayment().SiteId,
+                SitePosServerId = SitePosServerId,
+                SitePosServerRef = SitePosServerRef,
+                Environment = "IntegrationTest",
+                Enabled = true
+            }));
+        var service = CreateService(CashPayment(), bindingResolver: bindingResolver);
+
+        await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.Equal(1, bindingResolver.CallCount);
+        Assert.Equal(CashPayment().SiteId, bindingResolver.LastRequest!.SiteId);
+        Assert.Equal(SitePosServerId, bindingResolver.LastRequest.ExpectedSitePosServerId);
+        Assert.Null(bindingResolver.LastRequest.ExpectedSitePosServerRef);
     }
 
     [Fact]
@@ -396,7 +455,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         ITerminalCashStatutoryFiscalLinkageReader? statutoryFiscalLinkageReader = null,
         FiscalIssuancePosServerIntegrationOptions? posServerOptions = null,
         IIssueExitAuthorizationUseCase? exitAuthorization = null,
-        IVendorPaymentAcknowledgmentWorkflow? acknowledgment = null)
+        IVendorPaymentAcknowledgmentWorkflow? acknowledgment = null,
+        ISitePosServerBindingResolver? bindingResolver = null)
     {
         repo ??= new InMemoryFiscalReferenceRepository();
         posServerOptions ??= new FiscalIssuancePosServerIntegrationOptions
@@ -409,8 +469,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
                     new SitePosServerEndpointOptions
                     {
                         SiteId = cashPayment.SiteId,
-                        SitePosServerId = Guid.Parse("21000000-0000-4000-8000-000000000015"),
-                        SitePosServerRef = cashPayment.PosServerId,
+                        SitePosServerId = SitePosServerId,
+                        SitePosServerRef = SitePosServerRef,
                         Environment = "IntegrationTest",
                         Enabled = true
                     }
@@ -423,9 +483,15 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             posIntegration ?? new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied),
             statutoryFiscalLinkageReader ?? new FakeStatutoryFiscalLinkageReader(
                 TerminalCashStatutoryFiscalLinkageResult.NotApplicable()),
-            posServerOptions,
+            bindingResolver ?? new ConfiguredSitePosServerBindingResolver(posServerOptions),
             exitAuthorization ?? new FakeIssueExitAuthorizationUseCase(),
             NullLogger<TerminalCashFiscalIssuanceService>.Instance,
+            posServerOptions,
+            new PosServerFiscalDocumentRequestMapper(),
+            new FiscalSemanticRequestHashCalculator(),
+            new FakeRecoveryAuditRepository(),
+            new FakeRecoveryGuardRepository(),
+            new FakeRecoveryLock(),
             acknowledgment ?? new FakeVendorPaymentAcknowledgmentWorkflow());
     }
 
@@ -442,7 +508,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
 
     private static TerminalCashPaymentReadback CashPayment(
         string canonicalPaymentStatus = "CONFIRMED",
-        long amountDueMinorUnits = 10_000) =>
+        long amountDueMinorUnits = 10_000,
+        string? posServerId = null) =>
         new(
             TerminalCashPaymentCommandId: Guid.Parse("21000000-0000-4000-8000-000000000010"),
             TerminalCashTenderId: TerminalCashTenderId,
@@ -453,7 +520,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             TerminalId: "terminal-001",
             SiteId: Guid.Parse("21000000-0000-4000-8000-000000000012"),
             SiteGroupId: Guid.Parse("21000000-0000-4000-8000-000000000013"),
-            PosServerId: "DEV-POS-SERVER-ATC-001",
+            PosServerId: posServerId ?? SitePosServerId.ToString("D"),
             CashierId: CashierUserId.ToString("D"),
             CashierShiftId: "shift-001",
             Currency: "PHP",
@@ -712,6 +779,57 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             Guid? correlationId,
             CancellationToken cancellationToken) =>
             Task.FromResult(_readback);
+
+        public Task<TerminalCashFiscalConflictRecoveryResult> RecoverReportingPeriodConflictAsync(
+            TerminalCashFiscalConflictRecoveryCommand command,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Conflict recovery is not used by endpoint issuance tests.");
+    }
+
+    private sealed class TrackingSitePosServerBindingResolver : ISitePosServerBindingResolver
+    {
+        private readonly SitePosServerBindingResolution _resolution;
+
+        public TrackingSitePosServerBindingResolver(SitePosServerBindingResolution resolution)
+        {
+            _resolution = resolution;
+        }
+
+        public int CallCount { get; private set; }
+
+        public SitePosServerBindingRequest? LastRequest { get; private set; }
+
+        public SitePosServerBindingResolution Resolve(SitePosServerBindingRequest request)
+        {
+            CallCount++;
+            LastRequest = request;
+            return _resolution;
+        }
+    }
+
+    private sealed class FakeRecoveryAuditRepository : IFiscalExceptionControlledRetryExecutionAuditRepository
+    {
+        public Task<FiscalExceptionControlledRetryExecutionAttemptRecord> RecordAsync(
+            FiscalExceptionControlledRetryExecutionAttemptWrite attempt,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Recovery auditing is not used by ordinary issuance tests.");
+    }
+
+    private sealed class FakeRecoveryGuardRepository : ITerminalCashFiscalConflictRecoveryGuardRepository
+    {
+        public Task<TerminalCashFiscalConflictRecoveryFacts?> ReadAsync(
+            Guid paymentAttemptId,
+            Guid paymentConfirmationId,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Recovery guards are not used by ordinary issuance tests.");
+    }
+
+    private sealed class FakeRecoveryLock : ITerminalCashFiscalConflictRecoveryLock
+    {
+        public Task<IAsyncDisposable?> TryAcquireAsync(
+            Guid fiscalIssuanceReferenceId,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Recovery locking is not used by ordinary issuance tests.");
     }
 
     private sealed class InMemoryFiscalReferenceRepository : IFiscalIssuanceReferenceRepository

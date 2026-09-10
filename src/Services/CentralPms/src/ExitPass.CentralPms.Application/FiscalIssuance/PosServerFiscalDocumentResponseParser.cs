@@ -308,7 +308,21 @@ public static class PosServerFiscalDocumentResponseParser
         string code,
         FiscalIssuanceErrorPosture? errorPosture)
     {
-        if (httpStatusCode == (int)HttpStatusCode.Conflict || code == "fiscal_document_idempotency_conflict")
+        if (code == "fiscal_document_idempotency_conflict")
+        {
+            return PosServerFiscalDocumentOutcome.Conflict;
+        }
+
+        if (httpStatusCode == (int)HttpStatusCode.Conflict &&
+            code is "fiscal_reporting_period_unavailable"
+                or "fiscal_reporting_period_ambiguous"
+                or "fiscal_reporting_period_closed"
+                or "fiscal_reporting_period_assignment_mismatch")
+        {
+            return PosServerFiscalDocumentOutcome.FailedConfiguration;
+        }
+
+        if (httpStatusCode == (int)HttpStatusCode.Conflict)
         {
             return PosServerFiscalDocumentOutcome.Conflict;
         }
@@ -500,6 +514,7 @@ public static class PosServerFiscalDocumentResponseParser
         {
             "do_not_retry_without_request_change" => FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange,
             "retry_after_configuration_correction" => FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection,
+            "retry_after_reporting_configuration_correction" => FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection,
             "retry_after_service_recovery" => FiscalIssuanceErrorPosture.RetryAfterServiceRecovery,
             _ => null
         };

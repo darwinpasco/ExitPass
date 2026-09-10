@@ -2,7 +2,6 @@ using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
-using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace ExitPass.CentralPms.Infrastructure.Payments;
@@ -12,16 +11,16 @@ public sealed class PostgresDigitalPaymentFiscalContextReader :
     IDigitalPaymentFiscalRecoveryContextReader
 {
     private readonly string _connectionString;
-    private readonly FiscalIssuancePosServerIntegrationOptions _options;
+    private readonly ISitePosServerBindingResolver _sitePosServerBindingResolver;
     private readonly IStatutoryFiscalLinkageReader _statutoryFiscalLinkageReader;
 
     public PostgresDigitalPaymentFiscalContextReader(
         string connectionString,
-        IOptions<FiscalIssuancePosServerIntegrationOptions> options,
+        ISitePosServerBindingResolver sitePosServerBindingResolver,
         IStatutoryFiscalLinkageReader statutoryFiscalLinkageReader)
     {
         _connectionString = connectionString;
-        _options = options.Value;
+        _sitePosServerBindingResolver = sitePosServerBindingResolver;
         _statutoryFiscalLinkageReader = statutoryFiscalLinkageReader;
     }
 
@@ -81,23 +80,13 @@ public sealed class PostgresDigitalPaymentFiscalContextReader :
 
         var siteId = reader.GetGuid(reader.GetOrdinal("site_id"));
         var siteGroupId = reader.GetGuid(reader.GetOrdinal("site_group_id"));
-        var endpointMatches = _options.Endpoints
-            .Where(endpoint => endpoint.SiteId == siteId)
-            .ToArray();
-        if (endpointMatches.Length != 1)
+        var binding = _sitePosServerBindingResolver.Resolve(new SitePosServerBindingRequest(siteId));
+        if (!binding.IsSuccess || binding.Endpoint is null)
         {
-            throw new InvalidOperationException(
-                endpointMatches.Length == 0
-                    ? "site_pos_server_site_binding_not_found"
-                    : "site_pos_server_site_binding_ambiguous");
+            throw new InvalidOperationException(binding.Code);
         }
 
-        var endpoint = endpointMatches[0];
-        if (!endpoint.Enabled ||
-            !string.Equals(endpoint.Environment, _options.RuntimeEnvironment, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("site_pos_server_site_binding_inactive");
-        }
+        var endpoint = binding.Endpoint;
 
         var amount = reader.GetDecimal(reader.GetOrdinal("amount"));
         var amountMinorUnits = checked((long)decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
