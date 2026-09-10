@@ -66,7 +66,21 @@ public sealed class WebPayPaymentIntentRequest
     public Guid? StatutoryDiscountPayableBasisApplicationCommandId { get; set; }
 
     /// <summary>
+    /// Optional customer information snapshotted for the Sales Invoice. It has no effect on payment amount.
+    /// </summary>
+    public WebPayInvoiceCustomerInformation? InvoiceCustomerInformation { get; set; }
+
+    /// <summary>
     /// End-to-end correlation identifier.
     /// </summary>
     public Guid? CorrelationId { get; set; }
+}
+
+public sealed class WebPayInvoiceCustomerInformation
+{
+    public string? CustomerName { get; set; }
+    public string? Address { get; set; }
+    public string? Tin { get; set; }
+    public string? BusinessStyle { get; set; }
+    public string? StatutoryIdNumber { get; set; }
 }

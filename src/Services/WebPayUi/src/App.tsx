@@ -6,6 +6,12 @@ import { StatutoryEvidenceCapture } from "./StatutoryEvidenceCapture";
 import { AutomaticMaskedIdInput } from "./AutomaticMaskedIdInput";
 import { formatCustomerSupportReference } from "./customerSafeReference";
 import {
+  emptyInvoiceCustomerInformation,
+  invoiceCustomerInformationLimits,
+  normalizeInvoiceCustomerInformation,
+  validateInvoiceCustomerInformation
+} from "./invoiceCustomerInformation";
+import {
   ActivePaymentAttemptError,
   PayableBasisRefreshRequiredError,
   ReceiptPresentationError,
@@ -42,6 +48,7 @@ import type {
   PaymentIntentRequest,
   PaymentIntentResponse,
   PaymentMethod,
+  InvoiceCustomerInformation,
   SalesInvoicePresentationRow,
   StatutoryDiscountEntitlementType,
   WebPayStatutoryDiscountAvailabilityResponse,
@@ -62,19 +69,19 @@ const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string;
     code: "GCASH",
     label: "GCash",
     image: "/assets/payment-methods/gcash.png",
-    helper: "Pay with GCash through PayMongo Checkout"
+    helper: "Pay securely with your GCash wallet"
   },
   {
     code: "MAYA",
     label: "Maya",
     image: "/assets/payment-methods/maya.png",
-    helper: "Pay with Maya through PayMongo Checkout"
+    helper: "Pay securely with your Maya wallet"
   },
   {
     code: "CARD",
     label: "Card",
     image: "/assets/payment-methods/cards-visa-mastercard.png",
-    helper: "Visa or Mastercard through PayMongo Checkout"
+    helper: "Visa or Mastercard"
   }
 ];
 
@@ -176,6 +183,7 @@ export function App() {
   const [scannedContext, setScannedContext] = useState<Partial<PaymentIntentRequest>>({});
   const [plateNumber, setPlateNumber] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("QRPH");
+  const [invoiceCustomerInformation, setInvoiceCustomerInformation] = useState<InvoiceCustomerInformation>(emptyInvoiceCustomerInformation);
   const [resolvedSession, setResolvedSession] = useState<ParkingSessionResolveResponse | null>(null);
   const [result, setResult] = useState<PaymentIntentResponse | null>(null);
   const [activePaymentAttempt, setActivePaymentAttempt] = useState<ActivePaymentAttemptState | null>(null);
@@ -237,6 +245,7 @@ export function App() {
     setStatutoryAvailabilityState(emptyStatutoryDiscountAvailabilityState);
     setStatutoryPendingLifecycle(null);
     setRegularPaymentConfirmation(emptyRegularPaymentConfirmation);
+    setInvoiceCustomerInformation(emptyInvoiceCustomerInformation);
     clearStatutoryRecovery();
     setStage("INPUT");
   }
@@ -254,6 +263,7 @@ export function App() {
     setStatutoryAvailabilityState(emptyStatutoryDiscountAvailabilityState);
     setStatutoryPendingLifecycle(null);
     setRegularPaymentConfirmation(emptyRegularPaymentConfirmation);
+    setInvoiceCustomerInformation(emptyInvoiceCustomerInformation);
     setStage("INPUT");
   }
 
@@ -482,8 +492,8 @@ export function App() {
         });
         setStatutoryRecoveryMessage(
           rediscovery.opaqueContinuationUrl
-            ? "Existing statutory discount request restored from Central PMS with its continuation link."
-            : "Existing statutory discount request restored from Central PMS."
+            ? "Your existing statutory discount request was restored. You can also use its continuation link."
+            : "Your existing statutory discount request was restored."
         );
         return;
       }
@@ -526,6 +536,12 @@ export function App() {
 
     try {
       const appliedStatutoryBasis = options?.forceRegularAmount ? null : getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision);
+      const includeStatutoryId = hasApprovedStatutoryBenefit(paymentSession, statutoryDiscountState.decision);
+      const customerInformationError = validateInvoiceCustomerInformation(invoiceCustomerInformation, includeStatutoryId);
+      if (customerInformationError) {
+        throw new Error(customerInformationError);
+      }
+      const normalizedInvoiceCustomerInformation = normalizeInvoiceCustomerInformation(invoiceCustomerInformation, includeStatutoryId);
       paymentIntentCorrelationId =
         statutoryRecoveryRecord?.paymentIntentCorrelationId ||
         (appliedStatutoryBasis ? createRequestReference() : undefined);
@@ -560,6 +576,7 @@ export function App() {
         expectedCurrency: appliedStatutoryBasis?.currency ?? paymentSession?.currency,
         statutoryDiscountDecisionCommandId: appliedStatutoryBasis?.statutoryDiscountDecisionCommandId,
         statutoryDiscountPayableBasisApplicationCommandId: appliedStatutoryBasis?.statutoryDiscountPayableBasisApplicationCommandId,
+        invoiceCustomerInformation: normalizedInvoiceCustomerInformation,
         correlationId: paymentIntentCorrelationId
       }, fetch, {});
       setResult(response);
@@ -1037,7 +1054,7 @@ export function App() {
       statutoryRecoveryRecordRef.current = record;
       setStatutoryRecoveryRecord(record);
       if (!record) {
-        setStatutoryRecoveryMessage("Browser recovery metadata was cleared in another tab. Any Central PMS statutory request remains authoritative.");
+        setStatutoryRecoveryMessage("This page's saved recovery details were cleared in another tab. Your submitted request is unchanged.");
         return;
       }
 
@@ -1084,7 +1101,7 @@ export function App() {
     const controller = new AbortController();
     let cancelled = false;
     setIsRestoringStatutoryRecovery(true);
-    setStatutoryRecoveryMessage("Restoring an existing statutory discount request from Central PMS...");
+    setStatutoryRecoveryMessage("Restoring your existing statutory discount request...");
 
     async function restore() {
       try {
@@ -1125,7 +1142,7 @@ export function App() {
         });
         setStatutoryRecoveryMessage(
           resolvedSession
-            ? "Existing statutory discount request restored from authoritative Central PMS readback."
+            ? "Your existing statutory discount request was restored from its latest status."
             : "Existing statutory discount request restored. Resolve the parking session again to continue payment."
         );
       } catch (apiError) {
@@ -1184,6 +1201,7 @@ export function App() {
   const statutoryRecoveryPaymentBlocked = stage === "SESSION_RESOLVED" && statutoryRecoveryMutationInFlight;
   const coveredStatutoryEntitlements = getCoveredStatutoryEntitlementTypes(statutoryAvailabilityState.availability);
   const canStartStatutoryDiscountRequest = coveredStatutoryEntitlements.length > 0 || Boolean(statutoryDiscountState.decision);
+  const showStatutoryInvoiceId = hasApprovedStatutoryBenefit(summary, statutoryDiscountState.decision);
 
   return (
     <main className="app-shell">
@@ -1197,7 +1215,7 @@ export function App() {
 
       <section className="intro">
         <h1>Pay parking from your phone</h1>
-        <p>Scan your ticket QR, enter a ticket reference, or use your plate number to start a secure payment handoff.</p>
+        <p>Find your parking session, review the amount due, then choose how you want to pay.</p>
       </section>
 
       <QrScanner onDecoded={handleQrDecoded} />
@@ -1205,7 +1223,7 @@ export function App() {
       {statutoryRecoveryMessage && (
         <section className="statutory-recovery-panel" aria-live="polite" aria-labelledby="statutory-recovery-heading">
           <div>
-            <p className="eyebrow">Statutory discount recovery</p>
+            <p className="eyebrow">Saved request</p>
             <h2 id="statutory-recovery-heading">
               {isRestoringStatutoryRecovery ? "Restoring request" : "Saved request status"}
             </h2>
@@ -1217,10 +1235,10 @@ export function App() {
             onClick={() => {
               clearStatutoryRecovery();
               setStatutoryDiscountState(emptyStatutoryDiscountUiState);
-              setStatutoryRecoveryMessage("Browser recovery metadata was cleared. This does not cancel any Central PMS statutory discount request.");
+              setStatutoryRecoveryMessage("This page's saved recovery details were cleared. Your submitted request was not cancelled.");
             }}
           >
-            Clear browser recovery
+            Clear saved page details
           </button>
         </section>
       )}
@@ -1339,6 +1357,15 @@ export function App() {
           />
         )}
 
+        {summary && stage === "SESSION_RESOLVED" && !isPaymentComplete && (
+          <InvoiceCustomerInformationPanel
+            value={invoiceCustomerInformation}
+            showStatutoryId={showStatutoryInvoiceId}
+            onChange={setInvoiceCustomerInformation}
+          />
+        )}
+
+        {summary && stage === "SESSION_RESOLVED" && !isPaymentComplete && (
         <section className="method-section" aria-labelledby="payment-method-heading">
           <h2 id="payment-method-heading">Payment method</h2>
           <div className="method-grid">
@@ -1362,6 +1389,7 @@ export function App() {
             ))}
           </div>
         </section>
+        )}
 
         {error && (
           <div className="form-error" role="alert">
@@ -1470,11 +1498,11 @@ export function App() {
             <dl>
               <div>
                 <dt>Payment Method</dt>
-                <dd>{paymentMethods.find((method) => method.code === result.paymentMethod)?.label ?? "PayMongo Checkout"}</dd>
+                <dd>{paymentMethods.find((method) => method.code === result.paymentMethod)?.label ?? "Online payment"}</dd>
               </div>
               <div>
                 <dt>Payment Status</dt>
-                <dd>{result.status}</dd>
+                <dd>{getPaymentHandoffStatusLabel(result.status)}</dd>
               </div>
             </dl>
             {handoff?.handoffUrl && (
@@ -1486,7 +1514,6 @@ export function App() {
               <div className="qr-instructions">
                 <strong>QR payment instructions</strong>
                 <span>Open your preferred wallet and scan or follow the QR handoff link.</span>
-                <code>{handoff.qrCodeUrl}</code>
               </div>
             )}
             <CustomerSupportReference value={result.correlationId} />
@@ -1683,26 +1710,16 @@ function StatutoryDiscountRequestPanel({
             <h3>{copy.heading}</h3>
             <p>{copy.body}</p>
           </div>
-          <dl>
-            <div>
-              <dt>Decision status</dt>
-              <dd>{displayValue(decision.decisionResultStatus ?? decision.decisionCommandStatus)}</dd>
-            </div>
-            <div>
-              <dt>Payable-basis status</dt>
-              <dd>{displayValue(decision.payableBasisReadinessStatus)}</dd>
-            </div>
-          </dl>
           {showSupportReference && <CustomerSupportReference value={decision.correlationId} />}
 
           {getAppliedStatutoryPaymentBasis(decision) && (
             <dl className="payable-breakdown">
               <div>
-                <dt>Original Amount</dt>
+                <dt>Original parking fee</dt>
                 <dd>{formatCurrencyAmount(decision.originalAmountMinorUnits, decision.currency)}</dd>
               </div>
               <div>
-                <dt>VAT-exclusive Amount</dt>
+                <dt>Amount before VAT</dt>
                 <dd>{formatCurrencyAmount(decision.vatExclusiveBasisAmountMinorUnits, decision.currency)}</dd>
               </div>
               <div>
@@ -1710,15 +1727,11 @@ function StatutoryDiscountRequestPanel({
                 <dd>{formatCurrencyAmount(decision.vatAmountMinorUnits, decision.currency)}</dd>
               </div>
               <div>
-                <dt>VAT Treatment</dt>
-                <dd>{displayValue(decision.vatTreatment)}</dd>
-              </div>
-              <div>
                 <dt>Statutory Discount</dt>
                 <dd>{formatAdjustment(decision.statutoryDiscountAmountMinorUnits, decision.currency)}</dd>
               </div>
               <div>
-                <dt>Final Payable Amount</dt>
+                <dt>Amount due</dt>
                 <dd>{formatCurrencyAmount(decision.finalPayableAmountMinorUnits, decision.currency)}</dd>
               </div>
             </dl>
@@ -2042,11 +2055,11 @@ function PayableBasisPanel({ session }: { session: ParkingSessionResolveResponse
     <section className="payable-basis-panel" aria-labelledby="payable-basis-heading">
       <div className="session-summary-header">
         <div>
-          <p className="eyebrow">Payable basis</p>
-          <h2 id="payable-basis-heading">Approved payable basis</h2>
+          <p className="eyebrow">Fee summary</p>
+          <h2 id="payable-basis-heading">Parking fee</h2>
         </div>
         <div className="amount-due">
-          <span>Final Amount Due</span>
+          <span>Amount Due</span>
           <strong>{formatAmount(session.amountMinorUnits, session.currency)}</strong>
           <small>{session.currency}</small>
         </div>
@@ -2054,23 +2067,23 @@ function PayableBasisPanel({ session }: { session: ParkingSessionResolveResponse
 
       <dl className="payable-breakdown">
         <div>
-          <dt>Original Amount</dt>
+          <dt>Original parking fee</dt>
           <dd>{formatCurrencyAmount(originalAmount, session.currency)}</dd>
         </div>
         <div>
-          <dt>Coupon Adjustment</dt>
+          <dt>Coupon discount</dt>
           <dd>{formatAdjustment(couponAdjustment, session.currency)}</dd>
         </div>
         <div>
-          <dt>Statutory Adjustment</dt>
+          <dt>Statutory benefit</dt>
           <dd>{formatAdjustment(statutoryAdjustment, session.currency)}</dd>
         </div>
         <div>
-          <dt>Total Adjustment</dt>
+          <dt>Total adjustments</dt>
           <dd>{formatAdjustment(totalAdjustment, session.currency)}</dd>
         </div>
         <div>
-          <dt>Final Amount Due</dt>
+          <dt>Amount due</dt>
           <dd>{formatCurrencyAmount(session.amountMinorUnits, session.currency)}</dd>
         </div>
       </dl>
@@ -2096,6 +2109,91 @@ function PayableBasisPanel({ session }: { session: ParkingSessionResolveResponse
             </p>
           )}
         </div>
+      </div>
+    </section>
+  );
+}
+
+function InvoiceCustomerInformationPanel({
+  value,
+  showStatutoryId,
+  onChange
+}: {
+  value: InvoiceCustomerInformation;
+  showStatutoryId: boolean;
+  onChange: (value: InvoiceCustomerInformation) => void;
+}) {
+  const update = (field: keyof InvoiceCustomerInformation, fieldValue: string) => {
+    onChange({ ...value, [field]: fieldValue });
+  };
+
+  return (
+    <section className="customer-information-panel" aria-labelledby="customer-information-heading">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Sales Invoice</p>
+          <h2 id="customer-information-heading">Customer Information</h2>
+        </div>
+        <span className="optional-badge">Optional</span>
+      </div>
+      <p id="customer-information-help" className="section-help">
+        Add these details only if you want them shown on your Sales Invoice.
+      </p>
+      <div className="customer-information-grid" aria-describedby="customer-information-help">
+        <label className="field">
+          <span>Customer Name</span>
+          <input
+            name="customerName"
+            value={value.customerName}
+            maxLength={invoiceCustomerInformationLimits.customerName}
+            autoComplete="name"
+            onChange={(event) => update("customerName", event.target.value)}
+          />
+        </label>
+        <label className="field field-wide">
+          <span>Address</span>
+          <input
+            name="customerAddress"
+            value={value.address}
+            maxLength={invoiceCustomerInformationLimits.address}
+            autoComplete="street-address"
+            onChange={(event) => update("address", event.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>TIN</span>
+          <input
+            name="customerTin"
+            value={value.tin}
+            maxLength={invoiceCustomerInformationLimits.tin}
+            autoComplete="off"
+            inputMode="text"
+            onChange={(event) => update("tin", event.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>Business Style</span>
+          <input
+            name="businessStyle"
+            value={value.businessStyle}
+            maxLength={invoiceCustomerInformationLimits.businessStyle}
+            autoComplete="organization"
+            onChange={(event) => update("businessStyle", event.target.value)}
+          />
+        </label>
+        {showStatutoryId && (
+          <label className="field field-wide">
+            <span>OSCA ID No. / PWD ID No.</span>
+            <input
+              name="statutoryIdNumber"
+              value={value.statutoryIdNumber}
+              maxLength={invoiceCustomerInformationLimits.statutoryIdNumber}
+              autoComplete="off"
+              onChange={(event) => update("statutoryIdNumber", event.target.value)}
+            />
+            <small>This field appears because an approved parking benefit is linked to this session.</small>
+          </label>
+        )}
       </div>
     </section>
   );
@@ -2323,8 +2421,8 @@ function SalesInvoicePresentationPanel({
                     rows={[
                       ["VATable Sales", invoice.vatableSales],
                       ["VAT Amount", invoice.vatAmount],
-                      ["VAT Exempt", invoice.vatExempt],
-                      ["Zero Rated", invoice.zeroRated]
+                      ["VAT Exempt Sales", invoice.vatExempt],
+                      ["Zero Rated Sales", invoice.zeroRated]
                     ]}
                   />
                 </ReceiptSection>
@@ -2359,10 +2457,11 @@ function SalesInvoicePresentationPanel({
 
                 <ReceiptSection title="Customer Information" titleCase>
                   <div className="receipt-customer-fields">
-                    <span>Customer Name : ____________________</span>
-                    <span>ID No&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; : ____________________</span>
-                    <span>Address&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; : ____________________</span>
-                    <span>TIN&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; : ____________________</span>
+                    <span>NAME: {invoice.customerName || "—"}</span>
+                    <span>ADDRESS: {invoice.customerAddress || "—"}</span>
+                    <span>TIN: {invoice.customerTin || "—"}</span>
+                    <span>BUS. STYLE: {invoice.businessStyle || "—"}</span>
+                    {invoice.statutoryIdNumber && <span>OSCA ID No./PWD ID No.: {invoice.statutoryIdNumber}</span>}
                     <span className="customer-signature">Customer Sign : ____________________</span>
                   </div>
                 </ReceiptSection>
@@ -2484,10 +2583,15 @@ type ThermalSalesInvoice = {
   subtotal: string;
   discountReason?: string;
   discountAmount?: string;
-  vatableSales?: string;
-  vatAmount?: string;
-  vatExempt?: string;
-  zeroRated?: string;
+  vatableSales: string;
+  vatAmount: string;
+  vatExempt: string;
+  zeroRated: string;
+  customerName?: string;
+  customerAddress?: string;
+  customerTin?: string;
+  businessStyle?: string;
+  statutoryIdNumber?: string;
   zeroAmount: string;
   paymentMethod: string;
   paymentProvider: string;
@@ -2537,11 +2641,15 @@ function buildThermalSalesInvoice(
   const accreditationIssuedDate = value("salesInvoiceHeaderSnapshot.birAccreditationIssuedDate", "BIR Accreditation Issued Date", "DATE ISSUED");
   const ptuNumber = value("salesInvoiceHeaderSnapshot.ptuNumber", "PTU Number", "PTU");
   const ptuIssuedDate = value("salesInvoiceHeaderSnapshot.ptuIssuedDate", "PTU Issued Date", "PTU Date");
+  const vatableSales = formatOptionalReceiptAmount(value("totals.vatableSales", "VATable Sales", "taxes[0000].taxableAmount", "Taxable Amount"));
+  const vatAmount = formatOptionalReceiptAmount(value("totals.vatAmount", "VAT Amount", "appliedStatutoryFiscalFacts.vatAmount", "taxes[0000].taxAmount", "Tax Amount"));
+  const vatExempt = formatOptionalReceiptAmount(value("totals.vatExempt", "VAT Exempt", "VAT-Exempt Sales", "VAT Exempt Sales"));
+  const zeroRated = formatOptionalReceiptAmount(value("totals.zeroRated", "Zero Rated", "Zero-Rated Sales", "Zero Rated Sales"));
 
   if (!registeredBusinessName || !registeredBusinessAddress || !tin || !posSerialNumber || !min ||
       !parkingLocation || !supplierDeveloperRegisteredName || !supplierDeveloperAddress ||
       !supplierDeveloperTin || !accreditationNumber || !accreditationIssuedDate ||
-      !ptuNumber || !ptuIssuedDate) {
+      !ptuNumber || !ptuIssuedDate || !vatableSales || !vatAmount || !vatExempt || !zeroRated) {
     return null;
   }
 
@@ -2564,10 +2672,15 @@ function buildThermalSalesInvoice(
     subtotal,
     discountReason: value("appliedStatutoryFiscalFacts.entitlementType", "Discount Reason", "Entitlement Type", "Benefit Classification"),
     discountAmount: formatOptionalReceiptAmount(value("appliedStatutoryFiscalFacts.statutoryDiscountAmount", "Statutory Discount Amount", "Discount Amount")),
-    vatableSales: formatOptionalReceiptAmount(value("totals.vatableSales", "VATable Sales", "taxes[0000].taxableAmount", "Taxable Amount")),
-    vatAmount: formatOptionalReceiptAmount(value("appliedStatutoryFiscalFacts.vatAmount", "VAT Amount", "taxes[0000].taxAmount", "Tax Amount")),
-    vatExempt: formatOptionalReceiptAmount(value("totals.vatExempt", "VAT Exempt", "VAT-Exempt Sales", "VAT Exempt Sales")),
-    zeroRated: formatOptionalReceiptAmount(value("totals.zeroRated", "Zero Rated", "Zero-Rated Sales", "Zero Rated Sales")),
+    vatableSales,
+    vatAmount,
+    vatExempt,
+    zeroRated,
+    customerName: value("customerInformation.customerName", "Customer Name", "NAME"),
+    customerAddress: value("customerInformation.address", "Customer Address", "ADDRESS"),
+    customerTin: value("customerInformation.tin", "Customer TIN"),
+    businessStyle: value("customerInformation.businessStyle", "Business Style", "BUS. STYLE"),
+    statutoryIdNumber: value("customerInformation.statutoryIdNumber", "OSCA ID No. / PWD ID No.", "OSCA ID No./PWD ID No."),
     zeroAmount,
     paymentMethod,
     paymentProvider,
@@ -2812,21 +2925,13 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
     feeValidUntil: result.sessionSummary?.feeValidUntil ?? result.feeValidUntil ?? result.tariffExpiresAt,
     tariffExpiresAt: result.sessionSummary?.tariffExpiresAt ?? result.tariffExpiresAt
   };
-  const siteGroupName = getParkerFacingSiteGroupName(summary.siteGroupName);
   const siteName = getParkerFacingSiteName(summary.siteName);
 
   const rows = [
-    ["Site Group", siteGroupName],
-    ["Site Name", siteName],
     ["Ticket", displayValue(summary.ticketReference)],
     ["Plate", displayValue(summary.plateNumber)],
     ["Entry Time", displayValue(formatDateTime(summary.entryTime))],
     ["Duration", displayValue(summary.durationParked ?? formatDuration(summary.entryTime, summary.currentFeeCalculationTime))],
-    ["Total Fee", displayValue(formatCurrencyAmount(summary.totalFeeMinorUnits ?? summary.amountMinorUnits, summary.currency ?? result.currency))],
-    ["Discount/Coupon Adjustment", displayValue(formatAdjustment(summary.totalAdjustmentMinorUnits ?? (summary.couponAdjustmentMinorUnits ?? 0) + (summary.statutoryAdjustmentMinorUnits ?? 0), summary.currency ?? result.currency))],
-    ["Amount Due", displayValue(formatCurrencyAmount(summary.amountMinorUnits ?? result.amountMinorUnits, summary.currency ?? result.currency))],
-    ["Parking Status", displayValue(getParkerFacingParkingStatus(summary))],
-    ["Payment Status", displayValue(summary.paymentStatus)],
     ["Fee Valid Until", displayValue(formatDateTime(summary.feeValidUntil ?? summary.tariffExpiresAt))]
   ];
 
@@ -3021,14 +3126,14 @@ function isRejectedStatutoryDecision(decision: WebPayStatutoryDiscountDecisionRe
 
 function getStatutoryDiscountPaymentAvailabilityCopy(decision: WebPayStatutoryDiscountDecisionResponse): string {
   if (getAppliedStatutoryPaymentBasis(decision)) {
-    return "Payment is available using the Central PMS-approved statutory payable basis.";
+    return "Your approved statutory discount is included in the amount due.";
   }
 
   if (isPendingReviewStatutoryDecision(decision)) {
     return "The parking privilege is not applied while review is pending. You may keep waiting or explicitly choose to pay the regular amount.";
   }
 
-  return "Payment with the statutory discount remains unavailable while this statutory discount workflow is active.";
+  return "Payment with the statutory discount is not ready yet. Check the request status before continuing.";
 }
 
 function getCoveredStatutoryEntitlementTypes(
@@ -3162,7 +3267,7 @@ function getInitialRecoveryMessage(load: { record: WebPayStatutoryRecoveryRecord
   }
 
   if (load.cleared) {
-    return "An expired or invalid statutory discount recovery record was cleared. Browser metadata is not authoritative.";
+    return "Expired saved page details were cleared. The latest request status will be checked before payment.";
   }
 
   if (load.record) {
@@ -3179,21 +3284,21 @@ function getCrossTabRecoveryMessage(record: WebPayStatutoryRecoveryRecord): stri
     case "APPLICATION_SUBMITTING":
       return "Another page may be applying the approved statutory discount. Refresh status before trying again.";
     case "PAYMENT_SUBMITTING":
-      return "Another page may be starting payment for this applied statutory payable basis. Wait before trying again.";
+      return "Another page may be starting this payment. Wait before trying again.";
     case "PAYMENT_HANDOFF":
-      return "Payment was already started for this statutory discount workflow. Use the existing payment attempt or payment-return link.";
+      return "Payment was already started for this request. Continue the existing payment or return to its status page.";
     case "PAYABLE_READY":
-      return "A statutory discount workflow is ready for payment, but this page will refresh authoritative status before enabling payment.";
+      return "Your approved discount is ready. The latest amount will be checked before payment is enabled.";
     default:
-      return "A statutory discount workflow was found in browser recovery. Current status will be restored from Central PMS.";
+      return "A saved statutory discount request was found. Its latest status will be restored.";
   }
 }
 
 function getStatutoryDiscountPaymentBlockMessage(decision: WebPayStatutoryDiscountDecisionResponse): string {
   if (decision.payableBasisReady) {
     return getAppliedStatutoryPaymentBasis(decision)
-      ? "Payment is available using the approved statutory payable basis."
-      : "The statutory discount payable basis is missing required authoritative payment facts.";
+      ? "Payment is available with the approved statutory discount."
+      : "The approved amount is temporarily incomplete. Refresh the status before payment.";
   }
 
   return getStatutoryDiscountStatusCopy(decision).body;
@@ -3208,15 +3313,15 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
   if (decision.payableBasisReady && decision.appliedTariffSnapshotId && decision.finalPayableAmountMinorUnits !== null && decision.finalPayableAmountMinorUnits !== undefined && decision.currency) {
     return {
       heading: "Statutory discount applied",
-      body: "Central PMS returned the approved payable basis. Continue only when you are ready to start payment.",
+      body: "Your approved statutory discount is included in the amount due. Continue when you are ready to pay.",
       tone: "success"
     };
   }
 
   if (decision.payableBasisReady) {
     return {
-      heading: "Payment basis incomplete",
-      body: "Central PMS has not returned all required payment facts for the approved statutory discount. Refresh status before payment.",
+      heading: "Approved amount not ready",
+      body: "The approved amount is temporarily incomplete. Refresh the status before payment.",
       tone: "warning"
     };
   }
@@ -3240,7 +3345,7 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
   if (decision.retryable && readinessAction === "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY") {
     return {
       heading: "Discount application temporarily unavailable",
-      body: "Central PMS could not apply the approved discount yet. Retry the same application request after a short wait.",
+      body: "The approved discount could not be applied yet. Try again after a short wait.",
       tone: "warning"
     };
   }
@@ -3248,7 +3353,7 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
   if (readinessStatus.includes("CONFLICT") || (decision.safeErrorCode?.toUpperCase() ?? "").includes("SEMANTIC_CONFLICT")) {
     return {
       heading: "Statutory discount conflict",
-      body: "The approved discount could not be applied because the application request no longer matches the canonical decision.",
+      body: "The approved discount could not be applied because the request details no longer match. Please ask for assistance.",
       tone: "error"
     };
   }
@@ -3256,7 +3361,7 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
   if (readinessStatus === "APPLICATION_PROCESSING" || applicationStatus === "PROCESSING") {
     return {
       heading: "Discount application processing",
-      body: "The approved statutory discount is still being applied by Central PMS.",
+      body: "The approved statutory discount is still being applied.",
       tone: "pending"
     };
   }
@@ -3347,6 +3452,26 @@ function getNormalizedStatutoryStatus(session?: ParkingSessionResolveResponse | 
   }
 }
 
+function hasApprovedStatutoryBenefit(
+  session?: ParkingSessionResolveResponse | null,
+  decision?: WebPayStatutoryDiscountDecisionResponse | null
+): boolean {
+  if (getNormalizedStatutoryStatus(session) === "APPROVED") {
+    return true;
+  }
+
+  if (!decision?.payableBasisReady) {
+    return false;
+  }
+
+  const result = firstNonBlank(
+    decision.applicationResultClassification,
+    decision.payableBasisReadinessStatus,
+    decision.overallResultClassification
+  )?.toUpperCase();
+  return result === "APPLIED" || result === "READY" || result === "PAYABLE_BASIS_READY";
+}
+
 function isPaidStatus(status?: string | null): boolean {
   if (!status) {
     return false;
@@ -3410,6 +3535,21 @@ function getPaymentStatusCopy(statusKind: PaymentStatusKind): { heading: string;
         body: "Payment is pending server-side confirmation. Check status again in a moment.",
         image: "/assets/illustrations/payment-pending.svg"
       };
+  }
+}
+
+function getPaymentHandoffStatusLabel(status?: string | null): string {
+  switch (classifyPaymentStatus(status)) {
+    case "confirmed":
+      return "Payment confirmed";
+    case "failed":
+      return "Payment could not be completed";
+    case "expired":
+      return "Payment link expired";
+    case "cancelled":
+      return "Payment cancelled";
+    default:
+      return "Ready to continue";
   }
 }
 

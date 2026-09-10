@@ -535,6 +535,17 @@ function buildPresentationResponse(paymentAttemptId, correlationId) {
               { key: "tenders[0000].tenderTypeCodeKey", label: "Tender Type", displayValue: "QRPH" },
               { key: "tenders[0000].amount", label: "Tender Amount", displayValue: "PHP 25.00" }
             ]
+          },
+          {
+            name: "customerInformation",
+            title: "Customer Information",
+            rows: [
+              { key: "customerInformation.customerName", label: "Customer Name", displayValue: "Juan Dela Cruz" },
+              { key: "customerInformation.address", label: "Customer Address", displayValue: "Cebu City" },
+              { key: "customerInformation.tin", label: "Customer TIN", displayValue: "123-456-789-000" },
+              { key: "customerInformation.businessStyle", label: "Business Style", displayValue: "Juan Parking Services" },
+              { key: "customerInformation.statutoryIdNumber", label: "OSCA ID No. / PWD ID No.", displayValue: "OSCA-12345" }
+            ]
           }
         ]
       }

@@ -1,5 +1,13 @@
 export type PaymentMethod = "QRPH" | "GCASH" | "MAYA" | "CARD";
 
+export type InvoiceCustomerInformation = {
+  customerName: string;
+  address: string;
+  tin: string;
+  businessStyle: string;
+  statutoryIdNumber: string;
+};
+
 export type PaymentIntentRequest = {
   ticketReference?: string;
   plateNumber?: string;
@@ -12,6 +20,7 @@ export type PaymentIntentRequest = {
   expectedCurrency?: string;
   statutoryDiscountDecisionCommandId?: string;
   statutoryDiscountPayableBasisApplicationCommandId?: string;
+  invoiceCustomerInformation?: InvoiceCustomerInformation;
   correlationId?: string;
 };
 

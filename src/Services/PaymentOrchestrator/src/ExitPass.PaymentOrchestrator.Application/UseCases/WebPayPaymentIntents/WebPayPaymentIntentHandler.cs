@@ -205,6 +205,7 @@ public sealed class WebPayPaymentIntentHandler
             payableBasis,
             centralPmsPaymentProviderRail,
             paymentMethod,
+            MapInvoiceCustomerInformation(request.InvoiceCustomerInformation),
             idempotencyKey,
             correlationId,
             cancellationToken);
@@ -575,6 +576,12 @@ public sealed class WebPayPaymentIntentHandler
             errors.Add("statutoryDiscountDecisionCommandId is required when statutoryDiscountPayableBasisApplicationCommandId is supplied.");
         }
 
+        ValidateOptionalLength(errors, request.InvoiceCustomerInformation?.CustomerName, 160, "invoiceCustomerInformation.customerName");
+        ValidateOptionalLength(errors, request.InvoiceCustomerInformation?.Address, 300, "invoiceCustomerInformation.address");
+        ValidateOptionalLength(errors, request.InvoiceCustomerInformation?.Tin, 40, "invoiceCustomerInformation.tin");
+        ValidateOptionalLength(errors, request.InvoiceCustomerInformation?.BusinessStyle, 160, "invoiceCustomerInformation.businessStyle");
+        ValidateOptionalLength(errors, request.InvoiceCustomerInformation?.StatutoryIdNumber, 80, "invoiceCustomerInformation.statutoryIdNumber");
+
         if (errors.Count > 0)
         {
             return new WebPayPaymentIntentError(
@@ -601,6 +608,30 @@ public sealed class WebPayPaymentIntentHandler
         }
 
         return null;
+    }
+
+    private static void ValidateOptionalLength(List<string> errors, string? value, int maximumLength, string fieldName)
+    {
+        if (value?.Trim().Length > maximumLength)
+        {
+            errors.Add($"{fieldName} must not exceed {maximumLength} characters.");
+        }
+    }
+
+    private static CentralPmsInvoiceCustomerInformation? MapInvoiceCustomerInformation(
+        WebPayInvoiceCustomerInformation? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        return new CentralPmsInvoiceCustomerInformation(
+            BlankToNull(value.CustomerName),
+            BlankToNull(value.Address),
+            BlankToNull(value.Tin),
+            BlankToNull(value.BusinessStyle),
+            BlankToNull(value.StatutoryIdNumber));
     }
 
     private static WebPayPaymentIntentError? ValidateResolve(
@@ -1012,6 +1043,7 @@ public sealed class WebPayPaymentIntentHandler
         CentralPmsResolvedParking parking,
         string centralPmsPaymentProviderRail,
         string paymentMethod,
+        CentralPmsInvoiceCustomerInformation? invoiceCustomerInformation,
         string idempotencyKey,
         Guid correlationId,
         CancellationToken cancellationToken)
@@ -1021,6 +1053,7 @@ public sealed class WebPayPaymentIntentHandler
             parking.TariffSnapshotId,
             centralPmsPaymentProviderRail,
             paymentMethod,
+            invoiceCustomerInformation,
             idempotencyKey,
             correlationId,
             cancellationToken);
@@ -1101,6 +1134,7 @@ public sealed class WebPayPaymentIntentHandler
             parking.TariffSnapshotId,
             centralPmsPaymentProviderRail,
             paymentMethod,
+            invoiceCustomerInformation,
             idempotencyKey,
             correlationId,
             cancellationToken);

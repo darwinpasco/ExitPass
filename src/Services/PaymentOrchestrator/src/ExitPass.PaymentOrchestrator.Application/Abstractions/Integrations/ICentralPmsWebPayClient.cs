@@ -41,6 +41,7 @@ public interface ICentralPmsWebPayClient
         Guid tariffSnapshotId,
         string paymentProvider,
         string paymentMethod,
+        CentralPmsInvoiceCustomerInformation? invoiceCustomerInformation,
         string idempotencyKey,
         Guid correlationId,
         CancellationToken cancellationToken);
@@ -139,3 +140,10 @@ public interface ICentralPmsWebPayClient
         Guid correlationId,
         CancellationToken cancellationToken);
 }
+
+public sealed record CentralPmsInvoiceCustomerInformation(
+    string? CustomerName,
+    string? Address,
+    string? Tin,
+    string? BusinessStyle,
+    string? StatutoryIdNumber);

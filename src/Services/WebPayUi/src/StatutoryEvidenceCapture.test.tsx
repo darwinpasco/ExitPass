@@ -122,7 +122,7 @@ describe("StatutoryEvidenceCapture", () => {
   it.each([
     ["REVIEWABLE", "Ready for review", /does not mean.*approved/i],
     ["APPROVED", "Approved", /applied only.*payment-time flow/i],
-    ["APPLIED", "Applied", /authoritative payable basis/i],
+    ["APPLIED", "Applied", /included in the amount due/i],
     ["MALWARE_DETECTED", "Unsafe file detected", /cannot be used/i],
     ["UNKNOWN_FAIL_CLOSED", "Status unavailable", /could not be confirmed safely/i]
   ])("renders %s without collapsing lifecycle authority", async (lifecycleState, label, message) => {

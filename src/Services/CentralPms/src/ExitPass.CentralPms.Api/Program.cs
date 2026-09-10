@@ -412,6 +412,8 @@ static void ConfigureApplicationServices(
         ?? new HumanAuthenticationOptions().CentralPmsServiceIdentityId;
 
     builder.Services.AddScoped<ICreateOrReusePaymentAttemptUseCase, CreateOrReusePaymentAttemptHandler>();
+    builder.Services.AddScoped<IInvoiceCustomerInformationStore>(_ =>
+        new PostgresInvoiceCustomerInformationStore(mainDatabaseConnectionString));
     builder.Services.AddScoped<IResolveVendorParkingUseCase, ResolveVendorParkingHandler>();
     builder.Services.AddCentralPmsVendorPmsAdapter(
         builder.Configuration,

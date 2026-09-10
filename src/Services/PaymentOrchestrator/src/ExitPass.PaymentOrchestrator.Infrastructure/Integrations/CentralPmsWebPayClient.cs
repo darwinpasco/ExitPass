@@ -160,6 +160,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         Guid tariffSnapshotId,
         string paymentProvider,
         string paymentMethod,
+        CentralPmsInvoiceCustomerInformation? invoiceCustomerInformation,
         string idempotencyKey,
         Guid correlationId,
         CancellationToken cancellationToken)
@@ -168,7 +169,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
             ParkingSessionId: parkingSessionId,
             TariffSnapshotId: tariffSnapshotId,
             PaymentProvider: paymentProvider,
-            PaymentMethod: paymentMethod);
+            PaymentMethod: paymentMethod,
+            InvoiceCustomerInformation: invoiceCustomerInformation);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, _createPaymentAttemptUri)
         {
@@ -1194,7 +1196,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         Guid ParkingSessionId,
         Guid TariffSnapshotId,
         string PaymentProvider,
-        string PaymentMethod);
+        string PaymentMethod,
+        CentralPmsInvoiceCustomerInformation? InvoiceCustomerInformation);
 
     private sealed record CreatePaymentAttemptResponse(
         Guid PaymentAttemptId,

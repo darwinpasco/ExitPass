@@ -120,6 +120,30 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(body).not.toHaveProperty("reviewerUserId");
   });
 
+  it("WebPay_WhenCustomerInformationProvided_TrimsAndCarriesInvoiceFieldsWithoutChangingAmount", () => {
+    const body = buildPaymentIntentBody({
+      ticketReference: "TICKET-001",
+      paymentMethod: "CARD",
+      expectedAmountMinorUnits: 12500,
+      invoiceCustomerInformation: {
+        customerName: "  Juan Dela Cruz  ",
+        address: "  Cebu City  ",
+        tin: "  123-456-789-000  ",
+        businessStyle: "  Juan Parking Services  ",
+        statutoryIdNumber: "  OSCA-12345  "
+      }
+    });
+
+    expect(body.invoiceCustomerInformation).toEqual({
+      customerName: "Juan Dela Cruz",
+      address: "Cebu City",
+      tin: "123-456-789-000",
+      businessStyle: "Juan Parking Services",
+      statutoryIdNumber: "OSCA-12345"
+    });
+    expect(body.expectedAmountMinorUnits).toBe(12500);
+  });
+
   it("WebPay_WhenStatutoryDecisionSubmitted_UsesWebPayProxyRouteWithIdempotencyAndCorrelation", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

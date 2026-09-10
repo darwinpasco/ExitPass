@@ -75,7 +75,15 @@ public sealed record CentralPmsFiscalDocumentMappingContext(
     CentralPmsAppliedStatutoryFiscalFactsContext? AppliedStatutoryFiscalFacts = null,
     Guid? SiteId = null,
     string CompletionBasis = FiscalCompletionBasisCodes.PaymentFinality,
-    string? CompletionAuthorityRef = null);
+    string? CompletionAuthorityRef = null,
+    CentralPmsInvoiceCustomerInformationContext? InvoiceCustomerInformation = null);
+
+public sealed record CentralPmsInvoiceCustomerInformationContext(
+    string? CustomerName,
+    string? Address,
+    string? Tin,
+    string? BusinessStyle,
+    string? StatutoryIdNumber);
 
 public sealed record CentralPmsAppliedStatutoryFiscalFactsContext(
     Guid StatutoryDiscountDecisionCommandId,
@@ -226,7 +234,15 @@ public sealed record PosServerFiscalDocumentCreateRequest(
     PosServerAppliedStatutoryFiscalFactsRequest? AppliedStatutoryFiscalFacts = null,
     Guid? SiteId = null,
     string CompletionBasis = FiscalCompletionBasisCodes.PaymentFinality,
-    string? CompletionAuthorityRef = null);
+    string? CompletionAuthorityRef = null,
+    PosServerInvoiceCustomerInformationRequest? InvoiceCustomerInformation = null);
+
+public sealed record PosServerInvoiceCustomerInformationRequest(
+    string? CustomerName,
+    string? Address,
+    string? Tin,
+    string? BusinessStyle,
+    string? StatutoryIdNumber);
 
 public sealed record PosServerAppliedStatutoryFiscalFactsRequest(
     Guid StatutoryDiscountDecisionCommandId,

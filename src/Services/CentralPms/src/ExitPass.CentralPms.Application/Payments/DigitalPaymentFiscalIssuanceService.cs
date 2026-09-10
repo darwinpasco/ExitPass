@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 
@@ -210,7 +211,15 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             upstreamReference,
             null,
             BuildAppliedStatutoryFiscalFacts(context, statutory),
-            SiteId: context.SiteId);
+            SiteId: context.SiteId,
+            InvoiceCustomerInformation: context.InvoiceCustomerInformation is null
+                ? null
+                : new CentralPmsInvoiceCustomerInformationContext(
+                    context.InvoiceCustomerInformation.CustomerName,
+                    context.InvoiceCustomerInformation.Address,
+                    context.InvoiceCustomerInformation.Tin,
+                    context.InvoiceCustomerInformation.BusinessStyle,
+                    statutory is null ? null : context.InvoiceCustomerInformation.StatutoryIdNumber));
     }
 
     private static void EnsureStatutoryContextMatches(
@@ -496,7 +505,8 @@ public sealed record DigitalPaymentFiscalContext(
     DateTimeOffset ConfirmedAt,
     Guid SitePosServerId,
     string SitePosServerRef,
-    TerminalCashStatutoryFiscalLinkageContext? AppliedStatutoryFiscalContext = null);
+    TerminalCashStatutoryFiscalLinkageContext? AppliedStatutoryFiscalContext = null,
+    InvoiceCustomerInformation? InvoiceCustomerInformation = null);
 
 public sealed record DigitalPaymentFiscalIssuanceResult(
     Guid FiscalIssuanceReferenceId,

@@ -52,6 +52,29 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.NotEqual(paymentMethod, fixture.CapturedPaymentProvider);
     }
 
+    [Fact]
+    public async Task WebPayPaymentIntent_CarriesTrimmedInvoiceCustomerInformationWithoutChangingAmount()
+    {
+        var fixture = CreateFixture("GCASH", "PAYMONGO", null);
+        var request = DefaultRequest("GCASH");
+        request.InvoiceCustomerInformation = new WebPayInvoiceCustomerInformation
+        {
+            CustomerName = "  Juan Dela Cruz  ",
+            Address = "  100 Sample Street  ",
+            Tin = "  123-456-789  ",
+            BusinessStyle = "  Sample Trading  "
+        };
+
+        var result = await fixture.Sut.HandleAsync(request, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Juan Dela Cruz", fixture.CentralPms.CapturedInvoiceCustomerInformation?.CustomerName);
+        Assert.Equal("100 Sample Street", fixture.CentralPms.CapturedInvoiceCustomerInformation?.Address);
+        Assert.Equal("123-456-789", fixture.CentralPms.CapturedInvoiceCustomerInformation?.Tin);
+        Assert.Equal("Sample Trading", fixture.CentralPms.CapturedInvoiceCustomerInformation?.BusinessStyle);
+        Assert.Equal(12500, result.Response?.AmountMinorUnits);
+    }
+
     /// <summary>
     /// Verifies WebPay customer-facing methods route through PayMongo from the DB-backed policy result.
     /// </summary>
@@ -1361,6 +1384,8 @@ public sealed class WebPayPaymentIntentHandlerTests
 
         public string? CapturedPaymentMethod { get; private set; }
 
+        public CentralPmsInvoiceCustomerInformation? CapturedInvoiceCustomerInformation { get; private set; }
+
         public string? CapturedTicketReference { get; private set; }
 
         public IReadOnlyList<Guid> CapturedTariffSnapshotIds => _capturedTariffSnapshotIds;
@@ -1400,6 +1425,7 @@ public sealed class WebPayPaymentIntentHandlerTests
             Guid tariffSnapshotId,
             string paymentProvider,
             string paymentMethod,
+            CentralPmsInvoiceCustomerInformation? invoiceCustomerInformation,
             string idempotencyKey,
             Guid correlationId,
             CancellationToken cancellationToken)
@@ -1408,6 +1434,7 @@ public sealed class WebPayPaymentIntentHandlerTests
             CreatePaymentAttemptCallCount++;
             CapturedPaymentProvider = paymentProvider;
             CapturedPaymentMethod = paymentMethod;
+            CapturedInvoiceCustomerInformation = invoiceCustomerInformation;
             _capturedTariffSnapshotIds.Add(tariffSnapshotId);
 
             if (_createAttemptResults.Count > 0)

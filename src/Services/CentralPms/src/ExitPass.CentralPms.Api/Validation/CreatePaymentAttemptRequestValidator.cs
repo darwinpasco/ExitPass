@@ -45,6 +45,23 @@ public sealed class CreatePaymentAttemptRequestValidator
             errors.Add("PaymentProvider is required.");
         }
 
+        if (request.InvoiceCustomerInformation is { } customer)
+        {
+            AddLengthError(customer.CustomerName, 160, "InvoiceCustomerInformation.CustomerName", errors);
+            AddLengthError(customer.Address, 300, "InvoiceCustomerInformation.Address", errors);
+            AddLengthError(customer.Tin, 40, "InvoiceCustomerInformation.Tin", errors);
+            AddLengthError(customer.BusinessStyle, 160, "InvoiceCustomerInformation.BusinessStyle", errors);
+            AddLengthError(customer.StatutoryIdNumber, 80, "InvoiceCustomerInformation.StatutoryIdNumber", errors);
+        }
+
         return errors;
+    }
+
+    private static void AddLengthError(string? value, int maximum, string field, List<string> errors)
+    {
+        if (value?.Trim().Length > maximum)
+        {
+            errors.Add($"{field} must be {maximum} characters or fewer.");
+        }
     }
 }

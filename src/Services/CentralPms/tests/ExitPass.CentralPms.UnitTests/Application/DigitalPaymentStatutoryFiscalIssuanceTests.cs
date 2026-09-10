@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using NSubstitute;
@@ -51,6 +52,8 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         Assert.Empty(request.PayableBasis.DiscountReferences);
         Assert.Empty(request.DiscountPrivilegeDetails);
         Assert.Null(request.AppliedStatutoryFiscalFacts);
+        Assert.Equal("Juan Dela Cruz", request.InvoiceCustomerInformation?.CustomerName);
+        Assert.Null(request.InvoiceCustomerInformation?.StatutoryIdNumber);
 
         var line = Assert.Single(request.DocumentLines);
         Assert.Equal(expectedVatableSalesMinorUnits, line.UnitAmountMinorUnits);
@@ -117,6 +120,8 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         Assert.Equal(PolicyId, facts.PolicyReference.AppliedPolicyReferenceId);
         Assert.Equal("WEBPAY", facts.SourcePaymentChannel);
         Assert.Equal(8929, facts.FinalPayableAmountMinorUnits);
+        Assert.Equal("Juan Dela Cruz", request.InvoiceCustomerInformation?.CustomerName);
+        Assert.Equal("OSCA-12345", request.InvoiceCustomerInformation?.StatutoryIdNumber);
     }
 
     [Fact]
@@ -327,7 +332,13 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
             DateTimeOffset.Parse("2026-08-24T02:00:00Z"),
             PosAId,
             "IST-POS-A",
-            Statutory());
+            Statutory(),
+            new InvoiceCustomerInformation(
+                "Juan Dela Cruz",
+                "100 Sample Street",
+                "123-456-789",
+                "Sample Trading",
+                "OSCA-12345"));
 
     private static TerminalCashStatutoryFiscalLinkageContext Statutory() =>
         new(

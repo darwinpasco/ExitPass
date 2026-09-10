@@ -241,6 +241,16 @@ export function buildPaymentIntentBody(
     body.statutoryDiscountPayableBasisApplicationCommandId = request.statutoryDiscountPayableBasisApplicationCommandId.trim();
   }
 
+  if (request.invoiceCustomerInformation) {
+    body.invoiceCustomerInformation = {
+      customerName: request.invoiceCustomerInformation.customerName.trim(),
+      address: request.invoiceCustomerInformation.address.trim(),
+      tin: request.invoiceCustomerInformation.tin.trim(),
+      businessStyle: request.invoiceCustomerInformation.businessStyle.trim(),
+      statutoryIdNumber: request.invoiceCustomerInformation.statutoryIdNumber.trim()
+    };
+  }
+
   if (request.correlationId?.trim()) {
     body.correlationId = request.correlationId.trim();
   }
