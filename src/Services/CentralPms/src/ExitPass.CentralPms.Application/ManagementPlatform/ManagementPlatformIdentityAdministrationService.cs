@@ -66,8 +66,13 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
         }, cancellationToken);
 
     public Task<IdentityAdministrationResult<IReadOnlyList<IdentityRoleDefinition>>> ListRolesAsync(
-        IdentityAdministrationActor actor, Guid correlationId, CancellationToken cancellationToken) =>
-        _repository.ListRolesAsync(actor, correlationId, cancellationToken);
+        IdentityAdministrationActor actor, IdentityRoleCatalogQuery query, Guid correlationId, CancellationToken cancellationToken) =>
+        _repository.ListRolesAsync(actor, query with
+        {
+            UserType = string.IsNullOrWhiteSpace(query.UserType)
+                ? null
+                : RequireUserType(query.UserType, nameof(query.UserType))
+        }, correlationId, cancellationToken);
 
     public Task<IdentityAdministrationResult<IReadOnlyList<IdentityPermissionDefinition>>> ListPermissionsAsync(
         IdentityAdministrationActor actor, Guid correlationId, CancellationToken cancellationToken) =>

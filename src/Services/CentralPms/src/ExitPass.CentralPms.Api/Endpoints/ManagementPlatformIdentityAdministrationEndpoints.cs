@@ -35,8 +35,8 @@ public static class ManagementPlatformIdentityAdministrationEndpoints
         group.MapPost("/users/{userReference:guid}/credential-reset-challenges", async (HttpRequest request, Guid userReference, CredentialResetChallengeRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.IssueCredentialChallengeAsync(actor, new(userReference, body.Purpose, body.ExpiresAt, body.ReasonCode, correlation), ct)));
 
-        group.MapGet("/roles", async (HttpRequest request, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
-            await ExecuteAsync(request, actors, (actor, correlation) => service.ListRolesAsync(actor, correlation, ct)));
+        group.MapGet("/roles", async (HttpRequest request, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, string? userType, bool? directAddUserOnly, CancellationToken ct) =>
+            await ExecuteAsync(request, actors, (actor, correlation) => service.ListRolesAsync(actor, new(userType, directAddUserOnly ?? false), correlation, ct)));
         group.MapGet("/permissions", async (HttpRequest request, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.ListPermissionsAsync(actor, correlation, ct)));
         group.MapGet("/delegable-scopes", async (HttpRequest request, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
