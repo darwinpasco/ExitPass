@@ -121,6 +121,162 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
     }
 
     [Fact]
+    public async Task DelegableScopes_PitxGroupGrantExpandsToExactlyTwoAuthoritativeActiveSites()
+    {
+        var seed = await SeedAdministratorAsync();
+        const string pitxGroupId = "a6dbadf6-68b5-5bed-a7e0-a75faee70841";
+        const string pitxLevel3Id = "2d1dcdf8-f563-537c-8542-0bde7cc9da97";
+        const string pitxOpenLotId = "b336964f-3b84-5404-8690-97ead0929b1f";
+
+        await using (var connection = new NpgsqlConnection(_database.ConnectionString))
+        {
+            await connection.OpenAsync();
+            const string sql = """
+                UPDATE sites.site_groups SET site_group_status = 'ACTIVE'
+                WHERE site_group_id = @pitx_group_id;
+                UPDATE sites.sites SET site_status = 'ACTIVE'
+                WHERE site_id IN (@pitx_level3_id, @pitx_open_lot_id);
+                UPDATE identity.user_role_scope_grants
+                SET scope_type = 'SITE_GROUP', site_id = NULL, site_group_id = @pitx_group_id
+                WHERE user_role_id IN (SELECT user_role_id FROM identity.user_roles WHERE user_id = @actor_user_id)
+                  AND grant_status = 'ACTIVE';
+                """;
+            await using var command = new NpgsqlCommand(sql, connection);
+            command.Parameters.AddWithValue("pitx_group_id", Guid.Parse(pitxGroupId));
+            command.Parameters.AddWithValue("pitx_level3_id", Guid.Parse(pitxLevel3Id));
+            command.Parameters.AddWithValue("pitx_open_lot_id", Guid.Parse(pitxOpenLotId));
+            command.Parameters.AddWithValue("actor_user_id", seed.Actor.UserId);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var result = await repository.GetDelegableScopesAsync(seed.Actor, Guid.NewGuid(), CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        result.Value!.SiteGroups.Should().ContainSingle(group =>
+            group.SiteGroupId == Guid.Parse(pitxGroupId) && group.SiteGroupCode == "PITX" && group.SiteGroupName == "PITX");
+        result.Value.Sites.Select(site => (site.SiteId, site.SiteName)).Should().BeEquivalentTo([
+            (Guid.Parse(pitxLevel3Id), "PITX Level 3"),
+            (Guid.Parse(pitxOpenLotId), "PITX Open Lot")
+        ]);
+        result.Value.Sites.Should().OnlyContain(site =>
+            site.SiteGroupId == Guid.Parse(pitxGroupId) && site.LifecycleStatus == "ACTIVE");
+    }
+
+    [Fact]
+    public async Task CreateUser_RejectsActiveSyntheticScopesAndPersistsNothing()
+    {
+        var seed = await SeedAdministratorAsync();
+        var syntheticGroupId = Guid.NewGuid();
+        var syntheticSiteId = Guid.NewGuid();
+        await using (var connection = new NpgsqlConnection(_database.ConnectionString))
+        {
+            await connection.OpenAsync();
+            const string sql = """
+                INSERT INTO sites.site_groups (
+                    site_group_id, site_group_code, site_group_name, timezone_name, default_currency_code,
+                    site_group_status, effective_from)
+                VALUES (@group_id, @group_code, 'I-021 Synthetic Group', 'Asia/Manila', 'PHP', 'ACTIVE', now() - interval '1 day');
+                INSERT INTO sites.sites (
+                    site_id, site_group_id, site_code, site_name, site_type, timezone_name, country_code,
+                    site_status, effective_from)
+                VALUES (@site_id, @group_id, @site_code, 'I-021 Synthetic Site', 'OTHER', 'Asia/Manila', 'PH', 'ACTIVE', now() - interval '1 day');
+                """;
+            await using var command = new NpgsqlCommand(sql, connection);
+            command.Parameters.AddWithValue("group_id", syntheticGroupId);
+            command.Parameters.AddWithValue("group_code", $"I021-SYN-G-{Guid.NewGuid():N}"[..32]);
+            command.Parameters.AddWithValue("site_id", syntheticSiteId);
+            command.Parameters.AddWithValue("site_code", $"I021-SYN-S-{Guid.NewGuid():N}"[..32]);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var siteUsername = $"i021.synthetic.site.{Guid.NewGuid():N}";
+        var groupUsername = $"i021.synthetic.group.{Guid.NewGuid():N}";
+        var siteResult = await repository.CreateUserAsync(seed.Actor, new CreateIdentityUserCommand(
+            siteUsername, "Synthetic Site Rejection", null, null, "SITE_OPERATOR", seed.DelegableRoleId,
+            "SITE", syntheticSiteId, null, DateTimeOffset.UtcNow.AddMinutes(-1), null,
+            "I021_SYNTHETIC_REJECTION", "synthetic-site", Guid.NewGuid()), CancellationToken.None);
+        var groupResult = await repository.CreateUserAsync(seed.Actor, new CreateIdentityUserCommand(
+            groupUsername, "Synthetic Group Rejection", null, null, "SITE_OPERATOR", seed.DelegableRoleId,
+            "SITE_GROUP", null, syntheticGroupId, DateTimeOffset.UtcNow.AddMinutes(-1), null,
+            "I021_SYNTHETIC_REJECTION", "synthetic-group", Guid.NewGuid()), CancellationToken.None);
+
+        siteResult.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
+        groupResult.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
+        (await CountUsersByUsernameAsync(siteUsername)).Should().Be(0);
+        (await CountUsersByUsernameAsync(groupUsername)).Should().Be(0);
+        var catalog = await repository.GetDelegableScopesAsync(seed.Actor, Guid.NewGuid(), CancellationToken.None);
+        catalog.Value!.SiteGroups.Should().NotContain(group => group.SiteGroupId == syntheticGroupId);
+        catalog.Value.Sites.Should().NotContain(site => site.SiteId == syntheticSiteId);
+    }
+
+    [Fact]
+    public async Task CreateUser_RejectsRealActiveSiteOutsideActorsDelegationCeiling()
+    {
+        var seed = await SeedAdministratorAsync();
+        var username = $"i021.real.outside.{Guid.NewGuid():N}";
+        var pitxGroupId = Guid.Parse("a6dbadf6-68b5-5bed-a7e0-a75faee70841");
+        var pitxLevel3Id = Guid.Parse("2d1dcdf8-f563-537c-8542-0bde7cc9da97");
+
+        await using (var connection = new NpgsqlConnection(_database.ConnectionString))
+        {
+            await connection.OpenAsync();
+            const string sql = """
+                UPDATE sites.site_groups SET site_group_status = 'ACTIVE' WHERE site_group_id = @pitx_group_id;
+                UPDATE sites.sites SET site_status = 'ACTIVE' WHERE site_id = @pitx_site_id;
+                UPDATE identity.user_role_scope_grants
+                SET scope_type = 'SITE', site_id = @actor_site_id, site_group_id = NULL
+                WHERE user_role_id IN (SELECT user_role_id FROM identity.user_roles WHERE user_id = @actor_user_id)
+                  AND grant_status = 'ACTIVE';
+                """;
+            await using var command = new NpgsqlCommand(sql, connection);
+            command.Parameters.AddWithValue("pitx_group_id", pitxGroupId);
+            command.Parameters.AddWithValue("pitx_site_id", pitxLevel3Id);
+            command.Parameters.AddWithValue("actor_site_id", seed.SiteId);
+            command.Parameters.AddWithValue("actor_user_id", seed.Actor.UserId);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var result = await repository.CreateUserAsync(seed.Actor, new CreateIdentityUserCommand(
+            username, "Real Outside-Ceiling Rejection", null, null, "SITE_OPERATOR", seed.DelegableRoleId,
+            "SITE", pitxLevel3Id, null, DateTimeOffset.UtcNow.AddMinutes(-1), null,
+            "I021_REAL_OUTSIDE_REJECTION", "real-outside", Guid.NewGuid()), CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
+        result.Classification.Should().Be("DELEGATION_CEILING_EXCEEDED");
+        (await CountUsersByUsernameAsync(username)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CreateUser_RejectsInactiveCanonicalSiteAndPersistsNothing()
+    {
+        var seed = await SeedAdministratorAsync();
+        var username = $"i021.inactive.canonical.{Guid.NewGuid():N}";
+        await using (var connection = new NpgsqlConnection(_database.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand(
+                "UPDATE sites.sites SET site_status = 'INACTIVE' WHERE site_id = @site_id;", connection);
+            command.Parameters.AddWithValue("site_id", seed.SiteId);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var result = await repository.CreateUserAsync(seed.Actor, new CreateIdentityUserCommand(
+            username, "Inactive Canonical Rejection", null, null, "SITE_OPERATOR", seed.DelegableRoleId,
+            "SITE", seed.SiteId, null, DateTimeOffset.UtcNow.AddMinutes(-1), null,
+            "I021_INACTIVE_REJECTION", "inactive-canonical", Guid.NewGuid()), CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
+        result.Classification.Should().Be("DELEGATION_CEILING_EXCEEDED");
+        (await CountUsersByUsernameAsync(username)).Should().Be(0);
+        var catalog = await repository.GetDelegableScopesAsync(seed.Actor, Guid.NewGuid(), CancellationToken.None);
+        catalog.Value!.Sites.Should().NotContain(site => site.SiteId == seed.SiteId);
+    }
+
+    [Fact]
     public async Task CreateUser_WhenInitialAccessIsOutsideDelegation_CreatesNothing()
     {
         var seed = await SeedAdministratorAsync();
@@ -421,6 +577,14 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
                 site_id, site_group_id, site_code, site_name, site_type, timezone_name, country_code,
                 site_status, effective_from)
             VALUES (@site_id, @site_group_id, @site_code, 'I-021 Site', 'OTHER', 'Asia/Manila', 'PH', 'ACTIVE', now() - interval '1 day');
+
+            INSERT INTO sites.real_carpark_catalog_site_groups (
+                site_group_id, catalog_code, source_reference, source_sha256)
+            VALUES (@site_group_id, 'PROFESSIONAL_PARKING_REAL_CARPARK_V1', 'isolated-integration-test', repeat('A', 64));
+
+            INSERT INTO sites.real_carpark_catalog_sites (
+                site_id, site_group_id, catalog_code, source_reference, source_sha256)
+            VALUES (@site_id, @site_group_id, 'PROFESSIONAL_PARKING_REAL_CARPARK_V1', 'isolated-integration-test', repeat('A', 64));
 
             INSERT INTO identity.users (
                 user_id, username, display_name, user_type, user_status, effective_from)

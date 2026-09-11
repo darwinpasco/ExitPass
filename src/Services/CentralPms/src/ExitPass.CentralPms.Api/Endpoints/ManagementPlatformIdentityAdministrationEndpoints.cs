@@ -39,6 +39,8 @@ public static class ManagementPlatformIdentityAdministrationEndpoints
             await ExecuteAsync(request, actors, (actor, correlation) => service.ListRolesAsync(actor, correlation, ct)));
         group.MapGet("/permissions", async (HttpRequest request, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.ListPermissionsAsync(actor, correlation, ct)));
+        group.MapGet("/delegable-scopes", async (HttpRequest request, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
+            await ExecuteAsync(request, actors, (actor, correlation) => service.GetDelegableScopesAsync(actor, correlation, ct)));
 
         group.MapPost("/users/{userReference:guid}/role-assignments", async (HttpRequest request, Guid userReference, AssignIdentityRoleRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.AssignRoleAsync(actor, new(userReference, body.RoleReference, body.EffectiveFrom, body.EffectiveTo, body.ReasonCode, body.IdempotencyKey, correlation), ct)));

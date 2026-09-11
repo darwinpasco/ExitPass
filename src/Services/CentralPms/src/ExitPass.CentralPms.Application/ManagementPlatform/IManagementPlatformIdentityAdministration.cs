@@ -62,6 +62,11 @@ public interface IManagementPlatformIdentityAdministrationRepository
         Guid correlationId,
         CancellationToken cancellationToken);
 
+    Task<IdentityAdministrationResult<DelegableScopeCatalog>> GetDelegableScopesAsync(
+        IdentityAdministrationActor actor,
+        Guid correlationId,
+        CancellationToken cancellationToken);
+
     Task<IdentityAdministrationResult<IdentityRoleAssignment>> AssignRoleAsync(
         IdentityAdministrationActor actor,
         AssignIdentityRoleCommand command,

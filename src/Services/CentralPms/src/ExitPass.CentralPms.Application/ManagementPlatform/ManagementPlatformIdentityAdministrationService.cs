@@ -73,6 +73,10 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
         IdentityAdministrationActor actor, Guid correlationId, CancellationToken cancellationToken) =>
         _repository.ListPermissionsAsync(actor, correlationId, cancellationToken);
 
+    public Task<IdentityAdministrationResult<DelegableScopeCatalog>> GetDelegableScopesAsync(
+        IdentityAdministrationActor actor, Guid correlationId, CancellationToken cancellationToken) =>
+        _repository.GetDelegableScopesAsync(actor, correlationId, cancellationToken);
+
     public Task<IdentityAdministrationResult<IdentityRoleAssignment>> AssignRoleAsync(
         IdentityAdministrationActor actor, AssignIdentityRoleCommand command, CancellationToken cancellationToken) =>
         _repository.AssignRoleAsync(actor, command with

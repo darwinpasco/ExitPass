@@ -96,6 +96,29 @@ public sealed record IdentityScopeGrant(
     DateTimeOffset? LastReviewedAt,
     long RowVersion);
 
+public sealed record DelegableSiteGroup(
+    Guid SiteGroupId,
+    string SiteGroupCode,
+    string SiteGroupName,
+    string LifecycleStatus,
+    DateTimeOffset EffectiveFrom,
+    DateTimeOffset? EffectiveTo);
+
+public sealed record DelegableSite(
+    Guid SiteId,
+    string SiteCode,
+    string SiteName,
+    Guid SiteGroupId,
+    string SiteGroupCode,
+    string SiteGroupName,
+    string LifecycleStatus,
+    DateTimeOffset EffectiveFrom,
+    DateTimeOffset? EffectiveTo);
+
+public sealed record DelegableScopeCatalog(
+    IReadOnlyList<DelegableSiteGroup> SiteGroups,
+    IReadOnlyList<DelegableSite> Sites);
+
 public sealed record IdentityMfaStatus(
     bool RequiredForPrivilegedManagementPlatform,
     bool Enrolled,
