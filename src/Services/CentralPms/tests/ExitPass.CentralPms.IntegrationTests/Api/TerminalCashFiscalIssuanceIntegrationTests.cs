@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using ExitPass.CentralPms.Api.Endpoints;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
@@ -11,6 +12,7 @@ using ExitPass.CentralPms.Domain.FiscalIssuance;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.AspNetCore.Routing;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
@@ -481,6 +483,66 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         });
     }
 
+    [Fact]
+    public async Task TerminalCashFiscalRecovery_ServiceRoute_CallsOnlyServiceRecoveryMethod()
+    {
+        var fake = new FakeTerminalCashFiscalIssuanceService(
+            recoveryResult: new TerminalCashFiscalConflictRecoveryResult(
+                Guid.NewGuid(), "EXECUTED", true, false, Result()));
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+
+        using var response = await SendRecoveryAsync(
+            client,
+            "service-failure",
+            reasonCode: "persistence_write_failed");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty(fake.RecoveryCommands);
+        Assert.Single(fake.ServiceRecoveryCommands);
+        Assert.Equal("persistence_write_failed", fake.ServiceRecoveryCommands[0].ReasonCode);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task TerminalCashFiscalRecovery_ServiceRoute_RequiresBothGovernanceHeaders(
+        bool includeIdempotencyKey,
+        bool includeCorrelationId)
+    {
+        var fake = new FakeTerminalCashFiscalIssuanceService(
+            recoveryResult: new TerminalCashFiscalConflictRecoveryResult(
+                Guid.NewGuid(), "EXECUTED", true, false, Result()));
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+
+        using var response = await SendRecoveryAsync(
+            client,
+            "service-failure",
+            reasonCode: "persistence_write_failed",
+            includeIdempotencyKey,
+            includeCorrelationId);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(fake.ServiceRecoveryCommands);
+    }
+
+    [Fact]
+    public void TerminalCashFiscalRecovery_ServiceRoute_RequiresInternalServiceMtlsMetadata()
+    {
+        const string route =
+            "/internal/v1/terminal-cash-fiscal-recovery/{terminalCashTenderId:guid}/service-failure";
+        using var factory = new CustomWebApplicationFactory();
+
+        var endpoint = factory.Services.GetRequiredService<EndpointDataSource>()
+            .Endpoints
+            .OfType<RouteEndpoint>()
+            .Single(value => value.RoutePattern.RawText == route);
+
+        Assert.NotNull(endpoint.Metadata.GetMetadata<InternalServiceEndpointMetadata>());
+        Assert.Contains(HttpMethod.Post.Method, endpoint.Metadata.GetMetadata<HttpMethodMetadata>()!.HttpMethods);
+    }
+
     private static ITerminalCashFiscalIssuanceService CreateService(
         TerminalCashPaymentReadback? cashPayment,
         InMemoryFiscalReferenceRepository? repo = null,
@@ -536,7 +598,12 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
                 services.AddSingleton(service);
             });
 
-    private static Task<HttpResponseMessage> SendRecoveryAsync(HttpClient client, string routeSuffix)
+    private static Task<HttpResponseMessage> SendRecoveryAsync(
+        HttpClient client,
+        string routeSuffix,
+        string reasonCode = "sales_invoice_header_profile_not_found",
+        bool includeIdempotencyKey = true,
+        bool includeCorrelationId = true)
     {
         var fiscalCorrelationId = Guid.Parse("21000000-0000-4000-8000-000000000098");
         var body = new InternalTerminalCashFiscalRecoveryRequest(
@@ -555,7 +622,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             ExpectedFiscalCorrelationId: fiscalCorrelationId,
             ActorServiceIdentityId: Guid.Parse("21000000-0000-4000-8000-000000000097"),
             ApprovalReference: "authorized-test-approval",
-            ReasonCode: "sales_invoice_header_profile_not_found",
+            ReasonCode: reasonCode,
             SafeJustification: "The governed Sales Invoice profile configuration is now ready.");
         var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -563,8 +630,15 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         {
             Content = JsonContent.Create(body)
         };
-        request.Headers.Add("Idempotency-Key", $"terminal-cash-fiscal-{TerminalCashTenderId:N}");
-        request.Headers.Add("X-Correlation-Id", fiscalCorrelationId.ToString("D"));
+        if (includeIdempotencyKey)
+        {
+            request.Headers.Add("Idempotency-Key", $"terminal-cash-fiscal-{TerminalCashTenderId:N}");
+        }
+
+        if (includeCorrelationId)
+        {
+            request.Headers.Add("X-Correlation-Id", fiscalCorrelationId.ToString("D"));
+        }
         return client.SendAsync(request);
     }
 
@@ -833,6 +907,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
 
         public List<TerminalCashFiscalConflictRecoveryCommand> RecoveryCommands { get; } = [];
 
+        public List<TerminalCashFiscalConflictRecoveryCommand> ServiceRecoveryCommands { get; } = [];
+
         public Task<TerminalCashFiscalIssuanceResult> IssueOrReadAsync(
             TerminalCashFiscalIssuanceCommand command,
             CancellationToken cancellationToken)
@@ -857,6 +933,15 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             CancellationToken cancellationToken)
         {
             RecoveryCommands.Add(command);
+            return Task.FromResult(_recoveryResult ?? throw new NotSupportedException(
+                "Recovery result was not configured for this endpoint test."));
+        }
+
+        public Task<TerminalCashFiscalConflictRecoveryResult> RecoverServiceFailureAsync(
+            TerminalCashFiscalConflictRecoveryCommand command,
+            CancellationToken cancellationToken)
+        {
+            ServiceRecoveryCommands.Add(command);
             return Task.FromResult(_recoveryResult ?? throw new NotSupportedException(
                 "Recovery result was not configured for this endpoint test."));
         }

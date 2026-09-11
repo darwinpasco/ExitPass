@@ -330,13 +330,281 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             default, null!, null!, default);
     }
 
+    [Fact]
+    public async Task RecoverService_WhenPersistenceWriteFailedAndServiceRecovered_ExecutesGovernedRetry()
+    {
+        var fixture = CreateFixture(ServiceFailureReference());
+
+        var result = await fixture.Service.RecoverServiceFailureAsync(ServiceCommand(), default);
+
+        Assert.True(result.RecoveryExecuted);
+        Assert.Equal("EXECUTED", result.RecoveryStatus);
+        Assert.Equal(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded, result.FiscalIssuance.FiscalIssuanceState);
+        await fixture.ExitAuthorization.Received(1).ExecuteAsync(
+            Arg.Is<IssueExitAuthorizationCommand>(value =>
+                value.PaymentAttemptId == AttemptId && value.ParkingSessionId == SessionId),
+            Arg.Any<CancellationToken>());
+        await fixture.VendorAcknowledgment.Received(1).ProcessAsync(
+            Arg.Is<VendorPaymentAcknowledgmentWorkflowCommand>(value =>
+                value.PaymentAttemptId == AttemptId && value.PaymentConfirmationId == ConfirmationId),
+            Arg.Any<CancellationToken>());
+        await fixture.TerminalPayments.DidNotReceiveWithAnyArgs().CreateOrReadAsync(null!, default);
+        await fixture.TerminalPayments.Received(1).GetByTerminalCashTenderIdAsync(
+            TenderId,
+            Arg.Any<CancellationToken>());
+        Received.InOrder(() =>
+        {
+            fixture.AuditRepository.RecordAsync(
+                Arg.Is<FiscalExceptionControlledRetryExecutionAttemptWrite>(value =>
+                    value.ExecutionStatus == FiscalExceptionControlledRetryExecutionStatus.DryRunReady &&
+                    value.SafeSummary.Contains("terminal_cash_service_failure_recovery", StringComparison.Ordinal) &&
+                    value.SafeSummary.Contains("result=terminal_cash_service_failure_recovery_authorized", StringComparison.Ordinal)),
+                Arg.Any<CancellationToken>());
+            fixture.PosIntegration.TryIssueFiscalDocumentViaPosServerAsync(
+                ReferenceId,
+                Arg.Any<CentralPmsFiscalDocumentMappingContext>(),
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>());
+            fixture.AuditRepository.RecordAsync(
+                Arg.Is<FiscalExceptionControlledRetryExecutionAttemptWrite>(value =>
+                    value.ExecutionStatus == FiscalExceptionControlledRetryExecutionStatus.Executed),
+                Arg.Any<CancellationToken>());
+        });
+    }
+
+    [Fact]
+    public async Task RecoverService_WhenConfigurationFailureIsPresented_RejectsWrongEndpoint()
+    {
+        var fixture = CreateFixture(Reference());
+
+        var error = await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(() =>
+            fixture.Service.RecoverServiceFailureAsync(Command(), default));
+
+        Assert.Equal("TERMINAL_CASH_FISCAL_SERVICE_RECOVERY_REASON_NOT_APPROVED", error.ErrorCode);
+    }
+
+    [Fact]
+    public async Task RecoverConfiguration_WhenServiceFailureIsPresented_RejectsWrongEndpoint()
+    {
+        var fixture = CreateFixture(ServiceFailureReference());
+
+        var error = await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(() =>
+            fixture.Service.RecoverConfigurationFailureAsync(ServiceCommand(), default));
+
+        Assert.Equal("TERMINAL_CASH_FISCAL_RECOVERY_REASON_NOT_APPROVED", error.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData("unknown_service_failure", FiscalIssuanceIntegrationState.FiscalIssuanceFailedService, (int)FiscalIssuanceErrorPosture.RetryAfterServiceRecovery)]
+    [InlineData("fiscal_reporting_period_unavailable", FiscalIssuanceIntegrationState.FiscalIssuanceFailedService, (int)FiscalIssuanceErrorPosture.RetryAfterServiceRecovery)]
+    [InlineData(null, FiscalIssuanceIntegrationState.FiscalIssuanceFailedService, (int)FiscalIssuanceErrorPosture.RetryAfterServiceRecovery)]
+    [InlineData("", FiscalIssuanceIntegrationState.FiscalIssuanceFailedService, (int)FiscalIssuanceErrorPosture.RetryAfterServiceRecovery)]
+    [InlineData("persistence_write_failed", FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration, (int)FiscalIssuanceErrorPosture.RetryAfterServiceRecovery)]
+    [InlineData("persistence_write_failed", FiscalIssuanceIntegrationState.FiscalIssuanceFailedService, 999)]
+    [InlineData("persistence_write_failed", FiscalIssuanceIntegrationState.FiscalIssuanceFailedService, (int)FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange)]
+    [InlineData("persistence_write_failed", FiscalIssuanceIntegrationState.FiscalIssuanceFailedService, (int)FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection)]
+    public async Task RecoverService_WhenEligibilityPolicyDoesNotExactlyMatch_FailsClosed(
+        string? errorCode,
+        FiscalIssuanceIntegrationState state,
+        int postureValue)
+    {
+        var reference = ServiceFailureReference() with
+        {
+            LatestErrorCode = errorCode,
+            FiscalIssuanceState = state,
+            LatestErrorPosture = (FiscalIssuanceErrorPosture)postureValue
+        };
+        var fixture = CreateFixture(reference);
+        var command = ServiceCommand() with
+        {
+            ReasonCode = string.IsNullOrEmpty(errorCode) ? "persistence_write_failed" : errorCode
+        };
+
+        var error = await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(() =>
+            fixture.Service.RecoverServiceFailureAsync(command, default));
+
+        Assert.Equal("TERMINAL_CASH_FISCAL_SERVICE_RECOVERY_REASON_NOT_APPROVED", error.ErrorCode);
+        await fixture.PosIntegration.DidNotReceiveWithAnyArgs().TryIssueFiscalDocumentViaPosServerAsync(
+            default, null!, null!, default);
+    }
+
+    [Theory]
+    [InlineData("attempt")]
+    [InlineData("confirmation")]
+    [InlineData("session")]
+    [InlineData("tariff")]
+    [InlineData("amount")]
+    [InlineData("currency")]
+    [InlineData("delivery-hash")]
+    [InlineData("semantic-hash")]
+    [InlineData("upstream")]
+    [InlineData("transaction-correlation")]
+    [InlineData("fiscal-correlation")]
+    public async Task RecoverService_WhenImmutableExpectedFactDiffers_FailsClosed(string mismatch)
+    {
+        var fixture = CreateFixture(ServiceFailureReference());
+        var command = ServiceCommand();
+        command = mismatch switch
+        {
+            "attempt" => command with { ExpectedPaymentAttemptId = Guid.NewGuid() },
+            "confirmation" => command with { ExpectedPaymentConfirmationId = Guid.NewGuid() },
+            "session" => command with { ExpectedParkingSessionId = Guid.NewGuid() },
+            "tariff" => command with { ExpectedTariffSnapshotId = Guid.NewGuid() },
+            "amount" => command with { ExpectedAmountMinorUnits = AmountMinorUnits + 1 },
+            "currency" => command with { ExpectedCurrency = "USD" },
+            "delivery-hash" => command with { ExpectedDeliveryRequestHash = new string('b', 64) },
+            "semantic-hash" => command with { ExpectedFiscalSemanticRequestHash = new string('c', 64) },
+            "upstream" => command with { ExpectedUpstreamFinalityReference = "different-finality" },
+            "transaction-correlation" => command with { ExpectedTransactionCorrelationId = Guid.NewGuid() },
+            "fiscal-correlation" => command with { ExpectedFiscalCorrelationId = Guid.NewGuid() },
+            _ => command
+        };
+
+        await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(() =>
+            fixture.Service.RecoverServiceFailureAsync(command, default));
+        await fixture.PosIntegration.DidNotReceiveWithAnyArgs().TryIssueFiscalDocumentViaPosServerAsync(
+            default, null!, null!, default);
+    }
+
+    [Theory]
+    [InlineData("PENDING", "RECORDED")]
+    [InlineData("CONFIRMED", "PENDING")]
+    public async Task RecoverService_WhenPaymentFinalityIsNotConfirmedAndRecorded_FailsClosed(
+        string attemptStatus,
+        string confirmationStatus)
+    {
+        var facts = RecoveryFacts() with
+        {
+            PaymentAttemptStatus = attemptStatus,
+            PaymentConfirmationStatus = confirmationStatus
+        };
+        var fixture = CreateFixture(ServiceFailureReference(), guardFacts: facts);
+
+        var error = await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(() =>
+            fixture.Service.RecoverServiceFailureAsync(ServiceCommand(), default));
+
+        Assert.Equal("TERMINAL_CASH_FISCAL_RECOVERY_PAYMENT_FACTS_MISMATCH", error.ErrorCode);
+    }
+
+    [Fact]
+    public async Task RecoverService_WhenFiscalEvidenceIsPartial_FailsClosed()
+    {
+        var fixture = CreateFixture(ServiceFailureReference() with { FiscalSequenceValue = 11 });
+
+        var error = await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(() =>
+            fixture.Service.RecoverServiceFailureAsync(ServiceCommand(), default));
+
+        Assert.Equal("TERMINAL_CASH_FISCAL_RECOVERY_EXISTING_EVIDENCE_AMBIGUOUS", error.ErrorCode);
+    }
+
+    [Fact]
+    public async Task RecoverService_WhenFiscalEvidenceIsComplete_ReturnsGovernedReadback()
+    {
+        var fixture = CreateFixture(RecordedReference(FiscalIssuanceResultClassification.NewlyCreated));
+
+        var result = await fixture.Service.RecoverServiceFailureAsync(ServiceCommand(), default);
+
+        Assert.True(result.IdempotentReadback);
+        Assert.False(result.RecoveryExecuted);
+        Assert.Equal("ALREADY_COMPLETED", result.RecoveryStatus);
+        await fixture.PosIntegration.DidNotReceiveWithAnyArgs().TryIssueFiscalDocumentViaPosServerAsync(
+            default, null!, null!, default);
+    }
+
+    [Fact]
+    public async Task RecoverService_WhenPosReturnsIdempotentReplay_RecordsReplayMatched()
+    {
+        var replay = SuccessfulPosResult() with
+        {
+            ResultClassification = FiscalIssuanceResultClassification.IdempotentReplay
+        };
+        var fixture = CreateFixture(
+            ServiceFailureReference(),
+            posResultReference: RecordedReference(FiscalIssuanceResultClassification.IdempotentReplay),
+            posResult: replay);
+
+        var result = await fixture.Service.RecoverServiceFailureAsync(ServiceCommand(), default);
+
+        Assert.Equal("REPLAY_MATCHED", result.RecoveryStatus);
+        Assert.True(result.IdempotentReadback);
+        await fixture.AuditRepository.Received(1).RecordAsync(
+            Arg.Is<FiscalExceptionControlledRetryExecutionAttemptWrite>(value =>
+                value.ExecutionStatus == FiscalExceptionControlledRetryExecutionStatus.ReplayMatched),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RecoverService_WhenPosConflicts_RecordsConflictWithoutExitAuthorization()
+    {
+        var pos = FailedPosResult(PosServerFiscalDocumentOutcome.Conflict, "semantic_request_hash_mismatch");
+        var fixture = CreateFixture(ServiceFailureReference(), posResultReference: ServiceFailureReference(), posResult: pos);
+
+        var result = await fixture.Service.RecoverServiceFailureAsync(ServiceCommand(), default);
+
+        Assert.Equal("CONFLICT", result.RecoveryStatus);
+        await fixture.ExitAuthorization.DidNotReceiveWithAnyArgs().ExecuteAsync(null!, default);
+    }
+
+    [Fact]
+    public async Task RecoverService_WhenPosRetryFails_RecordsFailedAndPreservesPaymentFinality()
+    {
+        var pos = FailedPosResult(PosServerFiscalDocumentOutcome.FailedService, "persistence_write_failed");
+        var fixture = CreateFixture(ServiceFailureReference(), posResultReference: ServiceFailureReference(), posResult: pos);
+
+        var result = await fixture.Service.RecoverServiceFailureAsync(ServiceCommand(), default);
+
+        Assert.Equal("FAILED", result.RecoveryStatus);
+        Assert.Equal(AttemptId, result.FiscalIssuance.PaymentAttemptId);
+        Assert.Equal(ConfirmationId, result.FiscalIssuance.PaymentConfirmationId);
+        await fixture.ExitAuthorization.DidNotReceiveWithAnyArgs().ExecuteAsync(null!, default);
+    }
+
+    [Fact]
+    public async Task RecoverService_WhenRecoveryLockIsHeld_DoesNotExecute()
+    {
+        var fixture = CreateFixture(ServiceFailureReference(), lockAvailable: false);
+
+        var error = await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(() =>
+            fixture.Service.RecoverServiceFailureAsync(ServiceCommand(), default));
+
+        Assert.Equal("TERMINAL_CASH_FISCAL_RECOVERY_IN_PROGRESS", error.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData("site", "SITE_POS_SERVER_SITE_MISMATCH")]
+    [InlineData("pos", "TERMINAL_CASH_FISCAL_RECOVERY_POS_BINDING_MISMATCH")]
+    public async Task RecoverService_WhenSiteOrPosBindingDiffers_FailsClosedBeforePos(
+        string mismatch,
+        string expectedErrorCode)
+    {
+        var resolution = mismatch == "site"
+            ? SitePosServerBindingResolution.Failed(SitePosServerBindingResolutionCodes.SiteMismatch)
+            : SitePosServerBindingResolution.Success(new SitePosServerEndpointOptions
+            {
+                SiteId = SiteId,
+                SitePosServerId = Guid.Parse("31000000-0000-4000-8000-000000000099"),
+                SitePosServerRef = PosRef,
+                Environment = "Test",
+                Enabled = true
+            });
+        var fixture = CreateFixture(ServiceFailureReference(), bindingResolution: resolution);
+
+        var error = await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(() =>
+            fixture.Service.RecoverServiceFailureAsync(ServiceCommand(), default));
+
+        Assert.Equal(expectedErrorCode, error.ErrorCode);
+        await fixture.PosIntegration.DidNotReceiveWithAnyArgs().TryIssueFiscalDocumentViaPosServerAsync(
+            default, null!, null!, default);
+    }
+
     private static Fixture CreateFixture(
         FiscalIssuanceReferenceRecord? reference = null,
         int exitAuthorizationCount = 0,
         bool lockAvailable = true,
         FiscalIssuanceReferenceRecord? posResultReference = null,
         PosServerFiscalDocumentCreateResult? posResult = null,
-        SitePosServerBindingResolution? bindingResolution = null)
+        SitePosServerBindingResolution? bindingResolution = null,
+        TerminalCashFiscalConflictRecoveryFacts? guardFacts = null)
     {
         reference ??= Reference();
         posResult ??= SuccessfulPosResult();
@@ -384,13 +652,12 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             .Returns(call => AuditRecord(call.Arg<FiscalExceptionControlledRetryExecutionAttemptWrite>()));
         var guard = Substitute.For<ITerminalCashFiscalConflictRecoveryGuardRepository>();
         guard.ReadAsync(AttemptId, ConfirmationId, Arg.Any<CancellationToken>())
-            .Returns(new TerminalCashFiscalConflictRecoveryFacts(
-                AttemptId, ConfirmationId, SessionId, TariffId, "CONFIRMED", "RECORDED",
-                "PHP", AmountMinorUnits, "PHP", AmountMinorUnits, exitAuthorizationCount));
+            .Returns(guardFacts ?? RecoveryFacts(exitAuthorizationCount));
         var recoveryLock = Substitute.For<ITerminalCashFiscalConflictRecoveryLock>();
         recoveryLock.TryAcquireAsync(ReferenceId, Arg.Any<CancellationToken>())
             .Returns(lockAvailable ? new NoopLease() : null);
 
+        var vendorAcknowledgment = Substitute.For<IVendorPaymentAcknowledgmentWorkflow>();
         var service = new TerminalCashFiscalIssuanceService(
             terminalPayments,
             references,
@@ -406,8 +673,10 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             auditRepository,
             guard,
             recoveryLock,
-            Substitute.For<IVendorPaymentAcknowledgmentWorkflow>());
-        return new Fixture(service, posIntegration, auditRepository, exitAuthorization, hashCalculator);
+            vendorAcknowledgment);
+        return new Fixture(
+            service, posIntegration, auditRepository, exitAuthorization, hashCalculator,
+            vendorAcknowledgment, terminalPayments);
     }
 
     private static TerminalCashFiscalConflictRecoveryCommand Command() =>
@@ -431,6 +700,13 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             "authorized-test-approval",
             "fiscal_reporting_period_unavailable",
             "The governed reporting period is now ready.");
+
+    private static TerminalCashFiscalConflictRecoveryCommand ServiceCommand() =>
+        Command() with
+        {
+            ReasonCode = "persistence_write_failed",
+            SafeJustification = "The governed POS persistence service is now ready."
+        };
 
     private static TerminalCashPaymentReadback CashPayment() =>
         new(
@@ -488,6 +764,20 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             CompletionBasis: FiscalCompletionBasisCodes.PaymentFinality,
             CompletionAuthorityReferenceId: ConfirmationId);
 
+    private static FiscalIssuanceReferenceRecord ServiceFailureReference() =>
+        Reference() with
+        {
+            FiscalIssuanceState = FiscalIssuanceIntegrationState.FiscalIssuanceFailedService,
+            LatestExceptionReason = FiscalIssuanceExceptionReason.PersistenceWriteFailed,
+            LatestErrorCode = "persistence_write_failed",
+            LatestErrorPosture = FiscalIssuanceErrorPosture.RetryAfterServiceRecovery
+        };
+
+    private static TerminalCashFiscalConflictRecoveryFacts RecoveryFacts(int exitAuthorizationCount = 0) =>
+        new(
+            AttemptId, ConfirmationId, SessionId, TariffId, "CONFIRMED", "RECORDED",
+            "PHP", AmountMinorUnits, "PHP", AmountMinorUnits, exitAuthorizationCount);
+
     private static FiscalIssuanceReferenceRecord RecordedReference(FiscalIssuanceResultClassification classification) =>
         Reference() with
         {
@@ -527,6 +817,14 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             "fiscal_reporting_period_unavailable", "not ready", null, null, null,
             FiscalNumberAssignmentState.NotAssigned, null, null, null, null, null, null, null, null, null, null,
             FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection);
+
+    private static PosServerFiscalDocumentCreateResult FailedPosResult(
+        PosServerFiscalDocumentOutcome outcome,
+        string code) =>
+        new(
+            outcome, false, 503, code, "retry failed", null, null, null,
+            FiscalNumberAssignmentState.NotAssigned, null, null, null, null, null, null, null, null, null, null,
+            FiscalIssuanceErrorPosture.RetryAfterServiceRecovery);
 
     private static PosServerFiscalDocumentCreateRequest MappedRequest() =>
         new PosServerFiscalDocumentRequestMapper().Map(new CentralPmsFiscalDocumentMappingContext(
@@ -607,7 +905,9 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
         IFiscalIssuancePosServerLiveIntegrationService PosIntegration,
         IFiscalExceptionControlledRetryExecutionAuditRepository AuditRepository,
         IIssueExitAuthorizationUseCase ExitAuthorization,
-        IFiscalSemanticRequestHashCalculator HashCalculator);
+        IFiscalSemanticRequestHashCalculator HashCalculator,
+        IVendorPaymentAcknowledgmentWorkflow VendorAcknowledgment,
+        ITerminalCashPaymentService TerminalPayments);
 
     private sealed class NoopLease : IAsyncDisposable
     {

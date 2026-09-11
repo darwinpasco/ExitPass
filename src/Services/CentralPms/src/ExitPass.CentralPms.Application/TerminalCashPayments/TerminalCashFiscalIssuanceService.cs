@@ -17,11 +17,16 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     private const string RecordedPaymentConfirmationStatus = "RECORDED";
     private const string FiscalDocumentTypeCodeKey = "sales_invoice";
     private const string SalesInvoiceHeaderProfileNotFound = "sales_invoice_header_profile_not_found";
+    private const string PersistenceWriteFailed = "persistence_write_failed";
     private static readonly HashSet<string> ApprovedRetryableConfigurationErrorCodes = new(StringComparer.Ordinal)
     {
         "fiscal_reporting_period_unavailable",
         "fiscal_reporting_period_assignment_mismatch",
         SalesInvoiceHeaderProfileNotFound
+    };
+    private static readonly HashSet<string> ApprovedRetryableServiceErrorCodes = new(StringComparer.Ordinal)
+    {
+        PersistenceWriteFailed
     };
     private static readonly string CanonicalDeliveryRequestHash = Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes("{}"))).ToLowerInvariant();
@@ -181,6 +186,19 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
 
     public async Task<TerminalCashFiscalConflictRecoveryResult> RecoverConfigurationFailureAsync(
         TerminalCashFiscalConflictRecoveryCommand command,
+        CancellationToken cancellationToken) =>
+        await RecoverFailureAsync(command, TerminalCashRecoveryClass.ConfigurationFailure, cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<TerminalCashFiscalConflictRecoveryResult> RecoverServiceFailureAsync(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        CancellationToken cancellationToken) =>
+        await RecoverFailureAsync(command, TerminalCashRecoveryClass.ServiceFailure, cancellationToken)
+            .ConfigureAwait(false);
+
+    private async Task<TerminalCashFiscalConflictRecoveryResult> RecoverFailureAsync(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        TerminalCashRecoveryClass recoveryClass,
         CancellationToken cancellationToken)
     {
         ValidateRecovery(command);
@@ -224,6 +242,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             var replayAuditId = await RecordRecoveryAuditAsync(
                     command,
                     reference,
+                    recoveryClass,
                     FiscalExceptionControlledRetryExecutionStatus.ReplayMatched,
                     "terminal_cash_fiscal_recovery_already_completed",
                     posServerResult: null,
@@ -242,7 +261,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                     exitAuthorizationIssued: existingExitAuthorizationIssued));
         }
 
-        EnsureApprovedRecoveryState(command, reference);
+        EnsureApprovedRecoveryState(command, reference, recoveryClass);
         EnsureReferenceHasNoFiscalEvidence(reference);
 
         var durableFacts = await _recoveryGuardRepository.ReadAsync(
@@ -295,11 +314,21 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         var recalculatedHash = _semanticRequestHashCalculator.Calculate(mappedRequest);
         EnsureSemanticRequestUnchanged(command, reference, mappedRequest, recalculatedHash);
 
+        _logger.LogInformation(
+            "Terminal cash fiscal recovery passed guarded dry-run checks. recovery_class={RecoveryClass} fiscal_issuance_reference_id={FiscalIssuanceReferenceId} terminal_cash_tender_id={TerminalCashTenderId} correlation_id={CorrelationId}",
+            recoveryClass,
+            reference.FiscalIssuanceReferenceId,
+            command.TerminalCashTenderId,
+            command.RecoveryCorrelationId);
+
         await RecordRecoveryAuditAsync(
                 command,
                 reference,
+                recoveryClass,
                 FiscalExceptionControlledRetryExecutionStatus.DryRunReady,
-                "terminal_cash_configuration_failure_recovery_authorized",
+                recoveryClass == TerminalCashRecoveryClass.ServiceFailure
+                    ? "terminal_cash_service_failure_recovery_authorized"
+                    : "terminal_cash_configuration_failure_recovery_authorized",
                 posServerResult: null,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -331,11 +360,20 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         var finalAuditId = await RecordRecoveryAuditAsync(
                 command,
                 recoveredReference,
+                recoveryClass,
                 executionStatus,
                 liveResult.PosServerResult?.Code ?? liveResult.Code,
                 liveResult.PosServerResult,
                 cancellationToken)
             .ConfigureAwait(false);
+
+        _logger.LogInformation(
+            "Terminal cash fiscal recovery execution completed. recovery_class={RecoveryClass} execution_status={ExecutionStatus} fiscal_issuance_reference_id={FiscalIssuanceReferenceId} terminal_cash_tender_id={TerminalCashTenderId} correlation_id={CorrelationId}",
+            recoveryClass,
+            executionStatus,
+            recoveredReference.FiscalIssuanceReferenceId,
+            command.TerminalCashTenderId,
+            command.RecoveryCorrelationId);
 
         var exitAuthorizationIssued = await ContinueAfterVerifiedFiscalEvidenceAsync(
                 cashPayment,
@@ -346,7 +384,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
 
         return new TerminalCashFiscalConflictRecoveryResult(
             finalAuditId,
-            executionStatus.ToString().ToUpperInvariant(),
+            ToRecoveryStatus(executionStatus),
             RecoveryExecuted: liveResult.MappedRequest is not null && liveResult.PosServerResult is not null,
             IdempotentReadback: executionStatus == FiscalExceptionControlledRetryExecutionStatus.ReplayMatched,
             ToResult(
@@ -983,8 +1021,26 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
 
     private static void EnsureApprovedRecoveryState(
         TerminalCashFiscalConflictRecoveryCommand command,
-        FiscalIssuanceReferenceRecord reference)
+        FiscalIssuanceReferenceRecord reference,
+        TerminalCashRecoveryClass recoveryClass)
     {
+        if (recoveryClass == TerminalCashRecoveryClass.ServiceFailure)
+        {
+            if (reference.FiscalIssuanceState != FiscalIssuanceIntegrationState.FiscalIssuanceFailedService ||
+                reference.LatestErrorPosture != FiscalIssuanceErrorPosture.RetryAfterServiceRecovery ||
+                string.IsNullOrWhiteSpace(reference.LatestErrorCode) ||
+                !ApprovedRetryableServiceErrorCodes.Contains(reference.LatestErrorCode) ||
+                !ApprovedRetryableServiceErrorCodes.Contains(command.ReasonCode) ||
+                !string.Equals(reference.LatestErrorCode, command.ReasonCode, StringComparison.Ordinal))
+            {
+                throw Rejected(
+                    "TERMINAL_CASH_FISCAL_SERVICE_RECOVERY_REASON_NOT_APPROVED",
+                    "Only an unchanged explicitly approved retryable service failure is eligible for guarded service recovery.");
+            }
+
+            return;
+        }
+
         if (reference.FiscalIssuanceState is not (
                 FiscalIssuanceIntegrationState.FiscalIssuanceConflict or
                 FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration) ||
@@ -1079,6 +1135,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     private async Task<Guid> RecordRecoveryAuditAsync(
         TerminalCashFiscalConflictRecoveryCommand command,
         FiscalIssuanceReferenceRecord reference,
+        TerminalCashRecoveryClass recoveryClass,
         FiscalExceptionControlledRetryExecutionStatus status,
         string? resultCode,
         PosServerFiscalDocumentCreateResult? posServerResult,
@@ -1120,18 +1177,21 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                     : DateTimeOffset.UtcNow,
                 ServiceIdentityId: command.ActorServiceIdentityId,
                 CorrelationId: command.RecoveryCorrelationId,
-                SafeSummary: BuildRecoveryAuditSummary(command, safeResultCode)),
+                SafeSummary: BuildRecoveryAuditSummary(command, recoveryClass, safeResultCode)),
             cancellationToken).ConfigureAwait(false);
         return audit.RetryExecutionAttemptId;
     }
 
     private static string BuildRecoveryAuditSummary(
         TerminalCashFiscalConflictRecoveryCommand command,
+        TerminalCashRecoveryClass recoveryClass,
         string safeResultCode)
     {
         var summary = string.Join(
             ';',
-            "terminal_cash_configuration_failure_recovery",
+            recoveryClass == TerminalCashRecoveryClass.ServiceFailure
+                ? "terminal_cash_service_failure_recovery"
+                : "terminal_cash_configuration_failure_recovery",
             $"reason={command.ReasonCode.Trim()}",
             $"approval={command.ApprovalReference.Trim()}",
             $"result={safeResultCode}",
@@ -1200,4 +1260,17 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
 
     private static TerminalCashFiscalIssuanceRejectedException Rejected(string errorCode, string message) =>
         new(errorCode, message);
+
+    private static string ToRecoveryStatus(FiscalExceptionControlledRetryExecutionStatus status) => status switch
+    {
+        FiscalExceptionControlledRetryExecutionStatus.DryRunReady => "DRY_RUN_READY",
+        FiscalExceptionControlledRetryExecutionStatus.ReplayMatched => "REPLAY_MATCHED",
+        _ => status.ToString().ToUpperInvariant()
+    };
+
+    private enum TerminalCashRecoveryClass
+    {
+        ConfigurationFailure,
+        ServiceFailure
+    }
 }
