@@ -52,12 +52,12 @@ CREATE TEMP TABLE management_platform_uat_users (
 
 INSERT INTO management_platform_uat_users (user_id, username, email, display_name, user_type, role_code) VALUES
 ('79000000-0000-0000-0000-000000000001', 'uat-system-rbac-admin', 'uat-system-rbac-admin@example.test', 'UAT System / RBAC Administrator', 'INTERNAL_ADMIN', 'SYSTEM_RBAC_ADMINISTRATOR'),
-('79000000-0000-0000-0000-000000000002', 'uat-platform-admin', 'uat-platform-admin@example.test', 'UAT Platform Administrator', 'OPERATIONS_USER', 'PLATFORM_ADMINISTRATOR'),
-('77000000-0000-0000-0000-000000000012', 'uat-operations-supervisor', 'uat-operations-supervisor@example.test', 'UAT Operations Supervisor', 'SITE_OPERATOR', 'OPERATIONS_SUPERVISOR'),
-('77000000-0000-0000-0000-000000000010', 'uat-operator-support', 'uat-operator-support@example.test', 'UAT Operator / Support Staff', 'SITE_OPERATOR', 'OPERATOR_SUPPORT_STAFF'),
+('79000000-0000-0000-0000-000000000002', 'uat-platform-admin', 'uat-platform-admin@example.test', 'UAT Platform Administrator', 'INTERNAL_ADMIN', 'PLATFORM_ADMINISTRATOR'),
+('77000000-0000-0000-0000-000000000012', 'uat-operations-supervisor', 'uat-operations-supervisor@example.test', 'UAT Operations Supervisor', 'OPERATIONS_USER', 'OPERATIONS_SUPERVISOR'),
+('77000000-0000-0000-0000-000000000010', 'uat-operator-support', 'uat-operator-support@example.test', 'UAT Site Operator', 'SITE_OPERATOR', 'SITE_OPERATOR'),
 ('79000000-0000-0000-0000-000000000005', 'uat-finance-reconciliation', 'uat-finance-reconciliation@example.test', 'UAT Finance / Reconciliation Analyst', 'FINANCE_USER', 'FINANCE_RECONCILIATION_ANALYST'),
 ('79000000-0000-0000-0000-000000000006', 'uat-compliance-policy-admin', 'uat-compliance-policy-admin@example.test', 'UAT Compliance / Policy Administrator', 'COMPLIANCE_USER', 'COMPLIANCE_POLICY_ADMINISTRATOR'),
-('79000000-0000-0000-0000-000000000007', 'uat-executive-management', 'uat-executive-management@example.test', 'UAT Executive / Management', 'SUPPORT_USER', 'EXECUTIVE_MANAGEMENT');
+('79000000-0000-0000-0000-000000000007', 'uat-executive-management', 'uat-executive-management@example.test', 'UAT Executive / Management', 'OTHER', 'EXECUTIVE_MANAGEMENT');
 
 CREATE TEMP TABLE management_platform_uat_roles (
     role_code varchar(64) PRIMARY KEY,
@@ -368,45 +368,24 @@ SET username = EXCLUDED.username,
     updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
     updated_at = now();
 
-INSERT INTO identity.roles (
-    role_id,
-    role_code,
-    role_name,
-    role_description,
-    role_type,
-    role_status,
-    is_privileged,
-    requires_elevated_approval,
-    effective_from,
-    effective_to,
-    created_by_service_identity_id,
-    updated_by_service_identity_id
-)
-SELECT
-    pg_temp.exitpass_uat_uuid('management-platform-uat-role:' || role_code),
-    role_code,
-    role_name,
-    role_description,
-    role_type,
-    'ACTIVE',
-    is_privileged,
-    requires_elevated_approval,
-    '2020-01-01T00:00:00Z',
-    '2035-01-01T00:00:00Z',
-    '79000000-0000-0000-0000-000000000003',
-    '79000000-0000-0000-0000-000000000003'
-FROM management_platform_uat_roles
-ON CONFLICT ON CONSTRAINT uq_roles__role_code DO UPDATE
-SET role_name = EXCLUDED.role_name,
-    role_description = EXCLUDED.role_description,
-    role_type = EXCLUDED.role_type,
-    role_status = EXCLUDED.role_status,
-    is_privileged = EXCLUDED.is_privileged,
-    requires_elevated_approval = EXCLUDED.requires_elevated_approval,
-    effective_from = EXCLUDED.effective_from,
-    effective_to = EXCLUDED.effective_to,
-    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
-    updated_at = now();
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM management_platform_uat_users expected
+        LEFT JOIN identity.roles role
+          ON role.role_code = expected.role_code
+         AND role.role_provenance = 'CANONICAL_ROLE'
+         AND role.human_assignable
+         AND role.role_status = 'ACTIVE'
+        LEFT JOIN identity.role_user_type_compatibility compatibility
+          ON compatibility.role_id = role.role_id
+         AND compatibility.user_type = expected.user_type
+        WHERE role.role_id IS NULL OR compatibility.role_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'Wave 3 canonical role catalog and user-type compatibility must be deployed before UAT fixture users are seeded.';
+    END IF;
+END $$;
 
 INSERT INTO identity.permissions (
     permission_id,
@@ -445,57 +424,26 @@ SET permission_name = EXCLUDED.permission_name,
     updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
     updated_at = now();
 
-UPDATE identity.role_permissions rp
-SET binding_status = 'ACTIVE',
-    binding_reason_code = 'MANAGEMENT_PLATFORM_UAT_ROLE_PERMISSION_SEED',
-    assigned_by_service_identity_id = '79000000-0000-0000-0000-000000000003',
-    effective_from = '2020-01-01T00:00:00Z',
-    effective_to = '2035-01-01T00:00:00Z',
-    revoked_at = NULL,
-    revoked_by_user_id = NULL,
-    revoked_by_service_identity_id = NULL,
-    revocation_reason_code = NULL,
+-- Wave 3 intentionally does not insert roles or role-permission bindings here.
+-- Isolated UAT users consume the database-owned canonical catalog unchanged.
+
+UPDATE identity.user_roles ur
+SET assignment_status = 'REVOKED',
+    revoked_at = now(),
+    revoked_by_service_identity_id = '79000000-0000-0000-0000-000000000003',
+    revocation_reason_code = 'WAVE3_UAT_ROLE_REPLACED',
     updated_by_service_identity_id = '79000000-0000-0000-0000-000000000003',
     updated_at = now()
-FROM management_platform_uat_role_permission_map rpm
-JOIN identity.roles r ON r.role_code = rpm.role_code
-JOIN identity.permissions p ON p.permission_code = rpm.permission_code
-WHERE rp.role_id = r.role_id
-  AND rp.permission_id = p.permission_id;
-
-INSERT INTO identity.role_permissions (
-    role_permission_id,
-    role_id,
-    permission_id,
-    binding_status,
-    binding_reason_code,
-    assigned_by_service_identity_id,
-    effective_from,
-    effective_to,
-    created_by_service_identity_id,
-    updated_by_service_identity_id
-)
-SELECT
-    pg_temp.exitpass_uat_uuid('management-platform-uat-role-permission:' || rpm.role_code || ':' || rpm.permission_code),
-    r.role_id,
-    p.permission_id,
-    'ACTIVE',
-    'MANAGEMENT_PLATFORM_UAT_ROLE_PERMISSION_SEED',
-    '79000000-0000-0000-0000-000000000003',
-    '2020-01-01T00:00:00Z',
-    '2035-01-01T00:00:00Z',
-    '79000000-0000-0000-0000-000000000003',
-    '79000000-0000-0000-0000-000000000003'
-FROM management_platform_uat_role_permission_map rpm
-JOIN identity.roles r ON r.role_code = rpm.role_code
-JOIN identity.permissions p ON p.permission_code = rpm.permission_code
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM identity.role_permissions existing
-    WHERE existing.role_id = r.role_id
-      AND existing.permission_id = p.permission_id
-      AND existing.binding_status = 'ACTIVE'
-);
+FROM identity.roles role
+WHERE ur.role_id = role.role_id
+  AND ur.user_id IN (SELECT user_id FROM management_platform_uat_users)
+  AND ur.assignment_status = 'ACTIVE'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM management_platform_uat_users expected
+      WHERE expected.user_id = ur.user_id
+        AND expected.role_code = role.role_code
+  );
 
 UPDATE identity.user_roles ur
 SET assignment_status = 'ACTIVE',

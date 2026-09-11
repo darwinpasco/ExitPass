@@ -59,7 +59,13 @@ public sealed record IdentityRoleDefinition(
     bool RequiresElevatedApproval,
     DateTimeOffset EffectiveFrom,
     DateTimeOffset? EffectiveTo,
-    long RowVersion);
+    long RowVersion,
+    string Provenance = "HISTORICAL_LEGACY_ROLE",
+    bool DirectAddUserEligible = false,
+    bool HumanAssignable = false,
+    IReadOnlyList<string>? AllowedUserTypes = null);
+
+public sealed record IdentityRoleCatalogQuery(string? UserType, bool DirectAddUserOnly);
 
 public sealed record IdentityPermissionDefinition(
     Guid PermissionReference,

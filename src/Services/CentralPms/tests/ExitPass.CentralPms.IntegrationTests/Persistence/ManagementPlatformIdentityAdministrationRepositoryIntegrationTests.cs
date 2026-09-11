@@ -344,23 +344,40 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
     }
 
     [Fact]
-    public async Task PrivilegedDecision_RequiresIndependentActorAndDoesNotImplicitlyActivate()
+    public async Task CreateUser_WithPrivilegedRole_RequiresGovernedRequestAndCreatesNothing()
+    {
+        var seed = await SeedAdministratorAsync();
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var username = $"i021.direct-privileged.{Guid.NewGuid():N}";
+        var systemAdministratorRoleId = await GetRoleIdAsync("SYSTEM_ADMIN");
+
+        var result = await repository.CreateUserAsync(
+            seed.Actor,
+            new CreateIdentityUserCommand(
+                username, "I-021 Direct Privileged Role", null, null, "INTERNAL_ADMIN",
+                systemAdministratorRoleId, "SITE", seed.SiteId, null,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_DIRECT_PRIVILEGED", "direct-privileged", Guid.NewGuid()),
+            CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
+        result.Classification.Should().Be("PRIVILEGED_ACCESS_REQUEST_REQUIRED");
+        (await CountUsersByUsernameAsync(username)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PrivilegedDecision_RequiresIndependentActorAndAtomicallyProvisionsAuthority()
     {
         var requester = await SeedAdministratorAsync();
         var decider = await SeedAdministratorAsync();
+        var target = await SeedAdministratorAsync();
         var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
-        var target = await repository.CreateUserAsync(
-            requester.Actor,
-            new CreateIdentityUserCommand(
-                $"i021.priv.{Guid.NewGuid():N}", "I-021 Privileged Target", null, null, "SITE_OPERATOR",
-                requester.DelegableRoleId, "SITE", requester.SiteId, null,
-                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_PRIV_TARGET", "priv-target", Guid.NewGuid()),
-            CancellationToken.None);
+        var platformRoleId = await GetRoleIdAsync("PLATFORM_ADMINISTRATOR");
+        var initialEpoch = await GetAuthorizationEpochAsync(target.Actor.UserId);
 
         var requested = await repository.CreatePrivilegedAccessRequestAsync(
             requester.Actor,
             new CreatePrivilegedAccessRequestCommand(
-                target.Value!.UserReference, requester.SystemAdministratorRoleId, "GLOBAL", null, null,
+                target.Actor.UserId, platformRoleId, "SITE", requester.SiteId, null,
                 DateTimeOffset.UtcNow.AddMinutes(-1), null, DateTimeOffset.UtcNow.AddHours(1), "I021_PRIV_REQUEST", Guid.NewGuid()),
             CancellationToken.None);
         requested.Value!.Status.Should().Be("PENDING_DECISION");
@@ -375,9 +392,86 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             decider.Actor,
             new DecidePrivilegedAccessCommand(requested.Value.RequestReference, "APPROVE", "I021_APPROVE", requested.Value.RowVersion, Guid.NewGuid()),
             CancellationToken.None);
-        approved.Value!.Status.Should().Be("APPROVED");
+        approved.Value!.Status.Should().Be("APPLIED");
         approved.Value.Decisions.Should().ContainSingle(item => item.DecidedByUserReference == decider.Actor.UserId);
-        (await CountActiveRoleAssignmentsAsync(target.Value.UserReference, requester.SystemAdministratorRoleId)).Should().Be(0);
+        (await CountActiveRoleAssignmentsAsync(target.Actor.UserId, platformRoleId)).Should().Be(1);
+        (await CountActiveScopeGrantsAsync(target.Actor.UserId, platformRoleId, "SITE", requester.SiteId)).Should().Be(1);
+        (await GetAuthorizationEpochAsync(target.Actor.UserId)).Should().Be(initialEpoch + 1);
+        (await GetSessionStatusAsync(target.PublicSessionReference)).Should().Be("REVOKED");
+    }
+
+    [Fact]
+    public async Task RoleCatalog_IsCanonicalServerFilteredAndDirectAddUserSafe()
+    {
+        var seed = await SeedAdministratorAsync();
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+
+        var all = await repository.ListRolesAsync(seed.Actor, new(null, false), Guid.NewGuid(), CancellationToken.None);
+        all.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        all.Value.Should().HaveCount(14);
+        all.Value.Should().OnlyContain(role => role.Provenance == "CANONICAL_ROLE" && role.HumanAssignable);
+        all.Value.Should().NotContain(role =>
+            role.Code == "SERVICE_PRINCIPAL" || role.Code == "SITE_ADMINISTRATOR" ||
+            role.Code == "OPERATOR_SUPPORT_STAFF" || role.Code == "FINANCE_RECONCILIATION");
+
+        var finance = await repository.ListRolesAsync(seed.Actor, new("FINANCE_USER", true), Guid.NewGuid(), CancellationToken.None);
+        finance.Value.Should().ContainSingle();
+        finance.Value!.Single().Code.Should().Be("FINANCE_RECONCILIATION_ANALYST");
+        finance.Value.Single().Name.Should().Be("Finance / Reconciliation Analyst");
+        finance.Value.Single().DirectAddUserEligible.Should().BeTrue();
+        finance.Value.Single().IsPrivileged.Should().BeFalse();
+
+        var internalDirect = await repository.ListRolesAsync(seed.Actor, new("INTERNAL_ADMIN", true), Guid.NewGuid(), CancellationToken.None);
+        internalDirect.Value.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task LaterRoleAssignment_RevalidatesCompatibilityAndRoleProvenanceBeforePersistence()
+    {
+        var seed = await SeedAdministratorAsync();
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var target = await repository.CreateUserAsync(
+            seed.Actor,
+            new CreateIdentityUserCommand(
+                $"i021.later.{Guid.NewGuid():N}", "I-021 Later Assignment", null, null, "SITE_OPERATOR",
+                seed.DelegableRoleId, "SITE", seed.SiteId, null,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_LATER_TARGET", "later-target", Guid.NewGuid()),
+            CancellationToken.None);
+        var supportRoleId = await GetRoleIdAsync("SUPPORT_AGENT");
+        var historicalRoleId = await GetRoleIdAsync("OPERATOR_SUPPORT_STAFF");
+        var serviceRoleId = await GetRoleIdAsync("SERVICE_PRINCIPAL");
+        var uatRoleId = await InsertTestRoleAsync("UAT_WAVE3_HUMAN_ROLE", "UAT_TEST_ROLE", "ACTIVE", true, true, "SITE_OPERATOR");
+        var inactiveRoleId = await InsertTestRoleAsync("WAVE3_INACTIVE_ROLE", "CANONICAL_ROLE", "RETIRED", true, true, "SITE_OPERATOR");
+
+        var incompatible = await repository.AssignRoleAsync(
+            seed.Actor,
+            new AssignIdentityRoleCommand(target.Value!.UserReference, supportRoleId,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_INCOMPATIBLE_LATER", "later-incompatible", Guid.NewGuid()),
+            CancellationToken.None);
+        incompatible.Outcome.Should().Be(IdentityAdministrationOutcome.Invalid);
+        incompatible.Classification.Should().Be("USER_TYPE_ROLE_INCOMPATIBLE");
+        (await CountActiveRoleAssignmentsAsync(target.Value.UserReference, supportRoleId)).Should().Be(0);
+
+        var historical = await repository.AssignRoleAsync(
+            seed.Actor,
+            new AssignIdentityRoleCommand(target.Value.UserReference, historicalRoleId,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_HISTORICAL_LATER", "later-historical", Guid.NewGuid()),
+            CancellationToken.None);
+        historical.Outcome.Should().Be(IdentityAdministrationOutcome.Invalid);
+        historical.Classification.Should().Be("ROLE_NOT_HUMAN_ASSIGNABLE");
+        (await CountActiveRoleAssignmentsAsync(target.Value.UserReference, historicalRoleId)).Should().Be(0);
+
+        foreach (var rejectedRoleId in new[] { serviceRoleId, uatRoleId, inactiveRoleId })
+        {
+            var rejected = await repository.AssignRoleAsync(
+                seed.Actor,
+                new AssignIdentityRoleCommand(target.Value.UserReference, rejectedRoleId,
+                    DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_REJECT_NONCANONICAL", "later-rejected", Guid.NewGuid()),
+                CancellationToken.None);
+            rejected.Outcome.Should().Be(IdentityAdministrationOutcome.Invalid);
+            rejected.Classification.Should().Be("ROLE_NOT_HUMAN_ASSIGNABLE");
+            (await CountActiveRoleAssignmentsAsync(target.Value.UserReference, rejectedRoleId)).Should().Be(0);
+        }
     }
 
     [Fact]
@@ -821,6 +915,83 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         await using var command = new NpgsqlCommand("SELECT count(*) FROM identity.user_roles WHERE user_id = @user_id AND role_id = @role_id AND assignment_status = 'ACTIVE';", connection);
         command.Parameters.AddWithValue("user_id", userId);
         command.Parameters.AddWithValue("role_id", roleId);
+        return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<Guid> GetRoleIdAsync(string roleCode)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT role_id FROM identity.roles WHERE role_code=@role_code;", connection);
+        command.Parameters.AddWithValue("role_code", roleCode);
+        return (Guid)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<Guid> InsertTestRoleAsync(
+        string roleCode,
+        string provenance,
+        string status,
+        bool humanAssignable,
+        bool directAddUserEligible,
+        string compatibleUserType)
+    {
+        var roleId = Guid.NewGuid();
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        const string sql = """
+            INSERT INTO identity.roles (
+                role_id, role_code, role_name, role_type, role_status, is_privileged,
+                requires_elevated_approval, role_provenance, direct_add_user_eligible,
+                human_assignable, effective_from)
+            VALUES (
+                @role_id, @role_code, @role_code, 'OTHER', @status::identity.role_status_enum, false,
+                false, @provenance::identity.role_provenance_enum, @direct_add_user_eligible,
+                @human_assignable, now() - interval '1 minute');
+
+            INSERT INTO identity.role_user_type_compatibility (
+                role_id, user_type)
+            VALUES (@role_id, @user_type::identity.user_type_enum);
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("role_id", roleId);
+        command.Parameters.AddWithValue("role_code", roleCode);
+        command.Parameters.AddWithValue("status", status);
+        command.Parameters.AddWithValue("provenance", provenance);
+        command.Parameters.AddWithValue("direct_add_user_eligible", directAddUserEligible);
+        command.Parameters.AddWithValue("human_assignable", humanAssignable);
+        command.Parameters.AddWithValue("user_type", compatibleUserType);
+        await command.ExecuteNonQueryAsync();
+        return roleId;
+    }
+
+    private async Task<long> GetAuthorizationEpochAsync(Guid userId)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT authorization_epoch FROM identity.users WHERE user_id=@user_id;", connection);
+        command.Parameters.AddWithValue("user_id", userId);
+        return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<long> CountActiveScopeGrantsAsync(Guid userId, Guid roleId, string scopeType, Guid siteId)
+    {
+        const string sql = """
+            SELECT count(*)
+            FROM identity.user_role_scope_grants scope_grant
+            JOIN identity.user_roles assignment ON assignment.user_role_id=scope_grant.user_role_id
+            WHERE assignment.user_id=@user_id AND assignment.role_id=@role_id
+              AND assignment.assignment_status='ACTIVE' AND scope_grant.grant_status='ACTIVE'
+              AND scope_grant.scope_type::text=@scope_type AND scope_grant.site_id=@site_id;
+            """;
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("user_id", userId);
+        command.Parameters.AddWithValue("role_id", roleId);
+        command.Parameters.AddWithValue("scope_type", scopeType);
+        command.Parameters.AddWithValue("site_id", siteId);
         return (long)(await command.ExecuteScalarAsync())!;
     }
 

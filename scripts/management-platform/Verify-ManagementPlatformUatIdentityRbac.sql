@@ -13,6 +13,50 @@ BEGIN
     END IF;
 END $$;
 
+DO $wave3$
+DECLARE
+    v_problem_count integer;
+BEGIN
+    WITH expected(user_id, username, user_type, role_code) AS (
+        VALUES
+        ('79000000-0000-0000-0000-000000000001'::uuid, 'uat-system-rbac-admin', 'INTERNAL_ADMIN'::identity.user_type_enum, 'SYSTEM_RBAC_ADMINISTRATOR'),
+        ('79000000-0000-0000-0000-000000000002'::uuid, 'uat-platform-admin', 'INTERNAL_ADMIN'::identity.user_type_enum, 'PLATFORM_ADMINISTRATOR'),
+        ('77000000-0000-0000-0000-000000000012'::uuid, 'uat-operations-supervisor', 'OPERATIONS_USER'::identity.user_type_enum, 'OPERATIONS_SUPERVISOR'),
+        ('77000000-0000-0000-0000-000000000010'::uuid, 'uat-operator-support', 'SITE_OPERATOR'::identity.user_type_enum, 'SITE_OPERATOR'),
+        ('79000000-0000-0000-0000-000000000005'::uuid, 'uat-finance-reconciliation', 'FINANCE_USER'::identity.user_type_enum, 'FINANCE_RECONCILIATION_ANALYST'),
+        ('79000000-0000-0000-0000-000000000006'::uuid, 'uat-compliance-policy-admin', 'COMPLIANCE_USER'::identity.user_type_enum, 'COMPLIANCE_POLICY_ADMINISTRATOR'),
+        ('79000000-0000-0000-0000-000000000007'::uuid, 'uat-executive-management', 'OTHER'::identity.user_type_enum, 'EXECUTIVE_MANAGEMENT')
+    )
+    SELECT count(*) INTO v_problem_count
+    FROM expected
+    LEFT JOIN identity.users u ON u.user_id=expected.user_id AND u.username=expected.username
+      AND u.user_type=expected.user_type AND u.user_status='ACTIVE'
+    LEFT JOIN identity.roles r ON r.role_code=expected.role_code AND r.role_status='ACTIVE'
+      AND r.role_provenance='CANONICAL_ROLE' AND r.human_assignable
+    LEFT JOIN identity.role_user_type_compatibility c ON c.role_id=r.role_id AND c.user_type=expected.user_type
+    LEFT JOIN identity.user_roles ur ON ur.user_id=u.user_id AND ur.role_id=r.role_id AND ur.assignment_status='ACTIVE'
+    WHERE u.user_id IS NULL OR r.role_id IS NULL OR c.role_id IS NULL OR ur.user_role_id IS NULL;
+
+    IF v_problem_count <> 0 THEN
+        RAISE EXCEPTION 'Management Platform UAT users are not aligned to the canonical Wave 3 role catalog (% invalid rows).', v_problem_count;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM identity.role_permissions rp
+        JOIN identity.roles r ON r.role_id=rp.role_id
+        JOIN identity.permissions p ON p.permission_id=rp.permission_id
+        WHERE rp.binding_status='ACTIVE' AND r.role_provenance='CANONICAL_ROLE'
+          AND p.permission_code='uat-fixture.manage'
+    ) THEN
+        RAISE EXCEPTION 'uat-fixture.manage is assigned to a canonical role.';
+    END IF;
+END
+$wave3$;
+
+-- Historical verifier retained below as non-executing evidence of the
+-- superseded UAT bundles. The Wave 3 validation above is authoritative.
+/*
+
 SET client_min_messages TO WARNING;
 DROP TABLE IF EXISTS management_platform_uat_operator_console_fixture_counts;
 RESET client_min_messages;
@@ -304,3 +348,4 @@ SELECT
     (SELECT site_count FROM operator_console_fixture) AS uat_site_count,
     (SELECT device_binding_count FROM operator_console_fixture) AS uat_device_binding_count,
     (SELECT active_shift_count FROM operator_console_fixture) AS uat_active_shift_count;
+*/

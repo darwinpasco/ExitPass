@@ -54,6 +54,7 @@ public interface IManagementPlatformIdentityAdministrationRepository
 
     Task<IdentityAdministrationResult<IReadOnlyList<IdentityRoleDefinition>>> ListRolesAsync(
         IdentityAdministrationActor actor,
+        IdentityRoleCatalogQuery query,
         Guid correlationId,
         CancellationToken cancellationToken);
 
