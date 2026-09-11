@@ -10,6 +10,23 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
     private static readonly IdentityAdministrationActor Actor = new(Guid.NewGuid(), Guid.NewGuid());
 
     [Fact]
+    public async Task DelegableScopes_ForwardsTheAuthenticatedActorAndCorrelation()
+    {
+        var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
+        var service = new ManagementPlatformIdentityAdministrationService(
+            repository, Substitute.For<IHumanAuthenticationAdministrationGateway>());
+        var correlationId = Guid.NewGuid();
+        var expected = IdentityAdministrationResult<DelegableScopeCatalog>.Succeeded(
+            new DelegableScopeCatalog([], []), correlationId);
+        repository.GetDelegableScopesAsync(Actor, correlationId, Arg.Any<CancellationToken>()).Returns(expected);
+
+        var result = await service.GetDelegableScopesAsync(Actor, correlationId, CancellationToken.None);
+
+        result.Should().BeSameAs(expected);
+        await repository.Received(1).GetDelegableScopesAsync(Actor, correlationId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task CreateUser_NormalizesControlledCodesWithoutAcceptingActorFromRequest()
     {
         var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();

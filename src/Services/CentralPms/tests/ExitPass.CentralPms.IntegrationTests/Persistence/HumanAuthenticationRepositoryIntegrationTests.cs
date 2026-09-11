@@ -410,8 +410,7 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
     private async Task<(Guid SiteId, Guid SiteGroupId)> GrantSeededRoleAndScopesAsync(Guid userId)
     {
         var roleId = await ScalarAsync<Guid>("SELECT role_id FROM identity.roles WHERE role_status='ACTIVE' ORDER BY role_code LIMIT 1;");
-        var siteId = await ScalarAsync<Guid>("SELECT site_id FROM sites.sites WHERE site_status='ACTIVE' ORDER BY site_code LIMIT 1;");
-        var siteGroupId = await ScalarAsync<Guid>("SELECT site_group_id FROM sites.site_groups WHERE site_group_status='ACTIVE' ORDER BY site_group_code LIMIT 1;");
+        var (siteId, siteGroupId) = await ActivateCanonicalPitxLevel3Async();
         var userRoleId = Guid.NewGuid();
         const string sql = """
             INSERT INTO identity.user_roles (user_role_id,user_id,role_id,assignment_status,assignment_reason_code,
@@ -500,7 +499,7 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
     private async Task<(Guid DeviceId, Guid SiteId)> SeedAptDeviceAsync()
     {
         var deviceId = Guid.NewGuid();
-        var siteId = await ScalarAsync<Guid>("SELECT site_id FROM sites.sites WHERE site_status='ACTIVE' ORDER BY site_code LIMIT 1;");
+        var (siteId, _) = await ActivateCanonicalPitxLevel3Async();
         const string sql = """
             INSERT INTO identity.service_identities (service_identity_id,service_identity_code,service_identity_name,
                 identity_type,identity_status,effective_from,created_by_service_identity_id,updated_by_service_identity_id)
@@ -519,6 +518,23 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
         command.Parameters.AddWithValue("service_id", CentralPmsServiceIdentityId);
         await command.ExecuteNonQueryAsync();
         return (deviceId, siteId);
+    }
+
+    private async Task<(Guid SiteId, Guid SiteGroupId)> ActivateCanonicalPitxLevel3Async()
+    {
+        var siteGroupId = Guid.Parse("a6dbadf6-68b5-5bed-a7e0-a75faee70841");
+        var siteId = Guid.Parse("2d1dcdf8-f563-537c-8542-0bde7cc9da97");
+        const string sql = """
+            UPDATE sites.site_groups SET site_group_status='ACTIVE' WHERE site_group_id=@site_group_id;
+            UPDATE sites.sites SET site_status='ACTIVE' WHERE site_id=@site_id AND site_group_id=@site_group_id;
+            """;
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("site_group_id", siteGroupId);
+        command.Parameters.AddWithValue("site_id", siteId);
+        (await command.ExecuteNonQueryAsync()).Should().Be(2);
+        return (siteId, siteGroupId);
     }
 
     private async Task<(Guid DeviceId, Guid ShiftId)> SeedOperatorContextAsync(Guid userId, Guid siteId, Guid siteGroupId, string proofThumbprint)
@@ -547,13 +563,13 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
                 gen_random_uuid(),@service_id,@service_id);
 
             INSERT INTO operator_console.operator_shifts (
-                operator_shift_id,hr_provider_code,external_shift_id_hash,hr_identity_mapping_id,operator_user_id,
+                operator_shift_id,shift_reference,shift_origin,hr_provider_code,external_shift_id_hash,hr_identity_mapping_id,operator_user_id,
                 site_group_id,site_id,scheduled_start_at,scheduled_end_at,source_imported_at,import_status_code,
-                source_system_code,operational_status,active_from,active_to,correlation_id,
+                source_system_code,operational_status,active_from,active_to,opened_at,correlation_id,
                 created_by_service_identity_id,updated_by_service_identity_id)
-            VALUES (@shift_id,'TEST',@shift_hash,@mapping_id,@user_id,@site_group_id,@site_id,
+            VALUES (@shift_id,@shift_reference,'HR_IMPORT','TEST',@shift_hash,@mapping_id,@user_id,@site_group_id,@site_id,
                 now()-interval '1 hour',now()+interval '8 hours',now(),'IMPORTED','TEST','ACTIVE',
-                now()-interval '1 hour',now()+interval '8 hours',gen_random_uuid(),@service_id,@service_id);
+                now()-interval '1 hour',now()+interval '8 hours',now()-interval '1 hour',gen_random_uuid(),@service_id,@service_id);
             """;
         await using var connection = new NpgsqlConnection(_database.ConnectionString);
         await connection.OpenAsync();
@@ -567,6 +583,7 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
         command.Parameters.AddWithValue("site_id", siteId);
         command.Parameters.AddWithValue("proof_thumbprint", proofThumbprint);
         command.Parameters.AddWithValue("shift_id", shiftId);
+        command.Parameters.AddWithValue("shift_reference", $"I020-{shiftId:N}");
         command.Parameters.AddWithValue("shift_hash", Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant());
         command.Parameters.AddWithValue("service_id", CentralPmsServiceIdentityId);
         await command.ExecuteNonQueryAsync();

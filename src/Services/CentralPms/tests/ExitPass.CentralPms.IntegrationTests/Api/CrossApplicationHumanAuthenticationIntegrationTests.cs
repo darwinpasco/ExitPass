@@ -488,10 +488,12 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         var userId = Guid.NewGuid();
         var roleId = Guid.NewGuid();
         var userRoleId = Guid.NewGuid();
-        var siteId = await ScalarAsync<Guid>(
-            "SELECT site_id FROM sites.sites WHERE site_status='ACTIVE' ORDER BY site_code LIMIT 1;");
-        var siteGroupId = await ScalarAsync<Guid>(
-            "SELECT site_group_id FROM sites.site_groups WHERE site_group_status='ACTIVE' ORDER BY site_group_code LIMIT 1;");
+        var siteGroupId = Guid.Parse("a6dbadf6-68b5-5bed-a7e0-a75faee70841");
+        var siteId = Guid.Parse("2d1dcdf8-f563-537c-8542-0bde7cc9da97");
+        await ExecuteAsync("""
+            UPDATE sites.site_groups SET site_group_status='ACTIVE' WHERE site_group_id=@site_group_id;
+            UPDATE sites.sites SET site_status='ACTIVE' WHERE site_id=@site_id AND site_group_id=@site_group_id;
+            """, ("site_group_id", siteGroupId), ("site_id", siteId));
         var username = $"i022.{Guid.NewGuid():N}"[..24];
 
         const string sql = """
@@ -598,19 +600,20 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
             VALUES (gen_random_uuid(),@device_id,@site_group_id,@site_id,'ACTIVE','I022_PROOF',now(),
                 now()-interval '1 minute',gen_random_uuid(),@service_id,@service_id);
             INSERT INTO operator_console.operator_shifts (
-                operator_shift_id,hr_provider_code,external_shift_id_hash,hr_identity_mapping_id,operator_user_id,
+                operator_shift_id,shift_reference,shift_origin,hr_provider_code,external_shift_id_hash,hr_identity_mapping_id,operator_user_id,
                 site_group_id,site_id,scheduled_start_at,scheduled_end_at,source_imported_at,import_status_code,
-                source_system_code,operational_status,active_from,active_to,correlation_id,
+                source_system_code,operational_status,active_from,active_to,opened_at,correlation_id,
                 created_by_service_identity_id,updated_by_service_identity_id)
-            VALUES (@shift_id,'I022',@shift_hash,@mapping_id,@user_id,@site_group_id,@site_id,
+            VALUES (@shift_id,@shift_reference,'HR_IMPORT','I022',@shift_hash,@mapping_id,@user_id,@site_group_id,@site_id,
                 now()-interval '1 hour',now()+interval '8 hours',now(),'IMPORTED','I022','ACTIVE',
-                now()-interval '1 hour',now()+interval '8 hours',gen_random_uuid(),@service_id,@service_id);
+                now()-interval '1 hour',now()+interval '8 hours',now()-interval '1 hour',gen_random_uuid(),@service_id,@service_id);
             """,
             ("mapping_id", mappingId), ("user_id", seed.UserId),
             ("person_hash", Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant()),
             ("device_id", deviceId), ("device_code", $"I022_OC_{deviceId:N}"[..32]),
             ("site_group_id", seed.SiteGroupId), ("site_id", seed.SiteId), ("proof_hash", proofHash),
-            ("shift_id", shiftId), ("shift_hash", Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant()),
+            ("shift_id", shiftId), ("shift_reference", $"I022-{shiftId:N}"),
+            ("shift_hash", Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant()),
             ("service_id", CentralPmsServiceIdentityId));
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/operator-console/device-binding/establish")

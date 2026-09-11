@@ -13,6 +13,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
     private const string PermissionViewPermission = "permission.view";
     private const string RoleAssignmentPermission = "identity.role-assignment.manage";
     private const string ScopeAssignmentPermission = "identity.scope-assignment.manage";
+    private const string CanonicalCarparkCatalogCode = "PROFESSIONAL_PARKING_REAL_CARPARK_V1";
     private const string PrivilegedDecisionPermission = "identity.privileged-access.decide";
     private const string AccessReviewPermission = "identity.access-review.manage";
     private const string SessionViewPermission = "human-authentication.session.admin.view";
@@ -454,6 +455,105 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         }
 
         return IdentityAdministrationResult<IReadOnlyList<IdentityPermissionDefinition>>.Succeeded(permissions, correlationId);
+    }
+
+    public async Task<IdentityAdministrationResult<DelegableScopeCatalog>> GetDelegableScopesAsync(
+        IdentityAdministrationActor actor,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        if (!await IsAuthorizedAnyAsync(connection, null, actor, [ScopeAssignmentPermission, "assignment.manage"], cancellationToken))
+        {
+            return Forbidden<DelegableScopeCatalog>(correlationId);
+        }
+
+        const string groupSql = """
+            SELECT sg.site_group_id, sg.site_group_code, sg.site_group_name,
+                   sg.site_group_status::text, sg.effective_from, sg.effective_to
+            FROM sites.real_carpark_catalog_site_groups catalog
+            JOIN sites.site_groups sg ON sg.site_group_id = catalog.site_group_id
+            WHERE catalog.catalog_code = @catalog_code
+              AND sg.site_group_status = 'ACTIVE'
+              AND sg.effective_from <= now()
+              AND (sg.effective_to IS NULL OR sg.effective_to > now())
+              AND EXISTS (
+                  SELECT 1
+                  FROM identity.user_roles ur
+                  JOIN identity.user_role_scope_grants scope_grant ON scope_grant.user_role_id = ur.user_role_id
+                  WHERE ur.user_id = @actor_user_id
+                    AND ur.assignment_status = 'ACTIVE'
+                    AND ur.effective_from <= now()
+                    AND (ur.effective_to IS NULL OR ur.effective_to > now())
+                    AND scope_grant.grant_status = 'ACTIVE'
+                    AND scope_grant.effective_from <= now()
+                    AND (scope_grant.effective_to IS NULL OR scope_grant.effective_to > now())
+                    AND (scope_grant.scope_type = 'GLOBAL'
+                      OR (scope_grant.scope_type = 'SITE_GROUP' AND scope_grant.site_group_id = sg.site_group_id)))
+            ORDER BY sg.site_group_name, sg.site_group_code, sg.site_group_id;
+            """;
+        var groups = new List<DelegableSiteGroup>();
+        await using (var command = new NpgsqlCommand(groupSql, connection))
+        {
+            command.Parameters.AddWithValue("catalog_code", CanonicalCarparkCatalogCode);
+            command.Parameters.AddWithValue("actor_user_id", actor.UserId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                groups.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                    reader.GetFieldValue<DateTimeOffset>(4), GetNullableDateTimeOffset(reader, 5)));
+            }
+        }
+
+        const string siteSql = """
+            SELECT s.site_id, s.site_code, s.site_name,
+                   sg.site_group_id, sg.site_group_code, sg.site_group_name,
+                   s.site_status::text, s.effective_from, s.effective_to
+            FROM sites.real_carpark_catalog_sites catalog
+            JOIN sites.sites s ON s.site_id = catalog.site_id
+                              AND s.site_group_id = catalog.site_group_id
+            JOIN sites.real_carpark_catalog_site_groups group_catalog
+              ON group_catalog.site_group_id = s.site_group_id
+             AND group_catalog.catalog_code = catalog.catalog_code
+            JOIN sites.site_groups sg ON sg.site_group_id = s.site_group_id
+            WHERE catalog.catalog_code = @catalog_code
+              AND s.site_status = 'ACTIVE'
+              AND s.effective_from <= now()
+              AND (s.effective_to IS NULL OR s.effective_to > now())
+              AND sg.site_group_status = 'ACTIVE'
+              AND sg.effective_from <= now()
+              AND (sg.effective_to IS NULL OR sg.effective_to > now())
+              AND EXISTS (
+                  SELECT 1
+                  FROM identity.user_roles ur
+                  JOIN identity.user_role_scope_grants scope_grant ON scope_grant.user_role_id = ur.user_role_id
+                  WHERE ur.user_id = @actor_user_id
+                    AND ur.assignment_status = 'ACTIVE'
+                    AND ur.effective_from <= now()
+                    AND (ur.effective_to IS NULL OR ur.effective_to > now())
+                    AND scope_grant.grant_status = 'ACTIVE'
+                    AND scope_grant.effective_from <= now()
+                    AND (scope_grant.effective_to IS NULL OR scope_grant.effective_to > now())
+                    AND (scope_grant.scope_type = 'GLOBAL'
+                      OR (scope_grant.scope_type = 'SITE' AND scope_grant.site_id = s.site_id)
+                      OR (scope_grant.scope_type = 'SITE_GROUP' AND scope_grant.site_group_id = s.site_group_id)))
+            ORDER BY sg.site_group_name, s.site_name, s.site_code, s.site_id;
+            """;
+        var sites = new List<DelegableSite>();
+        await using (var command = new NpgsqlCommand(siteSql, connection))
+        {
+            command.Parameters.AddWithValue("catalog_code", CanonicalCarparkCatalogCode);
+            command.Parameters.AddWithValue("actor_user_id", actor.UserId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                sites.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetGuid(3),
+                    reader.GetString(4), reader.GetString(5), reader.GetString(6),
+                    reader.GetFieldValue<DateTimeOffset>(7), GetNullableDateTimeOffset(reader, 8)));
+            }
+        }
+
+        return IdentityAdministrationResult<DelegableScopeCatalog>.Succeeded(new(groups, sites), correlationId);
     }
 
     public async Task<IdentityAdministrationResult<IdentityRoleAssignment>> AssignRoleAsync(
@@ -1257,7 +1357,34 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT EXISTS (
+            SELECT (
+                (@scope_type = 'SITE' AND EXISTS (
+                    SELECT 1
+                    FROM sites.real_carpark_catalog_sites catalog
+                    JOIN sites.sites s ON s.site_id = catalog.site_id
+                                      AND s.site_group_id = catalog.site_group_id
+                    JOIN sites.real_carpark_catalog_site_groups group_catalog
+                      ON group_catalog.site_group_id = s.site_group_id
+                     AND group_catalog.catalog_code = catalog.catalog_code
+                    JOIN sites.site_groups sg ON sg.site_group_id = s.site_group_id
+                    WHERE catalog.catalog_code = @catalog_code
+                      AND s.site_id = @site_id
+                      AND s.site_status = 'ACTIVE'
+                      AND s.effective_from <= now()
+                      AND (s.effective_to IS NULL OR s.effective_to > now())
+                      AND sg.site_group_status = 'ACTIVE'
+                      AND sg.effective_from <= now()
+                      AND (sg.effective_to IS NULL OR sg.effective_to > now())))
+                OR (@scope_type = 'SITE_GROUP' AND EXISTS (
+                    SELECT 1
+                    FROM sites.real_carpark_catalog_site_groups catalog
+                    JOIN sites.site_groups sg ON sg.site_group_id = catalog.site_group_id
+                    WHERE catalog.catalog_code = @catalog_code
+                      AND sg.site_group_id = @site_group_id
+                      AND sg.site_group_status = 'ACTIVE'
+                      AND sg.effective_from <= now()
+                      AND (sg.effective_to IS NULL OR sg.effective_to > now())))
+            ) AND EXISTS (
                 SELECT 1
                 FROM identity.user_roles ur
                 JOIN identity.user_role_scope_grants g ON g.user_role_id = ur.user_role_id
@@ -1277,6 +1404,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("actor_user_id", actorUserId);
+        command.Parameters.AddWithValue("catalog_code", CanonicalCarparkCatalogCode);
         command.Parameters.AddWithValue("scope_type", scopeType);
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = Db(siteId);
         command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = Db(siteGroupId);
