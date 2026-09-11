@@ -16,15 +16,22 @@ public static class InternalTerminalCashFiscalConfigurationRecoveryEndpoints
             .WithTags("InternalTerminalCashFiscalRecovery")
             .RequireInternalServiceMtls();
 
-        group.MapPost("/{terminalCashTenderId:guid}/configuration-failure", RecoverAsync)
+        group.MapPost("/{terminalCashTenderId:guid}/configuration-failure", RecoverConfigurationFailureAsync)
             .WithName("RecoverTerminalCashFiscalConfigurationFailure")
             .Produces<TerminalCashFiscalConflictRecoveryResult>(StatusCodes.Status200OK)
             .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status400BadRequest)
             .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status404NotFound)
             .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status409Conflict);
 
-        group.MapPost("/{terminalCashTenderId:guid}/reporting-period-conflict", RecoverAsync)
+        group.MapPost("/{terminalCashTenderId:guid}/reporting-period-conflict", RecoverConfigurationFailureAsync)
             .WithName("RecoverTerminalCashFiscalReportingPeriodConflict")
+            .Produces<TerminalCashFiscalConflictRecoveryResult>(StatusCodes.Status200OK)
+            .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status400BadRequest)
+            .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status404NotFound)
+            .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status409Conflict);
+
+        group.MapPost("/{terminalCashTenderId:guid}/service-failure", RecoverServiceFailureAsync)
+            .WithName("RecoverTerminalCashFiscalServiceFailure")
             .Produces<TerminalCashFiscalConflictRecoveryResult>(StatusCodes.Status200OK)
             .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status400BadRequest)
             .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status404NotFound)
@@ -33,11 +40,38 @@ public static class InternalTerminalCashFiscalConfigurationRecoveryEndpoints
         return app;
     }
 
-    private static async Task<IResult> RecoverAsync(
+    private static Task<IResult> RecoverConfigurationFailureAsync(
         Guid terminalCashTenderId,
         InternalTerminalCashFiscalRecoveryRequest? body,
         HttpRequest request,
         ITerminalCashFiscalIssuanceService service,
+        CancellationToken cancellationToken) =>
+        RecoverAsync(
+            terminalCashTenderId,
+            body,
+            request,
+            service.RecoverConfigurationFailureAsync,
+            cancellationToken);
+
+    private static Task<IResult> RecoverServiceFailureAsync(
+        Guid terminalCashTenderId,
+        InternalTerminalCashFiscalRecoveryRequest? body,
+        HttpRequest request,
+        ITerminalCashFiscalIssuanceService service,
+        CancellationToken cancellationToken) =>
+        RecoverAsync(
+            terminalCashTenderId,
+            body,
+            request,
+            service.RecoverServiceFailureAsync,
+            cancellationToken);
+
+    private static async Task<IResult> RecoverAsync(
+        Guid terminalCashTenderId,
+        InternalTerminalCashFiscalRecoveryRequest? body,
+        HttpRequest request,
+        Func<TerminalCashFiscalConflictRecoveryCommand, CancellationToken,
+            Task<TerminalCashFiscalConflictRecoveryResult>> recover,
         CancellationToken cancellationToken)
     {
         var deliveryIdempotencyKey = request.Headers["Idempotency-Key"].FirstOrDefault();
@@ -54,7 +88,7 @@ public static class InternalTerminalCashFiscalConfigurationRecoveryEndpoints
 
         try
         {
-            var result = await service.RecoverConfigurationFailureAsync(
+            var result = await recover(
                     new TerminalCashFiscalConflictRecoveryCommand(
                         terminalCashTenderId,
                         body.FiscalIssuanceReferenceId,

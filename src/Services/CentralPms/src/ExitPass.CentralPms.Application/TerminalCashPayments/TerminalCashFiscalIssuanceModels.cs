@@ -29,6 +29,14 @@ public interface ITerminalCashFiscalIssuanceService
     Task<TerminalCashFiscalConflictRecoveryResult> RecoverConfigurationFailureAsync(
         TerminalCashFiscalConflictRecoveryCommand command,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Recovers one unchanged terminal-cash fiscal obligation whose persisted service
+    /// failure is explicitly approved for guarded retry. This is not a general retry API.
+    /// </summary>
+    Task<TerminalCashFiscalConflictRecoveryResult> RecoverServiceFailureAsync(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
