@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.HumanAuthentication;
 using ExitPass.CentralPms.Application.ManagementPlatform;
+using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
 using Microsoft.Extensions.Options;
 
 namespace ExitPass.CentralPms.Infrastructure.ManagementPlatform;
@@ -9,6 +10,7 @@ public sealed class HumanAuthenticationAdministrationGateway : IHumanAuthenticat
     private readonly IHumanAuthenticationRepository _authenticationRepository;
     private readonly IHumanMfaAdministrationService _mfaAdministration;
     private readonly ICredentialChallengeDelivery _challengeDelivery;
+    private readonly ICredentialChallengeLinkBuilder _challengeLinks;
     private readonly IManagementPlatformIdentityAdministrationRepository _identityAdministration;
     private readonly HumanAuthenticationOptions _options;
     private readonly TimeProvider _timeProvider;
@@ -17,6 +19,7 @@ public sealed class HumanAuthenticationAdministrationGateway : IHumanAuthenticat
         IHumanAuthenticationRepository authenticationRepository,
         IHumanMfaAdministrationService mfaAdministration,
         ICredentialChallengeDelivery challengeDelivery,
+        ICredentialChallengeLinkBuilder challengeLinks,
         IManagementPlatformIdentityAdministrationRepository identityAdministration,
         IOptions<HumanAuthenticationOptions> options,
         TimeProvider timeProvider)
@@ -24,10 +27,26 @@ public sealed class HumanAuthenticationAdministrationGateway : IHumanAuthenticat
         _authenticationRepository = authenticationRepository;
         _mfaAdministration = mfaAdministration;
         _challengeDelivery = challengeDelivery;
+        _challengeLinks = challengeLinks;
         _identityAdministration = identityAdministration;
         _options = options.Value;
         _timeProvider = timeProvider;
     }
+
+    public HumanAuthenticationAdministrationGateway(
+        IHumanAuthenticationRepository authenticationRepository,
+        IHumanMfaAdministrationService mfaAdministration,
+        ICredentialChallengeDelivery challengeDelivery,
+        IManagementPlatformIdentityAdministrationRepository identityAdministration,
+        IOptions<HumanAuthenticationOptions> options,
+        TimeProvider timeProvider)
+        : this(authenticationRepository, mfaAdministration, challengeDelivery,
+            new DisabledCredentialChallengeLinkBuilder(), identityAdministration, options, timeProvider)
+    {
+    }
+
+    public bool EmailDeliveryEnabled => _challengeDelivery.Enabled;
+    public bool ActivationLinkEnabled => _challengeLinks.Enabled;
 
     public async Task<IdentityAdministrationResult<CredentialResetChallengeResult>> IssueCredentialChallengeAsync(
         IdentityAdministrationActor actor,
@@ -39,6 +58,12 @@ public sealed class HumanAuthenticationAdministrationGateway : IHumanAuthenticat
             return Failed<CredentialResetChallengeResult>(IdentityAdministrationOutcome.Invalid,
                 "INVALID_CREDENTIAL_CHALLENGE_PURPOSE", command.CorrelationId);
         }
+        if (command.DeliveryMode is not (ActivationDeliveryModes.Email or ActivationDeliveryModes.AdminIssued) ||
+            (command.Purpose == "PASSWORD_RESET" && command.DeliveryMode != ActivationDeliveryModes.Email))
+        {
+            return Failed<CredentialResetChallengeResult>(IdentityAdministrationOutcome.Invalid,
+                "INVALID_CREDENTIAL_CHALLENGE_DELIVERY_MODE", command.CorrelationId);
+        }
 
         var now = _timeProvider.GetUtcNow();
         if (command.ExpiresAt <= now || command.ExpiresAt > now.AddMinutes(_options.CredentialChallengeMinutes))
@@ -46,27 +71,57 @@ public sealed class HumanAuthenticationAdministrationGateway : IHumanAuthenticat
             return Failed<CredentialResetChallengeResult>(IdentityAdministrationOutcome.Invalid,
                 "INVALID_CREDENTIAL_CHALLENGE_EXPIRY", command.CorrelationId);
         }
-        if (!_challengeDelivery.Enabled)
+        if (!_challengeLinks.Enabled)
         {
             return Failed<CredentialResetChallengeResult>(IdentityAdministrationOutcome.IntegrationUnavailable,
-                "CREDENTIAL_CHALLENGE_DELIVERY_NOT_CONFIGURED", command.CorrelationId);
+                "ACCOUNT_LIFECYCLE_URL_NOT_CONFIGURED", command.CorrelationId);
+        }
+
+        var target = await _authenticationRepository.GetCredentialChallengeTargetAsync(command.UserReference, cancellationToken);
+        if (target is null)
+        {
+            return Failed<CredentialResetChallengeResult>(IdentityAdministrationOutcome.NotFound,
+                "IDENTITY_USER_NOT_FOUND", command.CorrelationId);
+        }
+        if (command.Purpose == "ACCOUNT_ACTIVATION" && target.Status != "INVITED")
+        {
+            return Failed<CredentialResetChallengeResult>(IdentityAdministrationOutcome.Conflict,
+                "INVITATION_NOT_PENDING", command.CorrelationId);
+        }
+        if (command.DeliveryMode == ActivationDeliveryModes.Email &&
+            (!_challengeDelivery.Enabled || string.IsNullOrWhiteSpace(target.Email)))
+        {
+            return Failed<CredentialResetChallengeResult>(IdentityAdministrationOutcome.IntegrationUnavailable,
+                "CREDENTIAL_CHALLENGE_EMAIL_DELIVERY_NOT_CONFIGURED", command.CorrelationId);
+        }
+        if (command.DeliveryMode == ActivationDeliveryModes.AdminIssued && !command.AdminIssuedHandoffAcknowledged)
+        {
+            return Failed<CredentialResetChallengeResult>(IdentityAdministrationOutcome.Invalid,
+                "ADMIN_ISSUED_HANDOFF_ACKNOWLEDGEMENT_REQUIRED", command.CorrelationId);
         }
 
         var challenge = await _authenticationRepository.CreateCredentialChallengeAsync(
-            command.UserReference, command.Purpose, now, command.ExpiresAt,
+            command.UserReference, command.Purpose, $"{command.Purpose}_{command.DeliveryMode}", now, command.ExpiresAt,
             _options.CentralPmsServiceIdentityId, command.CorrelationId, cancellationToken);
-        try
+        if (command.DeliveryMode == ActivationDeliveryModes.Email)
         {
-            await _challengeDelivery.DeliverAsync(new CredentialChallengeDeliveryRequest(
-                command.UserReference, command.Purpose, challenge.Reference, challenge.Secret,
-                command.ExpiresAt, command.CorrelationId), cancellationToken);
-        }
-        catch when (!cancellationToken.IsCancellationRequested)
-        {
-            await _authenticationRepository.RevokeCredentialChallengeAsync(challenge.Reference,
-                _options.CentralPmsServiceIdentityId, "DELIVERY_FAILED", now, cancellationToken);
-            return Failed<CredentialResetChallengeResult>(IdentityAdministrationOutcome.IntegrationUnavailable,
-                "CREDENTIAL_CHALLENGE_DELIVERY_FAILED", command.CorrelationId);
+            try
+            {
+                await _challengeDelivery.DeliverAsync(new CredentialChallengeDeliveryRequest(
+                    command.UserReference, target.Email!, command.Purpose, challenge.Reference, challenge.Secret,
+                    command.ExpiresAt, command.CorrelationId), cancellationToken);
+            }
+            catch when (!cancellationToken.IsCancellationRequested)
+            {
+                await _authenticationRepository.RevokeCredentialChallengeAsync(challenge.Reference,
+                    _options.CentralPmsServiceIdentityId, $"{command.Purpose}_EMAIL_DELIVERY_FAILED", now, cancellationToken);
+                await _authenticationRepository.RecordSecurityEventAsync(
+                    "CREDENTIAL_CHALLENGE_DELIVERY_FAILED", "FAILED", $"{command.Purpose}_EMAIL_DELIVERY_FAILED",
+                    challenge.Reference, actor.UserId, null, null, command.CorrelationId,
+                    _options.CentralPmsServiceIdentityId, now, cancellationToken);
+                return Failed<CredentialResetChallengeResult>(IdentityAdministrationOutcome.IntegrationUnavailable,
+                    "CREDENTIAL_CHALLENGE_DELIVERY_FAILED", command.CorrelationId);
+            }
         }
 
         if (command.Purpose == "ACCOUNT_ACTIVATION")
@@ -75,8 +130,16 @@ public sealed class HumanAuthenticationAdministrationGateway : IHumanAuthenticat
                 command.ReasonCode, command.UserReference, actor.UserId, null, null, command.CorrelationId,
                 _options.CentralPmsServiceIdentityId, now, cancellationToken);
         }
+        OneTimeActivationMaterial? oneTime = null;
+        if (command.Purpose == "ACCOUNT_ACTIVATION" && command.DeliveryMode == ActivationDeliveryModes.AdminIssued)
+        {
+            var url = _challengeLinks.BuildUrl(command.Purpose, challenge.Reference, challenge.Secret);
+            oneTime = new(challenge.Reference, challenge.Secret, command.ExpiresAt, url, url);
+        }
         return IdentityAdministrationResult<CredentialResetChallengeResult>.Succeeded(
-            new(challenge.Reference, command.ExpiresAt), command.CorrelationId);
+            new(challenge.Reference, command.ExpiresAt, command.DeliveryMode,
+                command.DeliveryMode == ActivationDeliveryModes.Email ? "EMAIL_SENT" : "ADMIN_ISSUED", oneTime),
+            command.CorrelationId);
     }
 
     public async Task<IdentityAdministrationResult<bool>> RevokeSessionsAsync(

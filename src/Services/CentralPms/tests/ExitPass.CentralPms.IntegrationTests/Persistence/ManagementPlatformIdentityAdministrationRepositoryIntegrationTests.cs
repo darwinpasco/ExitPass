@@ -487,29 +487,44 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
                 DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_LIFECYCLE", "lifecycle-user", Guid.NewGuid()),
             CancellationToken.None);
 
-        var activated = await repository.ChangeUserLifecycleAsync(
+        var bypass = await repository.ChangeUserLifecycleAsync(
             seed.Actor,
             new ChangeIdentityUserLifecycleCommand(created.Value!.UserReference, "ACTIVATE", null, created.Value.RowVersion, "I021_ACTIVATE", Guid.NewGuid()),
             CancellationToken.None);
-        activated.Value!.Status.Should().Be("ACTIVE");
+        bypass.Outcome.Should().Be(IdentityAdministrationOutcome.Conflict);
+        bypass.Classification.Should().Be("INVITED_ACTIVATION_CHALLENGE_REQUIRED");
 
-        var locked = await repository.ChangeUserLifecycleAsync(
-            seed.Actor,
-            new ChangeIdentityUserLifecycleCommand(created.Value.UserReference, "LOCK", DateTimeOffset.UtcNow.AddMinutes(10), activated.Value.RowVersion, "I021_LOCK", Guid.NewGuid()),
-            CancellationToken.None);
-        locked.Value!.Status.Should().Be("LOCKED");
+        var challengeTokens = new HumanSessionTokenService();
+        var authentication = new PostgresHumanAuthenticationRepository(_database.ConnectionString, challengeTokens);
+        var supersededChallenge = await authentication.CreateCredentialChallengeAsync(
+            created.Value.UserReference, "ACCOUNT_ACTIVATION", "ACCOUNT_ACTIVATION_ADMIN_ISSUED",
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(30),
+            new HumanAuthenticationOptions().CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
+        (await GetChallengeHashAsync(supersededChallenge.Reference)).Should().Be(challengeTokens.HashSecret(supersededChallenge.Secret));
+        (await GetChallengeHashAsync(supersededChallenge.Reference)).Should().NotBe(supersededChallenge.Secret);
+        var activationChallenge = await authentication.CreateCredentialChallengeAsync(
+            created.Value.UserReference, "ACCOUNT_ACTIVATION", "ACCOUNT_ACTIVATION_EMAIL",
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(30),
+            new HumanAuthenticationOptions().CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
+        (await GetChallengeStatusAsync(supersededChallenge.Reference)).Should().Be("REVOKED");
 
-        var invalidActivation = await repository.ChangeUserLifecycleAsync(
+        var cancelled = await repository.CancelInvitationAsync(
             seed.Actor,
-            new ChangeIdentityUserLifecycleCommand(created.Value.UserReference, "ACTIVATE", null, locked.Value.RowVersion, "I021_INVALID", Guid.NewGuid()),
+            new CancelIdentityInvitationCommand(created.Value.UserReference, created.Value.RowVersion, "I021_CANCEL", Guid.NewGuid()),
             CancellationToken.None);
-        invalidActivation.Outcome.Should().Be(IdentityAdministrationOutcome.Conflict);
+        cancelled.Value!.Status.Should().Be("INACTIVE");
+        (await GetChallengeStatusAsync(activationChallenge.Reference)).Should().Be("REVOKED");
+        var cancelledDetail = await repository.GetUserAsync(
+            seed.Actor, created.Value.UserReference, Guid.NewGuid(), CancellationToken.None);
+        cancelledDetail.Value!.Invitation!.InvitationState.Should().Be("CANCELLED");
+        cancelledDetail.Value.Invitation.DeliveryClassification.Should().Be("CANCELLED");
 
-        var unlocked = await repository.ChangeUserLifecycleAsync(
+        var cancelledBypass = await repository.ChangeUserLifecycleAsync(
             seed.Actor,
-            new ChangeIdentityUserLifecycleCommand(created.Value.UserReference, "UNLOCK", null, locked.Value.RowVersion, "I021_UNLOCK", Guid.NewGuid()),
+            new ChangeIdentityUserLifecycleCommand(created.Value.UserReference, "ACTIVATE", null, cancelled.Value.RowVersion, "I021_INVALID", Guid.NewGuid()),
             CancellationToken.None);
-        unlocked.Value!.Status.Should().Be("ACTIVE");
+        cancelledBypass.Outcome.Should().Be(IdentityAdministrationOutcome.Conflict);
+        cancelledBypass.Classification.Should().Be("ACTIVE_LOCAL_CREDENTIAL_REQUIRED");
 
         var selfUnlock = await repository.ChangeUserLifecycleAsync(
             seed.Actor,
@@ -618,8 +633,12 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             TimeProvider.System,
             options);
         var administrationRepository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var links = new CredentialChallengeLinkBuilder(Options.Create(new CredentialChallengeDeliveryOptions
+        {
+            PublicAccountLifecycleBaseUrl = "https://accounts.exitpass.test"
+        }));
         var gateway = new HumanAuthenticationAdministrationGateway(
-            authenticationRepository, authentication, delivery, administrationRepository, options, TimeProvider.System);
+            authenticationRepository, authentication, delivery, links, administrationRepository, options, TimeProvider.System);
         var service = new ManagementPlatformIdentityAdministrationService(administrationRepository, gateway);
 
         var challengeCorrelation = Guid.NewGuid();
@@ -681,8 +700,8 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             VALUES (@site_id, @site_group_id, 'PROFESSIONAL_PARKING_REAL_CARPARK_V1', 'isolated-integration-test', repeat('A', 64));
 
             INSERT INTO identity.users (
-                user_id, username, display_name, user_type, user_status, effective_from)
-            VALUES (@actor_user_id, @username, 'I-021 Administrator', 'INTERNAL_ADMIN', 'ACTIVE', now() - interval '1 day');
+                user_id, username, email, email_normalized, display_name, user_type, user_status, effective_from)
+            VALUES (@actor_user_id, @username, @email, lower(@email), 'I-021 Administrator', 'INTERNAL_ADMIN', 'ACTIVE', now() - interval '1 day');
 
             INSERT INTO identity.local_credentials (
                 local_credential_id, user_id, credential_status, password_verifier, verifier_salt,
@@ -757,6 +776,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         command.Parameters.AddWithValue("site_code", $"I021-S-{Guid.NewGuid():N}");
         command.Parameters.AddWithValue("actor_user_id", actorUserId);
         command.Parameters.AddWithValue("username", $"i021.admin.{Guid.NewGuid():N}");
+        command.Parameters.AddWithValue("email", $"i021.admin.{Guid.NewGuid():N}@example.test");
         command.Parameters.AddWithValue("credential_id", localCredentialId);
         command.Parameters.AddWithValue("mfa_authenticator_id", mfaAuthenticatorId);
         command.Parameters.AddWithValue("user_role_id", userRoleId);
@@ -807,6 +827,26 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         await using var command = new NpgsqlCommand(
             "SELECT session_status::text FROM identity.human_sessions WHERE session_reference = @reference;", connection);
         command.Parameters.AddWithValue("reference", sessionReference);
+        return (string)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<string> GetChallengeStatusAsync(Guid challengeReference)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT challenge_status::text FROM identity.credential_challenges WHERE challenge_reference=@reference;", connection);
+        command.Parameters.AddWithValue("reference", challengeReference);
+        return (string)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<string> GetChallengeHashAsync(Guid challengeReference)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT challenge_secret_hash FROM identity.credential_challenges WHERE challenge_reference=@reference;", connection);
+        command.Parameters.AddWithValue("reference", challengeReference);
         return (string)(await command.ExecuteScalarAsync())!;
     }
 

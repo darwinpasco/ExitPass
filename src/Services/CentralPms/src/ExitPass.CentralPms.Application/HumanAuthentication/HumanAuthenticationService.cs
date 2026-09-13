@@ -424,21 +424,24 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
     {
         var now = _timeProvider.GetUtcNow();
         var login = await _repository.FindLocalLoginAsync(NormalizeUsername(username), now, cancellationToken);
-        if (_challengeDelivery.Enabled && login is not null && login.UserStatus is "ACTIVE" or "LOCKED")
+        if (_challengeDelivery.Enabled && login is not null && login.UserStatus is "ACTIVE" or "LOCKED" &&
+            !string.IsNullOrWhiteSpace(login.Email))
         {
             var expiresAt = now.AddMinutes(_options.CredentialChallengeMinutes);
-            var challenge = await _repository.CreateCredentialChallengeAsync(login.UserId, "PASSWORD_RESET", now, expiresAt, context.CentralPmsServiceIdentityId, context.CorrelationId, cancellationToken);
+            var challenge = await _repository.CreateCredentialChallengeAsync(login.UserId, "PASSWORD_RESET", "PASSWORD_RESET_EMAIL", now, expiresAt, context.CentralPmsServiceIdentityId, context.CorrelationId, cancellationToken);
             try
             {
                 await _challengeDelivery.DeliverAsync(new CredentialChallengeDeliveryRequest(
-                    login.UserId, "PASSWORD_RESET", challenge.Reference, challenge.Secret, expiresAt,
+                    login.UserId, login.Email, "PASSWORD_RESET", challenge.Reference, challenge.Secret, expiresAt,
                     context.CorrelationId), cancellationToken);
             }
-            catch
+            catch when (!cancellationToken.IsCancellationRequested)
             {
                 await _repository.RevokeCredentialChallengeAsync(challenge.Reference,
-                    context.CentralPmsServiceIdentityId, "DELIVERY_FAILED", now, cancellationToken);
-                throw;
+                    context.CentralPmsServiceIdentityId, "PASSWORD_RESET_EMAIL_DELIVERY_FAILED", now, cancellationToken);
+                await RecordSecurityAsync("CREDENTIAL_CHALLENGE_DELIVERY_FAILED", "FAILED",
+                    "PASSWORD_RESET_EMAIL_DELIVERY_FAILED", challenge.Reference, login.UserId,
+                    context, now, cancellationToken);
             }
         }
     }

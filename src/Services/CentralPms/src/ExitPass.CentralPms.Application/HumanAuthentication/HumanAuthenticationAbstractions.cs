@@ -3,6 +3,7 @@ namespace ExitPass.CentralPms.Application.HumanAuthentication;
 public interface IHumanAuthenticationRepository
 {
     Task<HumanLoginRecord?> FindLocalLoginAsync(string normalizedUsername, DateTimeOffset now, CancellationToken cancellationToken);
+    Task<CredentialChallengeTarget?> GetCredentialChallengeTargetAsync(Guid userId, CancellationToken cancellationToken);
     Task<int> CountRecentFailedAttemptsAsync(Guid? userId, string loginIdentifierHash, string? sourceIpHash, string attemptType, DateTimeOffset since, CancellationToken cancellationToken);
     Task RecordAuthenticationAttemptAsync(Guid? userId, string loginIdentifierHash, string? sourceIpHash, string? userAgentHash, string attemptType, string result, string audience, string reasonCode, DateTimeOffset observedAt, Guid correlationId, Guid serviceIdentityId, CancellationToken cancellationToken);
     Task ApplyAuthenticationLockoutAsync(Guid userId, DateTimeOffset lockedAt, DateTimeOffset expiresAt, string reasonCode, Guid serviceIdentityId, CancellationToken cancellationToken);
@@ -27,6 +28,7 @@ public interface IHumanAuthenticationRepository
     Task ResetTotpAuthenticatorAsync(Guid userId, Guid actorUserId, string reasonCode, DateTimeOffset now, CancellationToken cancellationToken);
     Task<bool> ChangeTotpAuthenticatorAsync(Guid userId, long expectedRowVersion, string action, Guid actorUserId, string reasonCode, Guid correlationId, Guid serviceIdentityId, DateTimeOffset now, CancellationToken cancellationToken);
     Task ChangePasswordAsync(Guid userId, Guid localCredentialId, long expectedCredentialRowVersion, PasswordHashMaterial material, DateTimeOffset now, Guid actorUserId, CancellationToken cancellationToken);
+    Task<(Guid Reference, string Secret)> CreateCredentialChallengeAsync(Guid userId, string purpose, string reasonCode, DateTimeOffset issuedAt, DateTimeOffset expiresAt, Guid requestorServiceIdentityId, Guid correlationId, CancellationToken cancellationToken);
     Task<(Guid Reference, string Secret)> CreateCredentialChallengeAsync(Guid userId, string purpose, DateTimeOffset issuedAt, DateTimeOffset expiresAt, Guid requestorServiceIdentityId, Guid correlationId, CancellationToken cancellationToken);
     Task<(Guid UserId, Guid ChallengeId)?> ConsumeCredentialChallengeAsync(Guid challengeReference, string challengeSecretHash, string purpose, DateTimeOffset now, CancellationToken cancellationToken);
     Task RevokeCredentialChallengeAsync(Guid challengeReference, Guid serviceIdentityId, string reasonCode, DateTimeOffset now, CancellationToken cancellationToken);
@@ -101,4 +103,10 @@ public interface ICredentialChallengeDelivery
 {
     bool Enabled { get; }
     Task DeliverAsync(CredentialChallengeDeliveryRequest request, CancellationToken cancellationToken);
+}
+
+public interface ICredentialChallengeLinkBuilder
+{
+    bool Enabled { get; }
+    string BuildUrl(string purpose, Guid challengeReference, string challengeSecret);
 }

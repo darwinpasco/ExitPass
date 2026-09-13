@@ -52,3 +52,11 @@ public sealed class DisabledCredentialChallengeDelivery : ICredentialChallengeDe
     public Task DeliverAsync(CredentialChallengeDeliveryRequest request, CancellationToken cancellationToken) =>
         throw new InvalidOperationException("Credential challenge delivery is not configured.");
 }
+
+public sealed class DisabledCredentialChallengeLinkBuilder : ICredentialChallengeLinkBuilder
+{
+    public bool Enabled => false;
+
+    public string BuildUrl(string purpose, Guid challengeReference, string challengeSecret) =>
+        throw new InvalidOperationException("Credential challenge links are not configured.");
+}

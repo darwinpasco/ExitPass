@@ -19,7 +19,7 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
     public async Task<HumanLoginRecord?> FindLocalLoginAsync(string normalizedUsername, DateTimeOffset now, CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT u.user_id, u.username, u.display_name, u.user_status::text, u.effective_from,
+            SELECT u.user_id, u.username, u.display_name, u.email, u.user_status::text, u.effective_from,
                    u.effective_to, u.lockout_expires_at, u.lockout_reason_code,
                    u.credential_version, u.authorization_epoch,
                    EXISTS (
@@ -62,6 +62,18 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
         command.Parameters.AddWithValue("now", now);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? ReadLogin(reader) : null;
+    }
+
+    public async Task<CredentialChallengeTarget?> GetCredentialChallengeTargetAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT user_id, user_status::text, email FROM identity.users WHERE user_id=@user_id;";
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("user_id", userId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new CredentialChallengeTarget(reader.GetGuid(0), reader.GetString(1), GetNullableString(reader, 2))
+            : null;
     }
 
     public async Task<int> CountRecentFailedAttemptsAsync(Guid? userId, string loginIdentifierHash, string? sourceIpHash, string attemptType, DateTimeOffset since, CancellationToken cancellationToken)
@@ -636,7 +648,7 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
     public Task ChangePasswordAsync(Guid userId, Guid localCredentialId, long expectedCredentialRowVersion, PasswordHashMaterial material, DateTimeOffset now, Guid actorUserId, CancellationToken cancellationToken) =>
         ReplacePasswordAsync(userId, localCredentialId, expectedCredentialRowVersion, material, now, actorUserId, null, cancellationToken);
 
-    public async Task<(Guid Reference, string Secret)> CreateCredentialChallengeAsync(Guid userId, string purpose, DateTimeOffset issuedAt, DateTimeOffset expiresAt, Guid requestorServiceIdentityId, Guid correlationId, CancellationToken cancellationToken)
+    public async Task<(Guid Reference, string Secret)> CreateCredentialChallengeAsync(Guid userId, string purpose, string reasonCode, DateTimeOffset issuedAt, DateTimeOffset expiresAt, Guid requestorServiceIdentityId, Guid correlationId, CancellationToken cancellationToken)
     {
         var reference = Guid.NewGuid();
         var secret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
@@ -650,7 +662,7 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
                 challenge_status, challenge_secret_hash, issued_at, expires_at,
                 requested_by_service_identity_id, reason_code, correlation_id)
             VALUES (gen_random_uuid(),@reference,@user_id,@purpose::identity.credential_challenge_purpose_enum,
-                'ISSUED',@secret_hash,@issued_at,@expires_at,@service_identity_id,'USER_REQUEST',@correlation_id);
+                'ISSUED',@secret_hash,@issued_at,@expires_at,@service_identity_id,@reason_code,@correlation_id);
             """;
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -658,6 +670,7 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
         command.Parameters.AddWithValue("reference", reference);
         command.Parameters.AddWithValue("user_id", userId);
         command.Parameters.AddWithValue("purpose", purpose);
+        command.Parameters.AddWithValue("reason_code", reasonCode);
         command.Parameters.AddWithValue("secret_hash", _tokens.HashSecret(secret));
         command.Parameters.AddWithValue("issued_at", issuedAt);
         command.Parameters.AddWithValue("expires_at", expiresAt);
@@ -667,6 +680,12 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
         await transaction.CommitAsync(cancellationToken);
         return (reference, secret);
     }
+
+    public Task<(Guid Reference, string Secret)> CreateCredentialChallengeAsync(
+        Guid userId, string purpose, DateTimeOffset issuedAt, DateTimeOffset expiresAt,
+        Guid requestorServiceIdentityId, Guid correlationId, CancellationToken cancellationToken) =>
+        CreateCredentialChallengeAsync(userId, purpose, "USER_REQUEST", issuedAt, expiresAt,
+            requestorServiceIdentityId, correlationId, cancellationToken);
 
     public async Task<(Guid UserId, Guid ChallengeId)?> ConsumeCredentialChallengeAsync(Guid challengeReference, string challengeSecretHash, string purpose, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -922,16 +941,16 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
     private static HumanLoginRecord ReadLogin(NpgsqlDataReader reader)
     {
         LocalCredentialRecord? credential = null;
-        if (!reader.IsDBNull(11))
+        if (!reader.IsDBNull(12))
         {
-            credential = new LocalCredentialRecord(reader.GetGuid(11), reader.GetString(12), (byte[])reader[13], (byte[])reader[14], reader.GetString(15), reader.GetInt16(16), reader.GetInt32(17), GetNullableInt(reader, 18), GetNullableShort(reader, 19), reader.GetInt64(20), reader.GetInt64(21));
+            credential = new LocalCredentialRecord(reader.GetGuid(12), reader.GetString(13), (byte[])reader[14], (byte[])reader[15], reader.GetString(16), reader.GetInt16(17), reader.GetInt32(18), GetNullableInt(reader, 19), GetNullableShort(reader, 20), reader.GetInt64(21), reader.GetInt64(22));
         }
         TotpAuthenticatorRecord? authenticator = null;
-        if (!reader.IsDBNull(22))
+        if (!reader.IsDBNull(23))
         {
-            authenticator = new TotpAuthenticatorRecord(reader.GetGuid(22), reader.GetString(23), (byte[])reader[24], reader.GetString(25), reader.GetString(26), reader.GetInt16(27), GetNullableLong(reader, 28), reader.GetInt64(29));
+            authenticator = new TotpAuthenticatorRecord(reader.GetGuid(23), reader.GetString(24), (byte[])reader[25], reader.GetString(26), reader.GetString(27), reader.GetInt16(28), GetNullableLong(reader, 29), reader.GetInt64(30));
         }
-        return new HumanLoginRecord(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetFieldValue<DateTimeOffset>(4), GetNullableDateTime(reader, 5), GetNullableDateTime(reader, 6), GetNullableString(reader, 7), reader.GetInt64(8), reader.GetInt64(9), reader.GetBoolean(10), credential, authenticator);
+        return new HumanLoginRecord(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(4), reader.GetFieldValue<DateTimeOffset>(5), GetNullableDateTime(reader, 6), GetNullableDateTime(reader, 7), GetNullableString(reader, 8), reader.GetInt64(9), reader.GetInt64(10), reader.GetBoolean(11), credential, authenticator, GetNullableString(reader, 3));
     }
 
     private static LocalCredentialRecord ReadCredential(NpgsqlDataReader reader, int offset) =>

@@ -73,7 +73,8 @@ public sealed record HumanLoginRecord(
     long AuthorizationEpoch,
     bool HasPrivilegedRole,
     LocalCredentialRecord? Credential,
-    TotpAuthenticatorRecord? TotpAuthenticator);
+    TotpAuthenticatorRecord? TotpAuthenticator,
+    string? Email = null);
 
 public sealed record HumanSessionRecord(
     Guid HumanSessionId,
@@ -145,8 +146,11 @@ public sealed record TotpVerificationResult(bool Succeeded, long? MatchedTimeSte
 
 public sealed record CredentialChallengeDeliveryRequest(
     Guid UserId,
+    string RecipientEmail,
     string Purpose,
     Guid ChallengeReference,
     string ChallengeSecret,
     DateTimeOffset ExpiresAt,
     Guid CorrelationId);
+
+public sealed record CredentialChallengeTarget(Guid UserId, string Status, string? Email);

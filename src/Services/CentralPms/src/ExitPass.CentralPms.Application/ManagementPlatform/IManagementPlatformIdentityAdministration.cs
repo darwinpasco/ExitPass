@@ -7,6 +7,9 @@ public interface IIdentityAdministrationActorAccessor
 
 public interface IHumanAuthenticationAdministrationGateway
 {
+    bool EmailDeliveryEnabled { get; }
+    bool ActivationLinkEnabled { get; }
+
     Task<IdentityAdministrationResult<CredentialResetChallengeResult>> IssueCredentialChallengeAsync(
         IdentityAdministrationActor actor,
         CreateCredentialResetChallengeCommand command,
@@ -50,6 +53,11 @@ public interface IManagementPlatformIdentityAdministrationRepository
     Task<IdentityAdministrationResult<IdentityUserSummary>> ChangeUserLifecycleAsync(
         IdentityAdministrationActor actor,
         ChangeIdentityUserLifecycleCommand command,
+        CancellationToken cancellationToken);
+
+    Task<IdentityAdministrationResult<IdentityUserSummary>> CancelInvitationAsync(
+        IdentityAdministrationActor actor,
+        CancelIdentityInvitationCommand command,
         CancellationToken cancellationToken);
 
     Task<IdentityAdministrationResult<IReadOnlyList<IdentityRoleDefinition>>> ListRolesAsync(
@@ -138,6 +146,16 @@ public interface IManagementPlatformIdentityAdministrationRepository
 
 public interface IManagementPlatformIdentityAdministrationService : IManagementPlatformIdentityAdministrationRepository
 {
+    Task<IdentityAdministrationResult<CreateIdentityUserResult>> CreateInvitedUserAsync(
+        IdentityAdministrationActor actor,
+        CreateIdentityUserCommand command,
+        CancellationToken cancellationToken);
+
+    Task<IdentityAdministrationResult<CredentialResetChallengeResult>> ReissueInvitationAsync(
+        IdentityAdministrationActor actor,
+        ReissueIdentityInvitationCommand command,
+        CancellationToken cancellationToken);
+
     Task<IdentityAdministrationResult<CredentialResetChallengeResult>> IssueCredentialChallengeAsync(
         IdentityAdministrationActor actor,
         CreateCredentialResetChallengeCommand command,

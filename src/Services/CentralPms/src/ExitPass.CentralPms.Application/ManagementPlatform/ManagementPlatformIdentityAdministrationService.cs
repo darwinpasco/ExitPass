@@ -1,3 +1,7 @@
+using System.Net.Mail;
+using ExitPass.CentralPms.Application.HumanAuthentication;
+using Microsoft.Extensions.Options;
+
 namespace ExitPass.CentralPms.Application.ManagementPlatform;
 
 public sealed class ManagementPlatformIdentityAdministrationService : IManagementPlatformIdentityAdministrationService
@@ -17,13 +21,26 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
 
     private readonly IManagementPlatformIdentityAdministrationRepository _repository;
     private readonly IHumanAuthenticationAdministrationGateway _authenticationGateway;
+    private readonly HumanAuthenticationOptions _authenticationOptions;
+    private readonly TimeProvider _timeProvider;
+
+    public ManagementPlatformIdentityAdministrationService(
+        IManagementPlatformIdentityAdministrationRepository repository,
+        IHumanAuthenticationAdministrationGateway authenticationGateway,
+        IOptions<HumanAuthenticationOptions> authenticationOptions,
+        TimeProvider timeProvider)
+    {
+        _repository = repository;
+        _authenticationGateway = authenticationGateway;
+        _authenticationOptions = authenticationOptions.Value;
+        _timeProvider = timeProvider;
+    }
 
     public ManagementPlatformIdentityAdministrationService(
         IManagementPlatformIdentityAdministrationRepository repository,
         IHumanAuthenticationAdministrationGateway authenticationGateway)
+        : this(repository, authenticationGateway, Options.Create(new HumanAuthenticationOptions()), TimeProvider.System)
     {
-        _repository = repository;
-        _authenticationGateway = authenticationGateway;
     }
 
     public Task<IdentityAdministrationResult<IReadOnlyList<IdentityUserSummary>>> ListUsersAsync(
@@ -36,16 +53,38 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
 
     public Task<IdentityAdministrationResult<IdentityUserSummary>> CreateUserAsync(
         IdentityAdministrationActor actor, CreateIdentityUserCommand command, CancellationToken cancellationToken) =>
-        _repository.CreateUserAsync(actor, command with
+        _repository.CreateUserAsync(actor, NormalizeCreateCommand(command), cancellationToken);
+
+    public async Task<IdentityAdministrationResult<CreateIdentityUserResult>> CreateInvitedUserAsync(
+        IdentityAdministrationActor actor, CreateIdentityUserCommand command, CancellationToken cancellationToken)
+    {
+        var normalized = NormalizeCreateCommand(command);
+        var validation = ValidateActivationDelivery<CreateIdentityUserResult>(normalized.ActivationDeliveryMode, normalized.Email,
+            normalized.AdminIssuedHandoffAcknowledged, normalized.CorrelationId);
+        if (validation is not null) return validation;
+
+        var created = await _repository.CreateUserAsync(actor, normalized, cancellationToken);
+        if (created.Outcome != IdentityAdministrationOutcome.Success || created.Value is null)
         {
-            Username = RequireText(command.Username, 128, nameof(command.Username)),
-            DisplayName = RequireText(command.DisplayName, 128, nameof(command.DisplayName)),
-            UserType = RequireUserType(command.UserType, nameof(command.UserType)),
-            InitialRoleReference = RequireReference(command.InitialRoleReference),
-            InitialScopeType = RequireCode(command.InitialScopeType, nameof(command.InitialScopeType)),
-            ReasonCode = RequireCode(command.ReasonCode, nameof(command.ReasonCode)),
-            IdempotencyKey = RequireText(command.IdempotencyKey, 128, nameof(command.IdempotencyKey))
-        }, cancellationToken);
+            return Propagate<CreateIdentityUserResult, IdentityUserSummary>(created);
+        }
+
+        var expiresAt = _timeProvider.GetUtcNow().AddMinutes(_authenticationOptions.CredentialChallengeMinutes);
+        var issued = await _authenticationGateway.IssueCredentialChallengeAsync(actor,
+            new(created.Value.UserReference, "ACCOUNT_ACTIVATION", expiresAt, normalized.ReasonCode,
+                normalized.CorrelationId, normalized.ActivationDeliveryMode, normalized.AdminIssuedHandoffAcknowledged),
+            cancellationToken);
+        if (issued.Outcome != IdentityAdministrationOutcome.Success || issued.Value is null)
+        {
+            return Propagate<CreateIdentityUserResult, CredentialResetChallengeResult>(issued);
+        }
+
+        var invitation = new IdentityInvitationStatus("INVITATION_PENDING", issued.Value.DeliveryMode, "ISSUED",
+            issued.Value.ChallengeReference, _timeProvider.GetUtcNow(), issued.Value.ExpiresAt,
+            issued.Value.DeliveryClassification);
+        return IdentityAdministrationResult<CreateIdentityUserResult>.Succeeded(
+            new(created.Value, invitation, issued.Value.OneTimeActivation), normalized.CorrelationId, "CREATED");
+    }
 
     public Task<IdentityAdministrationResult<IdentityUserSummary>> UpdateUserAsync(
         IdentityAdministrationActor actor, UpdateIdentityUserCommand command, CancellationToken cancellationToken) =>
@@ -64,6 +103,41 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
             Transition = RequireCode(command.Transition, nameof(command.Transition)),
             ReasonCode = RequireCode(command.ReasonCode, nameof(command.ReasonCode))
         }, cancellationToken);
+
+    public Task<IdentityAdministrationResult<IdentityUserSummary>> CancelInvitationAsync(
+        IdentityAdministrationActor actor, CancelIdentityInvitationCommand command, CancellationToken cancellationToken) =>
+        _repository.CancelInvitationAsync(actor, command with
+        {
+            UserReference = RequireReference(command.UserReference),
+            ReasonCode = RequireCode(command.ReasonCode, nameof(command.ReasonCode))
+        }, cancellationToken);
+
+    public async Task<IdentityAdministrationResult<CredentialResetChallengeResult>> ReissueInvitationAsync(
+        IdentityAdministrationActor actor, ReissueIdentityInvitationCommand command, CancellationToken cancellationToken)
+    {
+        var mode = RequireCode(command.ActivationDeliveryMode, nameof(command.ActivationDeliveryMode));
+        var reason = RequireCode(command.ReasonCode, nameof(command.ReasonCode));
+        var target = await _repository.GetUserAsync(actor, RequireReference(command.UserReference), command.CorrelationId, cancellationToken);
+        if (target.Outcome != IdentityAdministrationOutcome.Success || target.Value is null)
+        {
+            return Propagate<CredentialResetChallengeResult, IdentityUserDetail>(target);
+        }
+        if (target.Value.User.Status != "INVITED")
+        {
+            return IdentityAdministrationResult<CredentialResetChallengeResult>.Failed(
+                IdentityAdministrationOutcome.Conflict, "INVITATION_NOT_PENDING",
+                "Only an invited account can receive a new activation challenge.", command.CorrelationId);
+        }
+        var validation = ValidateActivationDelivery<CredentialResetChallengeResult>(mode,
+            target.Value.User.MaskedEmail, command.AdminIssuedHandoffAcknowledged, command.CorrelationId,
+            emailAlreadyValidated: true);
+        if (validation is not null) return validation;
+
+        return await IssueCredentialChallengeAsync(actor,
+            new(command.UserReference, "ACCOUNT_ACTIVATION",
+                _timeProvider.GetUtcNow().AddMinutes(_authenticationOptions.CredentialChallengeMinutes), reason,
+                command.CorrelationId, mode, command.AdminIssuedHandoffAcknowledged), cancellationToken);
+    }
 
     public Task<IdentityAdministrationResult<IReadOnlyList<IdentityRoleDefinition>>> ListRolesAsync(
         IdentityAdministrationActor actor, IdentityRoleCatalogQuery query, Guid correlationId, CancellationToken cancellationToken) =>
@@ -129,7 +203,8 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
         {
             UserReference = RequireReference(command.UserReference),
             Purpose = RequireCode(command.Purpose, nameof(command.Purpose)),
-            ReasonCode = RequireCode(command.ReasonCode, nameof(command.ReasonCode))
+            ReasonCode = RequireCode(command.ReasonCode, nameof(command.ReasonCode)),
+            DeliveryMode = RequireCode(command.DeliveryMode, nameof(command.DeliveryMode))
         };
         var authorization = await _repository.AuthorizeAuthenticationAdministrationAsync(
             actor, normalized.UserReference, "CREDENTIAL_RESET", normalized.CorrelationId, cancellationToken);
@@ -251,6 +326,74 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
         return normalized;
     }
 
+    private CreateIdentityUserCommand NormalizeCreateCommand(CreateIdentityUserCommand command) => command with
+    {
+        Username = RequireText(command.Username, 128, nameof(command.Username)),
+        DisplayName = RequireText(command.DisplayName, 128, nameof(command.DisplayName)),
+        Email = NormalizeOptionalEmail(command.Email),
+        UserType = RequireUserType(command.UserType, nameof(command.UserType)),
+        InitialRoleReference = RequireReference(command.InitialRoleReference),
+        InitialScopeType = RequireCode(command.InitialScopeType, nameof(command.InitialScopeType)),
+        ReasonCode = RequireCode(command.ReasonCode, nameof(command.ReasonCode)),
+        IdempotencyKey = RequireText(command.IdempotencyKey, 128, nameof(command.IdempotencyKey)),
+        ActivationDeliveryMode = RequireCode(command.ActivationDeliveryMode, nameof(command.ActivationDeliveryMode))
+    };
+
+    private IdentityAdministrationResult<T>? ValidateActivationDelivery<T>(
+        string mode, string? email, bool acknowledged, Guid correlationId, bool emailAlreadyValidated = false)
+    {
+        if (mode is not (ActivationDeliveryModes.Email or ActivationDeliveryModes.AdminIssued))
+        {
+            return IdentityAdministrationResult<T>.Failed(IdentityAdministrationOutcome.Invalid,
+                "INVALID_ACTIVATION_DELIVERY_MODE", "Choose EMAIL or ADMIN_ISSUED activation delivery.", correlationId);
+        }
+        if (!_authenticationGateway.ActivationLinkEnabled)
+        {
+            return IdentityAdministrationResult<T>.Failed(IdentityAdministrationOutcome.IntegrationUnavailable,
+                "ACCOUNT_LIFECYCLE_URL_NOT_CONFIGURED", "Account activation is not configured.", correlationId);
+        }
+        if (mode == ActivationDeliveryModes.Email)
+        {
+            if ((!emailAlreadyValidated && !IsUsableEmail(email)) || string.IsNullOrWhiteSpace(email))
+            {
+                return IdentityAdministrationResult<T>.Failed(IdentityAdministrationOutcome.Invalid,
+                    "ACTIVATION_EMAIL_REQUIRED", "A usable email address is required for email activation.", correlationId);
+            }
+            if (!_authenticationGateway.EmailDeliveryEnabled)
+            {
+                return IdentityAdministrationResult<T>.Failed(IdentityAdministrationOutcome.IntegrationUnavailable,
+                    "CREDENTIAL_CHALLENGE_EMAIL_DELIVERY_NOT_CONFIGURED", "Email activation delivery is not configured.", correlationId);
+            }
+        }
+        if (mode == ActivationDeliveryModes.AdminIssued && !acknowledged)
+        {
+            return IdentityAdministrationResult<T>.Failed(IdentityAdministrationOutcome.Invalid,
+                "ADMIN_ISSUED_HANDOFF_ACKNOWLEDGEMENT_REQUIRED",
+                "Confirm that the activation material will be handed directly to the intended employee.", correlationId);
+        }
+        return null;
+    }
+
+    private static string? NormalizeOptionalEmail(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
+
+    private static bool IsUsableEmail(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 254) return false;
+        try
+        {
+            var parsed = new MailAddress(value);
+            return string.Equals(parsed.Address, value, StringComparison.OrdinalIgnoreCase) && parsed.Host.Contains('.');
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
     private static IdentityAdministrationResult<T> Propagate<T>(IdentityAdministrationResult<bool> result) =>
         IdentityAdministrationResult<T>.Failed(result.Outcome, result.Classification, result.Message, result.CorrelationId);
+
+    private static IdentityAdministrationResult<TTarget> Propagate<TTarget, TSource>(IdentityAdministrationResult<TSource> result) =>
+        IdentityAdministrationResult<TTarget>.Failed(result.Outcome, result.Classification, result.Message, result.CorrelationId);
 }

@@ -13,7 +13,9 @@ public sealed record CreateIdentityUserRequest(
     DateTimeOffset EffectiveFrom,
     DateTimeOffset? EffectiveTo,
     string ReasonCode,
-    string IdempotencyKey);
+    string IdempotencyKey,
+    string ActivationDeliveryMode,
+    bool AdminIssuedHandoffAcknowledged = false);
 
 public sealed record UpdateIdentityUserRequest(
     string DisplayName,
@@ -32,7 +34,16 @@ public sealed record IdentityLifecycleRequest(
 public sealed record CredentialResetChallengeRequest(
     string Purpose,
     DateTimeOffset ExpiresAt,
-    string ReasonCode);
+    string ReasonCode,
+    string DeliveryMode = "EMAIL",
+    bool AdminIssuedHandoffAcknowledged = false);
+
+public sealed record ReissueIdentityInvitationRequest(
+    string ActivationDeliveryMode,
+    string ReasonCode,
+    bool AdminIssuedHandoffAcknowledged = false);
+
+public sealed record CancelIdentityInvitationRequest(long ExpectedRowVersion, string ReasonCode);
 
 public sealed record AssignIdentityRoleRequest(
     Guid RoleReference,

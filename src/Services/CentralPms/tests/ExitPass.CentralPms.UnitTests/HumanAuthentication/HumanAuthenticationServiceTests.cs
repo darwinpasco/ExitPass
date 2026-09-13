@@ -244,6 +244,50 @@ public sealed class HumanAuthenticationServiceTests
             Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task PasswordResetRequest_ForEligibleUser_UsesEmailDeliveryWithoutChangingPublicContract()
+    {
+        var fixture = new Fixture();
+        fixture.Login = fixture.CreateLogin(false) with { Email = "employee@example.test" };
+        fixture.ChallengeDelivery.Enabled.Returns(true);
+        var reference = Guid.NewGuid();
+        fixture.Repository.CreateCredentialChallengeAsync(fixture.Login.UserId, "PASSWORD_RESET",
+                "PASSWORD_RESET_EMAIL", Arg.Any<DateTimeOffset>(), Arg.Any<DateTimeOffset>(),
+                Arg.Any<Guid>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns((reference, "test-delivery-material"));
+
+        await fixture.Service.RequestPasswordResetAsync("Cashier01", fixture.Context(), CancellationToken.None);
+
+        await fixture.ChallengeDelivery.Received(1).DeliverAsync(
+            Arg.Is<CredentialChallengeDeliveryRequest>(request =>
+                request.RecipientEmail == "employee@example.test" &&
+                request.Purpose == "PASSWORD_RESET" &&
+                request.ChallengeReference == reference),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task PasswordResetRequest_WhenEmailDeliveryFails_RevokesChallengeAndDoesNotThrow()
+    {
+        var fixture = new Fixture();
+        fixture.Login = fixture.CreateLogin(false) with { Email = "employee@example.test" };
+        fixture.ChallengeDelivery.Enabled.Returns(true);
+        var reference = Guid.NewGuid();
+        fixture.Repository.CreateCredentialChallengeAsync(fixture.Login.UserId, "PASSWORD_RESET",
+                "PASSWORD_RESET_EMAIL", Arg.Any<DateTimeOffset>(), Arg.Any<DateTimeOffset>(),
+                Arg.Any<Guid>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns((reference, "test-delivery-material"));
+        fixture.ChallengeDelivery.DeliverAsync(Arg.Any<CredentialChallengeDeliveryRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new InvalidOperationException("test delivery failure")));
+
+        var operation = () => fixture.Service.RequestPasswordResetAsync("Cashier01", fixture.Context(), CancellationToken.None);
+
+        await operation.Should().NotThrowAsync();
+        await fixture.Repository.Received(1).RevokeCredentialChallengeAsync(reference,
+            Arg.Any<Guid>(), "PASSWORD_RESET_EMAIL_DELIVERY_FAILED", Arg.Any<DateTimeOffset>(),
+            Arg.Any<CancellationToken>());
+    }
+
     private sealed class Fixture
     {
         public readonly IHumanAuthenticationRepository Repository = Substitute.For<IHumanAuthenticationRepository>();
