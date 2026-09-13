@@ -23,6 +23,7 @@ public interface IHumanAuthenticationRepository
     Task<bool> IsActiveDeviceServiceAtSiteAsync(Guid serviceIdentityId, Guid siteId, DateTimeOffset now, CancellationToken cancellationToken);
     Task<bool> TryRecordTotpSuccessAsync(Guid authenticatorId, long expectedRowVersion, long matchedTimeStep, DateTimeOffset now, Guid serviceIdentityId, CancellationToken cancellationToken);
     Task<TotpAuthenticatorRecord?> CreatePendingTotpAuthenticatorAsync(Guid authenticatorId, Guid userId, byte[] protectedEnvelope, string keyReference, string keyVersion, short formatVersion, DateTimeOffset now, Guid actorUserId, CancellationToken cancellationToken);
+    Task<TotpAuthenticatorRecord?> RestartPendingTotpAuthenticatorAsync(Guid currentAuthenticatorId, long expectedRowVersion, Guid replacementAuthenticatorId, Guid userId, byte[] protectedEnvelope, string keyReference, string keyVersion, short formatVersion, DateTimeOffset now, Guid actorUserId, CancellationToken cancellationToken);
     Task<TotpAuthenticatorRecord?> GetCurrentTotpAuthenticatorAsync(Guid userId, CancellationToken cancellationToken);
     Task<bool> ConfirmTotpAuthenticatorAsync(Guid authenticatorId, long expectedRowVersion, long matchedTimeStep, DateTimeOffset now, Guid actorUserId, CancellationToken cancellationToken);
     Task ResetTotpAuthenticatorAsync(Guid userId, Guid actorUserId, string reasonCode, DateTimeOffset now, CancellationToken cancellationToken);
@@ -82,6 +83,7 @@ public interface IHumanAuthenticationService
     Task<HumanAuthenticationResult> FreshAuthenticateAsync(string token, string password, string? totpCode, HumanAuthenticationContext context, CancellationToken cancellationToken);
     Task<HumanAuthenticationResult> ChangePasswordAsync(string token, string currentPassword, string newPassword, string? totpCode, HumanAuthenticationContext context, CancellationToken cancellationToken);
     Task<TotpEnrollmentResult> BeginTotpEnrollmentAsync(string token, HumanAuthenticationContext context, CancellationToken cancellationToken);
+    Task<TotpEnrollmentResult> RestartTotpEnrollmentAsync(string token, HumanAuthenticationContext context, CancellationToken cancellationToken);
     Task<TotpEnrollmentResult> ConfirmTotpEnrollmentAsync(string token, string code, HumanAuthenticationContext context, CancellationToken cancellationToken);
     Task RequestPasswordResetAsync(string username, HumanAuthenticationContext context, CancellationToken cancellationToken);
     Task<HumanAuthenticationResult> ResetPasswordAsync(Guid challengeReference, string challengeSecret, string newPassword, HumanAuthenticationContext context, CancellationToken cancellationToken);

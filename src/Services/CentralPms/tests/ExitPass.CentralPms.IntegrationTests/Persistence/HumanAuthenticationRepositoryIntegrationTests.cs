@@ -678,6 +678,183 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
         (await ScalarAsync<string>("SELECT authenticator_status::text FROM identity.user_mfa_authenticators WHERE user_id=@id ORDER BY created_at DESC LIMIT 1;", user)).Should().Be("RESET_REQUIRED");
     }
 
+    [Fact]
+    public async Task Privileged_enrollment_restart_replaces_only_pending_material_and_requires_fresh_totp_login_for_authority()
+    {
+        var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
+        var runtime = CreateRuntime(TestOptions(), clock);
+        var username = $"W44Privileged{Guid.NewGuid():N}"[..30];
+        var user = await SeedUserAsync(runtime.Passwords, username, "correct horse battery staple");
+        await AssignPrivilegedRoleAsync(user);
+        var (siteId, siteGroupId) = await GrantSeededRoleAndScopesAsync(user);
+        const string permission = "w44.privileged.proof";
+        await GrantCanonicalPermissionsAsync(user, [permission]);
+        var context = Context();
+
+        var login = await runtime.Service.LoginAsync(username, "correct horse battery staple",
+            HumanSessionAudiences.ManagementPlatform, null, context, CancellationToken.None);
+        login.Response.Outcome.Should().Be(HumanAuthenticationOutcomes.MfaEnrollmentRequired);
+        login.Response.Authenticated.Should().BeTrue();
+        login.Response.Session!.MfaRequired.Should().BeTrue();
+        login.Response.Session.MfaSatisfied.Should().BeFalse();
+        login.Response.Session.Assurance.Should().Be("PASSWORD_MFA_PENDING");
+        login.Response.Session.Permissions.Should().BeEmpty();
+        login.Response.Session.SiteReferences.Should().BeEmpty();
+        login.Response.Session.SiteGroupReferences.Should().BeEmpty();
+        login.Response.Session.HasGlobalScope.Should().BeFalse();
+
+        var first = await runtime.Service.BeginTotpEnrollmentAsync(login.Credential!.SerializedToken,
+            context, CancellationToken.None);
+        first.Response.Outcome.Should().Be("TOTP_ENROLLMENT_STARTED");
+        first.Response.SharedSecret.Should().NotBeNullOrWhiteSpace();
+        first.Response.ProvisioningUri.Should().StartWith("otpauth://totp/");
+        (await runtime.Service.BeginTotpEnrollmentAsync(login.Credential.SerializedToken,
+            context, CancellationToken.None)).Response.ErrorCode.Should().Be("TOTP_AUTHENTICATOR_ALREADY_EXISTS");
+        var firstAuthenticatorId = await ScalarAsync<Guid>("SELECT user_mfa_authenticator_id FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='PENDING_ENROLLMENT';", user);
+
+        var restarted = await runtime.Service.RestartTotpEnrollmentAsync(login.Credential.SerializedToken,
+            context, CancellationToken.None);
+        restarted.Response.Outcome.Should().Be("TOTP_ENROLLMENT_RESTARTED");
+        restarted.Response.SharedSecret.Should().NotBe(first.Response.SharedSecret);
+        restarted.Response.ProvisioningUri.Should().NotBe(first.Response.ProvisioningUri);
+        (await ScalarAsync<string>("SELECT authenticator_status::text FROM identity.user_mfa_authenticators WHERE user_mfa_authenticator_id=@id;", firstAuthenticatorId)).Should().Be("REVOKED");
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='PENDING_ENROLLMENT';", user)).Should().Be(1);
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='ACTIVE';", user)).Should().Be(0);
+
+        var firstSecret = Base32Encoding.ToBytes(first.Response.SharedSecret!);
+        var replacementSecret = Base32Encoding.ToBytes(restarted.Response.SharedSecret!);
+        try
+        {
+            var oldCode = new Totp(firstSecret, 30, OtpHashMode.Sha1, 6).ComputeTotp(clock.GetUtcNow().UtcDateTime);
+            var oldConfirmation = await runtime.Service.ConfirmTotpEnrollmentAsync(login.Credential.SerializedToken,
+                oldCode, context, CancellationToken.None);
+            oldConfirmation.Response.ErrorCode.Should().Be("TOTP_CONFIRMATION_FAILED");
+
+            var confirmationCode = new Totp(replacementSecret, 30, OtpHashMode.Sha1, 6).ComputeTotp(clock.GetUtcNow().UtcDateTime);
+            var confirmed = await runtime.Service.ConfirmTotpEnrollmentAsync(login.Credential.SerializedToken,
+                confirmationCode, context, CancellationToken.None);
+            confirmed.Response.Outcome.Should().Be("TOTP_CONFIRMED_REAUTHENTICATION_REQUIRED");
+            confirmed.Response.SharedSecret.Should().BeNull();
+            confirmed.Response.ProvisioningUri.Should().BeNull();
+
+            var stillRestricted = await runtime.Service.ResolveSessionAsync(login.Credential.SerializedToken,
+                HumanSessionAudiences.ManagementPlatform, null, context, false, CancellationToken.None);
+            stillRestricted.Response.Authenticated.Should().BeTrue();
+            stillRestricted.Response.Session!.MfaSatisfied.Should().BeFalse();
+            stillRestricted.Response.Session.Permissions.Should().BeEmpty();
+            stillRestricted.Response.Session.SiteReferences.Should().BeEmpty();
+            stillRestricted.Response.Session.SiteGroupReferences.Should().BeEmpty();
+            stillRestricted.Response.Session.HasGlobalScope.Should().BeFalse();
+
+            (await runtime.Service.LoginAsync(username, "correct horse battery staple",
+                HumanSessionAudiences.ManagementPlatform, null, context, CancellationToken.None))
+                .Response.ErrorCode.Should().Be("TOTP_REQUIRED");
+
+            clock.Advance(TimeSpan.FromSeconds(30));
+            var loginCode = new Totp(replacementSecret, 30, OtpHashMode.Sha1, 6).ComputeTotp(clock.GetUtcNow().UtcDateTime);
+            var authenticated = await runtime.Service.LoginAsync(username, "correct horse battery staple",
+                HumanSessionAudiences.ManagementPlatform, loginCode, context, CancellationToken.None);
+            authenticated.Response.Outcome.Should().Be(HumanAuthenticationOutcomes.Authenticated);
+            authenticated.Response.Session!.MfaSatisfied.Should().BeTrue();
+            authenticated.Response.Session.Assurance.Should().Be("PASSWORD_TOTP");
+            authenticated.Response.Session.Permissions.Should().Contain(permission);
+            authenticated.Response.Session.SiteReferences.Should().Contain(siteId);
+            authenticated.Response.Session.SiteGroupReferences.Should().Contain(siteGroupId);
+
+            var replay = await runtime.Service.LoginAsync(username, "correct horse battery staple",
+                HumanSessionAudiences.ManagementPlatform, loginCode, context, CancellationToken.None);
+            replay.Response.ErrorCode.Should().Be("TOTP_INVALID");
+
+            var evidenceNeedles = new[] { first.Response.SharedSecret!, first.Response.ProvisioningUri!, restarted.Response.SharedSecret!, restarted.Response.ProvisioningUri!, oldCode, confirmationCode, loginCode };
+            foreach (var needle in evidenceNeedles)
+            {
+                (await ScalarAsync<int>("""
+                    SELECT count(*)::integer FROM (
+                        SELECT to_jsonb(a)::text AS document FROM identity.authentication_attempts a WHERE a.user_id=@id
+                        UNION ALL
+                        SELECT to_jsonb(ae)::text FROM audit.audit_events ae WHERE ae.actor_user_id=@id OR ae.target_entity_id=@id
+                        UNION ALL
+                        SELECT to_jsonb(se)::text FROM audit.security_events se WHERE se.actor_user_id=@id OR se.target_entity_id=@id
+                    ) evidence WHERE document LIKE '%' || @needle || '%';
+                    """, user, ("needle", needle))).Should().Be(0);
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(firstSecret);
+            CryptographicOperations.ZeroMemory(replacementSecret);
+        }
+
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM audit.security_events WHERE actor_user_id=@id AND security_event_type='TOTP_ENROLLMENT_RESTARTED' AND reason_code='LOST_ENROLLMENT_SECRET';", user)).Should().Be(1);
+        await runtime.Service.ResetTotpAsync(user, user, "W44_TEST_RESET", Guid.NewGuid(), CancellationToken.None);
+        var resetLogin = await runtime.Service.LoginAsync(username, "correct horse battery staple",
+            HumanSessionAudiences.ManagementPlatform, null, context, CancellationToken.None);
+        resetLogin.Response.Outcome.Should().Be(HumanAuthenticationOutcomes.MfaEnrollmentRequired);
+        var resetEnrollment = await runtime.Service.BeginTotpEnrollmentAsync(resetLogin.Credential!.SerializedToken,
+            context, CancellationToken.None);
+        resetEnrollment.Response.Outcome.Should().Be("TOTP_ENROLLMENT_STARTED");
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='PENDING_ENROLLMENT';", user)).Should().Be(1);
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='RESET_REQUIRED';", user)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Totp_enrollment_confirmation_throttles_and_ordinary_or_unprotected_sessions_fail_closed()
+    {
+        var options = TestOptions() with { MaximumFailures = 2 };
+        var runtime = CreateRuntime(options);
+        var user = await SeedUserAsync(runtime.Passwords, $"W44Throttle{Guid.NewGuid():N}"[..29], "correct horse battery staple");
+        await AssignPrivilegedRoleAsync(user);
+        var context = Context();
+        var login = await runtime.Service.LoginAsync(await ScalarAsync<string>("SELECT username FROM identity.users WHERE user_id=@id;", user),
+            "correct horse battery staple", HumanSessionAudiences.ManagementPlatform, null, context, CancellationToken.None);
+        await runtime.Service.BeginTotpEnrollmentAsync(login.Credential!.SerializedToken, context, CancellationToken.None);
+        (await runtime.Service.ConfirmTotpEnrollmentAsync(login.Credential.SerializedToken, "000000", context, CancellationToken.None)).Response.ErrorCode.Should().Be("TOTP_CONFIRMATION_FAILED");
+        (await runtime.Service.ConfirmTotpEnrollmentAsync(login.Credential.SerializedToken, "000001", context, CancellationToken.None)).Response.ErrorCode.Should().Be("TOTP_CONFIRMATION_FAILED");
+        (await runtime.Service.ConfirmTotpEnrollmentAsync(login.Credential.SerializedToken, "000002", context, CancellationToken.None)).Response.ErrorCode.Should().Be("TOTP_THROTTLED");
+        (await ScalarAsync<string>("SELECT authenticator_status::text FROM identity.user_mfa_authenticators WHERE user_id=@id ORDER BY created_at DESC LIMIT 1;", user)).Should().Be("PENDING_ENROLLMENT");
+
+        var ordinary = await SeedUserAsync(runtime.Passwords, $"W44Ordinary{Guid.NewGuid():N}"[..29], "correct horse battery staple");
+        var ordinaryLogin = await runtime.Service.LoginAsync(await ScalarAsync<string>("SELECT username FROM identity.users WHERE user_id=@id;", ordinary),
+            "correct horse battery staple", HumanSessionAudiences.ManagementPlatform, null, context, CancellationToken.None);
+        ordinaryLogin.Response.Outcome.Should().Be(HumanAuthenticationOutcomes.Authenticated);
+        (await runtime.Service.BeginTotpEnrollmentAsync(ordinaryLogin.Credential!.SerializedToken,
+            context, CancellationToken.None)).Response.ErrorCode.Should().Be("MFA_ENROLLMENT_NOT_REQUIRED");
+
+        var unprotectedRuntime = CreateRuntime(TestOptions() with { TotpProtectionKeyBase64 = "" });
+        var unprotectedUser = await SeedUserAsync(unprotectedRuntime.Passwords, $"W44NoProtect{Guid.NewGuid():N}"[..29], "correct horse battery staple");
+        await AssignPrivilegedRoleAsync(unprotectedUser);
+        var unprotectedLogin = await unprotectedRuntime.Service.LoginAsync(await ScalarAsync<string>("SELECT username FROM identity.users WHERE user_id=@id;", unprotectedUser),
+            "correct horse battery staple", HumanSessionAudiences.ManagementPlatform, null, context, CancellationToken.None);
+        (await unprotectedRuntime.Service.BeginTotpEnrollmentAsync(unprotectedLogin.Credential!.SerializedToken,
+            context, CancellationToken.None)).Response.ErrorCode.Should().Be("TOTP_PROTECTION_UNAVAILABLE");
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id;", unprotectedUser)).Should().Be(0);
+
+        var loginThrottleRuntime = CreateRuntime(options);
+        var loginThrottleUser = await SeedUserAsync(loginThrottleRuntime.Passwords, $"W44LoginThrottle{Guid.NewGuid():N}"[..29], "correct horse battery staple");
+        await AssignPrivilegedRoleAsync(loginThrottleUser);
+        var loginThrottleAuthenticatorId = Guid.NewGuid();
+        var loginThrottleSecret = RandomNumberGenerator.GetBytes(20);
+        try
+        {
+            var envelope = loginThrottleRuntime.Protector.Protect(loginThrottleUser, loginThrottleAuthenticatorId, loginThrottleSecret);
+            await SeedActiveAuthenticatorAsync(loginThrottleUser, loginThrottleAuthenticatorId, envelope, loginThrottleRuntime.Protector);
+            var loginThrottleUsername = await ScalarAsync<string>("SELECT username FROM identity.users WHERE user_id=@id;", loginThrottleUser);
+            var loginThrottleContext = Context();
+            (await loginThrottleRuntime.Service.LoginAsync(loginThrottleUsername, "correct horse battery staple",
+                HumanSessionAudiences.ManagementPlatform, "00000000", loginThrottleContext, CancellationToken.None)).Response.ErrorCode.Should().Be("TOTP_INVALID");
+            (await loginThrottleRuntime.Service.LoginAsync(loginThrottleUsername, "correct horse battery staple",
+                HumanSessionAudiences.ManagementPlatform, "11111111", loginThrottleContext, CancellationToken.None)).Response.ErrorCode.Should().Be("TOTP_INVALID");
+            var loginThrottled = await loginThrottleRuntime.Service.LoginAsync(loginThrottleUsername, "correct horse battery staple",
+                HumanSessionAudiences.ManagementPlatform, "22222222", loginThrottleContext, CancellationToken.None);
+            loginThrottled.HttpStatusCode.Should().Be(429);
+            loginThrottled.Response.ErrorCode.Should().Be("TOTP_THROTTLED");
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(loginThrottleSecret);
+        }
+    }
+
     private Runtime CreateRuntime(
         HumanAuthenticationOptions options,
         TimeProvider? timeProvider = null,
@@ -812,13 +989,21 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
 
     private async Task<(Guid SiteId, Guid SiteGroupId)> GrantSeededRoleAndScopesAsync(Guid userId)
     {
-        var roleId = await ScalarAsync<Guid>("SELECT role_id FROM identity.roles WHERE role_status='ACTIVE' ORDER BY role_code LIMIT 1;");
         var (siteId, siteGroupId) = await ActivateCanonicalPitxLevel3Async();
-        var userRoleId = Guid.NewGuid();
-        const string sql = """
+        const string assignmentSql = """
             INSERT INTO identity.user_roles (user_role_id,user_id,role_id,assignment_status,assignment_reason_code,
                 assigned_by_service_identity_id,effective_from,created_by_service_identity_id,updated_by_service_identity_id)
-            VALUES (@user_role_id,@user_id,@role_id,'ACTIVE','I020_TEST',@service_id,now()-interval '1 day',@service_id,@service_id);
+            SELECT gen_random_uuid(),@user_id,role_id,'ACTIVE','I020_TEST',@service_id,now()-interval '1 day',@service_id,@service_id
+            FROM identity.roles
+            WHERE role_status='ACTIVE'
+              AND NOT EXISTS (
+                  SELECT 1 FROM identity.user_roles
+                  WHERE user_id=@user_id AND assignment_status='ACTIVE')
+            ORDER BY role_code LIMIT 1;
+            """;
+        await ExecuteAsync(assignmentSql, userId, ("service_id", CentralPmsServiceIdentityId));
+        var userRoleId = await ScalarAsync<Guid>("SELECT user_role_id FROM identity.user_roles WHERE user_id=@id AND assignment_status='ACTIVE';", userId);
+        const string scopeSql = """
             INSERT INTO identity.user_role_scope_grants (user_role_scope_grant_id,user_role_id,scope_type,site_id,
                 grant_status,grant_reason_code,effective_from,granted_by_service_identity_id,
                 created_by_service_identity_id,updated_by_service_identity_id)
@@ -830,10 +1015,8 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
             """;
         await using var connection = new NpgsqlConnection(_database.ConnectionString);
         await connection.OpenAsync();
-        await using var command = new NpgsqlCommand(sql, connection);
+        await using var command = new NpgsqlCommand(scopeSql, connection);
         command.Parameters.AddWithValue("user_role_id", userRoleId);
-        command.Parameters.AddWithValue("user_id", userId);
-        command.Parameters.AddWithValue("role_id", roleId);
         command.Parameters.AddWithValue("site_id", siteId);
         command.Parameters.AddWithValue("site_group_id", siteGroupId);
         command.Parameters.AddWithValue("service_id", CentralPmsServiceIdentityId);

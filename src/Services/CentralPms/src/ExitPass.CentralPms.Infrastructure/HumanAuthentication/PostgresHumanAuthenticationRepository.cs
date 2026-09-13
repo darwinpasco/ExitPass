@@ -524,6 +524,63 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
         return result;
     }
 
+    public async Task<TotpAuthenticatorRecord?> RestartPendingTotpAuthenticatorAsync(
+        Guid currentAuthenticatorId,
+        long expectedRowVersion,
+        Guid replacementAuthenticatorId,
+        Guid userId,
+        byte[] protectedEnvelope,
+        string keyReference,
+        string keyVersion,
+        short formatVersion,
+        DateTimeOffset now,
+        Guid actorUserId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            WITH revoked AS (
+                UPDATE identity.user_mfa_authenticators
+                SET authenticator_status='REVOKED', activated_at=COALESCE(activated_at,@now), revoked_at=@now,
+                    reset_or_revoked_by_user_id=@actor_user_id,
+                    status_reason_code='PENDING_ENROLLMENT_RESTARTED',
+                    updated_at=@now, updated_by_user_id=@actor_user_id, row_version=row_version+1
+                WHERE user_mfa_authenticator_id=@current_id AND user_id=@user_id
+                  AND authenticator_type='TOTP' AND authenticator_status='PENDING_ENROLLMENT'
+                  AND row_version=@expected_row_version
+                RETURNING 1
+            )
+            INSERT INTO identity.user_mfa_authenticators (
+                user_mfa_authenticator_id, user_id, authenticator_type, authenticator_status,
+                protected_secret_envelope, protection_key_reference, protection_key_version,
+                envelope_format_version, enrollment_started_at, created_at, created_by_user_id,
+                updated_at, updated_by_user_id)
+            SELECT @replacement_id,@user_id,'TOTP','PENDING_ENROLLMENT',@envelope,@key_reference,@key_version,
+                @format_version,@now,@now,@actor_user_id,@now,@actor_user_id
+            WHERE EXISTS (SELECT 1 FROM revoked)
+            RETURNING user_mfa_authenticator_id, authenticator_status::text, protected_secret_envelope,
+                protection_key_reference, protection_key_version, envelope_format_version,
+                last_successfully_used_time_step, row_version;
+            """;
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("current_id", currentAuthenticatorId);
+        command.Parameters.AddWithValue("expected_row_version", expectedRowVersion);
+        command.Parameters.AddWithValue("replacement_id", replacementAuthenticatorId);
+        command.Parameters.AddWithValue("user_id", userId);
+        command.Parameters.AddWithValue("envelope", protectedEnvelope);
+        command.Parameters.AddWithValue("key_reference", keyReference);
+        command.Parameters.AddWithValue("key_version", keyVersion);
+        command.Parameters.AddWithValue("format_version", formatVersion);
+        command.Parameters.AddWithValue("now", now);
+        command.Parameters.AddWithValue("actor_user_id", actorUserId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var result = await reader.ReadAsync(cancellationToken) ? ReadAuthenticator(reader) : null;
+        await reader.DisposeAsync();
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
     public async Task<TotpAuthenticatorRecord?> GetCurrentTotpAuthenticatorAsync(Guid userId, CancellationToken cancellationToken)
     {
         const string sql = """

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.HumanAuthentication;
+using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.HumanAuthentication;
 using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
 using FluentAssertions;
@@ -91,8 +92,48 @@ public sealed class HumanAuthenticationServiceTests
         result.Response.Outcome.Should().Be(HumanAuthenticationOutcomes.MfaEnrollmentRequired);
         result.Response.Authenticated.Should().BeTrue();
         result.Response.Session!.Permissions.Should().BeEmpty();
+        result.Response.Session.SiteReferences.Should().BeEmpty();
+        result.Response.Session.SiteGroupReferences.Should().BeEmpty();
+        result.Response.Session.HasGlobalScope.Should().BeFalse();
         result.Response.Session.MfaRequired.Should().BeTrue();
         result.Response.Session.MfaSatisfied.Should().BeFalse();
+        var principal = HumanSessionAuthenticationHandler.CreatePrincipal(result.Response.Session);
+        principal.Claims.Should().NotContain(claim =>
+            claim.Type == CentralPmsRbacPolicyCatalog.PermissionClaimType ||
+            claim.Type == "site_id" ||
+            claim.Type == "site_group_id" ||
+            (claim.Type == "has_global_scope" && claim.Value == "true"));
+    }
+
+    [Theory]
+    [InlineData("PENDING_ENROLLMENT")]
+    [InlineData("RESET_REQUIRED")]
+    public async Task Privileged_management_user_with_reenrollment_state_gets_restricted_session(string status)
+    {
+        var fixture = new Fixture();
+        fixture.Login = fixture.CreateLogin(privileged: true, fixture.Authenticator with { Status = status });
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.ManagementPlatform);
+
+        result.Response.Outcome.Should().Be(HumanAuthenticationOutcomes.MfaEnrollmentRequired);
+        result.Response.Session!.MfaSatisfied.Should().BeFalse();
+        result.Response.Session.Permissions.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("SUSPENDED", "MFA_UNAVAILABLE", 403)]
+    [InlineData("ACTIVE", "TOTP_PROTECTION_UNAVAILABLE", 503)]
+    public async Task Privileged_management_user_with_unusable_totp_fails_closed(string status, string errorCode, int statusCode)
+    {
+        var fixture = new Fixture();
+        fixture.Login = fixture.CreateLogin(privileged: true, fixture.Authenticator with { Status = status });
+        if (status == "ACTIVE") fixture.Protector.IsConfigured.Returns(false);
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.ManagementPlatform, "123456");
+
+        result.HttpStatusCode.Should().Be(statusCode);
+        result.Response.ErrorCode.Should().Be(errorCode);
+        result.Response.Authenticated.Should().BeFalse();
     }
 
     [Fact]
