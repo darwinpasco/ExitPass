@@ -301,7 +301,15 @@ public sealed record CredentialResetChallengeResult(
     DateTimeOffset ExpiresAt,
     string DeliveryMode = ActivationDeliveryModes.Email,
     string DeliveryClassification = "EMAIL_SENT",
-    OneTimeActivationMaterial? OneTimeActivation = null);
+    OneTimeActivationMaterial? OneTimeActivation = null,
+    OneTimeCredentialMaterial? OneTimeCredential = null);
+
+public sealed record OneTimeCredentialMaterial(
+    Guid ChallengeReference,
+    string ChallengeSecret,
+    DateTimeOffset ExpiresAt,
+    string LifecycleUrl,
+    string QrPayload);
 
 public sealed record ReissueIdentityInvitationCommand(
     Guid UserReference,

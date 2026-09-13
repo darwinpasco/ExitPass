@@ -668,6 +668,89 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         (await CountSecurityEventsAsync("SESSION_REVOKED", revokeCorrelation)).Should().Be(1);
     }
 
+    [Fact]
+    public async Task AdminIssuedPasswordRecovery_UsesCanonicalChallengeAndResetRuntimeWithoutChangingAuthority()
+    {
+        var actor = await SeedAdministratorAsync();
+        var target = await SeedAdministratorAsync();
+        await ExecuteAsync("UPDATE identity.users SET email=NULL, email_normalized=NULL WHERE user_id=@user_id;", target.Actor.UserId);
+        var options = Options.Create(new HumanAuthenticationOptions
+        {
+            TotpProtectionKeyBase64 = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+            TotpProtectionKeyReference = "w45-disposable",
+            TotpProtectionKeyVersion = "1"
+        });
+        var tokens = new HumanSessionTokenService();
+        var authenticationRepository = new PostgresHumanAuthenticationRepository(_database.ConnectionString, tokens);
+        var delivery = new CapturingCredentialChallengeDelivery();
+        var authentication = new HumanAuthenticationService(authenticationRepository,
+            new Argon2idHumanPasswordHasher(options), new TotpProvider(options),
+            new AesGcmTotpSecretProtector(options), tokens, delivery, TimeProvider.System, options);
+        var administrationRepository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var links = new CredentialChallengeLinkBuilder(Options.Create(new CredentialChallengeDeliveryOptions
+        {
+            PublicAccountLifecycleBaseUrl = "https://accounts.exitpass.test"
+        }));
+        var gateway = new HumanAuthenticationAdministrationGateway(authenticationRepository, authentication, delivery,
+            links, administrationRepository, options, TimeProvider.System);
+        var service = new ManagementPlatformIdentityAdministrationService(administrationRepository, gateway, options, TimeProvider.System);
+        var localVersionBefore = await ScalarAsync<long>(
+            "SELECT credential_version FROM identity.local_credentials WHERE user_id=@user_id;", target.Actor.UserId);
+        var userVersionBefore = await ScalarAsync<long>(
+            "SELECT credential_version FROM identity.users WHERE user_id=@user_id;", target.Actor.UserId);
+        var epochBefore = await ScalarAsync<long>(
+            "SELECT authorization_epoch FROM identity.users WHERE user_id=@user_id;", target.Actor.UserId);
+        var roleCountBefore = await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM identity.user_roles WHERE user_id=@user_id;", target.Actor.UserId);
+        var scopeCountBefore = await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM identity.user_role_scope_grants WHERE user_role_id IN (SELECT user_role_id FROM identity.user_roles WHERE user_id=@user_id);", target.Actor.UserId);
+
+        var first = await service.IssueCredentialChallengeAsync(actor.Actor,
+            new(target.Actor.UserId, "PASSWORD_RESET", DateTimeOffset.UtcNow.AddMinutes(10), "NO_EMAIL_RECOVERY",
+                Guid.NewGuid(), ActivationDeliveryModes.AdminIssued, true), CancellationToken.None);
+        var secondCorrelation = Guid.NewGuid();
+        var second = await service.IssueCredentialChallengeAsync(actor.Actor,
+            new(target.Actor.UserId, "PASSWORD_RESET", DateTimeOffset.UtcNow.AddMinutes(10), "NO_EMAIL_RECOVERY_REISSUE",
+                secondCorrelation, ActivationDeliveryModes.AdminIssued, true), CancellationToken.None);
+
+        first.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        second.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        first.Value!.OneTimeCredential.Should().NotBeNull();
+        second.Value!.OneTimeCredential.Should().NotBeNull();
+        second.Value.OneTimeActivation.Should().BeNull();
+        second.Value.OneTimeCredential!.LifecycleUrl.Should().Be(
+            $"https://accounts.exitpass.test/account/reset-password?challengeReference={second.Value.ChallengeReference:D}&challengeSecret={second.Value.OneTimeCredential.ChallengeSecret}");
+        second.Value.OneTimeCredential.QrPayload.Should().Be(second.Value.OneTimeCredential.LifecycleUrl);
+        (await GetChallengeStatusAsync(first.Value.ChallengeReference)).Should().Be("REVOKED");
+        (await GetChallengeStatusAsync(second.Value.ChallengeReference)).Should().Be("ISSUED");
+        (await GetChallengeHashAsync(second.Value.ChallengeReference)).Should().NotBe(second.Value.OneTimeCredential.ChallengeSecret);
+        delivery.DeliveredReference.Should().BeNull();
+        (await CountSecurityEventsAsync("CREDENTIAL_RESET", secondCorrelation)).Should().Be(1);
+        (await CountAuditEventsAsync(secondCorrelation)).Should().Be(1);
+
+        var resetContext = new HumanAuthenticationContext(Guid.NewGuid(), options.Value.CentralPmsServiceIdentityId,
+            null, null, null, null);
+        var reset = await authentication.ResetPasswordAsync(second.Value.ChallengeReference,
+            second.Value.OneTimeCredential.ChallengeSecret, "replacement horse battery staple", resetContext,
+            CancellationToken.None);
+
+        reset.Response.Outcome.Should().Be("PASSWORD_RESET_COMPLETED");
+        (await GetChallengeStatusAsync(second.Value.ChallengeReference)).Should().Be("CONSUMED");
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.local_credentials WHERE user_id=@user_id AND credential_status IN ('ACTIVE','CHANGE_REQUIRED','LOCKED');", target.Actor.UserId)).Should().Be(1);
+        (await ScalarAsync<long>("SELECT credential_version FROM identity.local_credentials WHERE user_id=@user_id;", target.Actor.UserId)).Should().Be(localVersionBefore + 1);
+        (await ScalarAsync<long>("SELECT credential_version FROM identity.users WHERE user_id=@user_id;", target.Actor.UserId)).Should().Be(userVersionBefore + 1);
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.human_sessions WHERE user_id=@user_id AND session_status='ACTIVE';", target.Actor.UserId)).Should().Be(0);
+        (await ScalarAsync<string>("SELECT authenticator_status::text FROM identity.user_mfa_authenticators WHERE user_id=@user_id ORDER BY created_at DESC LIMIT 1;", target.Actor.UserId)).Should().Be("ACTIVE");
+        (await ScalarAsync<long>("SELECT authorization_epoch FROM identity.users WHERE user_id=@user_id;", target.Actor.UserId)).Should().Be(epochBefore);
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.user_roles WHERE user_id=@user_id;", target.Actor.UserId)).Should().Be(roleCountBefore);
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.user_role_scope_grants WHERE user_role_id IN (SELECT user_role_id FROM identity.user_roles WHERE user_id=@user_id);", target.Actor.UserId)).Should().Be(scopeCountBefore);
+
+        var replay = await authentication.ResetPasswordAsync(second.Value.ChallengeReference,
+            second.Value.OneTimeCredential.ChallengeSecret, "another replacement battery staple", resetContext,
+            CancellationToken.None);
+        replay.Response.ErrorCode.Should().Be("INVALID_OR_EXPIRED_CHALLENGE");
+    }
+
     private async Task<SeedContext> SeedAdministratorAsync()
     {
         var actorUserId = Guid.NewGuid();
@@ -797,6 +880,24 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         await using var command = new NpgsqlCommand("SELECT count(*) FROM audit.audit_events WHERE correlation_id = @correlation_id;", connection);
         command.Parameters.AddWithValue("correlation_id", correlationId);
         return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<T> ScalarAsync<T>(string sql, Guid userId)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("user_id", userId);
+        return (T)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task ExecuteAsync(string sql, Guid userId)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("user_id", userId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private async Task<long> CountUsersByUsernameAsync(string username)

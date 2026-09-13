@@ -33,7 +33,7 @@ public sealed record IdentityLifecycleRequest(
 
 public sealed record CredentialResetChallengeRequest(
     string Purpose,
-    DateTimeOffset ExpiresAt,
+    DateTimeOffset? ExpiresAt,
     string ReasonCode,
     string DeliveryMode = "EMAIL",
     bool AdminIssuedHandoffAcknowledged = false);
