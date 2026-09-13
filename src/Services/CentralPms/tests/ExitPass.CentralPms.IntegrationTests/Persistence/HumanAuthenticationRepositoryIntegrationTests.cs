@@ -209,6 +209,162 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
     }
 
     [Fact]
+    public async Task Invited_user_activation_creates_first_credential_atomically_and_supports_ordinary_login()
+    {
+        var runtime = CreateRuntime(TestOptions());
+        var username = $"w42ordinary{Guid.NewGuid():N}"[..28];
+        var user = await SeedInvitedUserAsync(username);
+        await AssignOrdinaryRoleAsync(user);
+        var now = DateTimeOffset.UtcNow;
+        var correlation = Guid.NewGuid();
+        var challenge = await runtime.Repository.CreateCredentialChallengeAsync(user, "ACCOUNT_ACTIVATION",
+            "ACCOUNT_ACTIVATION_ADMIN_ISSUED", now, now.AddMinutes(10), CentralPmsServiceIdentityId,
+            correlation, CancellationToken.None);
+
+        var activated = await runtime.Service.ActivateAsync(challenge.Reference, challenge.Secret,
+            "correct horse battery staple", Context(correlation), CancellationToken.None);
+
+        activated.HttpStatusCode.Should().Be(200);
+        activated.Response.Outcome.Should().Be("ACCOUNT_ACTIVATED");
+        activated.Response.Authenticated.Should().BeFalse();
+        (await ScalarAsync<string>("SELECT user_status::text FROM identity.users WHERE user_id=@id;", user)).Should().Be("ACTIVE");
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.local_credentials WHERE user_id=@id;", user)).Should().Be(1);
+        (await ScalarAsync<string>("SELECT credential_status::text FROM identity.local_credentials WHERE user_id=@id;", user)).Should().Be("ACTIVE");
+        (await ScalarAsync<string>("SELECT challenge_status::text FROM identity.credential_challenges WHERE challenge_reference=@id;", challenge.Reference)).Should().Be("CONSUMED");
+
+        var login = await runtime.Service.LoginAsync(username, "correct horse battery staple",
+            HumanSessionAudiences.ManagementPlatform, null, Context(), CancellationToken.None);
+        login.Response.Authenticated.Should().BeTrue();
+        login.Response.Session!.MfaRequired.Should().BeFalse();
+
+        (await ScalarAsync<int>("""
+            SELECT count(*)::integer FROM identity.authentication_attempts
+            WHERE user_id=@id AND attempt_type='ACTIVATION_CHALLENGE' AND attempt_result='SUCCESS'
+              AND reason_code='ACCOUNT_ACTIVATED';
+            """, user)).Should().Be(1);
+        (await ScalarAsync<int>("""
+            SELECT count(*)::integer FROM audit.security_events se
+            JOIN audit.audit_events ae ON ae.audit_event_id=se.audit_event_id
+            WHERE se.correlation_id=@id AND se.security_event_type='ACTIVATION_CHALLENGE_CONSUMED'
+              AND ae.event_type='ACTIVATION_CHALLENGE_CONSUMED';
+            """, correlation)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Activation_rejects_invalid_expired_superseded_cancelled_active_and_conflicting_cases_without_credentials()
+    {
+        var runtime = CreateRuntime(TestOptions());
+        var now = DateTimeOffset.UtcNow;
+
+        var invalidUser = await SeedInvitedUserAsync($"w42invalid{Guid.NewGuid():N}"[..27]);
+        var invalid = await runtime.Repository.CreateCredentialChallengeAsync(invalidUser, "ACCOUNT_ACTIVATION",
+            now, now.AddMinutes(10), CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
+        (await runtime.Service.ActivateAsync(invalid.Reference, "not-the-secret", "correct horse battery staple",
+            Context(), CancellationToken.None)).Response.ErrorCode.Should().Be("INVALID_OR_EXPIRED_CHALLENGE");
+        await AssertInvitedWithoutCredentialAsync(invalidUser);
+
+        var expiredUser = await SeedInvitedUserAsync($"w42expired{Guid.NewGuid():N}"[..27]);
+        var expired = await runtime.Repository.CreateCredentialChallengeAsync(expiredUser, "ACCOUNT_ACTIVATION",
+            now.AddHours(-2), now.AddHours(-1), CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
+        (await runtime.Service.ActivateAsync(expired.Reference, expired.Secret, "correct horse battery staple",
+            Context(), CancellationToken.None)).Response.ErrorCode.Should().Be("INVALID_OR_EXPIRED_CHALLENGE");
+        await AssertInvitedWithoutCredentialAsync(expiredUser);
+        (await ScalarAsync<string>("SELECT challenge_status::text FROM identity.credential_challenges WHERE challenge_reference=@id;", expired.Reference)).Should().Be("EXPIRED");
+
+        var supersededUser = await SeedInvitedUserAsync($"w42superseded{Guid.NewGuid():N}"[..30]);
+        var superseded = await runtime.Repository.CreateCredentialChallengeAsync(supersededUser, "ACCOUNT_ACTIVATION",
+            now, now.AddMinutes(10), CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
+        var latest = await runtime.Repository.CreateCredentialChallengeAsync(supersededUser, "ACCOUNT_ACTIVATION",
+            now, now.AddMinutes(10), CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
+        (await runtime.Service.ActivateAsync(superseded.Reference, superseded.Secret, "correct horse battery staple",
+            Context(), CancellationToken.None)).Response.ErrorCode.Should().Be("INVALID_OR_EXPIRED_CHALLENGE");
+        (await runtime.Service.ActivateAsync(latest.Reference, latest.Secret, "correct horse battery staple",
+            Context(), CancellationToken.None)).HttpStatusCode.Should().Be(200);
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.local_credentials WHERE user_id=@id;", supersededUser)).Should().Be(1);
+
+        var cancelledUser = await SeedInvitedUserAsync($"w42cancelled{Guid.NewGuid():N}"[..29]);
+        var cancelled = await runtime.Repository.CreateCredentialChallengeAsync(cancelledUser, "ACCOUNT_ACTIVATION",
+            now, now.AddMinutes(10), CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
+        await runtime.Repository.RevokeCredentialChallengeAsync(cancelled.Reference, CentralPmsServiceIdentityId,
+            "INVITATION_CANCELLED", now, CancellationToken.None);
+        await ExecuteAsync("UPDATE identity.users SET user_status='INACTIVE', row_version=row_version+1 WHERE user_id=@user_id;", cancelledUser);
+        (await runtime.Service.ActivateAsync(cancelled.Reference, cancelled.Secret, "correct horse battery staple",
+            Context(), CancellationToken.None)).Response.ErrorCode.Should().Be("INVALID_OR_EXPIRED_CHALLENGE");
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.local_credentials WHERE user_id=@id;", cancelledUser)).Should().Be(0);
+
+        var activeUser = await SeedInvitedUserAsync($"w42active{Guid.NewGuid():N}"[..26]);
+        var activeChallenge = await runtime.Repository.CreateCredentialChallengeAsync(activeUser, "ACCOUNT_ACTIVATION",
+            now, now.AddMinutes(10), CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
+        await ExecuteAsync("UPDATE identity.users SET user_status='ACTIVE', row_version=row_version+1 WHERE user_id=@user_id;", activeUser);
+        (await runtime.Service.ActivateAsync(activeChallenge.Reference, activeChallenge.Secret, "correct horse battery staple",
+            Context(), CancellationToken.None)).Response.ErrorCode.Should().Be("INVALID_OR_EXPIRED_CHALLENGE");
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.local_credentials WHERE user_id=@id;", activeUser)).Should().Be(0);
+
+        var conflictUser = await SeedInvitedUserAsync($"w42conflict{Guid.NewGuid():N}"[..28]);
+        await SeedCurrentCredentialAsync(runtime.Passwords, conflictUser, "ACTIVE");
+        var conflict = await runtime.Repository.CreateCredentialChallengeAsync(conflictUser, "ACCOUNT_ACTIVATION",
+            now, now.AddMinutes(10), CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
+        (await runtime.Service.ActivateAsync(conflict.Reference, conflict.Secret, "correct horse battery staple",
+            Context(), CancellationToken.None)).Response.ErrorCode.Should().Be("INVALID_OR_EXPIRED_CHALLENGE");
+        (await ScalarAsync<string>("SELECT user_status::text FROM identity.users WHERE user_id=@id;", conflictUser)).Should().Be("INVITED");
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.local_credentials WHERE user_id=@id;", conflictUser)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Activation_password_policy_is_retryable_and_pending_bootstrap_credential_is_preserved()
+    {
+        var runtime = CreateRuntime(TestOptions());
+        var user = await SeedInvitedUserAsync($"w42retry{Guid.NewGuid():N}"[..25]);
+        var credentialId = await SeedCurrentCredentialAsync(runtime.Passwords, user, "PENDING_ACTIVATION");
+        var now = DateTimeOffset.UtcNow;
+        var challenge = await runtime.Repository.CreateCredentialChallengeAsync(user, "ACCOUNT_ACTIVATION",
+            now, now.AddMinutes(10), CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
+
+        var rejected = await runtime.Service.ActivateAsync(challenge.Reference, challenge.Secret, "short",
+            Context(), CancellationToken.None);
+        rejected.Response.ErrorCode.Should().Be("PASSWORD_POLICY_FAILED");
+        (await ScalarAsync<string>("SELECT challenge_status::text FROM identity.credential_challenges WHERE challenge_reference=@id;", challenge.Reference)).Should().Be("ISSUED");
+        (await ScalarAsync<string>("SELECT credential_status::text FROM identity.local_credentials WHERE local_credential_id=@id;", credentialId)).Should().Be("PENDING_ACTIVATION");
+
+        var activated = await runtime.Service.ActivateAsync(challenge.Reference, challenge.Secret,
+            "correct horse battery staple", Context(), CancellationToken.None);
+        activated.HttpStatusCode.Should().Be(200);
+        (await ScalarAsync<Guid>("SELECT local_credential_id FROM identity.local_credentials WHERE user_id=@id;", user)).Should().Be(credentialId);
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.local_credentials WHERE user_id=@id;", user)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Concurrent_activation_and_replay_allow_exactly_one_success_and_privileged_login_remains_mfa_restricted()
+    {
+        var runtime = CreateRuntime(TestOptions());
+        var username = $"w42privileged{Guid.NewGuid():N}"[..30];
+        var user = await SeedInvitedUserAsync(username);
+        await AssignPrivilegedRoleAsync(user);
+        var now = DateTimeOffset.UtcNow;
+        var challenge = await runtime.Repository.CreateCredentialChallengeAsync(user, "ACCOUNT_ACTIVATION",
+            now, now.AddMinutes(10), CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
+        var context = Context();
+
+        var attempts = await Task.WhenAll(
+            runtime.Service.ActivateAsync(challenge.Reference, challenge.Secret, "correct horse battery staple", context, CancellationToken.None),
+            runtime.Service.ActivateAsync(challenge.Reference, challenge.Secret, "correct horse battery staple", context, CancellationToken.None));
+
+        attempts.Count(result => result.HttpStatusCode == 200).Should().Be(1);
+        attempts.Count(result => result.Response.ErrorCode == "INVALID_OR_EXPIRED_CHALLENGE").Should().Be(1);
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.local_credentials WHERE user_id=@id;", user)).Should().Be(1);
+        (await runtime.Service.ActivateAsync(challenge.Reference, challenge.Secret, "correct horse battery staple",
+            Context(), CancellationToken.None)).Response.ErrorCode.Should().Be("INVALID_OR_EXPIRED_CHALLENGE");
+
+        var login = await runtime.Service.LoginAsync(username, "correct horse battery staple",
+            HumanSessionAudiences.ManagementPlatform, null, Context(), CancellationToken.None);
+        login.Response.Outcome.Should().Be(HumanAuthenticationOutcomes.MfaEnrollmentRequired);
+        login.Response.Authenticated.Should().BeTrue();
+        login.Response.Session!.MfaRequired.Should().BeTrue();
+        login.Response.Session.MfaSatisfied.Should().BeFalse();
+        login.Response.Session.Permissions.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Password_failures_lock_and_throttle_then_expired_runtime_lockout_releases()
     {
         var options = TestOptions() with { MaximumFailures = 2, LockoutMinutes = 1 };
@@ -371,6 +527,83 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
         var service = new HumanAuthenticationService(repository, passwords, new TotpProvider(configured),
             protector, tokens, new DisabledCredentialChallengeDelivery(), timeProvider ?? TimeProvider.System, configured);
         return new Runtime(repository, service, passwords, protector);
+    }
+
+    private async Task<Guid> SeedInvitedUserAsync(string username)
+    {
+        var userId = Guid.NewGuid();
+        const string sql = """
+            INSERT INTO identity.users (user_id,username,display_name,user_type,user_status,effective_from,
+                created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (@user_id,@username,@username,'SITE_OPERATOR','INVITED',now()-interval '1 day',@service_id,@service_id);
+            """;
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("user_id", userId);
+        command.Parameters.AddWithValue("username", username);
+        command.Parameters.AddWithValue("service_id", CentralPmsServiceIdentityId);
+        await command.ExecuteNonQueryAsync();
+        return userId;
+    }
+
+    private async Task<Guid> SeedCurrentCredentialAsync(
+        IHumanPasswordHasher passwords,
+        Guid userId,
+        string status)
+    {
+        var credentialId = Guid.NewGuid();
+        var material = await passwords.HashAsync("legacy bootstrap horse battery staple", CancellationToken.None);
+        const string sql = """
+            INSERT INTO identity.local_credentials (local_credential_id,user_id,credential_status,password_verifier,
+                verifier_salt,verifier_algorithm_code,verifier_algorithm_version,verifier_work_factor,
+                verifier_memory_kib,verifier_parallelism,activated_at,last_changed_at,
+                created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (@credential_id,@user_id,@status::identity.local_credential_status_enum,@verifier,@salt,
+                @algorithm,@algorithm_version,@work_factor,@memory_kib,@parallelism,
+                CASE WHEN @status='PENDING_ACTIVATION' THEN NULL ELSE now() END,
+                CASE WHEN @status='PENDING_ACTIVATION' THEN NULL ELSE now() END,@service_id,@service_id);
+            """;
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("credential_id", credentialId);
+        command.Parameters.AddWithValue("user_id", userId);
+        command.Parameters.AddWithValue("status", status);
+        command.Parameters.AddWithValue("verifier", material.Verifier);
+        command.Parameters.AddWithValue("salt", material.Salt);
+        command.Parameters.AddWithValue("algorithm", material.AlgorithmCode);
+        command.Parameters.AddWithValue("algorithm_version", material.AlgorithmVersion);
+        command.Parameters.AddWithValue("work_factor", material.Iterations);
+        command.Parameters.AddWithValue("memory_kib", material.MemoryKiB);
+        command.Parameters.AddWithValue("parallelism", material.Parallelism);
+        command.Parameters.AddWithValue("service_id", CentralPmsServiceIdentityId);
+        await command.ExecuteNonQueryAsync();
+        return credentialId;
+    }
+
+    private async Task AssignOrdinaryRoleAsync(Guid userId)
+    {
+        const string sql = """
+            INSERT INTO identity.user_roles (user_role_id,user_id,role_id,assignment_status,assignment_reason_code,
+                assigned_by_service_identity_id,effective_from,created_by_service_identity_id,updated_by_service_identity_id)
+            SELECT gen_random_uuid(),@user_id,role_id,'ACTIVE','W42_TEST',@service_id,now()-interval '1 day',@service_id,@service_id
+            FROM identity.roles
+            WHERE role_status='ACTIVE' AND NOT is_privileged
+            ORDER BY role_code LIMIT 1;
+            """;
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("user_id", userId);
+        command.Parameters.AddWithValue("service_id", CentralPmsServiceIdentityId);
+        (await command.ExecuteNonQueryAsync()).Should().Be(1);
+    }
+
+    private async Task AssertInvitedWithoutCredentialAsync(Guid userId)
+    {
+        (await ScalarAsync<string>("SELECT user_status::text FROM identity.users WHERE user_id=@id;", userId)).Should().Be("INVITED");
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.local_credentials WHERE user_id=@id;", userId)).Should().Be(0);
     }
 
     private async Task<Guid> SeedUserAsync(IHumanPasswordHasher passwords, string username, string password)

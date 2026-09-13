@@ -34,7 +34,7 @@ public interface IHumanAuthenticationRepository
     Task RevokeCredentialChallengeAsync(Guid challengeReference, Guid serviceIdentityId, string reasonCode, DateTimeOffset now, CancellationToken cancellationToken);
     Task<LocalCredentialRecord?> GetCurrentLocalCredentialAsync(Guid userId, CancellationToken cancellationToken);
     Task CompletePasswordResetAsync(Guid userId, Guid challengeId, PasswordHashMaterial material, DateTimeOffset now, Guid serviceIdentityId, CancellationToken cancellationToken);
-    Task<Guid?> CompleteCredentialChallengeAsync(Guid challengeReference, string challengeSecretHash, string purpose, PasswordHashMaterial material, DateTimeOffset now, Guid serviceIdentityId, CancellationToken cancellationToken);
+    Task<CredentialChallengeCompletionResult> CompleteCredentialChallengeAsync(Guid challengeReference, string challengeSecretHash, string challengeReferenceHash, string purpose, PasswordHashMaterial material, DateTimeOffset now, HumanAuthenticationContext context, CancellationToken cancellationToken);
     Task RecordSecurityEventAsync(string eventType, string result, string reasonCode, Guid? targetEntityId, Guid? actorUserId, string? sourceIpHash, string? userAgentHash, Guid correlationId, Guid serviceIdentityId, DateTimeOffset now, CancellationToken cancellationToken);
 }
 

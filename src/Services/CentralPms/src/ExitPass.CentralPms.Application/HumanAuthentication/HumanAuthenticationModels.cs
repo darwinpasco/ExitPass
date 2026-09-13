@@ -154,3 +154,19 @@ public sealed record CredentialChallengeDeliveryRequest(
     Guid CorrelationId);
 
 public sealed record CredentialChallengeTarget(Guid UserId, string Status, string? Email);
+
+public static class CredentialChallengeCompletionOutcomes
+{
+    public const string Completed = "COMPLETED";
+    public const string Invalid = "INVALID";
+    public const string Expired = "EXPIRED";
+    public const string Revoked = "REVOKED";
+    public const string Consumed = "CONSUMED";
+    public const string AccountUnavailable = "ACCOUNT_UNAVAILABLE";
+    public const string CredentialConflict = "CREDENTIAL_CONFLICT";
+}
+
+public sealed record CredentialChallengeCompletionResult(string Outcome, Guid? UserId)
+{
+    public bool Succeeded => Outcome == CredentialChallengeCompletionOutcomes.Completed && UserId.HasValue;
+}
