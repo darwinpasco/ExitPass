@@ -450,13 +450,16 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
     {
         PasswordHashMaterial material;
         try { material = await _passwords.HashAsync(newPassword, cancellationToken); }
-        catch (ArgumentException) { return Failure(400, "PASSWORD_REJECTED", "PASSWORD_POLICY_FAILED", context.CorrelationId); }
+        catch (ArgumentException)
+        {
+            await RecordChallengePolicyFailureAsync(challengeReference, "PASSWORD_RESET_CHALLENGE", context, cancellationToken);
+            return Failure(400, "PASSWORD_REJECTED", "PASSWORD_POLICY_FAILED", context.CorrelationId);
+        }
         var now = _timeProvider.GetUtcNow();
-        var completedUserId = await _repository.CompleteCredentialChallengeAsync(challengeReference,
-            _tokens.HashSecret(challengeSecret), "PASSWORD_RESET", material, now,
-            context.CentralPmsServiceIdentityId, cancellationToken);
-        if (!completedUserId.HasValue) return Failure(400, "CHALLENGE_REJECTED", "INVALID_OR_EXPIRED_CHALLENGE", context.CorrelationId);
-        await RecordSecurityAsync("CREDENTIAL_RESET", "ALLOWED", "PASSWORD_RESET_COMPLETED", completedUserId, completedUserId, context, now, cancellationToken);
+        var completion = await _repository.CompleteCredentialChallengeAsync(challengeReference,
+            _tokens.HashSecret(challengeSecret), _tokens.HashPrivacyValue(challengeReference.ToString("D")),
+            "PASSWORD_RESET", material, now, context, cancellationToken);
+        if (!completion.Succeeded) return Failure(400, "CHALLENGE_REJECTED", "INVALID_OR_EXPIRED_CHALLENGE", context.CorrelationId);
         return Failure(200, "PASSWORD_RESET_COMPLETED", null, context.CorrelationId);
     }
 
@@ -464,14 +467,35 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
     {
         PasswordHashMaterial material;
         try { material = await _passwords.HashAsync(newPassword, cancellationToken); }
-        catch (ArgumentException) { return Failure(400, "PASSWORD_REJECTED", "PASSWORD_POLICY_FAILED", context.CorrelationId); }
+        catch (ArgumentException)
+        {
+            await RecordChallengePolicyFailureAsync(challengeReference, "ACTIVATION_CHALLENGE", context, cancellationToken);
+            return Failure(400, "PASSWORD_REJECTED", "PASSWORD_POLICY_FAILED", context.CorrelationId);
+        }
         var now = _timeProvider.GetUtcNow();
-        var completedUserId = await _repository.CompleteCredentialChallengeAsync(challengeReference,
-            _tokens.HashSecret(challengeSecret), "ACCOUNT_ACTIVATION", material, now,
-            context.CentralPmsServiceIdentityId, cancellationToken);
-        if (!completedUserId.HasValue) return Failure(400, "CHALLENGE_REJECTED", "INVALID_OR_EXPIRED_CHALLENGE", context.CorrelationId);
-        await RecordSecurityAsync("ACTIVATION_CHALLENGE_CONSUMED", "ALLOWED", "ACCOUNT_ACTIVATED", completedUserId, completedUserId, context, now, cancellationToken);
+        var completion = await _repository.CompleteCredentialChallengeAsync(challengeReference,
+            _tokens.HashSecret(challengeSecret), _tokens.HashPrivacyValue(challengeReference.ToString("D")),
+            "ACCOUNT_ACTIVATION", material, now, context, cancellationToken);
+        if (!completion.Succeeded) return Failure(400, "CHALLENGE_REJECTED", "INVALID_OR_EXPIRED_CHALLENGE", context.CorrelationId);
         return Failure(200, "ACCOUNT_ACTIVATED", null, context.CorrelationId);
+    }
+
+    private async Task RecordChallengePolicyFailureAsync(
+        Guid challengeReference,
+        string attemptType,
+        HumanAuthenticationContext context,
+        CancellationToken cancellationToken)
+    {
+        var now = _timeProvider.GetUtcNow();
+        var referenceHash = _tokens.HashPrivacyValue(challengeReference.ToString("D"));
+        await _repository.RecordAuthenticationAttemptAsync(null, referenceHash, context.SourceIpHash,
+            context.UserAgentHash, attemptType, "INVALID", HumanSessionAudiences.ManagementPlatform,
+            "PASSWORD_POLICY_FAILED", now, context.CorrelationId, context.CentralPmsServiceIdentityId,
+            cancellationToken);
+        await RecordSecurityAsync(attemptType == "ACTIVATION_CHALLENGE"
+                ? "ACTIVATION_CHALLENGE_REJECTED"
+                : "PASSWORD_RESET_CHALLENGE_REJECTED",
+            "FAILED", "PASSWORD_POLICY_FAILED", challengeReference, null, context, now, cancellationToken);
     }
 
     public async Task ResetTotpAsync(Guid targetUserId, Guid actorUserId, string reasonCode, Guid correlationId, CancellationToken cancellationToken)

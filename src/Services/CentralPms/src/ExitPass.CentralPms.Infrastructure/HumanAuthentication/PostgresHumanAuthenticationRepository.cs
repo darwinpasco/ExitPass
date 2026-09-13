@@ -739,63 +739,186 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
         await ReplacePasswordAsync(userId, credential.LocalCredentialId, credential.RowVersion, material, now, null, serviceIdentityId, cancellationToken);
     }
 
-    public async Task<Guid?> CompleteCredentialChallengeAsync(Guid challengeReference, string challengeSecretHash, string purpose, PasswordHashMaterial material, DateTimeOffset now, Guid serviceIdentityId, CancellationToken cancellationToken)
+    public async Task<CredentialChallengeCompletionResult> CompleteCredentialChallengeAsync(
+        Guid challengeReference,
+        string challengeSecretHash,
+        string challengeReferenceHash,
+        string purpose,
+        PasswordHashMaterial material,
+        DateTimeOffset now,
+        HumanAuthenticationContext context,
+        CancellationToken cancellationToken)
     {
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        Guid userId;
-        Guid challengeId;
+        Guid? userId = null;
+        Guid challengeId = default;
+        string? challengeStatus = null;
+        DateTimeOffset expiresAt = default;
+        var secretMatches = false;
+
         await using (var challenge = new NpgsqlCommand("""
-            SELECT user_id, credential_challenge_id
+            SELECT user_id, credential_challenge_id, challenge_status::text, expires_at,
+                   challenge_secret_hash=@secret_hash AS secret_matches
             FROM identity.credential_challenges
-            WHERE challenge_reference=@reference AND challenge_secret_hash=@secret_hash
+            WHERE challenge_reference=@reference
               AND challenge_purpose=@purpose::identity.credential_challenge_purpose_enum
-              AND challenge_status='ISSUED' AND expires_at>@now
             FOR UPDATE;
             """, connection, transaction))
         {
             challenge.Parameters.AddWithValue("reference", challengeReference);
             challenge.Parameters.AddWithValue("secret_hash", challengeSecretHash);
             challenge.Parameters.AddWithValue("purpose", purpose);
-            challenge.Parameters.AddWithValue("now", now);
             await using var reader = await challenge.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken)) return null;
-            userId = reader.GetGuid(0);
-            challengeId = reader.GetGuid(1);
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                userId = reader.GetGuid(0);
+                challengeId = reader.GetGuid(1);
+                challengeStatus = reader.GetString(2);
+                expiresAt = reader.GetFieldValue<DateTimeOffset>(3);
+                secretMatches = reader.GetBoolean(4);
+            }
         }
 
-        Guid credentialId;
-        long credentialRowVersion;
+        if (!userId.HasValue)
+        {
+            return await RecordChallengeRejectionAsync(connection, transaction, challengeReference,
+                challengeReferenceHash, null, purpose, CredentialChallengeCompletionOutcomes.Invalid,
+                "CHALLENGE_NOT_FOUND", "INVALID", now, context, cancellationToken);
+        }
+        if (!secretMatches)
+        {
+            return await RecordChallengeRejectionAsync(connection, transaction, challengeReference,
+                challengeReferenceHash, userId, purpose, CredentialChallengeCompletionOutcomes.Invalid,
+                "CHALLENGE_SECRET_INVALID", "INVALID", now, context, cancellationToken);
+        }
+        if (challengeStatus == "ISSUED" && expiresAt <= now)
+        {
+            await using var expire = new NpgsqlCommand("""
+                UPDATE identity.credential_challenges
+                SET challenge_status='EXPIRED', row_version=row_version+1
+                WHERE credential_challenge_id=@challenge_id AND challenge_status='ISSUED';
+                """, connection, transaction);
+            expire.Parameters.AddWithValue("challenge_id", challengeId);
+            await expire.ExecuteNonQueryAsync(cancellationToken);
+            return await RecordChallengeRejectionAsync(connection, transaction, challengeReference,
+                challengeReferenceHash, userId, purpose, CredentialChallengeCompletionOutcomes.Expired,
+                "CHALLENGE_EXPIRED", "EXPIRED", now, context, cancellationToken);
+        }
+        if (challengeStatus != "ISSUED")
+        {
+            var outcome = challengeStatus switch
+            {
+                "REVOKED" => CredentialChallengeCompletionOutcomes.Revoked,
+                "EXPIRED" => CredentialChallengeCompletionOutcomes.Expired,
+                "CONSUMED" => CredentialChallengeCompletionOutcomes.Consumed,
+                _ => CredentialChallengeCompletionOutcomes.Invalid
+            };
+            var reason = challengeStatus switch
+            {
+                "REVOKED" => "CHALLENGE_REVOKED",
+                "EXPIRED" => "CHALLENGE_EXPIRED",
+                "CONSUMED" => "CHALLENGE_ALREADY_CONSUMED",
+                _ => "CHALLENGE_NOT_USABLE"
+            };
+            var attemptResult = challengeStatus switch
+            {
+                "REVOKED" => "REVOKED",
+                "EXPIRED" => "EXPIRED",
+                _ => "INVALID"
+            };
+            return await RecordChallengeRejectionAsync(connection, transaction, challengeReference,
+                challengeReferenceHash, userId, purpose, outcome, reason, attemptResult, now, context,
+                cancellationToken);
+        }
+
+        string? userStatus;
+        await using (var user = new NpgsqlCommand("""
+            SELECT user_status::text FROM identity.users WHERE user_id=@user_id FOR UPDATE;
+            """, connection, transaction))
+        {
+            user.Parameters.AddWithValue("user_id", userId.Value);
+            userStatus = (string?)await user.ExecuteScalarAsync(cancellationToken);
+        }
+        var allowedStatus = purpose == "ACCOUNT_ACTIVATION"
+            ? userStatus == "INVITED"
+            : userStatus is "ACTIVE" or "LOCKED";
+        if (!allowedStatus)
+        {
+            return await RecordChallengeRejectionAsync(connection, transaction, challengeReference,
+                challengeReferenceHash, userId, purpose, CredentialChallengeCompletionOutcomes.AccountUnavailable,
+                purpose == "ACCOUNT_ACTIVATION" ? "ACTIVATION_ACCOUNT_NOT_INVITED" : "RESET_ACCOUNT_NOT_USABLE",
+                "UNAVAILABLE", now, context, cancellationToken);
+        }
+
+        var credentials = new List<(Guid Id, string Status, long RowVersion)>();
         await using (var credential = new NpgsqlCommand("""
-            SELECT local_credential_id, row_version
+            SELECT local_credential_id, credential_status::text, row_version
             FROM identity.local_credentials
-            WHERE user_id=@user_id AND credential_status IN ('PENDING_ACTIVATION','ACTIVE','CHANGE_REQUIRED','LOCKED')
-            ORDER BY created_at DESC LIMIT 1 FOR UPDATE;
+            WHERE user_id=@user_id
+              AND credential_status IN ('PENDING_ACTIVATION','ACTIVE','CHANGE_REQUIRED','LOCKED')
+            ORDER BY created_at DESC FOR UPDATE;
             """, connection, transaction))
         {
-            credential.Parameters.AddWithValue("user_id", userId);
+            credential.Parameters.AddWithValue("user_id", userId.Value);
             await using var reader = await credential.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken)) return null;
-            credentialId = reader.GetGuid(0);
-            credentialRowVersion = reader.GetInt64(1);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                credentials.Add((reader.GetGuid(0), reader.GetString(1), reader.GetInt64(2)));
+            }
         }
 
-        await using (var credential = new NpgsqlCommand("""
-            UPDATE identity.local_credentials SET credential_status='ACTIVE', password_verifier=@verifier,
-                verifier_salt=@salt, verifier_algorithm_code=@algorithm, verifier_algorithm_version=@algorithm_version,
-                verifier_work_factor=@work_factor, verifier_memory_kib=@memory_kib, verifier_parallelism=@parallelism,
-                credential_version=credential_version+1, activated_at=COALESCE(activated_at,@now), last_changed_at=@now,
-                updated_at=@now, updated_by_service_identity_id=@service_identity_id, row_version=row_version+1
-            WHERE local_credential_id=@credential_id AND user_id=@user_id AND row_version=@row_version;
-            """, connection, transaction))
+        if (purpose == "ACCOUNT_ACTIVATION" && credentials.Count == 0)
         {
-            AddHashParameters(credential, material);
-            credential.Parameters.AddWithValue("credential_id", credentialId);
-            credential.Parameters.AddWithValue("user_id", userId);
-            credential.Parameters.AddWithValue("row_version", credentialRowVersion);
-            credential.Parameters.AddWithValue("now", now);
-            credential.Parameters.AddWithValue("service_identity_id", serviceIdentityId);
-            if (await credential.ExecuteNonQueryAsync(cancellationToken) != 1) return null;
+            await using var createCredential = new NpgsqlCommand("""
+                INSERT INTO identity.local_credentials (
+                    local_credential_id, user_id, credential_status, password_verifier, verifier_salt,
+                    verifier_algorithm_code, verifier_algorithm_version, verifier_work_factor,
+                    verifier_memory_kib, verifier_parallelism, activated_at, last_changed_at,
+                    created_at, updated_at, created_by_service_identity_id, updated_by_service_identity_id)
+                VALUES (gen_random_uuid(), @user_id, 'ACTIVE', @verifier, @salt, @algorithm,
+                    @algorithm_version, @work_factor, @memory_kib, @parallelism, @now, @now,
+                    @now, @now, @service_identity_id, @service_identity_id);
+                """, connection, transaction);
+            AddHashParameters(createCredential, material);
+            createCredential.Parameters.AddWithValue("user_id", userId.Value);
+            createCredential.Parameters.AddWithValue("now", now);
+            createCredential.Parameters.AddWithValue("service_identity_id", context.CentralPmsServiceIdentityId);
+            if (await createCredential.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                throw new InvalidOperationException("The first local credential could not be created atomically.");
+            }
+        }
+        else
+        {
+            var expectedStatus = purpose == "ACCOUNT_ACTIVATION" ? "PENDING_ACTIVATION" : null;
+            if (credentials.Count != 1 || (expectedStatus is not null && credentials[0].Status != expectedStatus) ||
+                (purpose == "PASSWORD_RESET" && credentials[0].Status == "PENDING_ACTIVATION"))
+            {
+                return await RecordChallengeRejectionAsync(connection, transaction, challengeReference,
+                    challengeReferenceHash, userId, purpose, CredentialChallengeCompletionOutcomes.CredentialConflict,
+                    "CURRENT_CREDENTIAL_CONFLICT", "UNAVAILABLE", now, context, cancellationToken);
+            }
+
+            var current = credentials[0];
+            await using var updateCredential = new NpgsqlCommand("""
+                UPDATE identity.local_credentials SET credential_status='ACTIVE', password_verifier=@verifier,
+                    verifier_salt=@salt, verifier_algorithm_code=@algorithm, verifier_algorithm_version=@algorithm_version,
+                    verifier_work_factor=@work_factor, verifier_memory_kib=@memory_kib, verifier_parallelism=@parallelism,
+                    credential_version=credential_version+1, activated_at=COALESCE(activated_at,@now), last_changed_at=@now,
+                    updated_at=@now, updated_by_service_identity_id=@service_identity_id, row_version=row_version+1
+                WHERE local_credential_id=@credential_id AND user_id=@user_id AND row_version=@row_version;
+                """, connection, transaction);
+            AddHashParameters(updateCredential, material);
+            updateCredential.Parameters.AddWithValue("credential_id", current.Id);
+            updateCredential.Parameters.AddWithValue("user_id", userId.Value);
+            updateCredential.Parameters.AddWithValue("row_version", current.RowVersion);
+            updateCredential.Parameters.AddWithValue("now", now);
+            updateCredential.Parameters.AddWithValue("service_identity_id", context.CentralPmsServiceIdentityId);
+            if (await updateCredential.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                throw new InvalidOperationException("The local credential could not be updated atomically.");
+            }
         }
 
         await using (var complete = new NpgsqlCommand("""
@@ -805,21 +928,46 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
         {
             complete.Parameters.AddWithValue("challenge_id", challengeId);
             complete.Parameters.AddWithValue("now", now);
-            if (await complete.ExecuteNonQueryAsync(cancellationToken) != 1) return null;
+            if (await complete.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                throw new InvalidOperationException("The credential challenge could not be consumed atomically.");
+            }
+        }
+        await using (var revokeOthers = new NpgsqlCommand("""
+            UPDATE identity.credential_challenges SET challenge_status='REVOKED', revoked_at=@now,
+                revoked_by_service_identity_id=@service_identity_id, reason_code=@reason_code,
+                row_version=row_version+1
+            WHERE user_id=@user_id AND credential_challenge_id<>@challenge_id
+              AND challenge_purpose=@purpose::identity.credential_challenge_purpose_enum
+              AND challenge_status='ISSUED';
+            """, connection, transaction))
+        {
+            revokeOthers.Parameters.AddWithValue("user_id", userId.Value);
+            revokeOthers.Parameters.AddWithValue("challenge_id", challengeId);
+            revokeOthers.Parameters.AddWithValue("purpose", purpose);
+            revokeOthers.Parameters.AddWithValue("now", now);
+            revokeOthers.Parameters.AddWithValue("reason_code", purpose == "ACCOUNT_ACTIVATION"
+                ? "ACTIVATION_COMPLETED"
+                : "PASSWORD_RESET_COMPLETED");
+            revokeOthers.Parameters.AddWithValue("service_identity_id", context.CentralPmsServiceIdentityId);
+            await revokeOthers.ExecuteNonQueryAsync(cancellationToken);
         }
         await using (var updateUser = new NpgsqlCommand("""
             UPDATE identity.users SET user_status=CASE WHEN @purpose='ACCOUNT_ACTIVATION'
                     THEN 'ACTIVE'::identity.user_status_enum ELSE user_status END,
                 credential_version=credential_version+1, updated_at=@now,
                 updated_by_service_identity_id=@service_identity_id, row_version=row_version+1
-            WHERE user_id=@user_id AND (@purpose<>'ACCOUNT_ACTIVATION' OR user_status='INVITED');
+            WHERE user_id=@user_id;
             """, connection, transaction))
         {
-            updateUser.Parameters.AddWithValue("user_id", userId);
+            updateUser.Parameters.AddWithValue("user_id", userId.Value);
             updateUser.Parameters.AddWithValue("purpose", purpose);
             updateUser.Parameters.AddWithValue("now", now);
-            updateUser.Parameters.AddWithValue("service_identity_id", serviceIdentityId);
-            if (await updateUser.ExecuteNonQueryAsync(cancellationToken) != 1) return null;
+            updateUser.Parameters.AddWithValue("service_identity_id", context.CentralPmsServiceIdentityId);
+            if (await updateUser.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                throw new InvalidOperationException("The user credential lifecycle could not be updated atomically.");
+            }
         }
         await using (var revokeSessions = new NpgsqlCommand("""
             UPDATE identity.human_sessions SET session_status='REVOKED', revoked_at=@now,
@@ -828,13 +976,85 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
             WHERE user_id=@user_id AND session_status='ACTIVE';
             """, connection, transaction))
         {
-            revokeSessions.Parameters.AddWithValue("user_id", userId);
+            revokeSessions.Parameters.AddWithValue("user_id", userId.Value);
             revokeSessions.Parameters.AddWithValue("now", now);
-            revokeSessions.Parameters.AddWithValue("service_identity_id", serviceIdentityId);
+            revokeSessions.Parameters.AddWithValue("service_identity_id", context.CentralPmsServiceIdentityId);
             await revokeSessions.ExecuteNonQueryAsync(cancellationToken);
         }
+
+        await InsertChallengeAttemptAsync(connection, transaction, userId, challengeReferenceHash, purpose,
+            "SUCCESS", purpose == "ACCOUNT_ACTIVATION" ? "ACCOUNT_ACTIVATED" : "PASSWORD_RESET_COMPLETED",
+            now, context, cancellationToken);
+        await InsertSecurityEventAsync(connection, transaction,
+            purpose == "ACCOUNT_ACTIVATION" ? "ACTIVATION_CHALLENGE_CONSUMED" : "CREDENTIAL_RESET",
+            "ALLOWED", purpose == "ACCOUNT_ACTIVATION" ? "ACCOUNT_ACTIVATED" : "PASSWORD_RESET_COMPLETED",
+            userId, userId, context.SourceIpHash, context.UserAgentHash, context.CorrelationId,
+            context.CentralPmsServiceIdentityId, now, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return userId;
+        return new CredentialChallengeCompletionResult(CredentialChallengeCompletionOutcomes.Completed, userId);
+    }
+
+    private static async Task<CredentialChallengeCompletionResult> RecordChallengeRejectionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid challengeReference,
+        string challengeReferenceHash,
+        Guid? userId,
+        string purpose,
+        string outcome,
+        string reasonCode,
+        string attemptResult,
+        DateTimeOffset now,
+        HumanAuthenticationContext context,
+        CancellationToken cancellationToken)
+    {
+        await InsertChallengeAttemptAsync(connection, transaction, userId, challengeReferenceHash, purpose,
+            attemptResult, reasonCode, now, context, cancellationToken);
+        await InsertSecurityEventAsync(connection, transaction,
+            purpose == "ACCOUNT_ACTIVATION" ? "ACTIVATION_CHALLENGE_REJECTED" : "PASSWORD_RESET_CHALLENGE_REJECTED",
+            attemptResult == "UNAVAILABLE" ? "BLOCKED" : "FAILED", reasonCode,
+            userId ?? challengeReference, null, context.SourceIpHash, context.UserAgentHash,
+            context.CorrelationId, context.CentralPmsServiceIdentityId, now, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new CredentialChallengeCompletionResult(outcome, userId);
+    }
+
+    private static async Task InsertChallengeAttemptAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid? userId,
+        string challengeReferenceHash,
+        string purpose,
+        string result,
+        string reasonCode,
+        DateTimeOffset now,
+        HumanAuthenticationContext context,
+        CancellationToken cancellationToken)
+    {
+        await using var attempt = new NpgsqlCommand("""
+            INSERT INTO identity.authentication_attempts (
+                authentication_attempt_id, user_id, login_identifier_hash, attempt_type, attempt_result,
+                session_audience, source_ip_hash, user_agent_hash, reason_code, observed_at,
+                correlation_id, recorded_by_service_identity_id)
+            VALUES (gen_random_uuid(), @user_id, @reference_hash,
+                @attempt_type::identity.authentication_attempt_type_enum,
+                @attempt_result::identity.authentication_attempt_result_enum,
+                'MANAGEMENT_PLATFORM', @source_hash, @agent_hash, @reason_code, @now,
+                @correlation_id, @service_identity_id);
+            """, connection, transaction);
+        attempt.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = (object?)userId ?? DBNull.Value;
+        attempt.Parameters.AddWithValue("reference_hash", challengeReferenceHash);
+        attempt.Parameters.AddWithValue("attempt_type", purpose == "ACCOUNT_ACTIVATION"
+            ? "ACTIVATION_CHALLENGE"
+            : "PASSWORD_RESET_CHALLENGE");
+        attempt.Parameters.AddWithValue("attempt_result", result);
+        attempt.Parameters.Add("source_hash", NpgsqlDbType.Char).Value = (object?)context.SourceIpHash ?? DBNull.Value;
+        attempt.Parameters.Add("agent_hash", NpgsqlDbType.Char).Value = (object?)context.UserAgentHash ?? DBNull.Value;
+        attempt.Parameters.AddWithValue("reason_code", reasonCode);
+        attempt.Parameters.AddWithValue("now", now);
+        attempt.Parameters.AddWithValue("correlation_id", context.CorrelationId);
+        attempt.Parameters.AddWithValue("service_identity_id", context.CentralPmsServiceIdentityId);
+        await attempt.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task RecordSecurityEventAsync(string eventType, string result, string reasonCode, Guid? targetEntityId, Guid? actorUserId, string? sourceIpHash, string? userAgentHash, Guid correlationId, Guid serviceIdentityId, DateTimeOffset now, CancellationToken cancellationToken)
