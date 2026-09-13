@@ -24,6 +24,7 @@ public static class HumanAuthenticationEndpoints
         web.MapPost("/password-resets", ResetPasswordAsync).DisableAntiforgery();
         web.MapPost("/activations", ActivateAsync).DisableAntiforgery();
         web.MapPost("/totp/enrollment", BeginTotpEnrollmentAsync);
+        web.MapPost("/totp/enrollment/restart", RestartTotpEnrollmentAsync);
         web.MapPost("/totp/enrollment/confirm", ConfirmTotpEnrollmentAsync);
 
         var apt = app.MapGroup("/v1/apt/human-sessions").WithTags("AptHumanAuthentication");
@@ -185,6 +186,9 @@ public static class HumanAuthenticationEndpoints
 
     private static Task<IResult> BeginTotpEnrollmentAsync(HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IAntiforgery antiforgery, CancellationToken cancellationToken) =>
         ExecuteWebTotpMutationAsync(request, response, tokens, options.Value, antiforgery, (token, context) => service.BeginTotpEnrollmentAsync(token, context, cancellationToken));
+
+    private static Task<IResult> RestartTotpEnrollmentAsync(HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IAntiforgery antiforgery, CancellationToken cancellationToken) =>
+        ExecuteWebTotpMutationAsync(request, response, tokens, options.Value, antiforgery, (token, context) => service.RestartTotpEnrollmentAsync(token, context, cancellationToken));
 
     private static Task<IResult> ConfirmTotpEnrollmentAsync(TotpEnrollmentConfirmRequest body, HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IAntiforgery antiforgery, CancellationToken cancellationToken) =>
         ExecuteWebTotpMutationAsync(request, response, tokens, options.Value, antiforgery, (token, context) => service.ConfirmTotpEnrollmentAsync(token, body.Code, context, cancellationToken));

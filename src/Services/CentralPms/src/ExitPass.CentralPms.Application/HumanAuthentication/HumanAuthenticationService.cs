@@ -367,10 +367,33 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         var validation = await ValidateSessionAsync(token, HumanSessionAudiences.ManagementPlatform, null, context, false, cancellationToken);
         if (validation.Record is null) return TotpFailure(validation.Failure!.HttpStatusCode, validation.Failure.Response.ErrorCode ?? "SESSION_INVALID", context.CorrelationId);
         var record = validation.Record;
-        if (!record.HasPrivilegedRole) return TotpFailure(403, "MFA_ENROLLMENT_NOT_REQUIRED", context.CorrelationId);
+        if (!record.HasPrivilegedRole || record.MfaRequirementSatisfied) return TotpFailure(403, "MFA_ENROLLMENT_NOT_REQUIRED", context.CorrelationId);
         if (!_totpProtector.IsConfigured) return TotpFailure(503, "TOTP_PROTECTION_UNAVAILABLE", context.CorrelationId);
         var existing = await _repository.GetCurrentTotpAuthenticatorAsync(record.UserId, cancellationToken);
         if (existing?.Status is "PENDING_ENROLLMENT" or "ACTIVE" or "SUSPENDED") return TotpFailure(409, "TOTP_AUTHENTICATOR_ALREADY_EXISTS", context.CorrelationId);
+
+        return await CreateTotpEnrollmentAsync(record, null, context, cancellationToken);
+    }
+
+    public async Task<TotpEnrollmentResult> RestartTotpEnrollmentAsync(string token, HumanAuthenticationContext context, CancellationToken cancellationToken)
+    {
+        var validation = await ValidateSessionAsync(token, HumanSessionAudiences.ManagementPlatform, null, context, false, cancellationToken);
+        if (validation.Record is null) return TotpFailure(validation.Failure!.HttpStatusCode, validation.Failure.Response.ErrorCode ?? "SESSION_INVALID", context.CorrelationId);
+        var record = validation.Record;
+        if (!record.HasPrivilegedRole || record.MfaRequirementSatisfied) return TotpFailure(403, "MFA_ENROLLMENT_NOT_REQUIRED", context.CorrelationId);
+        if (!_totpProtector.IsConfigured) return TotpFailure(503, "TOTP_PROTECTION_UNAVAILABLE", context.CorrelationId);
+        var existing = await _repository.GetCurrentTotpAuthenticatorAsync(record.UserId, cancellationToken);
+        if (existing?.Status != "PENDING_ENROLLMENT") return TotpFailure(409, "TOTP_ENROLLMENT_RESTART_NOT_ALLOWED", context.CorrelationId);
+
+        return await CreateTotpEnrollmentAsync(record, existing, context, cancellationToken);
+    }
+
+    private async Task<TotpEnrollmentResult> CreateTotpEnrollmentAsync(
+        HumanSessionRecord record,
+        TotpAuthenticatorRecord? pendingToReplace,
+        HumanAuthenticationContext context,
+        CancellationToken cancellationToken)
+    {
 
         var secret = _totp.GenerateSecret();
         var authenticatorId = Guid.NewGuid();
@@ -378,10 +401,23 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         {
             var envelope = _totpProtector.Protect(record.UserId, authenticatorId, secret);
             var now = _timeProvider.GetUtcNow();
-            var created = await _repository.CreatePendingTotpAuthenticatorAsync(authenticatorId, record.UserId, envelope, _totpProtector.KeyReference, _totpProtector.KeyVersion, _totpProtector.EnvelopeFormatVersion, now, record.UserId, cancellationToken);
+            var created = pendingToReplace is null
+                ? await _repository.CreatePendingTotpAuthenticatorAsync(authenticatorId, record.UserId, envelope,
+                    _totpProtector.KeyReference, _totpProtector.KeyVersion, _totpProtector.EnvelopeFormatVersion,
+                    now, record.UserId, cancellationToken)
+                : await _repository.RestartPendingTotpAuthenticatorAsync(pendingToReplace.AuthenticatorId,
+                    pendingToReplace.RowVersion, authenticatorId, record.UserId, envelope,
+                    _totpProtector.KeyReference, _totpProtector.KeyVersion, _totpProtector.EnvelopeFormatVersion,
+                    now, record.UserId, cancellationToken);
             if (created is null) return TotpFailure(409, "TOTP_ENROLLMENT_CONFLICT", context.CorrelationId);
-            await RecordSecurityAsync("TOTP_ENROLLMENT_STARTED", "ALLOWED", "USER_ENROLLMENT", authenticatorId, record.UserId, context, now, cancellationToken);
-            return new TotpEnrollmentResult(200, new TotpEnrollmentResponse("TOTP_ENROLLMENT_STARTED", _totp.EncodeSecret(secret), _totp.BuildProvisioningUri(record.Username, secret), now, context.CorrelationId));
+            var restarted = pendingToReplace is not null;
+            await RecordSecurityAsync(restarted ? "TOTP_ENROLLMENT_RESTARTED" : "TOTP_ENROLLMENT_STARTED",
+                "ALLOWED", restarted ? "LOST_ENROLLMENT_SECRET" : "USER_ENROLLMENT", authenticatorId,
+                record.UserId, context, now, cancellationToken);
+            return new TotpEnrollmentResult(200, new TotpEnrollmentResponse(
+                restarted ? "TOTP_ENROLLMENT_RESTARTED" : "TOTP_ENROLLMENT_STARTED",
+                _totp.EncodeSecret(secret), _totp.BuildProvisioningUri(record.Username, secret), now,
+                context.CorrelationId));
         }
         finally { CryptographicOperations.ZeroMemory(secret); }
     }
@@ -391,6 +427,7 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         var validation = await ValidateSessionAsync(token, HumanSessionAudiences.ManagementPlatform, null, context, false, cancellationToken);
         if (validation.Record is null) return TotpFailure(validation.Failure!.HttpStatusCode, validation.Failure.Response.ErrorCode ?? "SESSION_INVALID", context.CorrelationId);
         var record = validation.Record;
+        if (!record.HasPrivilegedRole || record.MfaRequirementSatisfied) return TotpFailure(403, "MFA_ENROLLMENT_NOT_REQUIRED", context.CorrelationId);
         var authenticator = await _repository.GetCurrentTotpAuthenticatorAsync(record.UserId, cancellationToken);
         if (authenticator?.Status != "PENDING_ENROLLMENT") return TotpFailure(409, "TOTP_ENROLLMENT_NOT_PENDING", context.CorrelationId);
         var now = _timeProvider.GetUtcNow();
