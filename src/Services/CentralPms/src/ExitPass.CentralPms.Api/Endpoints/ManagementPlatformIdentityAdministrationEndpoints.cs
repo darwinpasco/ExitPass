@@ -1,7 +1,9 @@
 using ExitPass.CentralPms.Api.Security;
+using ExitPass.CentralPms.Application.HumanAuthentication;
 using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Contracts.ManagementPlatform;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.Extensions.Options;
 
 namespace ExitPass.CentralPms.Api.Endpoints;
 
@@ -32,8 +34,11 @@ public static class ManagementPlatformIdentityAdministrationEndpoints
         MapLifecycle(group, "lock", "LOCK");
         MapLifecycle(group, "unlock", "UNLOCK");
 
-        group.MapPost("/users/{userReference:guid}/credential-reset-challenges", async (HttpRequest request, Guid userReference, CredentialResetChallengeRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
-            await ExecuteAsync(request, actors, (actor, correlation) => service.IssueCredentialChallengeAsync(actor, new(userReference, body.Purpose, body.ExpiresAt, body.ReasonCode, correlation, body.DeliveryMode, body.AdminIssuedHandoffAcknowledged), ct)));
+        group.MapPost("/users/{userReference:guid}/credential-reset-challenges", async (HttpRequest request, Guid userReference, CredentialResetChallengeRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, IOptions<HumanAuthenticationOptions> authenticationOptions, TimeProvider timeProvider, CancellationToken ct) =>
+        {
+            var expiresAt = body.ExpiresAt ?? timeProvider.GetUtcNow().AddMinutes(authenticationOptions.Value.CredentialChallengeMinutes);
+            return await ExecuteAsync(request, actors, (actor, correlation) => service.IssueCredentialChallengeAsync(actor, new(userReference, body.Purpose, expiresAt, body.ReasonCode, correlation, body.DeliveryMode, body.AdminIssuedHandoffAcknowledged), ct));
+        });
         group.MapPost("/users/{userReference:guid}/invitation/reissue", async (HttpRequest request, Guid userReference, ReissueIdentityInvitationRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.ReissueInvitationAsync(actor, new(userReference, body.ActivationDeliveryMode, body.ReasonCode, body.AdminIssuedHandoffAcknowledged, correlation), ct)));
         group.MapPost("/users/{userReference:guid}/invitation/cancel", async (HttpRequest request, Guid userReference, CancelIdentityInvitationRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>

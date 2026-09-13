@@ -66,13 +66,21 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
 
     public async Task<CredentialChallengeTarget?> GetCredentialChallengeTargetAsync(Guid userId, CancellationToken cancellationToken)
     {
-        const string sql = "SELECT user_id, user_status::text, email FROM identity.users WHERE user_id=@user_id;";
+        const string sql = """
+            SELECT u.user_id, u.user_status::text, u.email,
+                   (SELECT count(*)::integer
+                    FROM identity.local_credentials c
+                    WHERE c.user_id=u.user_id
+                      AND c.credential_status IN ('ACTIVE','CHANGE_REQUIRED','LOCKED'))
+            FROM identity.users u
+            WHERE u.user_id=@user_id;
+            """;
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("user_id", userId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
-            ? new CredentialChallengeTarget(reader.GetGuid(0), reader.GetString(1), GetNullableString(reader, 2))
+            ? new CredentialChallengeTarget(reader.GetGuid(0), reader.GetString(1), GetNullableString(reader, 2), reader.GetInt32(3))
             : null;
     }
 

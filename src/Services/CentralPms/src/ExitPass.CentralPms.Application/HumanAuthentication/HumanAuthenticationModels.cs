@@ -153,7 +153,11 @@ public sealed record CredentialChallengeDeliveryRequest(
     DateTimeOffset ExpiresAt,
     Guid CorrelationId);
 
-public sealed record CredentialChallengeTarget(Guid UserId, string Status, string? Email);
+public sealed record CredentialChallengeTarget(
+    Guid UserId,
+    string Status,
+    string? Email,
+    int UsableLocalCredentialCount);
 
 public static class CredentialChallengeCompletionOutcomes
 {
