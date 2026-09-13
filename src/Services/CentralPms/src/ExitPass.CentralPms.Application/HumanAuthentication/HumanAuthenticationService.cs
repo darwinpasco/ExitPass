@@ -425,6 +425,7 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         var now = _timeProvider.GetUtcNow();
         var login = await _repository.FindLocalLoginAsync(NormalizeUsername(username), now, cancellationToken);
         if (_challengeDelivery.Enabled && login is not null && login.UserStatus is "ACTIVE" or "LOCKED" &&
+            login.Credential is { Status: "ACTIVE" or "CHANGE_REQUIRED" or "LOCKED" } &&
             !string.IsNullOrWhiteSpace(login.Email))
         {
             var expiresAt = now.AddMinutes(_options.CredentialChallengeMinutes);

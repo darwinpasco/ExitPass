@@ -86,6 +86,35 @@ public sealed class HumanAuthenticationApiIntegrationTests
         replacement.Should().NotBe(originalSessionCookie);
     }
 
+    [Fact]
+    public async Task Password_reset_request_is_anti_enumerating_for_email_no_email_unknown_and_disabled_delivery()
+    {
+        var withEmail = $"W43Email{Guid.NewGuid():N}"[..24];
+        var withoutEmail = $"W43NoEmail{Guid.NewGuid():N}"[..24];
+        await SeedUserAsync(withEmail, "correct horse battery staple", "employee@example.test");
+        await SeedUserAsync(withoutEmail, "correct horse battery staple");
+        await using var factory = Factory();
+        using var client = factory.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+            HandleCookies = false
+        });
+        client.DefaultRequestHeaders.Add("Origin", "https://localhost");
+
+        foreach (var username in new[] { withEmail, withoutEmail, $"W43Unknown{Guid.NewGuid():N}"[..24] })
+        {
+            var response = await client.PostAsJsonAsync("/v1/human-authentication/password-reset-requests",
+                new HumanPasswordResetStartRequest(username));
+            response.StatusCode.Should().Be(HttpStatusCode.Accepted);
+            response.Headers.CacheControl!.NoStore.Should().BeTrue();
+            var body = await response.Content.ReadFromJsonAsync<HumanChallengeAcceptedResponse>();
+            body!.Outcome.Should().Be("REQUEST_ACCEPTED");
+            body.CorrelationId.Should().NotBeEmpty();
+        }
+
+        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.credential_challenges WHERE user_id IN (SELECT user_id FROM identity.users WHERE username=ANY(@usernames));", [withEmail, withoutEmail])).Should().Be(0);
+    }
+
     private CustomWebApplicationFactory Factory()
     {
         var key = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -102,7 +131,7 @@ public sealed class HumanAuthenticationApiIntegrationTests
         });
     }
 
-    private async Task SeedUserAsync(string username, string password)
+    private async Task SeedUserAsync(string username, string password, string? email = null)
     {
         var options = Options.Create(new HumanAuthenticationOptions
         {
@@ -114,9 +143,9 @@ public sealed class HumanAuthenticationApiIntegrationTests
         var material = await new Argon2idHumanPasswordHasher(options).HashAsync(password, CancellationToken.None);
         const string sql = """
             WITH new_user AS (
-                INSERT INTO identity.users (user_id,username,display_name,user_type,user_status,effective_from,
+                INSERT INTO identity.users (user_id,username,display_name,email,user_type,user_status,effective_from,
                     created_by_service_identity_id,updated_by_service_identity_id)
-                VALUES (gen_random_uuid(),@username,@username,'SITE_OPERATOR','ACTIVE',now()-interval '1 day',@service_id,@service_id)
+                VALUES (gen_random_uuid(),@username,@username,@email,'SITE_OPERATOR','ACTIVE',now()-interval '1 day',@service_id,@service_id)
                 RETURNING user_id
             )
             INSERT INTO identity.local_credentials (local_credential_id,user_id,credential_status,password_verifier,
@@ -130,6 +159,7 @@ public sealed class HumanAuthenticationApiIntegrationTests
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("username", username);
+        command.Parameters.Add("email", NpgsqlTypes.NpgsqlDbType.Varchar).Value = (object?)email ?? DBNull.Value;
         command.Parameters.AddWithValue("service_id", CentralPmsServiceIdentityId);
         command.Parameters.AddWithValue("verifier", material.Verifier);
         command.Parameters.AddWithValue("salt", material.Salt);
@@ -139,6 +169,15 @@ public sealed class HumanAuthenticationApiIntegrationTests
         command.Parameters.AddWithValue("memory_kib", material.MemoryKiB);
         command.Parameters.AddWithValue("parallelism", material.Parallelism);
         await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<T> ScalarAsync<T>(string sql, string[] usernames)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("usernames", usernames);
+        return (T)(await command.ExecuteScalarAsync())!;
     }
 
     private static string CookieValue(IEnumerable<string> setCookieHeaders, string name)
