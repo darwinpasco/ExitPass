@@ -286,6 +286,51 @@ public sealed class HumanAuthenticationServiceTests
         await fixture.Repository.Received(1).RevokeCredentialChallengeAsync(reference,
             Arg.Any<Guid>(), "PASSWORD_RESET_EMAIL_DELIVERY_FAILED", Arg.Any<DateTimeOffset>(),
             Arg.Any<CancellationToken>());
+        await fixture.Repository.Received(1).RecordSecurityEventAsync(
+            "CREDENTIAL_CHALLENGE_DELIVERY_FAILED", "FAILED", "PASSWORD_RESET_EMAIL_DELIVERY_FAILED",
+            reference, fixture.Login.UserId, Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<Guid>(),
+            Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task PasswordResetRequest_UnknownNoEmailOrNonEligibleAccount_DoesNotIssueOrDeliver()
+    {
+        var fixture = new Fixture();
+        fixture.ChallengeDelivery.Enabled.Returns(true);
+
+        fixture.Login = null;
+        await fixture.Service.RequestPasswordResetAsync("unknown", fixture.Context(), CancellationToken.None);
+
+        fixture.Login = fixture.CreateLogin(false) with { Email = null };
+        await fixture.Service.RequestPasswordResetAsync("no-email", fixture.Context(), CancellationToken.None);
+
+        fixture.Login = fixture.CreateLogin(false) with { Email = "invited@example.test", UserStatus = "INVITED" };
+        await fixture.Service.RequestPasswordResetAsync("invited", fixture.Context(), CancellationToken.None);
+
+        fixture.Login = fixture.CreateLogin(false) with { Email = "no-credential@example.test", Credential = null };
+        await fixture.Service.RequestPasswordResetAsync("no-credential", fixture.Context(), CancellationToken.None);
+
+        await fixture.Repository.DidNotReceiveWithAnyArgs().CreateCredentialChallengeAsync(
+            default, default!, default!, default, default, default, default, default);
+        await fixture.ChallengeDelivery.DidNotReceiveWithAnyArgs().DeliverAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task PasswordResetRequest_LockedAccountWithCurrentCredential_RemainsEligibleForEmailDelivery()
+    {
+        var fixture = new Fixture();
+        fixture.Login = fixture.CreateLogin(false) with { Email = "locked@example.test", UserStatus = "LOCKED" };
+        fixture.ChallengeDelivery.Enabled.Returns(true);
+        fixture.Repository.CreateCredentialChallengeAsync(fixture.Login.UserId, "PASSWORD_RESET",
+                "PASSWORD_RESET_EMAIL", Arg.Any<DateTimeOffset>(), Arg.Any<DateTimeOffset>(),
+                Arg.Any<Guid>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns((Guid.NewGuid(), "test-delivery-material"));
+
+        await fixture.Service.RequestPasswordResetAsync("locked", fixture.Context(), CancellationToken.None);
+
+        await fixture.ChallengeDelivery.Received(1).DeliverAsync(
+            Arg.Is<CredentialChallengeDeliveryRequest>(request => request.RecipientEmail == "locked@example.test"),
+            Arg.Any<CancellationToken>());
     }
 
     private sealed class Fixture
