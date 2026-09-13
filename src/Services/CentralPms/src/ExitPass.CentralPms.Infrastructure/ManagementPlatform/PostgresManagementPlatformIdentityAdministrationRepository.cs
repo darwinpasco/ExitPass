@@ -116,7 +116,8 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
 
         var assignments = await ReadAssignmentsAsync(connection, null, userReference, cancellationToken);
         var grants = await ReadScopeGrantsAsync(connection, null, userReference, cancellationToken);
-        return IdentityAdministrationResult<IdentityUserDetail>.Succeeded(new(user, assignments, grants), correlationId);
+        var invitation = await ReadInvitationAsync(connection, null, user, cancellationToken);
+        return IdentityAdministrationResult<IdentityUserDetail>.Succeeded(new(user, assignments, grants, invitation), correlationId);
     }
 
     public async Task<IdentityAdministrationResult<IdentityUserSummary>> CreateUserAsync(
@@ -330,6 +331,31 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return Forbidden<IdentityUserSummary>(command.CorrelationId, "SELF_LIFECYCLE_CHANGE_PROHIBITED");
         }
 
+        if (command.Transition == "ACTIVATE")
+        {
+            var current = await ReadUserAsync(connection, transaction, command.UserReference, cancellationToken);
+            if (current?.Status == "INVITED")
+            {
+                return Conflict<IdentityUserSummary>(command.CorrelationId,
+                    "INVITED_ACTIVATION_CHALLENGE_REQUIRED",
+                    "An invited local account must complete its activation challenge.");
+            }
+
+            await using var credential = new NpgsqlCommand("""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM identity.local_credentials
+                    WHERE user_id=@user_id AND credential_status='ACTIVE');
+                """, connection, transaction);
+            credential.Parameters.AddWithValue("user_id", command.UserReference);
+            if (!(bool)(await credential.ExecuteScalarAsync(cancellationToken))!)
+            {
+                return Conflict<IdentityUserSummary>(command.CorrelationId,
+                    "ACTIVE_LOCAL_CREDENTIAL_REQUIRED",
+                    "A local account cannot be activated before it establishes a credential.");
+            }
+        }
+
         var targetStatus = command.Transition switch
         {
             "ACTIVATE" => "ACTIVE",
@@ -370,7 +396,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             WHERE user_id = @user_id
               AND row_version = @expected_row_version
               AND user_status <> 'RETIRED'
-              AND ((@transition = 'ACTIVATE' AND user_status IN ('INVITED', 'INACTIVE', 'SUSPENDED'))
+              AND ((@transition = 'ACTIVATE' AND user_status IN ('INACTIVE', 'SUSPENDED'))
                 OR (@transition = 'SUSPEND' AND user_status IN ('ACTIVE', 'LOCKED'))
                 OR (@transition = 'INACTIVATE' AND user_status IN ('INVITED', 'ACTIVE', 'LOCKED', 'SUSPENDED'))
                 OR (@transition = 'RETIRE')
@@ -409,6 +435,56 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         await InsertAuditAsync(connection, transaction, eventType, "SUCCESS", command.ReasonCode, "IdentityUser", command.UserReference, actor.UserId, command.CorrelationId, "A governed human identity lifecycle transition completed.", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return IdentityAdministrationResult<IdentityUserSummary>.Succeeded((await ReadUserAsync(connection, null, command.UserReference, cancellationToken))!, command.CorrelationId);
+    }
+
+    public async Task<IdentityAdministrationResult<IdentityUserSummary>> CancelInvitationAsync(
+        IdentityAdministrationActor actor,
+        CancelIdentityInvitationCommand command,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+        if (!await IsAuthorizedAsync(connection, transaction, actor, UserManagePermission, cancellationToken) ||
+            !await CanAccessUserAsync(connection, transaction, actor.UserId, command.UserReference, cancellationToken))
+        {
+            return NotFound<IdentityUserSummary>(command.CorrelationId);
+        }
+
+        await using var update = new NpgsqlCommand("""
+            UPDATE identity.users
+            SET user_status='INACTIVE', authorization_epoch=authorization_epoch+1,
+                updated_at=now(), updated_by_user_id=@actor_user_id, row_version=row_version+1
+            WHERE user_id=@user_id AND user_status='INVITED' AND row_version=@row_version;
+            """, connection, transaction);
+        update.Parameters.AddWithValue("user_id", command.UserReference);
+        update.Parameters.AddWithValue("actor_user_id", actor.UserId);
+        update.Parameters.AddWithValue("row_version", command.ExpectedRowVersion);
+        if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return Conflict<IdentityUserSummary>(command.CorrelationId, "INVITATION_NOT_PENDING",
+                "Only a current invited account can be cancelled.");
+        }
+
+        await using var revoke = new NpgsqlCommand("""
+            UPDATE identity.credential_challenges
+            SET challenge_status='REVOKED', revoked_at=now(), revoked_by_user_id=@actor_user_id,
+                reason_code=CASE WHEN reason_code LIKE '%ADMIN_ISSUED%'
+                    THEN 'ACCOUNT_ACTIVATION_ADMIN_ISSUED_CANCELLED'
+                    ELSE 'ACCOUNT_ACTIVATION_EMAIL_CANCELLED' END,
+                row_version=row_version+1
+            WHERE user_id=@user_id AND challenge_purpose='ACCOUNT_ACTIVATION' AND challenge_status='ISSUED';
+            """, connection, transaction);
+        revoke.Parameters.AddWithValue("user_id", command.UserReference);
+        revoke.Parameters.AddWithValue("actor_user_id", actor.UserId);
+        await revoke.ExecuteNonQueryAsync(cancellationToken);
+
+        await InsertAuditAsync(connection, transaction, "INVITATION_CANCELLED", "SUCCESS", command.ReasonCode,
+            "IdentityUser", command.UserReference, actor.UserId, command.CorrelationId,
+            "The invited account was made inactive and its activation challenge was revoked.", cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return IdentityAdministrationResult<IdentityUserSummary>.Succeeded(
+            (await ReadUserAsync(connection, null, command.UserReference, cancellationToken))!, command.CorrelationId);
     }
 
     public async Task<IdentityAdministrationResult<IReadOnlyList<IdentityRoleDefinition>>> ListRolesAsync(
@@ -1846,6 +1922,45 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         command.Parameters.AddWithValue("user_id", userId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? ReadUser(reader) : null;
+    }
+
+    private static async Task<IdentityInvitationStatus?> ReadInvitationAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        IdentityUserSummary user,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT challenge_reference, challenge_status::text, issued_at, expires_at, reason_code
+            FROM identity.credential_challenges
+            WHERE user_id=@user_id AND challenge_purpose='ACCOUNT_ACTIVATION'
+            ORDER BY issued_at DESC, credential_challenge_id DESC LIMIT 1;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("user_id", user.UserReference);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+
+        var reference = reader.GetGuid(0);
+        var persistedState = reader.GetString(1);
+        var issuedAt = reader.GetFieldValue<DateTimeOffset>(2);
+        var expiresAt = reader.GetFieldValue<DateTimeOffset>(3);
+        var reason = GetNullableString(reader, 4) ?? string.Empty;
+        var mode = reason.Contains("ADMIN_ISSUED", StringComparison.Ordinal)
+            ? ActivationDeliveryModes.AdminIssued
+            : reason.Contains("EMAIL", StringComparison.Ordinal) ? ActivationDeliveryModes.Email : null;
+        var challengeState = persistedState == "ISSUED" && expiresAt <= DateTimeOffset.UtcNow ? "EXPIRED" : persistedState;
+        var classification = reason.Contains("DELIVERY_FAILED", StringComparison.Ordinal) ? "DELIVERY_FAILED"
+            : reason.Contains("CANCELLED", StringComparison.Ordinal) ? "CANCELLED"
+            : challengeState == "EXPIRED" ? "EXPIRED"
+            : reason == "SUPERSEDED" ? "SUPERSEDED"
+            : persistedState == "CONSUMED" || user.Status == "ACTIVE" ? "ACTIVATED"
+            : mode == ActivationDeliveryModes.AdminIssued ? "ADMIN_ISSUED"
+            : mode == ActivationDeliveryModes.Email ? "EMAIL_SENT"
+            : "INVITATION_PENDING";
+        var invitationState = classification is "ACTIVATED" or "CANCELLED" or "DELIVERY_FAILED" or "EXPIRED" or "SUPERSEDED"
+            ? classification
+            : "INVITATION_PENDING";
+        return new(invitationState, mode, challengeState, reference, issuedAt, expiresAt, classification);
     }
 
     private static IdentityUserSummary ReadUser(NpgsqlDataReader reader) =>

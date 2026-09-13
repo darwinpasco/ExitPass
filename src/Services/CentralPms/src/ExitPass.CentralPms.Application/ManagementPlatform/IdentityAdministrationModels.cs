@@ -46,7 +46,35 @@ public sealed record IdentityUserSummary(
 public sealed record IdentityUserDetail(
     IdentityUserSummary User,
     IReadOnlyList<IdentityRoleAssignment> RoleAssignments,
-    IReadOnlyList<IdentityScopeGrant> ScopeGrants);
+    IReadOnlyList<IdentityScopeGrant> ScopeGrants,
+    IdentityInvitationStatus? Invitation = null);
+
+public static class ActivationDeliveryModes
+{
+    public const string Email = "EMAIL";
+    public const string AdminIssued = "ADMIN_ISSUED";
+}
+
+public sealed record IdentityInvitationStatus(
+    string InvitationState,
+    string? ActivationDeliveryMode,
+    string? LatestChallengeState,
+    Guid? ChallengeReference,
+    DateTimeOffset? IssuedAt,
+    DateTimeOffset? ExpiresAt,
+    string DeliveryClassification);
+
+public sealed record OneTimeActivationMaterial(
+    Guid ChallengeReference,
+    string ChallengeSecret,
+    DateTimeOffset ExpiresAt,
+    string ActivationUrl,
+    string QrPayload);
+
+public sealed record CreateIdentityUserResult(
+    IdentityUserSummary User,
+    IdentityInvitationStatus Invitation,
+    OneTimeActivationMaterial? OneTimeActivation);
 
 public sealed record IdentityRoleDefinition(
     Guid RoleReference,
@@ -200,7 +228,9 @@ public sealed record CreateIdentityUserCommand(
     DateTimeOffset? EffectiveTo,
     string ReasonCode,
     string IdempotencyKey,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string ActivationDeliveryMode = ActivationDeliveryModes.Email,
+    bool AdminIssuedHandoffAcknowledged = false);
 
 public sealed record UpdateIdentityUserCommand(
     Guid UserReference,
@@ -262,9 +292,29 @@ public sealed record CreateCredentialResetChallengeCommand(
     string Purpose,
     DateTimeOffset ExpiresAt,
     string ReasonCode,
+    Guid CorrelationId,
+    string DeliveryMode = ActivationDeliveryModes.Email,
+    bool AdminIssuedHandoffAcknowledged = false);
+
+public sealed record CredentialResetChallengeResult(
+    Guid ChallengeReference,
+    DateTimeOffset ExpiresAt,
+    string DeliveryMode = ActivationDeliveryModes.Email,
+    string DeliveryClassification = "EMAIL_SENT",
+    OneTimeActivationMaterial? OneTimeActivation = null);
+
+public sealed record ReissueIdentityInvitationCommand(
+    Guid UserReference,
+    string ActivationDeliveryMode,
+    string ReasonCode,
+    bool AdminIssuedHandoffAcknowledged,
     Guid CorrelationId);
 
-public sealed record CredentialResetChallengeResult(Guid ChallengeReference, DateTimeOffset ExpiresAt);
+public sealed record CancelIdentityInvitationCommand(
+    Guid UserReference,
+    long ExpectedRowVersion,
+    string ReasonCode,
+    Guid CorrelationId);
 
 public sealed record CreatePrivilegedAccessRequestCommand(
     Guid TargetUserReference,

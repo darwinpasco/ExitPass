@@ -81,8 +81,8 @@ public sealed class HumanAuthenticationAdministrationGatewayTests
         var result = await fixture.Gateway.IssueCredentialChallengeAsync(Actor, command, CancellationToken.None);
 
         result.Outcome.Should().Be(IdentityAdministrationOutcome.IntegrationUnavailable);
-        result.Classification.Should().Be("CREDENTIAL_CHALLENGE_DELIVERY_NOT_CONFIGURED");
-        await fixture.Authentication.DidNotReceiveWithAnyArgs().CreateCredentialChallengeAsync(default, default!, default, default, default, default, default);
+        result.Classification.Should().Be("CREDENTIAL_CHALLENGE_EMAIL_DELIVERY_NOT_CONFIGURED");
+        await fixture.Authentication.DidNotReceiveWithAnyArgs().CreateCredentialChallengeAsync(default, default!, default!, default, default, default, default, default);
     }
 
     [Fact]
@@ -93,18 +93,76 @@ public sealed class HumanAuthenticationAdministrationGatewayTests
         var command = new CreateCredentialResetChallengeCommand(Guid.NewGuid(), "PASSWORD_RESET",
             DateTimeOffset.UtcNow.AddMinutes(10), "ADMIN_RESET", Guid.NewGuid());
         fixture.Authentication.CreateCredentialChallengeAsync(command.UserReference, command.Purpose,
-                Arg.Any<DateTimeOffset>(), command.ExpiresAt, fixture.Options.CentralPmsServiceIdentityId,
+                "PASSWORD_RESET_EMAIL", Arg.Any<DateTimeOffset>(), command.ExpiresAt, fixture.Options.CentralPmsServiceIdentityId,
                 command.CorrelationId, Arg.Any<CancellationToken>())
             .Returns((reference, "one-time-delivery-secret"));
 
         var result = await fixture.Gateway.IssueCredentialChallengeAsync(Actor, command, CancellationToken.None);
 
         result.Value.Should().Be(new CredentialResetChallengeResult(reference, command.ExpiresAt));
-        result.Value!.GetType().GetProperties().Select(property => property.Name)
-            .Should().NotContain(name => name.Contains("Secret", StringComparison.OrdinalIgnoreCase));
+        result.Value!.OneTimeActivation.Should().BeNull();
         await fixture.Delivery.Received(1).DeliverAsync(
-            Arg.Is<CredentialChallengeDeliveryRequest>(request => request.ChallengeReference == reference),
+            Arg.Is<CredentialChallengeDeliveryRequest>(request => request.ChallengeReference == reference &&
+                request.RecipientEmail == "employee@example.test"),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AccountActivation_WhenEmailDeliveryFails_RevokesChallengeAndReturnsControlledFailure()
+    {
+        var fixture = new Fixture(challengeDeliveryEnabled: true);
+        var reference = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var command = new CreateCredentialResetChallengeCommand(userId, "ACCOUNT_ACTIVATION",
+            DateTimeOffset.UtcNow.AddMinutes(10), "ONBOARDING", Guid.NewGuid());
+        fixture.Authentication.GetCredentialChallengeTargetAsync(userId, Arg.Any<CancellationToken>())
+            .Returns(new CredentialChallengeTarget(userId, "INVITED", "employee@example.test"));
+        fixture.Authentication.CreateCredentialChallengeAsync(userId, "ACCOUNT_ACTIVATION",
+                "ACCOUNT_ACTIVATION_EMAIL", Arg.Any<DateTimeOffset>(), command.ExpiresAt,
+                fixture.Options.CentralPmsServiceIdentityId, command.CorrelationId, Arg.Any<CancellationToken>())
+            .Returns((reference, "task-owned-delivery-material"));
+        fixture.Delivery.DeliverAsync(Arg.Any<CredentialChallengeDeliveryRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new InvalidOperationException("test SMTP failure")));
+
+        var result = await fixture.Gateway.IssueCredentialChallengeAsync(Actor, command, CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.IntegrationUnavailable);
+        result.Classification.Should().Be("CREDENTIAL_CHALLENGE_DELIVERY_FAILED");
+        result.Value.Should().BeNull();
+        await fixture.Authentication.Received(1).RevokeCredentialChallengeAsync(reference,
+            fixture.Options.CentralPmsServiceIdentityId, "ACCOUNT_ACTIVATION_EMAIL_DELIVERY_FAILED",
+            Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+        await fixture.Authentication.Received(1).RecordSecurityEventAsync(
+            "CREDENTIAL_CHALLENGE_DELIVERY_FAILED", "FAILED", "ACCOUNT_ACTIVATION_EMAIL_DELIVERY_FAILED",
+            reference, Actor.UserId, null, null, command.CorrelationId,
+            fixture.Options.CentralPmsServiceIdentityId, Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AccountActivation_AdminIssued_ReturnsSecretOnceWithoutInvokingEmailDelivery()
+    {
+        var fixture = new Fixture();
+        var reference = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var command = new CreateCredentialResetChallengeCommand(userId, "ACCOUNT_ACTIVATION",
+            DateTimeOffset.UtcNow.AddMinutes(10), "ONBOARDING", Guid.NewGuid(),
+            ActivationDeliveryModes.AdminIssued, true);
+        fixture.Authentication.GetCredentialChallengeTargetAsync(userId, Arg.Any<CancellationToken>())
+            .Returns(new CredentialChallengeTarget(userId, "INVITED", null));
+        fixture.Authentication.CreateCredentialChallengeAsync(userId, "ACCOUNT_ACTIVATION",
+                "ACCOUNT_ACTIVATION_ADMIN_ISSUED", Arg.Any<DateTimeOffset>(), command.ExpiresAt,
+                fixture.Options.CentralPmsServiceIdentityId, command.CorrelationId, Arg.Any<CancellationToken>())
+            .Returns((reference, "one-time-activation-secret"));
+
+        var result = await fixture.Gateway.IssueCredentialChallengeAsync(Actor, command, CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        result.Value!.DeliveryMode.Should().Be(ActivationDeliveryModes.AdminIssued);
+        result.Value.OneTimeActivation.Should().BeEquivalentTo(new OneTimeActivationMaterial(reference,
+            "one-time-activation-secret", command.ExpiresAt,
+            $"https://accounts.example.test/account/activate?challengeReference={reference:D}&challengeSecret=one-time-activation-secret",
+            $"https://accounts.example.test/account/activate?challengeReference={reference:D}&challengeSecret=one-time-activation-secret"));
+        await fixture.Delivery.DidNotReceiveWithAnyArgs().DeliverAsync(default!, default);
     }
 
     private sealed class Fixture
@@ -112,6 +170,7 @@ public sealed class HumanAuthenticationAdministrationGatewayTests
         public readonly IHumanAuthenticationRepository Authentication = Substitute.For<IHumanAuthenticationRepository>();
         public readonly IHumanMfaAdministrationService Mfa = Substitute.For<IHumanMfaAdministrationService>();
         public readonly ICredentialChallengeDelivery Delivery = Substitute.For<ICredentialChallengeDelivery>();
+        public readonly ICredentialChallengeLinkBuilder Links = Substitute.For<ICredentialChallengeLinkBuilder>();
         public readonly IManagementPlatformIdentityAdministrationRepository Identity = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
         public readonly HumanAuthenticationOptions Options = new();
         public readonly HumanAuthenticationAdministrationGateway Gateway;
@@ -119,7 +178,12 @@ public sealed class HumanAuthenticationAdministrationGatewayTests
         public Fixture(bool challengeDeliveryEnabled = false)
         {
             Delivery.Enabled.Returns(challengeDeliveryEnabled);
-            Gateway = new HumanAuthenticationAdministrationGateway(Authentication, Mfa, Delivery, Identity,
+            Links.Enabled.Returns(true);
+            Links.BuildUrl(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<string>())
+                .Returns(call => $"https://accounts.example.test/account/activate?challengeReference={call.ArgAt<Guid>(1):D}&challengeSecret={call.ArgAt<string>(2)}");
+            Authentication.GetCredentialChallengeTargetAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+                .Returns(call => new CredentialChallengeTarget(call.ArgAt<Guid>(0), "ACTIVE", "employee@example.test"));
+            Gateway = new HumanAuthenticationAdministrationGateway(Authentication, Mfa, Delivery, Links, Identity,
                 Microsoft.Extensions.Options.Options.Create(Options), TimeProvider.System);
         }
     }

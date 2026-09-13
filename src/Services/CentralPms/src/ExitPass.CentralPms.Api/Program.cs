@@ -376,12 +376,21 @@ static void ConfigureHumanAuthentication(WebApplicationBuilder builder, string m
         .Validate(options => options.CentralPmsServiceIdentityId != Guid.Empty, "Central PMS service identity is required.")
         .Validate(options => options.WebIdleMinutes > 0 && options.WebAbsoluteHours > 0 && options.AptIdleMinutes > 0 && options.AptAbsoluteHours > 0, "Human session expiry values must be positive.")
         .ValidateOnStart();
+    builder.Services.AddOptions<CredentialChallengeDeliveryOptions>()
+        .Bind(builder.Configuration.GetSection(CredentialChallengeDeliveryOptions.SectionName))
+        .Validate(options => !options.Smtp.Enabled ||
+            (!string.IsNullOrWhiteSpace(options.Smtp.Host) && options.Smtp.Port is > 0 and <= 65535 &&
+             SmtpCredentialChallengeDelivery.IsUsableEmail(options.Smtp.SenderAddress) &&
+             CredentialChallengeLinkBuilder.IsUsablePublicBaseUrl(options.PublicAccountLifecycleBaseUrl)),
+            "Enabled SMTP challenge delivery requires a valid host, port, sender address, and HTTPS public account lifecycle URL.")
+        .ValidateOnStart();
     builder.Services.AddSingleton<IHumanSessionTokenService, HumanSessionTokenService>();
     builder.Services.AddSingleton<IHumanPasswordHasher, Argon2idHumanPasswordHasher>();
     builder.Services.AddSingleton<ITotpProvider, TotpProvider>();
     builder.Services.AddSingleton<ITotpSecretProtector, AesGcmTotpSecretProtector>();
     builder.Services.AddSingleton<IExternalHumanAuthenticationAdapter, DisabledExternalHumanAuthenticationAdapter>();
-    builder.Services.AddSingleton<ICredentialChallengeDelivery, DisabledCredentialChallengeDelivery>();
+    builder.Services.AddSingleton<ICredentialChallengeLinkBuilder, CredentialChallengeLinkBuilder>();
+    builder.Services.AddSingleton<ICredentialChallengeDelivery, SmtpCredentialChallengeDelivery>();
     builder.Services.AddScoped<IHumanAuthenticationRepository>(services =>
         new PostgresHumanAuthenticationRepository(mainDatabaseConnectionString, services.GetRequiredService<IHumanSessionTokenService>()));
     builder.Services.AddScoped<HumanAuthenticationService>();

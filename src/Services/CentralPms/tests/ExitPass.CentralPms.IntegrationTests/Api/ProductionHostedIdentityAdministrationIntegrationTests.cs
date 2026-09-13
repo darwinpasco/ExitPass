@@ -138,7 +138,9 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
                 DateTimeOffset.UtcNow,
                 null,
                 "I021_USER_TYPE_VALIDATION",
-                $"unsupported-{Guid.NewGuid():N}"),
+                $"unsupported-{Guid.NewGuid():N}",
+                "ADMIN_ISSUED",
+                true),
             csrf);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -177,7 +179,8 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
             new CreateIdentityUserRequest(
                 username, "Incompatible User Role", null, null, "SUPPORT_USER",
                 seed.DelegableRoleId, "SITE", seed.SiteId, null,
-                DateTimeOffset.UtcNow, null, "I021_INCOMPATIBLE_ROLE", $"incompatible-{Guid.NewGuid():N}"),
+                DateTimeOffset.UtcNow, null, "I021_INCOMPATIBLE_ROLE", $"incompatible-{Guid.NewGuid():N}",
+                "ADMIN_ISSUED", true),
             csrf);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -194,6 +197,7 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
             {
                 ["ConnectionStrings:MainDatabase"] = _database.ConnectionString,
                 ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost",
+                ["CredentialChallengeDelivery:PublicAccountLifecycleBaseUrl"] = "https://accounts.exitpass.test",
                 ["CentralPms:VendorPms:Provider"] = "SITE_ADAPTER",
                 ["CentralPms:VendorPms:Environment"] = "INTEGRATION_TEST",
                 ["CentralPms:VendorPms:CentralPmsServiceIdentityId"] =
