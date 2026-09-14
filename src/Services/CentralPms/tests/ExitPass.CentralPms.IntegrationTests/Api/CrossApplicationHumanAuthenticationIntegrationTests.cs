@@ -146,6 +146,17 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
     }
 
     [Fact]
+    public async Task Production_authenticated_browser_can_establish_first_operator_device_cookie()
+    {
+        var seed = await SeedScopedUserAsync([], true, true);
+        await using var factory = ProductionFactory();
+        using var client = WebClient(factory);
+        await LoginWebAsync(client, seed.Username, HumanSessionAudiences.ManagementPlatform);
+
+        await EstablishOperatorDeviceAsync(client, seed);
+    }
+
+    [Fact]
     public async Task Production_operator_login_requiresServerIssuedDeviceCookie_and_liveRevocationBlocksQueue()
     {
         var seed = await SeedScopedUserAsync(

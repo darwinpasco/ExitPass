@@ -7,7 +7,7 @@ public sealed class OperatorConsoleOperatingContextMiddleware(RequestDelegate ne
 {
     public async Task InvokeAsync(HttpContext context, IOperatorConsoleOperatingContextService service)
     {
-        if (!IsOperatorConsoleRequest(context.Request.Path) ||
+        if (!IsOperatorConsoleRequest(context.Request) ||
             !string.Equals(context.User.Identity?.AuthenticationType, HumanSessionAuthenticationHandler.SchemeName, StringComparison.Ordinal))
         {
             await next(context);
@@ -42,9 +42,14 @@ public sealed class OperatorConsoleOperatingContextMiddleware(RequestDelegate ne
         await next(context);
     }
 
-    private static bool IsOperatorConsoleRequest(PathString path)
+    private static bool IsOperatorConsoleRequest(HttpRequest request)
     {
-        var value = path.Value ?? string.Empty;
+        var value = request.Path.Value ?? string.Empty;
+        if (HttpMethods.IsPost(request.Method) &&
+            string.Equals(value, "/v1/operator-console/device-binding/establish", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
         if (value.StartsWith("/v1/operator-console/shift-management", StringComparison.OrdinalIgnoreCase))
         {
             return false;
