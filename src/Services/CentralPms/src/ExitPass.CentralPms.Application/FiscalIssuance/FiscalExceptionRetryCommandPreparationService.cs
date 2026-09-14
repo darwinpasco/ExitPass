@@ -54,6 +54,7 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
 
         var detail = request.Detail;
         var summary = detail.Summary;
+        var retryableConfigurationFailure = IsRetryableConfigurationFailure(detail);
 
         var idempotencyStatus = ResolveIdempotencyStatus(
             summary.UpstreamFinalityReference,
@@ -87,7 +88,7 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
                 idempotencyStatus);
         }
 
-        if (summary.ReadbackAttemptCount is null or < 1)
+        if (!retryableConfigurationFailure && summary.ReadbackAttemptCount is (null or < 1))
         {
             return Blocked(
                 "readback_attempt_history_missing",
@@ -96,7 +97,8 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
                 idempotencyStatus);
         }
 
-        if (summary.ReadbackClassification != FiscalExceptionReadbackClassification.NotFound)
+        if (!retryableConfigurationFailure &&
+            summary.ReadbackClassification != FiscalExceptionReadbackClassification.NotFound)
         {
             return Blocked(
                 ToReadbackBlockReason(summary.ReadbackClassification),
@@ -132,7 +134,8 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
                 idempotencyStatus);
         }
 
-        if (HasUnsafeQueueState(summary) || HasConfigurationFailure(summary))
+        if (HasUnsafeQueueState(summary) ||
+            !retryableConfigurationFailure && HasConfigurationFailure(summary))
         {
             return Blocked(
                 "fiscal_exception_state_not_safe_for_retry_command",
@@ -192,7 +195,7 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
                 SemanticRequestHashValue: summary.SemanticRequestHashValue,
                 SemanticRequestHashAlgorithm: summary.SemanticRequestHashAlgorithm,
                 SemanticRequestHashSourceVersion: summary.SemanticRequestHashSourceVersion,
-                LatestReadbackClassificationBasis: summary.ReadbackClassification!.Value,
+                LatestReadbackClassificationBasis: summary.ReadbackClassification,
                 RetryEligibilityDecisionBasis: summary.RetryEligibilityDecision,
                 SafeBlockReasonCode: null,
                 CorrelationId: detail.CorrelationId,
@@ -249,6 +252,10 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
             or FiscalIssuanceExceptionReason.FiscalSequenceStateNotEffective
             or FiscalIssuanceExceptionReason.FiscalNumberAllocationFailed
             or FiscalIssuanceExceptionReason.FiscalDocumentNumberFormatFailed;
+
+    private static bool IsRetryableConfigurationFailure(FiscalExceptionQueueCaseDetail detail) =>
+        detail.Summary.FiscalIssuanceState == FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration &&
+        detail.LatestErrorPosture == FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection;
 
     private static bool HasConfirmedSemanticRequestHash(FiscalExceptionQueueCaseSummary summary) =>
         summary.SemanticRequestHashAvailabilityStatus ==

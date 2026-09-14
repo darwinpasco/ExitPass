@@ -977,7 +977,10 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         record.FiscalIssuanceState switch
         {
             FiscalIssuanceIntegrationState.FiscalIssuanceUnknown => FiscalExceptionQueueState.ReadbackRequired,
-            FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration => FiscalExceptionQueueState.BlockedRequiresConfigFix,
+            FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration
+                when IsRetryableConfigurationFailure(record) => FiscalExceptionQueueState.Queued,
+            FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration =>
+                FiscalExceptionQueueState.BlockedRequiresConfigFix,
             FiscalIssuanceIntegrationState.FiscalIssuanceConflict => FiscalExceptionQueueState.MismatchReview,
             FiscalIssuanceIntegrationState.FiscalIssuanceManualReview => FiscalExceptionQueueState.ManualReviewRequired,
             FiscalIssuanceIntegrationState.FiscalIssuanceExceptionReleased => FiscalExceptionQueueState.ManualReviewRequired,
@@ -1034,6 +1037,10 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
 
         return FiscalExceptionRetryEligibilityStatus.UnavailableInThisSlice;
     }
+
+    private static bool IsRetryableConfigurationFailure(FiscalIssuanceReferenceRecord record) =>
+        record.FiscalIssuanceState == FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration &&
+        record.LatestErrorPosture == FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection;
 
     private static string? SafeErrorSummary(FiscalIssuanceReferenceRecord record)
     {

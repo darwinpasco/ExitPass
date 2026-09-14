@@ -282,7 +282,7 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
         }
 
         EnsureRecoveryRequestMatches(command, recovery);
-        if (!recovery.PermitsServiceRecovery && !recovery.IsCompleted)
+        if (!recovery.PermitsRecovery && !recovery.IsCompleted)
         {
             throw new InvalidOperationException("payment_attempt_has_no_retryable_fiscal_recovery_context");
         }

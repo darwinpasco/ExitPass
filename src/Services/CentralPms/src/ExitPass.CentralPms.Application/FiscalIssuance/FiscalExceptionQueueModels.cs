@@ -448,7 +448,7 @@ public sealed record FiscalExceptionRetryCommandEnvelope(
     string? SemanticRequestHashValue,
     string? SemanticRequestHashAlgorithm,
     string? SemanticRequestHashSourceVersion,
-    FiscalExceptionReadbackClassification LatestReadbackClassificationBasis,
+    FiscalExceptionReadbackClassification? LatestReadbackClassificationBasis,
     FiscalExceptionRetryEligibilityDecision RetryEligibilityDecisionBasis,
     string? SafeBlockReasonCode,
     Guid? CorrelationId,

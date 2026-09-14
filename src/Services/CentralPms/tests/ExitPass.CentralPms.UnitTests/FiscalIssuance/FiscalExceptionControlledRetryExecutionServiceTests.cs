@@ -70,10 +70,20 @@ public sealed class FiscalExceptionControlledRetryExecutionServiceTests
     [Fact]
     public async Task ExecuteAsync_WhenRetryEligibilityIsNotEligible_Blocks()
     {
-        var scenario = await ReadyScenarioAsync(referenceState: FiscalIssuanceIntegrationState.FiscalIssuanceFailedRequest);
+        var scenario = await ReadyScenarioAsync();
+        var blockedDetail = scenario.Request.Detail with
+        {
+            Summary = scenario.Request.Detail.Summary with
+            {
+                RetryEligibilityStatus = FiscalExceptionRetryEligibilityStatus.BlockedManualReview,
+                RetryEligibilityDecision = FiscalExceptionRetryEligibilityDecision.Blocked,
+                RetryBlockReasonCode = "retry_eligibility_not_eligible"
+            }
+        };
+        var request = scenario.Request with { Detail = blockedDetail };
         var sut = CreateSut(EnabledOptions(), auditRepository: new FakeExecutionAuditRepository());
 
-        var result = await sut.ExecuteAsync(scenario.Request, CancellationToken.None);
+        var result = await sut.ExecuteAsync(request, CancellationToken.None);
 
         result.Status.Should().Be(FiscalExceptionControlledRetryExecutionStatus.Blocked);
         result.BlockReasonCode.Should().NotBeNullOrWhiteSpace();
