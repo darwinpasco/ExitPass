@@ -71,9 +71,9 @@ public sealed class HttpFiscalReportingPosServerGateway(
             FiscalReportingGatewayAction.ElectronicJournalDownload => (HttpMethod.Get, $"/v1/electronic-journal/invoice-text.txt?{scope}{Period(request)}{Search(request)}", "electronic_journal.export", null),
             FiscalReportingGatewayAction.XHistory => (HttpMethod.Get, $"/v1/fiscal-reports/x-readings/history?{scope}", "fiscal_x_reading.read", null),
             FiscalReportingGatewayAction.XGenerate => (HttpMethod.Post, "/v1/fiscal-reports/x-readings", "fiscal_x_reading.generate", new { operationKey=request.OperationKey, sitePosServerId=endpoint.SitePosServerId, fiscalIdentityId=endpoint.FiscalIdentityId, observedAt=DateTimeOffset.UtcNow }),
-            FiscalReportingGatewayAction.XDownload => (HttpMethod.Get, $"/v1/fiscal-reports/x-readings/{Uri.EscapeDataString(RequireReference(request))}/exports/text?width=standard", "fiscal_x_reading.export", null),
+            FiscalReportingGatewayAction.XDownload => (HttpMethod.Get, $"/v1/fiscal-reports/x-readings/{Uri.EscapeDataString(RequireReference(request))}/exports/pdf", "fiscal_x_reading.export", null),
             FiscalReportingGatewayAction.ZHistory => (HttpMethod.Get, $"/v1/fiscal-reports/z-readings/history?{scope}", "fiscal_z_reading.read", null),
-            FiscalReportingGatewayAction.ZDownload => (HttpMethod.Get, $"/v1/fiscal-reports/z-readings/{Uri.EscapeDataString(RequireReference(request))}/exports/text?width=standard", "fiscal_z_reading.export", null),
+            FiscalReportingGatewayAction.ZDownload => (HttpMethod.Get, $"/v1/fiscal-reports/z-readings/{Uri.EscapeDataString(RequireReference(request))}/exports/pdf", "fiscal_z_reading.export", null),
             _ => throw new InvalidOperationException("Unsupported fiscal reporting gateway action.")
         };
         var outbound=Build(endpoint,method,path,permission,request.CorrelationId);

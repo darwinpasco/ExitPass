@@ -72,6 +72,33 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
         Assert.Contains("\"expectedStateVersion\":7", handler.Bodies[1]);
     }
 
+    [Theory]
+    [InlineData(FiscalReportingGatewayAction.XDownload, "/v1/fiscal-reports/x-readings/X-20260915-001/exports/pdf", "fiscal_x_reading.export")]
+    [InlineData(FiscalReportingGatewayAction.ZDownload, "/v1/fiscal-reports/z-readings/Z-20260915-001/exports/pdf", "fiscal_z_reading.export")]
+    public async Task ReadingDownloadsRequestTheAuthoritativePdfExport(
+        FiscalReportingGatewayAction action,
+        string expectedPath,
+        string expectedPermission)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent("%PDF-1.4"u8.ToArray())
+        };
+        response.Content.Headers.ContentType = new("application/pdf");
+        response.Content.Headers.ContentDisposition = new("attachment") { FileName = "reading-57mm.pdf" };
+        var handler = new CaptureHandler(_ => response);
+
+        var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(action) with { ReportReference = action == FiscalReportingGatewayAction.XDownload ? "X-20260915-001" : "Z-20260915-001" });
+
+        Assert.Equal(200, result.HttpStatusCode);
+        Assert.Equal("application/pdf", result.ContentType);
+        Assert.Equal("reading-57mm.pdf", result.FileName);
+        Assert.Equal(expectedPath, handler.Requests.Single().RequestUri!.AbsolutePath);
+        Assert.Empty(handler.Requests.Single().RequestUri!.Query);
+        Assert.Equal(expectedPermission, Header(handler.Requests.Single(), "X-PosServer-Admin-Permission"));
+    }
+
     [Fact]
     public async Task UnavailablePosFailsCleanlyAndIsRetryable()
     {

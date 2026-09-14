@@ -15,7 +15,10 @@ test.describe("Operator Console POS-authoritative fiscal reporting", () => {
   test("visually exposes site-scoped EJ, X, and confirmed privileged Z", async ({ page }, testInfo) => {
     await page.goto("/operator-console/fiscal-reporting?operatorFiscalReportingScenario=ready");
     await expect(page.getByRole("heading", { name: "Fiscal Reporting" })).toBeVisible();
-    await expect(page.getByText("Customer Name      : Juan Dela Cruz", { exact: false })).toBeVisible();
+    const invoice = page.locator("article.invoiceText pre");
+    await expect(invoice).toContainText("SALES INVOICE");
+    await expect(invoice).toContainText("POS SOFTWARE SUPPLIER / DEVELOPER");
+    await expect(invoice).toContainText("NOTHING FOLLOWS");
     await expect(page.getByLabel("Authorized Site")).toHaveValue(site);
     await page.screenshot({ path: testInfo.outputPath("operator-fiscal-reporting-ej.png"), fullPage: true });
 
