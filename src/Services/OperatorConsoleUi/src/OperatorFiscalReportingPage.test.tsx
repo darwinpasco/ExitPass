@@ -83,12 +83,22 @@ describe("Operator Console fiscal reporting", () => {
     expect(screen.getByText("2026-09-14 07:30:00 PHT")).toBeInTheDocument();
   });
 
-  it("shows site-scoped authoritative EJ text and a backend txt URL", async () => {
+  it("shows the site-scoped authoritative Sales Invoice receipt without reconstructing it", async () => {
     render(<OperatorFiscalReportingPage client={createOperatorFiscalReportingFixture()} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
     const invoice = await screen.findByText("SI-00000001");
     const pre = invoice.closest("article")?.querySelector("pre");
-    expect(pre?.textContent).toContain("Customer Name      : Juan Dela Cruz");
-    expect(pre?.textContent).toContain("VAT Exempt Sales   : PHP 0.00");
+    expect(pre?.textContent).toContain("SALES INVOICE");
+    expect(pre?.textContent).toContain("ORIGINAL");
+    expect(pre?.textContent).toContain("PARKING DETAILS");
+    expect(pre?.textContent).toContain("ITEMS");
+    expect(pre?.textContent).toContain("DISCOUNTS");
+    expect(pre?.textContent).toContain("PAYMENT DETAILS");
+    expect(pre?.textContent).toContain("THIS SERVES AS YOUR SALES INVOICE");
+    expect(pre?.textContent).toContain("Customer Information");
+    expect(pre?.textContent).toContain("POS SOFTWARE SUPPLIER / DEVELOPER");
+    expect(pre?.textContent).toContain("THANK YOU FOR CHOOSING OUR SERVICE");
+    expect(pre?.textContent).toContain("NOTHING FOLLOWS");
+    expect(pre?.textContent).toContain("VAT Exempt Sales                        PHP 0.00");
     expect(screen.getByRole("link", { name: "Download authoritative .txt" })).toHaveAttribute("href", expect.stringContaining("/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/electronic-journal/download"));
   });
 
@@ -110,6 +120,10 @@ describe("Operator Console fiscal reporting", () => {
     await userEvent.click(screen.getByRole("button", { name: "Generate Z Reading" }));
     expect(client.generateZ).not.toHaveBeenCalled();
     expect(screen.getByRole("alertdialog", { name: "Confirm Z Reading close" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(client.generateZ).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog", { name: "Confirm Z Reading close" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Generate Z Reading" }));
     await userEvent.click(screen.getByRole("button", { name: "Confirm close and generate Z" }));
     await waitFor(() => expect(client.generateZ).toHaveBeenCalledWith("SITE-PITX"));
   });

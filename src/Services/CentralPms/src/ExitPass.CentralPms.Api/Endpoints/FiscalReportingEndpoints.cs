@@ -74,9 +74,14 @@ public static class FiscalReportingEndpoints
         logger.Log(result.HttpStatusCode<400?LogLevel.Information:LogLevel.Warning,
             "Fiscal reporting operation completed. actor={Actor} site={Site} action={Action} result={Result} report={Report} correlation_id={Correlation}",
             actor,siteId,action,result.Code,reportReference,correlation);
-        if(result.HttpStatusCode is >=200 and <300 && result.ContentType.StartsWith("text/plain",StringComparison.OrdinalIgnoreCase))
+        if(result.HttpStatusCode is >=200 and <300 &&
+            (result.ContentType.StartsWith("text/plain",StringComparison.OrdinalIgnoreCase) ||
+             result.ContentType.StartsWith("application/pdf",StringComparison.OrdinalIgnoreCase)))
         {
-            request.HttpContext.Response.Headers.ContentDisposition=$"attachment; filename=\"{result.FileName??"fiscal-report.txt"}\"";
+            var fallbackFileName = result.ContentType.StartsWith("application/pdf",StringComparison.OrdinalIgnoreCase)
+                ? "fiscal-report.pdf"
+                : "fiscal-report.txt";
+            request.HttpContext.Response.Headers.ContentDisposition=$"attachment; filename=\"{result.FileName??fallbackFileName}\"";
             request.HttpContext.Response.Headers.CacheControl="private, no-store";
             return Results.Bytes(result.Body,result.ContentType);
         }
