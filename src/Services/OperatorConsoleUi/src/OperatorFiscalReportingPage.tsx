@@ -39,8 +39,8 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
       const currentPeriod = nextX?.currentPeriod ?? nextZ?.currentPeriod;
       let range = phtRangeToUtc(start, end);
       if (!start && !end && currentPeriod) {
-        setStart(formatPhtInstant(currentPeriod.periodStartAt));
-        setEnd(formatPhtInstant(currentPeriod.periodEndAt));
+        setStart(formatPhtInputValue(currentPeriod.periodStartAt));
+        setEnd(formatPhtInputValue(currentPeriod.periodEndAt));
         range = { start: currentPeriod.periodStartAt, end: currentPeriod.periodEndAt };
       }
       if (has(fiscalReportingPermissions.ejRead) && range) {
@@ -95,7 +95,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     <div className="reportTabs" role="tablist" aria-label="Fiscal report type"><button type="button" role="tab" aria-selected={tab === "ej"} onClick={() => setTab("ej")}>Electronic Journal</button><button type="button" role="tab" aria-selected={tab === "x"} onClick={() => setTab("x")}>X Reading</button><button type="button" role="tab" aria-selected={tab === "z"} onClick={() => setTab("z")}>Z Reading</button></div>
     {busy && <p role="status">Loading authoritative POS reporting data...</p>}
     {error && <div className="stateMessage danger" role="alert"><h3>Fiscal reporting unavailable</h3><p>{error}</p></div>}
-    {tab === "ej" && (has(fiscalReportingPermissions.ejRead) ? <div className="fiscalPane" role="tabpanel"><h3>Electronic Journal</h3><p>Exact visible Sales Invoice text supplied by POS authority. The browser does not create the journal artifact.</p><div className="reportFilters"><label>Period start (PHT)<input aria-label="EJ period start PHT" placeholder="YYYY-MM-DD HH:mm:ss" value={start} onChange={(e) => setStart(e.target.value)} /></label><label>Period end (PHT)<input aria-label="EJ period end PHT" placeholder="YYYY-MM-DD HH:mm:ss" value={end} onChange={(e) => setEnd(e.target.value)} /></label><label>SI / transaction reference<input aria-label="Search Electronic Journal" value={search} onChange={(e) => setSearch(e.target.value)} /></label><button type="button" onClick={() => load(true)}>View journal</button>{has(fiscalReportingPermissions.ejExport) && !!ej?.length && downloadRange && <a className="primaryButton" href={client.ejUrl(siteId, downloadRange.start, downloadRange.end, search)}>Download authoritative .txt</a>}</div>{ej?.length === 0 && <p role="status">No Sales Invoice activity exists for this period.</p>}{ej?.map((invoice) => <article className="invoiceText" key={invoice.fiscalDocumentId}><header><strong>{invoice.fiscalDocumentNumber}</strong><span>{formatPhtInstant(invoice.issuedAt)} PHT</span></header><pre>{invoice.printableText}</pre></article>)}</div> : <p className="stateMessage warning">Electronic Journal permission is required.</p>)}
+    {tab === "ej" && (has(fiscalReportingPermissions.ejRead) ? <div className="fiscalPane" role="tabpanel"><h3>Electronic Journal</h3><p>Exact visible Sales Invoice text supplied by POS authority. The browser does not create the journal artifact.</p><div className="reportFilters"><label>Period start (PHT)<input type="datetime-local" step="1" aria-label="EJ period start PHT" value={start} onChange={(e) => setStart(e.target.value)} /></label><label>Period end (PHT)<input type="datetime-local" step="1" aria-label="EJ period end PHT" value={end} onChange={(e) => setEnd(e.target.value)} /></label><label>SI / transaction reference<input aria-label="Search Electronic Journal" value={search} onChange={(e) => setSearch(e.target.value)} /></label><button type="button" onClick={() => load(true)}>View journal</button>{has(fiscalReportingPermissions.ejExport) && !!ej?.length && downloadRange && <a className="primaryButton" href={client.ejUrl(siteId, downloadRange.start, downloadRange.end, search)}>Download authoritative .txt</a>}</div>{ej?.length === 0 && <p role="status">No Sales Invoice activity exists for this period.</p>}{ej?.map((invoice) => <article className="invoiceText" key={invoice.fiscalDocumentId}><header><strong>{invoice.fiscalDocumentNumber}</strong><span>{formatPhtInstant(invoice.issuedAt)} PHT</span></header><pre>{invoice.printableText}</pre></article>)}</div> : <p className="stateMessage warning">Electronic Journal permission is required.</p>)}
     {tab === "x" && <ReadingPanel kind="X" history={x} canRead={has(fiscalReportingPermissions.xRead)} canGenerate={has(fiscalReportingPermissions.xGenerate)} onGenerate={() => generate("x")} download={(reference) => client.readingUrl(siteId, "x", reference)} />}
     {tab === "z" && <><ReadingPanel kind="Z" history={z} canRead={has(fiscalReportingPermissions.zRead)} canGenerate={false} download={(reference) => client.readingUrl(siteId, "z", reference)} />{has(fiscalReportingPermissions.zGenerate) && (!confirming ? <button className="dangerButton" type="button" onClick={() => setConfirming(true)}>Generate Z Reading</button> : <div className="zConfirmation" role="alertdialog" aria-label="Confirm Z Reading close"><h3>Close the current fiscal reporting period?</h3><p>Generating Z Reading closes and finalizes the current reporting period according to authoritative POS behavior. The browser cannot choose the period, sequence, or totals.</p><button className="dangerButton" type="button" onClick={() => generate("z")} disabled={busy}>Confirm close and generate Z</button><button type="button" onClick={() => setConfirming(false)}>Cancel</button></div>)}</>}
   </section>;
@@ -108,7 +108,7 @@ function ReadingPanel({ kind, history, canRead, canGenerate, onGenerate, downloa
 
 const PHT_OFFSET_MILLISECONDS = 8 * 60 * 60 * 1000;
 const EXPLICIT_INSTANT_PATTERN = /(Z|[+-]\d{2}:\d{2})$/i;
-const PHT_INPUT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/;
+const PHT_INPUT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/;
 
 export function formatPhtInstant(value: string) {
   if (!EXPLICIT_INSTANT_PATTERN.test(value)) throw new Error("An explicit fiscal reporting instant is required.");
@@ -117,10 +117,14 @@ export function formatPhtInstant(value: string) {
   return new Date(milliseconds + PHT_OFFSET_MILLISECONDS).toISOString().slice(0, 19).replace("T", " ");
 }
 
+export function formatPhtInputValue(value: string) {
+  return formatPhtInstant(value).replace(" ", "T");
+}
+
 export function phtInputToUtc(value: string) {
   const match = PHT_INPUT_PATTERN.exec(value.trim());
-  if (!match) throw new Error("A PHT date and time in YYYY-MM-DD HH:mm:ss format is required.");
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText] = match;
+  if (!match) throw new Error("A valid PHT date and time is required.");
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText = "0"] = match;
   const [year, month, day, hour, minute, second] = [yearText, monthText, dayText, hourText, minuteText, secondText].map(Number);
   const phtAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
   const calendarCheck = new Date(phtAsUtc);
