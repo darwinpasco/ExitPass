@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
   formatPhtInstant,
+  formatPhtInputValue,
   OperatorFiscalReportingPage,
   phtInputToUtc
 } from "./OperatorFiscalReportingPage";
@@ -16,15 +17,23 @@ describe("Operator Console fiscal reporting", () => {
   });
 
   it("converts operator-entered PHT values to explicit UTC API instants", () => {
-    expect(phtInputToUtc("2026-09-14 07:00:00")).toBe("2026-09-13T23:00:00Z");
+    expect(phtInputToUtc("2026-09-14T07:00:00")).toBe("2026-09-13T23:00:00Z");
+    expect(phtInputToUtc("2026-09-14T07:00:01")).toBe("2026-09-13T23:00:01Z");
   });
 
   it("initializes the EJ range from the current fiscal period and calls the API with UTC instants", async () => {
     const client = createPitxFiscalReportingClient();
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
 
-    expect(await screen.findByLabelText("EJ period start PHT")).toHaveValue("2026-09-14 07:00:00");
-    expect(screen.getByLabelText("EJ period end PHT")).toHaveValue("2026-09-15 07:00:00");
+    const start = await screen.findByLabelText("EJ period start PHT");
+    const end = screen.getByLabelText("EJ period end PHT");
+    expect(start).toHaveAttribute("type", "datetime-local");
+    expect(start).toHaveAttribute("step", "1");
+    expect(end).toHaveAttribute("type", "datetime-local");
+    expect(end).toHaveAttribute("step", "1");
+    expect(formatPhtInputValue("2026-09-13T23:00:00Z")).toBe("2026-09-14T07:00:00");
+    expect(start).toHaveValue("2026-09-14T07:00");
+    expect(end).toHaveValue("2026-09-15T07:00");
     await waitFor(() => expect(client.readEj).toHaveBeenCalledWith(
       "SITE-PITX",
       "2026-09-13T23:00:00Z",
@@ -47,10 +56,8 @@ describe("Operator Console fiscal reporting", () => {
     await waitFor(() => expect(client.readEj).toHaveBeenCalled());
     vi.mocked(client.readEj).mockClear();
 
-    await user.clear(start);
-    await user.type(start, "2026-09-14 07:00:00");
-    await user.clear(end);
-    await user.type(end, "2026-09-15 07:00:00");
+    fireEvent.change(start, { target: { value: "2026-09-14T07:00" } });
+    fireEvent.change(end, { target: { value: "2026-09-15T07:00" } });
     await user.click(screen.getByRole("button", { name: "View journal" }));
 
     await waitFor(() => expect(client.readEj).toHaveBeenCalledWith(
