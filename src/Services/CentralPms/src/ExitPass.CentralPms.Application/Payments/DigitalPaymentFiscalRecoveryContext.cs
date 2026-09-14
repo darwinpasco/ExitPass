@@ -20,9 +20,16 @@ public sealed record DigitalPaymentFiscalRecoveryContext(
     string? LatestErrorPosture,
     bool HasCompleteFiscalEvidence)
 {
+    public bool PermitsRecovery =>
+        PermitsServiceRecovery || PermitsConfigurationRecovery;
+
     public bool PermitsServiceRecovery =>
         string.Equals(FiscalIssuanceState, "FISCAL_ISSUANCE_FAILED_SERVICE", StringComparison.Ordinal) &&
         string.Equals(LatestErrorPosture, "RETRY_AFTER_SERVICE_RECOVERY", StringComparison.Ordinal);
+
+    public bool PermitsConfigurationRecovery =>
+        string.Equals(FiscalIssuanceState, "FISCAL_ISSUANCE_FAILED_CONFIGURATION", StringComparison.Ordinal) &&
+        string.Equals(LatestErrorPosture, "RETRY_AFTER_CONFIGURATION_CORRECTION", StringComparison.Ordinal);
 
     public bool IsCompleted =>
         FiscalIssuanceState is "FISCAL_ISSUANCE_RECORDED" or "FISCAL_ISSUANCE_REPLAYED" or "FISCAL_ISSUANCE_RECONCILED" &&

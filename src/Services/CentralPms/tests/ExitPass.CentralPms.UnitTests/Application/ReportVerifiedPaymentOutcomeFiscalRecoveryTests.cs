@@ -120,6 +120,117 @@ public sealed class ReportVerifiedPaymentOutcomeFiscalRecoveryTests
     }
 
     [Fact]
+    public async Task RetryableConfigurationFailure_AfterCorrection_ResumesWithoutReconfirmingPayment()
+    {
+        var fixture = CreateFixture(RecoveryContext(
+            state: "FISCAL_ISSUANCE_FAILED_CONFIGURATION",
+            posture: "RETRY_AFTER_CONFIGURATION_CORRECTION"));
+        fixture.FiscalIssuance.IssueOrReadAsync(
+                Arg.Any<DigitalPaymentFiscalIssuanceCommand>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new DigitalPaymentFiscalIssuanceResult(
+                FiscalReferenceId,
+                true,
+                true,
+                null,
+                Guid.NewGuid(),
+                "IST-POS-A"));
+
+        var result = await fixture.Sut.ExecuteAsync(Command(), CancellationToken.None);
+
+        Assert.Equal(ConfirmationId, result.PaymentConfirmationId);
+        Assert.NotNull(result.ExitAuthorizationId);
+        await fixture.Confirmation.DidNotReceiveWithAnyArgs().RecordAsync(default!, default, default);
+        await fixture.Finalization.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+        Received.InOrder(() =>
+        {
+            fixture.FiscalIssuance.IssueOrReadAsync(
+                Arg.Is<DigitalPaymentFiscalIssuanceCommand>(value =>
+                    value.PaymentAttemptId == AttemptId &&
+                    value.PaymentConfirmationId == ConfirmationId &&
+                    value.ParkingSessionId == SessionId),
+                Arg.Any<CancellationToken>());
+            fixture.ExitAuthorization.ExecuteAsync(
+                Arg.Any<IssueExitAuthorizationCommand>(),
+                Arg.Any<CancellationToken>());
+        });
+    }
+
+    [Fact]
+    public async Task RetryableConfigurationFailure_WhenStillInvalid_RemainsRecoverableWithoutPaymentReplay()
+    {
+        var fixture = CreateFixture(RecoveryContext(
+            state: "FISCAL_ISSUANCE_FAILED_CONFIGURATION",
+            posture: "RETRY_AFTER_CONFIGURATION_CORRECTION"));
+        fixture.FiscalIssuance.IssueOrReadAsync(
+                Arg.Any<DigitalPaymentFiscalIssuanceCommand>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new DigitalPaymentFiscalIssuanceResult(
+                FiscalReferenceId,
+                false,
+                true,
+                "fiscal_reporting_period_unavailable",
+                Guid.NewGuid(),
+                "IST-POS-A"));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Sut.ExecuteAsync(Command(), CancellationToken.None));
+
+        Assert.Equal("fiscal_reporting_period_unavailable", exception.Message);
+        await fixture.Confirmation.DidNotReceiveWithAnyArgs().RecordAsync(default!, default, default);
+        await fixture.Finalization.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+        await fixture.ExitAuthorization.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task ConfigurationFailureWithoutRetryDisposition_RemainsDenied()
+    {
+        var fixture = CreateFixture(RecoveryContext(
+            state: "FISCAL_ISSUANCE_FAILED_CONFIGURATION",
+            posture: "DO_NOT_RETRY_WITHOUT_REQUEST_CHANGE"));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Sut.ExecuteAsync(Command(), CancellationToken.None));
+
+        Assert.Equal("payment_attempt_has_no_retryable_fiscal_recovery_context", exception.Message);
+        await fixture.Confirmation.DidNotReceiveWithAnyArgs().RecordAsync(default!, default, default);
+        await fixture.FiscalIssuance.DidNotReceiveWithAnyArgs().IssueOrReadAsync(default!, default);
+        await fixture.ExitAuthorization.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task DuplicateConfigurationRecoveryInvocation_ReusesFinalityAndAuthorizationIdempotency()
+    {
+        var fixture = CreateFixture(RecoveryContext(
+            state: "FISCAL_ISSUANCE_FAILED_CONFIGURATION",
+            posture: "RETRY_AFTER_CONFIGURATION_CORRECTION"));
+        fixture.FiscalIssuance.IssueOrReadAsync(
+                Arg.Any<DigitalPaymentFiscalIssuanceCommand>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new DigitalPaymentFiscalIssuanceResult(
+                FiscalReferenceId,
+                true,
+                false,
+                null,
+                Guid.NewGuid(),
+                "IST-POS-A"));
+
+        var first = await fixture.Sut.ExecuteAsync(Command(), CancellationToken.None);
+        var second = await fixture.Sut.ExecuteAsync(Command(), CancellationToken.None);
+
+        Assert.Equal(first.PaymentConfirmationId, second.PaymentConfirmationId);
+        Assert.Equal(first.ExitAuthorizationId, second.ExitAuthorizationId);
+        await fixture.Confirmation.DidNotReceiveWithAnyArgs().RecordAsync(default!, default, default);
+        await fixture.Finalization.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+        await fixture.FiscalIssuance.Received(2).IssueOrReadAsync(
+            Arg.Any<DigitalPaymentFiscalIssuanceCommand>(),
+            Arg.Any<CancellationToken>());
+        await fixture.ExitAuthorization.Received(2).ExecuteAsync(
+            Arg.Any<IssueExitAuthorizationCommand>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task CompletedFiscalReplay_ReturnsExistingAuthoritativePathWithoutPaymentMutation()
     {
         var fixture = CreateFixture(RecoveryContext(completed: true));
@@ -241,7 +352,9 @@ public sealed class ReportVerifiedPaymentOutcomeFiscalRecoveryTests
 
     private static DigitalPaymentFiscalRecoveryContext RecoveryContext(
         bool retryable = false,
-        bool completed = false) =>
+        bool completed = false,
+        string? state = null,
+        string? posture = null) =>
         new(
             AttemptId,
             SessionId,
@@ -251,12 +364,12 @@ public sealed class ReportVerifiedPaymentOutcomeFiscalRecoveryTests
             "RECORDED",
             VerifiedAt,
             FiscalReferenceId,
-            retryable
+            state ?? (retryable
                 ? "FISCAL_ISSUANCE_FAILED_SERVICE"
                 : completed
                     ? "FISCAL_ISSUANCE_RECORDED"
-                    : "FISCAL_ISSUANCE_FAILED_REQUEST",
-            retryable ? "RETRY_AFTER_SERVICE_RECOVERY" : null,
+                    : "FISCAL_ISSUANCE_FAILED_REQUEST"),
+            posture ?? (retryable ? "RETRY_AFTER_SERVICE_RECOVERY" : null),
             completed);
 
     private static ReportVerifiedPaymentOutcomeCommand Command(string providerStatus = "SUCCESS") =>

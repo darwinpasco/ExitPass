@@ -52,6 +52,44 @@ public sealed class DigitalPaymentFiscalIssuanceRecoveryTests
     }
 
     [Fact]
+    public async Task RetryableConfigurationReference_ReusesCanonicalFiscalAndIdempotencyContext()
+    {
+        var contextReader = Substitute.For<IDigitalPaymentFiscalContextReader>();
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        references.FindByPaymentConfirmationIdAsync(ConfirmationId, Arg.Any<CancellationToken>())
+            .Returns(Reference(
+                FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration,
+                FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection));
+        contextReader.ReadAsync(AttemptId, ConfirmationId, SessionId, Arg.Any<CancellationToken>())
+            .Returns(Context());
+        CentralPmsFiscalDocumentMappingContext? capturedMapping = null;
+        PosServerCreateResultRecordingContext? capturedRecordingContext = null;
+        posServer.TryIssueFiscalDocumentViaPosServerAsync(
+                FiscalReferenceId,
+                Arg.Do<CentralPmsFiscalDocumentMappingContext>(value => capturedMapping = value),
+                Arg.Do<PosServerCreateResultRecordingContext>(value => capturedRecordingContext = value),
+                Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(
+                ["fiscal_reporting_period_unavailable"]));
+        var sut = new DigitalPaymentFiscalIssuanceService(contextReader, references, orchestration, posServer);
+
+        var result = await sut.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.False(result.ReadyForExitAuthorization);
+        Assert.NotNull(capturedMapping);
+        Assert.Equal(PosId, capturedMapping.SitePosServerId);
+        Assert.Equal("IST-POS-A", capturedMapping.SitePosServerRef);
+        Assert.Equal(TariffId.ToString("D"), capturedMapping.PayableBasis.PayableBasisRef);
+        Assert.Equal($"PAYMENT_CONFIRMATION:{ConfirmationId:D}", capturedMapping.PaymentFinalityRef);
+        Assert.NotNull(capturedRecordingContext);
+        Assert.Equal($"PAYMENT_CONFIRMATION:{ConfirmationId:D}", capturedRecordingContext.UpstreamFinalityReference);
+        Assert.Equal(PosId, capturedRecordingContext.SitePosServerId);
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
+    }
+
+    [Fact]
     public async Task ConfirmationNearUtcDateBoundary_DefersBusinessDayAssignmentToPosServer()
     {
         var contextReader = Substitute.For<IDigitalPaymentFiscalContextReader>();

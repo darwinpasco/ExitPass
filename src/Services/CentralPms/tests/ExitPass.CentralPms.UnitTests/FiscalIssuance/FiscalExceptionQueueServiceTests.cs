@@ -112,6 +112,62 @@ public sealed class FiscalExceptionQueueServiceTests
     }
 
     [Fact]
+    public async Task GetAsync_WhenConfigurationFailureIsExplicitlyRetryable_PreparesControlledRecovery()
+    {
+        var reference = Reference(
+            FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration,
+            FiscalIssuanceExceptionReason.FiscalSequencePolicyNotFound,
+            "fiscal_sequence_policy_not_found",
+            FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection) with
+        {
+            SemanticRequestHashStatus = FiscalSemanticRequestHashSourceStatus.Available,
+            SemanticRequestHashValue = new string('a', 64),
+            SemanticRequestHashAlgorithm = "SHA-256",
+            SemanticRequestHashSourceVersion = FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+            SemanticRequestHashSourceFactCount = 20,
+            SemanticRequestHashSafeSummary = "semantic_request_hash_available"
+        };
+        var sut = new FiscalExceptionQueueService(new FakeReferenceReader([reference]));
+
+        var detail = await sut.GetAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+        detail.Should().NotBeNull();
+        detail!.Summary.QueueState.Should().Be(FiscalExceptionQueueState.Queued);
+        detail.Summary.ReadbackStatus.Should().Be(FiscalExceptionReadbackStatus.NotRequired);
+        detail.Summary.ReadbackClassification.Should().BeNull();
+        detail.Summary.RetryEligibilityStatus.Should()
+            .Be(FiscalExceptionRetryEligibilityStatus.EligibleForControlledRetryPlanning);
+        detail.Summary.RetryEligibilityDecision.Should().Be(FiscalExceptionRetryEligibilityDecision.Eligible);
+        detail.Summary.RetryCommandPreparationStatus.Should()
+            .Be(FiscalExceptionRetryCommandPreparationStatus.PreparedNonExecutable);
+        detail.Summary.RetryExecutionAvailable.Should().BeFalse();
+
+        var preparation = await new FiscalExceptionRetryCommandPreparationService()
+            .PrepareAsync(new FiscalExceptionRetryCommandPreparationRequest(detail), CancellationToken.None);
+        preparation.Command.Should().NotBeNull();
+        preparation.Command!.LatestReadbackClassificationBasis.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenConfigurationFailurePostureIsNotRetryable_RemainsBlocked()
+    {
+        var reference = Reference(
+            FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration,
+            FiscalIssuanceExceptionReason.FiscalSequencePolicyNotFound,
+            "fiscal_sequence_policy_not_found",
+            FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange);
+        var sut = new FiscalExceptionQueueService(new FakeReferenceReader([reference]));
+
+        var detail = await sut.GetAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+        detail.Should().NotBeNull();
+        detail!.Summary.QueueState.Should().Be(FiscalExceptionQueueState.BlockedRequiresConfigFix);
+        detail.Summary.RetryEligibilityStatus.Should().Be(FiscalExceptionRetryEligibilityStatus.BlockedConfiguration);
+        detail.Summary.RetryEligibilityDecision.Should().Be(FiscalExceptionRetryEligibilityDecision.Blocked);
+        detail.Summary.RetryCommandPreparationStatus.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Blocked);
+    }
+
+    [Fact]
     public void FiscalExceptionQueueSlice_DoesNotIntroduceRetrySchedulerOrExecutionEndpoint()
     {
         var fiscalIssuanceTypes = typeof(FiscalExceptionQueueService).Assembly
@@ -146,7 +202,8 @@ public sealed class FiscalExceptionQueueServiceTests
     private static FiscalIssuanceReferenceRecord Reference(
         FiscalIssuanceIntegrationState state,
         FiscalIssuanceExceptionReason? reason = null,
-        string? errorCode = null)
+        string? errorCode = null,
+        FiscalIssuanceErrorPosture posture = FiscalIssuanceErrorPosture.RetryAfterServiceRecovery)
     {
         var now = DateTimeOffset.Parse("2026-07-03T10:00:00+08:00");
         return new FiscalIssuanceReferenceRecord(
@@ -177,7 +234,7 @@ public sealed class FiscalExceptionQueueServiceTests
             FiscalIssuanceState: state,
             LatestExceptionReason: reason,
             LatestErrorCode: errorCode,
-            LatestErrorPosture: FiscalIssuanceErrorPosture.RetryAfterServiceRecovery,
+            LatestErrorPosture: posture,
             CorrelationId: Guid.NewGuid(),
             PosServerResponseTimestamp: null,
             FirstRecordedAt: now,

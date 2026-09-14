@@ -35,7 +35,9 @@ public sealed class FiscalExceptionRetryEligibilityEvaluator : IFiscalExceptionR
                 detail);
         }
 
-        if (summary.QueueState == FiscalExceptionQueueState.BlockedRequiresConfigFix ||
+        var retryableConfigurationFailure = IsRetryableConfigurationFailure(detail);
+        if (!retryableConfigurationFailure &&
+            (summary.QueueState == FiscalExceptionQueueState.BlockedRequiresConfigFix ||
             summary.Category == FiscalExceptionQueueCategory.FiscalConfigurationMissing ||
             summary.LatestExceptionReason is FiscalIssuanceExceptionReason.FiscalIdentityNotFound
                 or FiscalIssuanceExceptionReason.FiscalIdentityAmbiguous
@@ -46,7 +48,7 @@ public sealed class FiscalExceptionRetryEligibilityEvaluator : IFiscalExceptionR
                 or FiscalIssuanceExceptionReason.FiscalSequenceStateNotFound
                 or FiscalIssuanceExceptionReason.FiscalSequenceStateNotEffective
                 or FiscalIssuanceExceptionReason.FiscalNumberAllocationFailed
-                or FiscalIssuanceExceptionReason.FiscalDocumentNumberFormatFailed)
+                or FiscalIssuanceExceptionReason.FiscalDocumentNumberFormatFailed))
         {
             return Blocked(
                 FiscalExceptionRetryEligibilityStatus.BlockedConfiguration,
@@ -56,7 +58,8 @@ public sealed class FiscalExceptionRetryEligibilityEvaluator : IFiscalExceptionR
                 detail);
         }
 
-        if (summary.ReadbackAttemptCount is null or < 1 || readbackClassification is null)
+        if (!retryableConfigurationFailure &&
+            (summary.ReadbackAttemptCount is null or < 1 || readbackClassification is null))
         {
             return Blocked(
                 FiscalExceptionRetryEligibilityStatus.BlockedPendingReadback,
@@ -66,7 +69,9 @@ public sealed class FiscalExceptionRetryEligibilityEvaluator : IFiscalExceptionR
                 detail);
         }
 
-        var readbackGate = EvaluateReadbackGate(readbackClassification.Value, evaluatedAt, detail);
+        var readbackGate = retryableConfigurationFailure
+            ? null
+            : EvaluateReadbackGate(readbackClassification!.Value, evaluatedAt, detail);
         if (readbackGate is not null)
         {
             return readbackGate;
@@ -114,6 +119,10 @@ public sealed class FiscalExceptionRetryEligibilityEvaluator : IFiscalExceptionR
             ReadbackAttemptCount: summary.ReadbackAttemptCount,
             RetryExecutionAvailable: false);
     }
+
+    private static bool IsRetryableConfigurationFailure(FiscalExceptionQueueCaseDetail detail) =>
+        detail.Summary.FiscalIssuanceState == FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration &&
+        detail.LatestErrorPosture == FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection;
 
     private static FiscalExceptionRetryEligibilityEvaluation? EvaluateReadbackGate(
         FiscalExceptionReadbackClassification readbackClassification,
