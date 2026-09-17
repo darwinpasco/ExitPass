@@ -375,6 +375,7 @@ static void ConfigureHumanAuthentication(WebApplicationBuilder builder, string m
         .Bind(builder.Configuration.GetSection(HumanAuthenticationOptions.SectionName))
         .Validate(options => options.CentralPmsServiceIdentityId != Guid.Empty, "Central PMS service identity is required.")
         .Validate(options => options.WebIdleMinutes > 0 && options.WebAbsoluteHours > 0 && options.AptIdleMinutes > 0 && options.AptAbsoluteHours > 0, "Human session expiry values must be positive.")
+        .Validate(options => options.TemporaryPasswordHours == 72, "Temporary passwords must expire after exactly 72 hours.")
         .ValidateOnStart();
     builder.Services.AddOptions<CredentialChallengeDeliveryOptions>()
         .Bind(builder.Configuration.GetSection(CredentialChallengeDeliveryOptions.SectionName))

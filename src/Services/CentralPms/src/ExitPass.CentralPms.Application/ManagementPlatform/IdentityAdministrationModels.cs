@@ -1,3 +1,5 @@
+using ExitPass.CentralPms.Application.HumanAuthentication;
+
 namespace ExitPass.CentralPms.Application.ManagementPlatform;
 
 public sealed record IdentityAdministrationActor(Guid UserId, Guid HumanSessionId);
@@ -74,7 +76,25 @@ public sealed record OneTimeActivationMaterial(
 public sealed record CreateIdentityUserResult(
     IdentityUserSummary User,
     IdentityInvitationStatus Invitation,
-    OneTimeActivationMaterial? OneTimeActivation);
+    OneTimeActivationMaterial? OneTimeActivation,
+    OneTimeHumanBootstrapMaterial? OneTimeBootstrap = null);
+
+public sealed record OneTimeHumanBootstrapMaterial(
+    string TemporaryPassword,
+    DateTimeOffset TemporaryPasswordExpiresAt,
+    string TotpSharedSecret,
+    string TotpProvisioningUri);
+
+public sealed record HumanBootstrapPersistenceMaterial(
+    Guid UserReference,
+    Guid CredentialReference,
+    PasswordHashMaterial PasswordHash,
+    DateTimeOffset TemporaryPasswordExpiresAt,
+    Guid AuthenticatorReference,
+    byte[] ProtectedTotpSecret,
+    string ProtectionKeyReference,
+    string ProtectionKeyVersion,
+    short EnvelopeFormatVersion);
 
 public sealed record IdentityRoleDefinition(
     Guid RoleReference,
@@ -230,7 +250,8 @@ public sealed record CreateIdentityUserCommand(
     string IdempotencyKey,
     Guid CorrelationId,
     string ActivationDeliveryMode = ActivationDeliveryModes.Email,
-    bool AdminIssuedHandoffAcknowledged = false);
+    bool AdminIssuedHandoffAcknowledged = false,
+    HumanBootstrapPersistenceMaterial? Bootstrap = null);
 
 public sealed record UpdateIdentityUserCommand(
     Guid UserReference,

@@ -1,4 +1,5 @@
 using System.Net.Mail;
+using System.Security.Cryptography;
 using ExitPass.CentralPms.Application.HumanAuthentication;
 using Microsoft.Extensions.Options;
 
@@ -23,17 +24,26 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
     private readonly IHumanAuthenticationAdministrationGateway _authenticationGateway;
     private readonly HumanAuthenticationOptions _authenticationOptions;
     private readonly TimeProvider _timeProvider;
+    private readonly IHumanPasswordHasher? _passwordHasher;
+    private readonly ITotpProvider? _totpProvider;
+    private readonly ITotpSecretProtector? _totpProtector;
 
     public ManagementPlatformIdentityAdministrationService(
         IManagementPlatformIdentityAdministrationRepository repository,
         IHumanAuthenticationAdministrationGateway authenticationGateway,
         IOptions<HumanAuthenticationOptions> authenticationOptions,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IHumanPasswordHasher? passwordHasher = null,
+        ITotpProvider? totpProvider = null,
+        ITotpSecretProtector? totpProtector = null)
     {
         _repository = repository;
         _authenticationGateway = authenticationGateway;
         _authenticationOptions = authenticationOptions.Value;
         _timeProvider = timeProvider;
+        _passwordHasher = passwordHasher;
+        _totpProvider = totpProvider;
+        _totpProtector = totpProtector;
     }
 
     public ManagementPlatformIdentityAdministrationService(
@@ -59,9 +69,30 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
         IdentityAdministrationActor actor, CreateIdentityUserCommand command, CancellationToken cancellationToken)
     {
         var normalized = NormalizeCreateCommand(command);
-        var validation = ValidateActivationDelivery<CreateIdentityUserResult>(normalized.ActivationDeliveryMode, normalized.Email,
-            normalized.AdminIssuedHandoffAcknowledged, normalized.CorrelationId);
-        if (validation is not null) return validation;
+        if (_passwordHasher is null || _totpProvider is null || _totpProtector is null || !_totpProtector.IsConfigured)
+        {
+            return IdentityAdministrationResult<CreateIdentityUserResult>.Failed(
+                IdentityAdministrationOutcome.IntegrationUnavailable, "HUMAN_BOOTSTRAP_CRYPTOGRAPHY_UNAVAILABLE",
+                "Human account provisioning is unavailable.", normalized.CorrelationId);
+        }
+
+        var now = _timeProvider.GetUtcNow();
+        var userReference = Guid.NewGuid();
+        var authenticatorReference = Guid.NewGuid();
+        var temporaryPassword = GenerateTemporaryPassword();
+        var passwordHash = await _passwordHasher.HashAsync(temporaryPassword, cancellationToken);
+        var totpSecret = _totpProvider.GenerateSecret();
+        var totpSharedSecret = _totpProvider.EncodeSecret(totpSecret);
+        var provisioningUri = _totpProvider.BuildProvisioningUri(normalized.Username, totpSecret);
+        var protectedSecret = _totpProtector.Protect(userReference, authenticatorReference, totpSecret);
+        CryptographicOperations.ZeroMemory(totpSecret);
+        var expiresAt = now.AddHours(_authenticationOptions.TemporaryPasswordHours);
+        normalized = normalized with
+        {
+            Bootstrap = new HumanBootstrapPersistenceMaterial(userReference, Guid.NewGuid(), passwordHash, expiresAt,
+                authenticatorReference, protectedSecret, _totpProtector.KeyReference, _totpProtector.KeyVersion,
+                _totpProtector.EnvelopeFormatVersion)
+        };
 
         var created = await _repository.CreateUserAsync(actor, normalized, cancellationToken);
         if (created.Outcome != IdentityAdministrationOutcome.Success || created.Value is null)
@@ -69,21 +100,12 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
             return Propagate<CreateIdentityUserResult, IdentityUserSummary>(created);
         }
 
-        var expiresAt = _timeProvider.GetUtcNow().AddMinutes(_authenticationOptions.CredentialChallengeMinutes);
-        var issued = await _authenticationGateway.IssueCredentialChallengeAsync(actor,
-            new(created.Value.UserReference, "ACCOUNT_ACTIVATION", expiresAt, normalized.ReasonCode,
-                normalized.CorrelationId, normalized.ActivationDeliveryMode, normalized.AdminIssuedHandoffAcknowledged),
-            cancellationToken);
-        if (issued.Outcome != IdentityAdministrationOutcome.Success || issued.Value is null)
-        {
-            return Propagate<CreateIdentityUserResult, CredentialResetChallengeResult>(issued);
-        }
-
-        var invitation = new IdentityInvitationStatus("INVITATION_PENDING", issued.Value.DeliveryMode, "ISSUED",
-            issued.Value.ChallengeReference, _timeProvider.GetUtcNow(), issued.Value.ExpiresAt,
-            issued.Value.DeliveryClassification);
+        var invitation = new IdentityInvitationStatus("PASSWORD_CHANGE_REQUIRED", "ADMIN_ISSUED", null,
+            null, now, expiresAt, "ONE_TIME_BOOTSTRAP");
         return IdentityAdministrationResult<CreateIdentityUserResult>.Succeeded(
-            new(created.Value, invitation, issued.Value.OneTimeActivation), normalized.CorrelationId, "CREATED");
+            new(created.Value, invitation, null,
+                new OneTimeHumanBootstrapMaterial(temporaryPassword, expiresAt, totpSharedSecret, provisioningUri)),
+            normalized.CorrelationId, "CREATED");
     }
 
     public Task<IdentityAdministrationResult<IdentityUserSummary>> UpdateUserAsync(
@@ -376,6 +398,9 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
 
     private static string? NormalizeOptionalEmail(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
+
+    private static string GenerateTemporaryPassword() =>
+        $"Ep1!{Convert.ToHexString(RandomNumberGenerator.GetBytes(14))}";
 
     private static bool IsUsableEmail(string? value)
     {

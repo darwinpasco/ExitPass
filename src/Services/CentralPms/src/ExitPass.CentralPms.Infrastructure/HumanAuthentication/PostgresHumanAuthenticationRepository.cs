@@ -35,6 +35,7 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
                    lc.verifier_salt, lc.verifier_algorithm_code, lc.verifier_algorithm_version,
                    lc.verifier_work_factor, lc.verifier_memory_kib, lc.verifier_parallelism,
                    lc.credential_version AS local_credential_version, lc.row_version AS local_credential_row_version,
+                   lc.temporary_password_expires_at,
                    ma.user_mfa_authenticator_id, ma.authenticator_status::text,
                    ma.protected_secret_envelope, ma.protection_key_reference, ma.protection_key_version,
                    ma.envelope_format_version, ma.last_successfully_used_time_step,
@@ -236,7 +237,7 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
         long credentialVersion;
         long authorizationEpoch;
         await using (var command = new NpgsqlCommand("""
-            UPDATE identity.local_credentials SET credential_status='ACTIVE', password_verifier=@verifier,
+            UPDATE identity.local_credentials SET credential_status='ACTIVE', temporary_password_expires_at=NULL, password_verifier=@verifier,
                 verifier_salt=@salt, verifier_algorithm_code=@algorithm, verifier_algorithm_version=@algorithm_version,
                 verifier_work_factor=@work_factor, verifier_memory_kib=@memory_kib, verifier_parallelism=@parallelism,
                 credential_version=credential_version+1, activated_at=COALESCE(activated_at,@now), last_changed_at=@now,
@@ -967,7 +968,7 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
 
             var current = credentials[0];
             await using var updateCredential = new NpgsqlCommand("""
-                UPDATE identity.local_credentials SET credential_status='ACTIVE', password_verifier=@verifier,
+                UPDATE identity.local_credentials SET credential_status='ACTIVE', temporary_password_expires_at=NULL, password_verifier=@verifier,
                     verifier_salt=@salt, verifier_algorithm_code=@algorithm, verifier_algorithm_version=@algorithm_version,
                     verifier_work_factor=@work_factor, verifier_memory_kib=@memory_kib, verifier_parallelism=@parallelism,
                     credential_version=credential_version+1, activated_at=COALESCE(activated_at,@now), last_changed_at=@now,
@@ -1193,33 +1194,59 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
     {
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        const string sql = """
-            UPDATE identity.local_credentials SET credential_status='ACTIVE', password_verifier=@verifier,
+        await using (var command = new NpgsqlCommand("""
+            UPDATE identity.local_credentials SET credential_status='ACTIVE', temporary_password_expires_at=NULL, password_verifier=@verifier,
                 verifier_salt=@salt, verifier_algorithm_code=@algorithm, verifier_algorithm_version=@algorithm_version,
                 verifier_work_factor=@work_factor, verifier_memory_kib=@memory_kib, verifier_parallelism=@parallelism,
                 credential_version=credential_version+1, activated_at=COALESCE(activated_at,@now), last_changed_at=@now,
                 updated_at=@now, updated_by_user_id=@actor_user_id, updated_by_service_identity_id=@service_identity_id,
                 row_version=row_version+1
             WHERE local_credential_id=@credential_id AND user_id=@user_id AND row_version=@row_version;
+            """, connection, transaction))
+        {
+            AddHashParameters(command, material);
+            command.Parameters.AddWithValue("credential_id", localCredentialId);
+            command.Parameters.AddWithValue("user_id", userId);
+            command.Parameters.AddWithValue("row_version", expectedCredentialRowVersion);
+            command.Parameters.AddWithValue("now", now);
+            command.Parameters.Add("actor_user_id", NpgsqlDbType.Uuid).Value = (object?)actorUserId ?? DBNull.Value;
+            command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = (object?)serviceIdentityId ?? DBNull.Value;
+            if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                throw new InvalidOperationException("The credential changed concurrently.");
+            }
+        }
+
+        await using (var command = new NpgsqlCommand("""
             UPDATE identity.users SET credential_version=credential_version+1, updated_at=@now,
                 updated_by_user_id=@actor_user_id, updated_by_service_identity_id=@service_identity_id,
                 row_version=row_version+1 WHERE user_id=@user_id;
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("user_id", userId);
+            command.Parameters.AddWithValue("now", now);
+            command.Parameters.Add("actor_user_id", NpgsqlDbType.Uuid).Value = (object?)actorUserId ?? DBNull.Value;
+            command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = (object?)serviceIdentityId ?? DBNull.Value;
+            if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                throw new InvalidOperationException("The credential owner is unavailable.");
+            }
+        }
+
+        await using (var command = new NpgsqlCommand("""
             UPDATE identity.human_sessions SET session_status='REVOKED', revoked_at=@now,
                 revoked_by_user_id=@actor_user_id, revoked_by_service_identity_id=@service_identity_id,
                 revocation_reason_code='CREDENTIAL_CHANGED', updated_at=@now,
                 updated_by_user_id=@actor_user_id, updated_by_service_identity_id=@service_identity_id,
                 row_version=row_version+1 WHERE user_id=@user_id AND session_status='ACTIVE';
-            """;
-        await using var command = new NpgsqlCommand(sql, connection, transaction);
-        AddHashParameters(command, material);
-        command.Parameters.AddWithValue("credential_id", localCredentialId);
-        command.Parameters.AddWithValue("user_id", userId);
-        command.Parameters.AddWithValue("row_version", expectedCredentialRowVersion);
-        command.Parameters.AddWithValue("now", now);
-        command.Parameters.Add("actor_user_id", NpgsqlDbType.Uuid).Value = (object?)actorUserId ?? DBNull.Value;
-        command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = (object?)serviceIdentityId ?? DBNull.Value;
-        var affected = await command.ExecuteNonQueryAsync(cancellationToken);
-        if (affected < 2) throw new InvalidOperationException("The credential changed concurrently.");
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("user_id", userId);
+            command.Parameters.AddWithValue("now", now);
+            command.Parameters.Add("actor_user_id", NpgsqlDbType.Uuid).Value = (object?)actorUserId ?? DBNull.Value;
+            command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = (object?)serviceIdentityId ?? DBNull.Value;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -1231,10 +1258,11 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
             credential = new LocalCredentialRecord(reader.GetGuid(12), reader.GetString(13), (byte[])reader[14], (byte[])reader[15], reader.GetString(16), reader.GetInt16(17), reader.GetInt32(18), GetNullableInt(reader, 19), GetNullableShort(reader, 20), reader.GetInt64(21), reader.GetInt64(22));
         }
         TotpAuthenticatorRecord? authenticator = null;
-        if (!reader.IsDBNull(23))
+        if (!reader.IsDBNull(24))
         {
-            authenticator = new TotpAuthenticatorRecord(reader.GetGuid(23), reader.GetString(24), (byte[])reader[25], reader.GetString(26), reader.GetString(27), reader.GetInt16(28), GetNullableLong(reader, 29), reader.GetInt64(30));
+            authenticator = new TotpAuthenticatorRecord(reader.GetGuid(24), reader.GetString(25), (byte[])reader[26], reader.GetString(27), reader.GetString(28), reader.GetInt16(29), GetNullableLong(reader, 30), reader.GetInt64(31));
         }
+        if (credential is not null) credential = credential with { TemporaryPasswordExpiresAt = GetNullableDateTime(reader, 23) };
         return new HumanLoginRecord(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(4), reader.GetFieldValue<DateTimeOffset>(5), GetNullableDateTime(reader, 6), GetNullableDateTime(reader, 7), GetNullableString(reader, 8), reader.GetInt64(9), reader.GetInt64(10), reader.GetBoolean(11), credential, authenticator, GetNullableString(reader, 3));
     }
 
