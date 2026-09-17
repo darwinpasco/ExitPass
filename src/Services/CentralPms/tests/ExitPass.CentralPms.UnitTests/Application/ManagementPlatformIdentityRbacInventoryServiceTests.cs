@@ -7,19 +7,19 @@ namespace ExitPass.CentralPms.UnitTests.Application;
 public sealed class ManagementPlatformIdentityRbacInventoryServiceTests
 {
     [Fact]
-    public async Task GetInventoryAsync_ReturnsSevenTargetRoleBundles()
+    public async Task GetInventoryAsync_ReturnsExactlyEightApprovedRoleBundles()
     {
         var service = new ManagementPlatformIdentityRbacInventoryService(new FakeRepository());
 
         var inventory = await service.GetInventoryAsync(CancellationToken.None);
 
-        inventory.RoleBundles.Should().HaveCount(7);
-        inventory.RoleBundles.Select(role => role.DisplayName).Should().Contain(new[]
+        inventory.RoleBundles.Select(role => role.DisplayName).Should().BeEquivalentTo(new[]
         {
-            "System / RBAC Administrator",
-            "Platform Administrator",
+            "System Administrator",
             "Operations Supervisor",
-            "Operator / Support Staff",
+            "Site Operator",
+            "Parking Attendant",
+            "APT / Cashier Operator",
             "Finance / Reconciliation Analyst",
             "Compliance / Policy Administrator",
             "Executive / Management"
@@ -47,11 +47,22 @@ public sealed class ManagementPlatformIdentityRbacInventoryServiceTests
             .TypicalAccessRights.Should().NotContain("statutory-discounts.payable-basis.apply");
         inventory.RoleBundles.Single(role => role.RoleKey == "operations-supervisor")
             .TypicalAccessRights.Should().Contain([
+                "statutory-discounts.draft.create",
+                "shift.manage",
                 "statutory-discounts.review.queue.read",
                 "statutory-discounts.review.detail.read",
                 "statutory-discounts.decision.approve",
                 "statutory-discounts.decision.reject"
             ]);
+
+        var administrator = inventory.RoleBundles.Single(role => role.RoleKey == "system-administrator");
+        administrator.TypicalAccessRights.Should().Contain(["user.manage", "site.manage", "device.manage", "shift.manage", "platform-config.manage"]);
+        administrator.TypicalAccessRights.Should().NotContain(permission =>
+            permission.StartsWith("statutory-discounts.", StringComparison.Ordinal) ||
+            permission.StartsWith("reconciliation.", StringComparison.Ordinal) ||
+            permission.StartsWith("policy-import.", StringComparison.Ordinal) ||
+            permission.StartsWith("fiscal-issuance.void", StringComparison.Ordinal) ||
+            permission.StartsWith("apt.", StringComparison.Ordinal));
 
         inventory.PolicyMappings.Should().NotContain(mapping =>
             mapping.PolicyName == "FiscalIssuanceVoidCommand");

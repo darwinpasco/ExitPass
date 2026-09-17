@@ -51,10 +51,11 @@ CREATE TEMP TABLE management_platform_uat_users (
 ) ON COMMIT DROP;
 
 INSERT INTO management_platform_uat_users (user_id, username, email, display_name, user_type, role_code) VALUES
-('79000000-0000-0000-0000-000000000001', 'uat-system-rbac-admin', 'uat-system-rbac-admin@example.test', 'UAT System / RBAC Administrator', 'INTERNAL_ADMIN', 'SYSTEM_RBAC_ADMINISTRATOR'),
-('79000000-0000-0000-0000-000000000002', 'uat-platform-admin', 'uat-platform-admin@example.test', 'UAT Platform Administrator', 'INTERNAL_ADMIN', 'PLATFORM_ADMINISTRATOR'),
+('79000000-0000-0000-0000-000000000001', 'uat-system-admin', 'uat-system-admin@example.test', 'UAT System Administrator', 'INTERNAL_ADMIN', 'SYSTEM_ADMINISTRATOR'),
 ('77000000-0000-0000-0000-000000000012', 'uat-operations-supervisor', 'uat-operations-supervisor@example.test', 'UAT Operations Supervisor', 'OPERATIONS_USER', 'OPERATIONS_SUPERVISOR'),
 ('77000000-0000-0000-0000-000000000010', 'uat-operator-support', 'uat-operator-support@example.test', 'UAT Site Operator', 'SITE_OPERATOR', 'SITE_OPERATOR'),
+('79000000-0000-0000-0000-000000000008', 'uat-parking-attendant', 'uat-parking-attendant@example.test', 'UAT Parking Attendant', 'OPERATIONS_USER', 'PARKING_ATTENDANT'),
+('79000000-0000-0000-0000-000000000009', 'uat-apt-cashier', 'uat-apt-cashier@example.test', 'UAT APT / Cashier Operator', 'OPERATIONS_USER', 'APT_CASHIER_OPERATOR'),
 ('79000000-0000-0000-0000-000000000005', 'uat-finance-reconciliation', 'uat-finance-reconciliation@example.test', 'UAT Finance / Reconciliation Analyst', 'FINANCE_USER', 'FINANCE_RECONCILIATION_ANALYST'),
 ('79000000-0000-0000-0000-000000000006', 'uat-compliance-policy-admin', 'uat-compliance-policy-admin@example.test', 'UAT Compliance / Policy Administrator', 'COMPLIANCE_USER', 'COMPLIANCE_POLICY_ADMINISTRATOR'),
 ('79000000-0000-0000-0000-000000000007', 'uat-executive-management', 'uat-executive-management@example.test', 'UAT Executive / Management', 'OTHER', 'EXECUTIVE_MANAGEMENT');
@@ -69,14 +70,14 @@ CREATE TEMP TABLE management_platform_uat_roles (
 ) ON COMMIT DROP;
 
 INSERT INTO management_platform_uat_roles (role_code, role_name, role_description, role_type, is_privileged, requires_elevated_approval) VALUES
-('SYSTEM_RBAC_ADMINISTRATOR', 'System / RBAC Administrator', 'UAT role bundle for identity, RBAC, role, permission, assignment, and access audit inventory/admin posture. Business workflow authority must be separately granted.', 'SYSTEM', true, true),
-('PLATFORM_ADMINISTRATOR', 'Platform Administrator', 'UAT role bundle for site, site group, device, shift, POS Server/fiscal configuration, connector, platform configuration, and operational readiness administration.', 'OPERATIONS', true, true),
-('OPERATIONS_SUPERVISOR', 'Operations Supervisor', 'UAT role bundle for higher-trust operational review, statutory discount approval/rejection, controlled Sales Invoice void authority, and operational audit visibility. Payable-basis application remains service-channel payment-time authority.', 'OPERATIONS', true, true),
-('HEAD_OFFICE_STATUTORY_BENEFIT_REVIEWER', 'Head Office Statutory Benefit Reviewer', 'Explicitly assigned enterprise statutory-benefit queue, detail, evidence review, approval, and rejection authority. It grants no User Administration, fiscal mutation, payment mutation, gate, or configuration authority.', 'OPERATIONS', true, true),
-('OPERATOR_SUPPORT_STAFF', 'Operator / Support Staff', 'UAT role bundle for site-scoped operational lookup, statutory discount draft initiation, metadata-only evidence capture, and status viewing.', 'SUPPORT', false, false),
+('SYSTEM_ADMINISTRATOR', 'System Administrator', 'Administrative authority for identity/RBAC, sites, devices, shifts, POS Server/fiscal configuration, connectors, platform configuration, and access audit. No business workflow authority.', 'SYSTEM', true, true),
+('OPERATIONS_SUPERVISOR', 'Operations Supervisor', 'UAT role bundle for assigned-site operational supervision and Management Platform-only all-site statutory discount approval/rejection. Payable-basis application remains service-channel payment-time authority.', 'OPERATIONS', true, true),
+('SITE_OPERATOR', 'Site Operator', 'Assigned-site operation, support, and statutory discount processing without approval authority.', 'OPERATIONS', false, false),
+('PARKING_ATTENDANT', 'Parking Attendant', 'Native Parking App authority at assigned sites and devices.', 'OPERATIONS', false, false),
+('APT_CASHIER_OPERATOR', 'APT / Cashier Operator', 'APT authority at assigned sites and terminals.', 'OPERATIONS', false, false),
 ('FINANCE_RECONCILIATION_ANALYST', 'Finance / Reconciliation Analyst', 'UAT role bundle for financial, payment, fiscal, discount, revenue, variance, and reconciliation reporting.', 'FINANCE', false, false),
 ('COMPLIANCE_POLICY_ADMINISTRATOR', 'Compliance / Policy Administrator', 'UAT role bundle for compliance audit review, statutory discount policy governance, evidence rules, policy import review, and compliance reporting.', 'COMPLIANCE', true, true),
-('EXECUTIVE_MANAGEMENT', 'Executive / Management', 'UAT role bundle for read-only executive dashboard, management reporting, KPI, performance, fiscal summary, statutory discount summary, and exception trend visibility.', 'OTHER', false, false);
+('EXECUTIVE_MANAGEMENT', 'Executive / Management', 'UAT role bundle for read-only executive dashboard, management reporting, KPI, performance, fiscal summary, statutory discount summary, and exception trend visibility. Global scope is mandatory.', 'OTHER', false, true);
 
 CREATE TEMP TABLE management_platform_uat_permissions (
     permission_code varchar(96) PRIMARY KEY,
@@ -189,37 +190,36 @@ CREATE TEMP TABLE management_platform_uat_role_permission_map (
 ) ON COMMIT DROP;
 
 INSERT INTO management_platform_uat_role_permission_map (role_code, permission_code) VALUES
-('SYSTEM_RBAC_ADMINISTRATOR', 'management-platform.identity-rbac.inventory.read'),
-('SYSTEM_RBAC_ADMINISTRATOR', 'user.view'),
-('SYSTEM_RBAC_ADMINISTRATOR', 'user.manage'),
-('SYSTEM_RBAC_ADMINISTRATOR', 'rbac.view'),
-('SYSTEM_RBAC_ADMINISTRATOR', 'rbac.manage'),
-('SYSTEM_RBAC_ADMINISTRATOR', 'role.view'),
-('SYSTEM_RBAC_ADMINISTRATOR', 'role.manage'),
-('SYSTEM_RBAC_ADMINISTRATOR', 'permission.view'),
-('SYSTEM_RBAC_ADMINISTRATOR', 'permission.manage'),
-('SYSTEM_RBAC_ADMINISTRATOR', 'assignment.view'),
-('SYSTEM_RBAC_ADMINISTRATOR', 'assignment.manage'),
-('SYSTEM_RBAC_ADMINISTRATOR', 'access-audit.view'),
-('PLATFORM_ADMINISTRATOR', 'site.view'),
-('PLATFORM_ADMINISTRATOR', 'site.manage'),
-('PLATFORM_ADMINISTRATOR', 'site-group.view'),
-('PLATFORM_ADMINISTRATOR', 'site-group.manage'),
-('PLATFORM_ADMINISTRATOR', 'device.view'),
-('PLATFORM_ADMINISTRATOR', 'device.manage'),
-('PLATFORM_ADMINISTRATOR', 'device-binding.view'),
-('PLATFORM_ADMINISTRATOR', 'device-binding.manage'),
-('PLATFORM_ADMINISTRATOR', 'shift.view'),
-('PLATFORM_ADMINISTRATOR', 'shift.manage'),
-('PLATFORM_ADMINISTRATOR', 'pos-server-config.view'),
-('PLATFORM_ADMINISTRATOR', 'pos-server-config.manage'),
-('PLATFORM_ADMINISTRATOR', 'connector-config.view'),
-('PLATFORM_ADMINISTRATOR', 'connector-config.manage'),
-('PLATFORM_ADMINISTRATOR', 'operational-monitoring.view'),
-('PLATFORM_ADMINISTRATOR', 'platform-config.view'),
-('PLATFORM_ADMINISTRATOR', 'platform-config.manage'),
-('PLATFORM_ADMINISTRATOR', 'environment-config.view'),
-('PLATFORM_ADMINISTRATOR', 'uat-fixture.manage'),
+('SYSTEM_ADMINISTRATOR', 'management-platform.identity-rbac.inventory.read'),
+('SYSTEM_ADMINISTRATOR', 'user.view'),
+('SYSTEM_ADMINISTRATOR', 'user.manage'),
+('SYSTEM_ADMINISTRATOR', 'rbac.view'),
+('SYSTEM_ADMINISTRATOR', 'rbac.manage'),
+('SYSTEM_ADMINISTRATOR', 'role.view'),
+('SYSTEM_ADMINISTRATOR', 'role.manage'),
+('SYSTEM_ADMINISTRATOR', 'permission.view'),
+('SYSTEM_ADMINISTRATOR', 'permission.manage'),
+('SYSTEM_ADMINISTRATOR', 'assignment.view'),
+('SYSTEM_ADMINISTRATOR', 'assignment.manage'),
+('SYSTEM_ADMINISTRATOR', 'access-audit.view'),
+('SYSTEM_ADMINISTRATOR', 'site.view'),
+('SYSTEM_ADMINISTRATOR', 'site.manage'),
+('SYSTEM_ADMINISTRATOR', 'site-group.view'),
+('SYSTEM_ADMINISTRATOR', 'site-group.manage'),
+('SYSTEM_ADMINISTRATOR', 'device.view'),
+('SYSTEM_ADMINISTRATOR', 'device.manage'),
+('SYSTEM_ADMINISTRATOR', 'device-binding.view'),
+('SYSTEM_ADMINISTRATOR', 'device-binding.manage'),
+('SYSTEM_ADMINISTRATOR', 'shift.view'),
+('SYSTEM_ADMINISTRATOR', 'shift.manage'),
+('SYSTEM_ADMINISTRATOR', 'pos-server-config.view'),
+('SYSTEM_ADMINISTRATOR', 'pos-server-config.manage'),
+('SYSTEM_ADMINISTRATOR', 'connector-config.view'),
+('SYSTEM_ADMINISTRATOR', 'connector-config.manage'),
+('SYSTEM_ADMINISTRATOR', 'platform-config.view'),
+('SYSTEM_ADMINISTRATOR', 'platform-config.manage'),
+('SYSTEM_ADMINISTRATOR', 'environment-config.view'),
+('SYSTEM_ADMINISTRATOR', 'uat-fixture.manage'),
 ('OPERATIONS_SUPERVISOR', 'statutory-discounts.draft.view'),
 ('OPERATIONS_SUPERVISOR', 'statutory-discounts.evidence.view'),
 ('OPERATIONS_SUPERVISOR', 'statutory-discounts.evidence.review.view'),
@@ -236,23 +236,24 @@ INSERT INTO management_platform_uat_role_permission_map (role_code, permission_c
 ('OPERATIONS_SUPERVISOR', 'ops.vendor-session-projection-health.view'),
 ('OPERATIONS_SUPERVISOR', 'operator-console.vendor-projection-health.view'),
 ('OPERATIONS_SUPERVISOR', 'vendor-acknowledgments.view'),
-('HEAD_OFFICE_STATUTORY_BENEFIT_REVIEWER', 'statutory-discounts.review.queue.read'),
-('HEAD_OFFICE_STATUTORY_BENEFIT_REVIEWER', 'statutory-discounts.review.detail.read'),
-('HEAD_OFFICE_STATUTORY_BENEFIT_REVIEWER', 'statutory-discounts.evidence.review.view'),
-('HEAD_OFFICE_STATUTORY_BENEFIT_REVIEWER', 'statutory-discounts.decision.approve'),
-('HEAD_OFFICE_STATUTORY_BENEFIT_REVIEWER', 'statutory-discounts.decision.reject'),
-('OPERATOR_SUPPORT_STAFF', 'statutory-discounts.session.lookup'),
-('OPERATOR_SUPPORT_STAFF', 'statutory-discounts.draft.view'),
-('OPERATOR_SUPPORT_STAFF', 'statutory-discounts.draft.create'),
-('OPERATOR_SUPPORT_STAFF', 'statutory-discounts.evidence.view'),
-('OPERATOR_SUPPORT_STAFF', 'statutory-discounts.evidence.capture'),
-('OPERATOR_SUPPORT_STAFF', 'statutory-discounts.policy.resolve'),
-('OPERATOR_SUPPORT_STAFF', 'fiscal-issuance.status.read'),
-('OPERATOR_SUPPORT_STAFF', 'ticket.lookup'),
-('OPERATOR_SUPPORT_STAFF', 'projection-health.view'),
-('OPERATOR_SUPPORT_STAFF', 'ops.vendor-session-projection-health.view'),
-('OPERATOR_SUPPORT_STAFF', 'operator-console.vendor-projection-health.view'),
-('OPERATOR_SUPPORT_STAFF', 'vendor-acknowledgments.view'),
+('OPERATIONS_SUPERVISOR', 'statutory-discounts.session.lookup'),
+('OPERATIONS_SUPERVISOR', 'statutory-discounts.draft.create'),
+('OPERATIONS_SUPERVISOR', 'statutory-discounts.evidence.capture'),
+('OPERATIONS_SUPERVISOR', 'ticket.lookup'),
+('OPERATIONS_SUPERVISOR', 'shift.view'),
+('OPERATIONS_SUPERVISOR', 'shift.manage'),
+('SITE_OPERATOR', 'statutory-discounts.session.lookup'),
+('SITE_OPERATOR', 'statutory-discounts.draft.view'),
+('SITE_OPERATOR', 'statutory-discounts.draft.create'),
+('SITE_OPERATOR', 'statutory-discounts.evidence.view'),
+('SITE_OPERATOR', 'statutory-discounts.evidence.capture'),
+('SITE_OPERATOR', 'statutory-discounts.policy.resolve'),
+('SITE_OPERATOR', 'fiscal-issuance.status.read'),
+('SITE_OPERATOR', 'ticket.lookup'),
+('SITE_OPERATOR', 'projection-health.view'),
+('SITE_OPERATOR', 'ops.vendor-session-projection-health.view'),
+('SITE_OPERATOR', 'operator-console.vendor-projection-health.view'),
+('SITE_OPERATOR', 'vendor-acknowledgments.view'),
 ('FINANCE_RECONCILIATION_ANALYST', 'reconciliation.view'),
 ('FINANCE_RECONCILIATION_ANALYST', 'reconciliation.manage'),
 ('FINANCE_RECONCILIATION_ANALYST', 'payment-report.view'),
@@ -494,5 +495,41 @@ WHERE NOT EXISTS (
       AND existing.role_id = r.role_id
       AND existing.assignment_status = 'ACTIVE'
 );
+
+-- Executive / Management is the only role whose assignment scope is invariant:
+-- it must always be Global. Repair the isolated UAT fixture atomically and never
+-- interpret missing Site references as implicit Global authority.
+UPDATE identity.user_role_scope_grants grant
+SET grant_status='REVOKED', revoked_at=now(),
+    revoked_by_service_identity_id='79000000-0000-0000-0000-000000000003',
+    revocation_reason_code='EXECUTIVE_GLOBAL_SCOPE_REQUIRED', updated_at=now(),
+    updated_by_service_identity_id='79000000-0000-0000-0000-000000000003'
+FROM identity.user_roles assignment
+JOIN identity.roles role ON role.role_id=assignment.role_id
+WHERE grant.user_role_id=assignment.user_role_id
+  AND assignment.user_id='79000000-0000-0000-0000-000000000007'
+  AND role.role_code='EXECUTIVE_MANAGEMENT'
+  AND grant.grant_status='ACTIVE' AND grant.scope_type<>'GLOBAL';
+
+INSERT INTO identity.user_role_scope_grants (
+    user_role_scope_grant_id, user_role_id, scope_type, grant_status,
+    grant_reason_code, effective_from, effective_to,
+    granted_by_service_identity_id, created_by_service_identity_id,
+    updated_by_service_identity_id)
+SELECT pg_temp.exitpass_uat_uuid('management-platform-uat-executive-global:' || assignment.user_role_id::text),
+       assignment.user_role_id, 'GLOBAL', 'ACTIVE',
+       'EXECUTIVE_GLOBAL_SCOPE_REQUIRED', '2020-01-01T00:00:00Z', '2035-01-01T00:00:00Z',
+       '79000000-0000-0000-0000-000000000003',
+       '79000000-0000-0000-0000-000000000003',
+       '79000000-0000-0000-0000-000000000003'
+FROM identity.user_roles assignment
+JOIN identity.roles role ON role.role_id=assignment.role_id
+WHERE assignment.user_id='79000000-0000-0000-0000-000000000007'
+  AND assignment.assignment_status='ACTIVE'
+  AND role.role_code='EXECUTIVE_MANAGEMENT'
+  AND NOT EXISTS (
+      SELECT 1 FROM identity.user_role_scope_grants existing
+      WHERE existing.user_role_id=assignment.user_role_id
+        AND existing.scope_type='GLOBAL' AND existing.grant_status='ACTIVE');
 
 COMMIT;

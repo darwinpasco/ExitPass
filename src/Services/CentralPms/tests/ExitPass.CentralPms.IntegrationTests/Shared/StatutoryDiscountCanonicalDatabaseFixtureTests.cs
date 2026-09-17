@@ -38,7 +38,9 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixtureTests
             "ExitPass_HikCentralProjectionSafety_v1.3.sql",
             "ExitPass_MultiSiteVendorAdapterRouting_v1.3.sql",
             "ExitPass_Core_PaymentAttemptPaymentMethod_v1.3.sql",
+            "ExitPass_CentralPms_WebPayInvoiceCustomerInformation_v1.2.sql",
             "ExitPass_OperatorConsoleOperatingContext_v1.3.sql",
+            "ExitPass_IdentityRbacApprovedRoleCatalog_v1.3.sql",
             "ExitPass_ShiftManagementMvp_v1.3.sql",
             "ExitPass_ExitAuthorizationCompletionAuthority_v1.3.sql",
             "ExitPass_CentralPms_ZeroPayableFiscalCompletion_v1.3.sql");
@@ -47,6 +49,7 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixtureTests
             "Validate_HikCentralProjectionSafety_v1.3.sql",
             "Validate_MultiSiteVendorAdapterRouting_v1.3.sql",
             "Validate_OperatorConsoleOperatingContext_v1.3.sql",
+            "Validate_IdentityRbacApprovedRoleCatalog_v1.3.sql",
             "Validate_ExitAuthorizationCompletionAuthority_v1.3.sql",
             "Validate_CentralPmsZeroPayableFiscalCompletion_v1.3.sql");
         options.ApplicationSchemaSources.Should().OnlyContain(source => File.Exists(source.PatchPath));
