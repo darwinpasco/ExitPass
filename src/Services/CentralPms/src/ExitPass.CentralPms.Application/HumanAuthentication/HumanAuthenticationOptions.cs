@@ -3,6 +3,7 @@ namespace ExitPass.CentralPms.Application.HumanAuthentication;
 public sealed record HumanAuthenticationOptions
 {
     public const string SectionName = "HumanAuthentication";
+    public const int RequiredTemporaryPasswordHours = 72;
 
     public bool Enabled { get; init; } = true;
     public Guid CentralPmsServiceIdentityId { get; init; } = Guid.Parse("8063c159-dae6-57af-9f1f-e0a07d519fb2");
@@ -21,7 +22,7 @@ public sealed record HumanAuthenticationOptions
     public int AptAbsoluteHours { get; init; } = 12;
     public int FreshAuthenticationMinutes { get; init; } = 5;
     public int CredentialChallengeMinutes { get; init; } = 30;
-    public int TemporaryPasswordHours { get; init; } = 72;
+    public int TemporaryPasswordHours { get; init; } = RequiredTemporaryPasswordHours;
     public string CookieName { get; init; } = "__Host-ExitPass-HumanSession";
     public string AptSessionAuthorizationScheme { get; init; } = "ExitPass-HumanSession";
     public string TotpIssuer { get; init; } = "ExitPass";

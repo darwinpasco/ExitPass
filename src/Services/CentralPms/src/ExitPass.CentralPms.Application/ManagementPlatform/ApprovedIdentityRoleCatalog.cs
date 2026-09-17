@@ -3,8 +3,8 @@ namespace ExitPass.CentralPms.Application.ManagementPlatform;
 public sealed record ApprovedIdentityRolePolicy(
     string Code,
     string DisplayName,
-    IReadOnlySet<string> AllowedApplicationAudiences,
-    IReadOnlySet<string> AllowedAssignmentScopes,
+    IReadOnlyList<string> AllowedApplicationAudiences,
+    IReadOnlyList<string> AllowedAssignmentScopes,
     string? DefaultAssignmentScope = null);
 
 /// <summary>
@@ -89,7 +89,7 @@ public static class ApprovedIdentityRoleCatalog
     public static bool IsApplicationEligible(string? roleCode, string? audience) =>
         TryGetPolicy(roleCode, out var policy) &&
         audience is not null &&
-        policy!.AllowedApplicationAudiences.Contains(audience);
+        policy!.AllowedApplicationAudiences.Contains(audience, CodeComparer);
 
     public static bool IsUserEligibleForApplication(IEnumerable<string>? roleCodes, string? audience) =>
         roleCodes is not null && roleCodes.Any(roleCode => IsApplicationEligible(roleCode, audience));
@@ -97,7 +97,7 @@ public static class ApprovedIdentityRoleCatalog
     public static bool IsScopeAllowed(string? roleCode, string? scopeType) =>
         TryGetPolicy(roleCode, out var policy) &&
         scopeType is not null &&
-        policy!.AllowedAssignmentScopes.Contains(scopeType);
+        policy!.AllowedAssignmentScopes.Contains(scopeType, CodeComparer);
 
     /// <summary>
     /// Returns false for statutory supervisor permissions on every audience except Management Platform.
@@ -117,5 +117,5 @@ public static class ApprovedIdentityRoleCatalog
         string[] applications,
         string[] scopes,
         string? defaultScope = null) =>
-        new(code, displayName, applications.ToHashSet(CodeComparer), scopes.ToHashSet(CodeComparer), defaultScope);
+        new(code, displayName, Array.AsReadOnly(applications), Array.AsReadOnly(scopes), defaultScope);
 }

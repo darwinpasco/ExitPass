@@ -331,7 +331,7 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
     {
         const string sql = """
             WITH effective_roles AS (
-                SELECT ur.user_role_id, ur.role_id FROM identity.user_roles ur
+                SELECT ur.user_role_id, ur.role_id, r.role_code FROM identity.user_roles ur
                 JOIN identity.roles r ON r.role_id=ur.role_id
                 WHERE ur.user_id=@user_id AND ur.assignment_status='ACTIVE' AND ur.revoked_at IS NULL
                   AND ur.effective_from<=@now AND (ur.effective_to IS NULL OR ur.effective_to>@now)
@@ -352,7 +352,8 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
             SELECT COALESCE((SELECT array_agg(permission_code ORDER BY permission_code) FROM perms), ARRAY[]::varchar[]),
                    COALESCE((SELECT array_agg(site_id ORDER BY site_id) FROM scopes WHERE scope_type='SITE'), ARRAY[]::uuid[]),
                    COALESCE((SELECT array_agg(site_group_id ORDER BY site_group_id) FROM scopes WHERE scope_type='SITE_GROUP'), ARRAY[]::uuid[]),
-                   EXISTS(SELECT 1 FROM scopes WHERE scope_type='GLOBAL');
+                   EXISTS(SELECT 1 FROM scopes WHERE scope_type='GLOBAL'),
+                   COALESCE((SELECT array_agg(DISTINCT role_code ORDER BY role_code) FROM effective_roles), ARRAY[]::varchar[]);
             """;
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection);
@@ -360,7 +361,8 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
         command.Parameters.AddWithValue("now", now);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);
-        return new EffectiveHumanAuthorization(reader.GetFieldValue<string[]>(0), reader.GetFieldValue<Guid[]>(1), reader.GetFieldValue<Guid[]>(2), reader.GetBoolean(3));
+        return new EffectiveHumanAuthorization(reader.GetFieldValue<string[]>(0), reader.GetFieldValue<Guid[]>(1),
+            reader.GetFieldValue<Guid[]>(2), reader.GetBoolean(3), reader.GetFieldValue<string[]>(4));
     }
 
     public async Task<bool> TouchSessionAsync(Guid humanSessionId, long expectedRowVersion, DateTimeOffset now, DateTimeOffset idleExpiresAt, CancellationToken cancellationToken)

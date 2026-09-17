@@ -12,6 +12,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using OtpNet;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
@@ -19,6 +20,10 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 [Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class ProductionHostedIdentityAdministrationIntegrationTests
 {
+    private static readonly byte[] TotpProtectionKey = System.Security.Cryptography.SHA256.HashData(
+        System.Text.Encoding.UTF8.GetBytes("exitpass-i021-hosted-test-protection-key"));
+    private static readonly byte[] TotpSecret = System.Security.Cryptography.SHA256.HashData(
+        System.Text.Encoding.UTF8.GetBytes("exitpass-i021-hosted-test-totp-secret"))[..20];
     private readonly StatutoryDiscountCanonicalDatabaseFixture _database;
 
     public ProductionHostedIdentityAdministrationIntegrationTests(StatutoryDiscountCanonicalDatabaseFixture database)
@@ -41,15 +46,30 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
 
         using var login = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
         {
-            Content = JsonContent.Create(new HumanLoginRequest(seed.Username, password, HumanSessionAudiences.ManagementPlatform))
+            Content = JsonContent.Create(new HumanLoginRequest(seed.Username, password,
+                HumanSessionAudiences.ManagementPlatform, CurrentTotpCode()))
         };
         login.Headers.Add("Origin", "https://localhost");
         var loginResponse = await client.SendAsync(login);
         loginResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var authenticated = await loginResponse.Content.ReadFromJsonAsync<HumanAuthenticationResponse>();
         authenticated!.Authenticated.Should().BeTrue();
-        authenticated.Session!.MfaRequired.Should().BeFalse();
+        authenticated.Session!.MfaRequired.Should().BeTrue();
+        authenticated.Session.MfaSatisfied.Should().BeTrue();
         var csrf = loginResponse.Headers.GetValues("X-CSRF-Token").Single();
+
+        var rolesResponse = await client.GetAsync("/v1/management-platform/identity/roles");
+        rolesResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var roles = await rolesResponse.Content.ReadFromJsonAsync<IdentityRoleDefinition[]>();
+        roles.Should().NotBeNull().And.HaveCount(8);
+        foreach (var role in roles!)
+        {
+            ApprovedIdentityRoleCatalog.TryGetPolicy(role.Code, out var policy).Should().BeTrue();
+            role.ApplicationAccess.Should().Equal(policy!.AllowedApplicationAudiences);
+            role.ScopePolicy!.AllowedScopeTypes.Should().Equal(policy.AllowedAssignmentScopes);
+            role.ScopePolicy.AssignmentRequired.Should().BeTrue();
+            role.ScopePolicy.DefaultScope.Should().Be(policy.DefaultAssignmentScope);
+        }
 
         var detailResponse = await client.GetAsync($"/v1/management-platform/identity/users/{seed.UserId:D}");
         detailResponse.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -115,7 +135,8 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
 
         using var login = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
         {
-            Content = JsonContent.Create(new HumanLoginRequest(seed.Username, password, HumanSessionAudiences.ManagementPlatform))
+            Content = JsonContent.Create(new HumanLoginRequest(seed.Username, password,
+                HumanSessionAudiences.ManagementPlatform, CurrentTotpCode()))
         };
         login.Headers.Add("Origin", "https://localhost");
         var loginResponse = await client.SendAsync(login);
@@ -130,7 +151,6 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
                 "Unsupported User Type",
                 null,
                 null,
-                "HUMAN",
                 Guid.NewGuid(),
                 "SITE",
                 Guid.NewGuid(),
@@ -139,8 +159,7 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
                 null,
                 "I021_USER_TYPE_VALIDATION",
                 $"unsupported-{Guid.NewGuid():N}",
-                "ADMIN_ISSUED",
-                true),
+                "HUMAN"),
             csrf);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -152,7 +171,7 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
     }
 
     [Fact]
-    public async Task ProductionHost_RejectsIncompatibleUserTypeAndRoleBeforePersistence()
+    public async Task ProductionHost_UserTypeDoesNotDetermineRoleOrScope()
     {
         var password = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
         var seed = await SeedOrdinaryAdministratorAsync(password);
@@ -166,7 +185,8 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
 
         using var login = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
         {
-            Content = JsonContent.Create(new HumanLoginRequest(seed.Username, password, HumanSessionAudiences.ManagementPlatform))
+            Content = JsonContent.Create(new HumanLoginRequest(seed.Username, password,
+                HumanSessionAudiences.ManagementPlatform, CurrentTotpCode()))
         };
         login.Headers.Add("Origin", "https://localhost");
         var loginResponse = await client.SendAsync(login);
@@ -177,17 +197,29 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         var response = await SendMutationAsync(client, HttpMethod.Post,
             "/v1/management-platform/identity/users",
             new CreateIdentityUserRequest(
-                username, "Incompatible User Role", null, null, "SUPPORT_USER",
+                username, "Incompatible User Role", null, null,
                 seed.DelegableRoleId, "SITE", seed.SiteId, null,
                 DateTimeOffset.UtcNow, null, "I021_INCOMPATIBLE_ROLE", $"incompatible-{Guid.NewGuid():N}",
-                "ADMIN_ISSUED", true),
+                "SUPPORT_USER"),
             csrf);
 
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        var error = await response.Content.ReadFromJsonAsync<IdentityAdministrationErrorResponse>();
-        error!.Classification.Should().Be("USER_TYPE_ROLE_INCOMPATIBLE");
-        error.Retryable.Should().BeFalse();
-        (await ReadUserCountByUsernameAsync(username)).Should().Be(0);
+        response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var created = await response.Content.ReadFromJsonAsync<CreateIdentityUserResult>();
+        created!.User.Status.Should().Be("ACTIVE");
+        created.OneTimeBootstrap.Should().NotBeNull();
+        created.OneTimeBootstrap!.PasswordChangeRequired.Should().BeTrue();
+        created.OneTimeBootstrap.TemporaryPassword.Should().NotBeNullOrWhiteSpace();
+        created.OneTimeBootstrap.TotpSharedSecret.Should().NotBeNullOrWhiteSpace();
+        created.OneTimeBootstrap.TotpProvisioningUri.Should().Contain(created.OneTimeBootstrap.TotpSharedSecret);
+        var storedExpiry = await ReadTemporaryPasswordExpiryAsync(created.User.UserReference);
+        (storedExpiry - created.OneTimeBootstrap.TemporaryPasswordExpiresAt).Duration()
+            .Should().BeLessThan(TimeSpan.FromMilliseconds(1));
+        var userRead = await client.GetAsync($"/v1/management-platform/identity/users/{created.User.UserReference:D}");
+        userRead.StatusCode.Should().Be(HttpStatusCode.OK);
+        var userBody = await userRead.Content.ReadAsStringAsync();
+        userBody.Should().NotContain(created.OneTimeBootstrap.TemporaryPassword);
+        userBody.Should().NotContain(created.OneTimeBootstrap.TotpSharedSecret);
+        (await ReadUserCountByUsernameAsync(username)).Should().Be(1);
     }
 
     private CustomWebApplicationFactory CreateProductionFactory() =>
@@ -197,6 +229,9 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
             {
                 ["ConnectionStrings:MainDatabase"] = _database.ConnectionString,
                 ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost",
+                ["HumanAuthentication:TotpProtectionKeyBase64"] = Convert.ToBase64String(TotpProtectionKey),
+                ["HumanAuthentication:TotpProtectionKeyReference"] = "i021-hosted-test",
+                ["HumanAuthentication:TotpProtectionKeyVersion"] = "1",
                 ["CredentialChallengeDelivery:PublicAccountLifecycleBaseUrl"] = "https://accounts.exitpass.test",
                 ["CentralPms:VendorPms:Provider"] = "SITE_ADAPTER",
                 ["CentralPms:VendorPms:Environment"] = "INTEGRATION_TEST",
@@ -226,12 +261,42 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         var material = await new Argon2idHumanPasswordHasher(options).HashAsync(password, CancellationToken.None);
         var userId = Guid.NewGuid();
         var credentialId = Guid.NewGuid();
-        var roleId = Guid.NewGuid();
+        var authenticatorId = Guid.NewGuid();
         var assignmentId = Guid.NewGuid();
         var delegableAssignmentId = Guid.NewGuid();
+        var siteGroupId = Guid.NewGuid();
+        var siteId = Guid.NewGuid();
         var username = $"i021.hosted.{Guid.NewGuid():N}";
         var displayName = "I-021 Hosted Administrator";
+        var protectorOptions = Options.Create(new HumanAuthenticationOptions
+        {
+            TotpProtectionKeyBase64 = Convert.ToBase64String(TotpProtectionKey),
+            TotpProtectionKeyReference = "i021-hosted-test",
+            TotpProtectionKeyVersion = "1"
+        });
+        var protector = new AesGcmTotpSecretProtector(protectorOptions);
+        var protectedSecret = protector.Protect(userId, authenticatorId, TotpSecret);
         const string sql = """
+            INSERT INTO sites.site_groups (
+                site_group_id, site_group_code, site_group_name, timezone_name, default_currency_code,
+                site_group_status, effective_from)
+            VALUES (@site_group_id, @site_group_code, 'I-021 Hosted Group', 'Asia/Manila', 'PHP',
+                'ACTIVE', now() - interval '1 day');
+
+            INSERT INTO sites.sites (
+                site_id, site_group_id, site_code, site_name, site_type, timezone_name, country_code,
+                site_status, effective_from)
+            VALUES (@site_id, @site_group_id, @site_code, 'I-021 Hosted Site', 'OTHER', 'Asia/Manila', 'PH',
+                'ACTIVE', now() - interval '1 day');
+
+            INSERT INTO sites.real_carpark_catalog_site_groups (
+                site_group_id, catalog_code, source_reference, source_sha256)
+            VALUES (@site_group_id, 'PROFESSIONAL_PARKING_REAL_CARPARK_V1', 'hosted-integration-test', repeat('B', 64));
+
+            INSERT INTO sites.real_carpark_catalog_sites (
+                site_id, site_group_id, catalog_code, source_reference, source_sha256)
+            VALUES (@site_id, @site_group_id, 'PROFESSIONAL_PARKING_REAL_CARPARK_V1', 'hosted-integration-test', repeat('B', 64));
+
             INSERT INTO identity.users (
                 user_id, username, display_name, user_type, user_status, effective_from)
             VALUES (@user_id, @username, @display_name, 'INTERNAL_ADMIN', 'ACTIVE', now() - interval '1 minute');
@@ -244,26 +309,20 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
             VALUES (@credential_id, @user_id, 'ACTIVE', @verifier, @salt, @algorithm, @algorithm_version,
                 @work_factor, @memory_kib, @parallelism, now(), now(), @user_id, @user_id);
 
-            INSERT INTO identity.roles (
-                role_id, role_code, role_name, role_type, role_status, is_privileged,
-                requires_elevated_approval, effective_from)
-            VALUES (@role_id, @role_code, 'I-021 Hosted Administrator', 'OTHER', 'ACTIVE', false, false, now() - interval '1 minute');
+            INSERT INTO identity.user_mfa_authenticators (
+                user_mfa_authenticator_id, user_id, authenticator_type, authenticator_status,
+                protected_secret_envelope, protection_key_reference, protection_key_version,
+                envelope_format_version, enrollment_started_at, activated_at,
+                created_by_user_id, updated_by_user_id)
+            VALUES (@authenticator_id, @user_id, 'TOTP', 'ACTIVE', @protected_secret,
+                @key_reference, @key_version, @format_version, now(), now(), @user_id, @user_id);
 
             INSERT INTO identity.user_roles (
                 user_role_id, user_id, role_id, assignment_status, assignment_reason_code,
                 assigned_by_user_id, effective_from, created_by_user_id, updated_by_user_id)
-            VALUES (@assignment_id, @user_id, @role_id, 'ACTIVE', 'I021_HOSTED', @user_id,
-                now() - interval '1 minute', @user_id, @user_id);
-
-            INSERT INTO identity.role_permissions (
-                role_permission_id, role_id, permission_id, binding_status, binding_reason_code,
-                assigned_by_user_id, effective_from, created_by_user_id, updated_by_user_id)
-            SELECT gen_random_uuid(), @role_id, permission_id, 'ACTIVE', 'I021_HOSTED', @user_id,
+            SELECT @assignment_id, @user_id, role_id, 'ACTIVE', 'I021_HOSTED', @user_id,
                    now() - interval '1 minute', @user_id, @user_id
-            FROM identity.permissions
-            WHERE permission_code IN ('user.view', 'user.manage',
-                'identity.role-assignment.manage', 'identity.scope-assignment.manage',
-                'human-authentication.session.admin.view', 'human-authentication.session.admin.revoke');
+            FROM identity.roles WHERE role_code = 'SYSTEM_ADMINISTRATOR';
 
             INSERT INTO identity.user_roles (
                 user_role_id, user_id, role_id, assignment_status, assignment_reason_code,
@@ -283,12 +342,19 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("user_id", userId);
         command.Parameters.AddWithValue("credential_id", credentialId);
-        command.Parameters.AddWithValue("role_id", roleId);
+        command.Parameters.AddWithValue("authenticator_id", authenticatorId);
         command.Parameters.AddWithValue("assignment_id", assignmentId);
         command.Parameters.AddWithValue("delegable_assignment_id", delegableAssignmentId);
+        command.Parameters.AddWithValue("site_group_id", siteGroupId);
+        command.Parameters.AddWithValue("site_id", siteId);
+        command.Parameters.AddWithValue("site_group_code", $"I021-HG-{Guid.NewGuid():N}"[..32]);
+        command.Parameters.AddWithValue("site_code", $"I021-HS-{Guid.NewGuid():N}"[..32]);
         command.Parameters.AddWithValue("username", username);
         command.Parameters.AddWithValue("display_name", displayName);
-        command.Parameters.AddWithValue("role_code", $"I021_HOSTED_{Guid.NewGuid():N}"[..40]);
+        command.Parameters.AddWithValue("protected_secret", protectedSecret);
+        command.Parameters.AddWithValue("key_reference", protector.KeyReference);
+        command.Parameters.AddWithValue("key_version", protector.KeyVersion);
+        command.Parameters.AddWithValue("format_version", protector.EnvelopeFormatVersion);
         command.Parameters.AddWithValue("verifier", material.Verifier);
         command.Parameters.AddWithValue("salt", material.Salt);
         command.Parameters.AddWithValue("algorithm", material.AlgorithmCode);
@@ -298,9 +364,38 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         command.Parameters.AddWithValue("parallelism", material.Parallelism);
         await command.ExecuteNonQueryAsync();
         var delegableRoleId = (Guid)(await new NpgsqlCommand("SELECT role_id FROM identity.roles WHERE role_code = 'SITE_OPERATOR';", connection).ExecuteScalarAsync())!;
-        var siteId = (Guid)(await new NpgsqlCommand("SELECT site_id FROM sites.sites WHERE site_status = 'ACTIVE' ORDER BY site_id LIMIT 1;", connection).ExecuteScalarAsync())!;
         return new(userId, username, displayName, delegableRoleId, siteId);
     }
+
+    [Fact]
+    public async Task ProductionHost_RequiresTotpForManagementAndRejectsWrongApplication()
+    {
+        var password = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
+        var seed = await SeedOrdinaryAdministratorAsync(password);
+        using var factory = CreateProductionFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+            HandleCookies = false,
+            AllowAutoRedirect = false
+        });
+        client.DefaultRequestHeaders.Add("Origin", "https://localhost");
+
+        var missingTotp = await client.PostAsJsonAsync("/v1/human-authentication/login",
+            new HumanLoginRequest(seed.Username, password, HumanSessionAudiences.ManagementPlatform));
+        missingTotp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await missingTotp.Content.ReadFromJsonAsync<HumanAuthenticationResponse>())!.ErrorCode
+            .Should().Be("TOTP_REQUIRED");
+
+        var wrongAudience = await client.PostAsJsonAsync("/v1/human-authentication/login",
+            new HumanLoginRequest(seed.Username, password, HumanSessionAudiences.NativeParkingApp));
+        wrongAudience.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await wrongAudience.Content.ReadFromJsonAsync<HumanAuthenticationResponse>())!.ErrorCode
+            .Should().Be("APPLICATION_AUDIENCE_DENIED");
+    }
+
+    private static string CurrentTotpCode() =>
+        new Totp(TotpSecret, 30, OtpHashMode.Sha1, 6).ComputeTotp(DateTime.UtcNow);
 
     private async Task<Guid?> ReadLatestProfileUpdateActorAsync(Guid userId)
     {
@@ -327,6 +422,22 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("username", username);
         return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<DateTimeOffset> ReadTemporaryPasswordExpiryAsync(Guid userId)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT temporary_password_expires_at FROM identity.local_credentials WHERE user_id=@user_id;", connection);
+        command.Parameters.AddWithValue("user_id", userId);
+        var value = await command.ExecuteScalarAsync();
+        return value switch
+        {
+            DateTimeOffset timestamp => timestamp,
+            DateTime timestamp => new DateTimeOffset(DateTime.SpecifyKind(timestamp, DateTimeKind.Utc)),
+            _ => throw new InvalidOperationException("Temporary-password expiry was not persisted.")
+        };
     }
 
     private sealed record HostedAdminSeed(Guid UserId, string Username, string DisplayName, Guid DelegableRoleId, Guid SiteId);

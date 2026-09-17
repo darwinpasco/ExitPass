@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Contracts.HumanAuthentication;
 using Microsoft.Extensions.Options;
 
@@ -181,6 +182,14 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         if (validation.Record is null) return validation.Failure!;
         var record = validation.Record;
         var now = _timeProvider.GetUtcNow();
+        EffectiveHumanAuthorization? authorization = null;
+        if (!IsRestrictedSession(record))
+        {
+            var audienceDecision = await AuthorizeNormalApplicationSessionAsync(
+                record.UserId, record.Audience, context.CorrelationId, cancellationToken);
+            if (audienceDecision.Failure is not null) return audienceDecision.Failure;
+            authorization = audienceDecision.Authorization;
+        }
         var credential = _tokens.Create();
         var issue = await _repository.RotateSessionAsync(record, credential, record.MfaRequirementSatisfied,
             record.MfaAuthenticatorId, record.MfaVerifiedAt, record.AssuranceContext, now,
@@ -188,7 +197,8 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
             context.CorrelationId, cancellationToken);
         if (issue is null) return Failure(409, HumanAuthenticationOutcomes.SessionInvalid, "SESSION_ROTATION_CONFLICT", context.CorrelationId, true);
         await RecordSecurityAsync("SESSION_REVOKED", "ALLOWED", "SESSION_ROTATED", record.HumanSessionId, record.UserId, context, now, cancellationToken);
-        return await SuccessFromSessionAsync(issue.Record, credential, context.CorrelationId, cancellationToken);
+        return await SuccessFromSessionAsync(issue.Record, credential, context.CorrelationId, cancellationToken,
+            authorization: authorization);
     }
 
     public async Task<HumanAuthenticationResult> LogoutAsync(string token, HumanAuthenticationContext context, CancellationToken cancellationToken)
@@ -278,6 +288,14 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         }
 
         await RecordAttemptAsync(login.UserId, loginHash, "PASSWORD", "SUCCESS", record.Audience, "FRESH_PASSWORD_VERIFIED", context, now, cancellationToken);
+        EffectiveHumanAuthorization? authorization = null;
+        if (!IsRestrictedSession(record))
+        {
+            var audienceDecision = await AuthorizeNormalApplicationSessionAsync(
+                record.UserId, record.Audience, context.CorrelationId, cancellationToken);
+            if (audienceDecision.Failure is not null) return audienceDecision.Failure;
+            authorization = audienceDecision.Authorization;
+        }
         var replacement = _tokens.Create();
         var absolute = now.AddHours(record.Audience == HumanSessionAudiences.Apt ? _options.AptAbsoluteHours : _options.WebAbsoluteHours);
         var assurance = mfaSatisfied ? "PASSWORD_TOTP" : "PASSWORD";
@@ -286,7 +304,8 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
             context.CorrelationId, cancellationToken);
         if (issue is null) return Failure(409, HumanAuthenticationOutcomes.SessionInvalid, "SESSION_ROTATION_CONFLICT", context.CorrelationId, true);
         await RecordSecurityAsync("LOGIN_SUCCEEDED", "ALLOWED", "FRESH_REAUTHENTICATION", record.UserId, record.UserId, context, now, cancellationToken);
-        return await SuccessFromSessionAsync(issue.Record, replacement, context.CorrelationId, cancellationToken);
+        return await SuccessFromSessionAsync(issue.Record, replacement, context.CorrelationId, cancellationToken,
+            authorization: authorization);
     }
 
     public async Task<HumanAuthenticationResult> ChangePasswordAsync(string token, string currentPassword, string newPassword, string? totpCode, HumanAuthenticationContext context, CancellationToken cancellationToken)
@@ -572,26 +591,87 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         var absolute = now.AddHours(audience == HumanSessionAudiences.Apt ? _options.AptAbsoluteHours : _options.WebAbsoluteHours);
         var idle = ComputeIdleExpiry(audience, now, absolute);
         var assurance = passwordChangeRequired ? "PASSWORD_CHANGE_REQUIRED" : mfaSatisfied ? "PASSWORD_TOTP" : mfaRequired ? "PASSWORD_MFA_PENDING" : "PASSWORD";
+        EffectiveHumanAuthorization? authorization = null;
+        if (!passwordChangeRequired && (!mfaRequired || mfaSatisfied))
+        {
+            var audienceDecision = await AuthorizeNormalApplicationSessionAsync(
+                login.UserId, audience, context.CorrelationId, cancellationToken);
+            if (audienceDecision.Failure is not null) return audienceDecision.Failure;
+            authorization = audienceDecision.Authorization;
+        }
         var issue = await _repository.CreateSessionAsync(login.UserId, credential.LocalCredentialId, audience, context.DeviceServiceIdentityId, mfaSatisfied, mfaAuthenticatorId, mfaVerifiedAt, assurance, login.CredentialVersion, login.AuthorizationEpoch, now, idle, absolute, context.CorrelationId, token, cancellationToken);
         await RecordSecurityAsync("LOGIN_SUCCEEDED", "ALLOWED", outcome, login.UserId, login.UserId, context, now, cancellationToken);
-        return await SuccessFromSessionAsync(issue.Record, token, context.CorrelationId, cancellationToken, outcome, passwordChangeRequired, mfaRequired);
+        return await SuccessFromSessionAsync(issue.Record, token, context.CorrelationId, cancellationToken, outcome,
+            passwordChangeRequired, mfaRequired, authorization);
     }
 
-    private async Task<HumanAuthenticationResult> SuccessFromSessionAsync(HumanSessionRecord record, SessionCredential credential, Guid correlationId, CancellationToken cancellationToken, string outcome = HumanAuthenticationOutcomes.Authenticated, bool? passwordChangeRequired = null, bool? mfaRequired = null)
+    private async Task<HumanAuthenticationResult> SuccessFromSessionAsync(HumanSessionRecord record, SessionCredential credential, Guid correlationId, CancellationToken cancellationToken, string outcome = HumanAuthenticationOutcomes.Authenticated, bool? passwordChangeRequired = null, bool? mfaRequired = null, EffectiveHumanAuthorization? authorization = null)
     {
-        var authorization = await _repository.GetEffectiveAuthorizationAsync(record.UserId, _timeProvider.GetUtcNow(), cancellationToken);
         var requiresMfa = mfaRequired ?? record.Audience == HumanSessionAudiences.ManagementPlatform;
         var mustChangePassword = passwordChangeRequired ?? record.LocalCredentialStatus == "CHANGE_REQUIRED";
         var restricted = (requiresMfa && !record.MfaRequirementSatisfied) || mustChangePassword;
+        authorization ??= restricted
+            ? new EffectiveHumanAuthorization([], [], [], false, [])
+            : await _repository.GetEffectiveAuthorizationAsync(record.UserId, _timeProvider.GetUtcNow(), cancellationToken);
+        var permissions = restricted
+            ? []
+            : authorization.Permissions
+                .Where(permission => ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(
+                    permission, record.Audience))
+                .ToArray();
         var dto = new HumanSessionDto(record.SessionReference, record.UserId, record.Username, record.DisplayName, record.Audience, record.AssuranceContext,
             record.HasPrivilegedRole, mustChangePassword, requiresMfa, record.MfaRequirementSatisfied,
             record.AuthenticatedAt, record.LastSeenAt, record.IdleExpiresAt, record.AbsoluteExpiresAt,
-            restricted ? [] : authorization.Permissions, restricted ? [] : authorization.SiteIds,
+            permissions, restricted ? [] : authorization.SiteIds,
             restricted ? [] : authorization.SiteGroupIds, !restricted && authorization.HasGlobalScope,
             record.DeviceServiceIdentityId, correlationId);
         return new HumanAuthenticationResult(200, new HumanAuthenticationResponse(outcome, true, dto,
             record.Audience == HumanSessionAudiences.Apt ? credential.SerializedToken : null, null, false, correlationId), credential, record.HumanSessionId);
     }
+
+    private async Task<(EffectiveHumanAuthorization? Authorization, HumanAuthenticationResult? Failure)>
+        AuthorizeNormalApplicationSessionAsync(
+            Guid userId,
+            string audience,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+    {
+        EffectiveHumanAuthorization authorization;
+        try
+        {
+            authorization = await _repository.GetEffectiveAuthorizationAsync(
+                userId, _timeProvider.GetUtcNow(), cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return (null, Failure(503, HumanAuthenticationOutcomes.AccountUnavailable,
+                "APPLICATION_AUDIENCE_POLICY_UNAVAILABLE", correlationId, true));
+        }
+
+        var roleCodes = authorization.EffectiveRoleCodes;
+        if (roleCodes is null || roleCodes.Count == 0 ||
+            roleCodes.Any(roleCode => !ApprovedIdentityRoleCatalog.TryGetPolicy(roleCode, out _)))
+        {
+            return (null, Failure(403, HumanAuthenticationOutcomes.Forbidden,
+                "APPLICATION_AUDIENCE_POLICY_UNKNOWN", correlationId));
+        }
+
+        if (!ApprovedIdentityRoleCatalog.IsUserEligibleForApplication(roleCodes, audience))
+        {
+            return (null, Failure(403, HumanAuthenticationOutcomes.Forbidden,
+                "APPLICATION_AUDIENCE_DENIED", correlationId));
+        }
+
+        return (authorization, null);
+    }
+
+    private static bool IsRestrictedSession(HumanSessionRecord record) =>
+        record.LocalCredentialStatus == "CHANGE_REQUIRED" ||
+        (record.Audience == HumanSessionAudiences.ManagementPlatform && !record.MfaRequirementSatisfied);
 
     private async Task<(HumanSessionRecord? Record, SessionCredential? Credential, HumanAuthenticationResult? Failure)> ValidateSessionAsync(string token, string? expectedAudience, Guid? expectedDeviceServiceIdentityId, HumanAuthenticationContext context, bool touch, CancellationToken cancellationToken)
     {

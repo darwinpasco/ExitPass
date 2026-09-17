@@ -83,7 +83,8 @@ public sealed record OneTimeHumanBootstrapMaterial(
     string TemporaryPassword,
     DateTimeOffset TemporaryPasswordExpiresAt,
     string TotpSharedSecret,
-    string TotpProvisioningUri);
+    string TotpProvisioningUri,
+    bool PasswordChangeRequired = true);
 
 public sealed record HumanBootstrapPersistenceMaterial(
     Guid UserReference,
@@ -111,7 +112,14 @@ public sealed record IdentityRoleDefinition(
     string Provenance = "HISTORICAL_LEGACY_ROLE",
     bool DirectAddUserEligible = false,
     bool HumanAssignable = false,
-    IReadOnlyList<string>? AllowedUserTypes = null);
+    IReadOnlyList<string>? AllowedUserTypes = null,
+    IReadOnlyList<string>? ApplicationAccess = null,
+    IdentityRoleScopePolicy? ScopePolicy = null);
+
+public sealed record IdentityRoleScopePolicy(
+    IReadOnlyList<string> AllowedScopeTypes,
+    bool AssignmentRequired,
+    string? DefaultScope = null);
 
 public sealed record IdentityRoleCatalogQuery(string? UserType, bool DirectAddUserOnly);
 
@@ -249,8 +257,6 @@ public sealed record CreateIdentityUserCommand(
     string ReasonCode,
     string IdempotencyKey,
     Guid CorrelationId,
-    string ActivationDeliveryMode = ActivationDeliveryModes.Email,
-    bool AdminIssuedHandoffAcknowledged = false,
     HumanBootstrapPersistenceMaterial? Bootstrap = null);
 
 public sealed record UpdateIdentityUserCommand(

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using ExitPass.CentralPms.Application.HumanAuthentication;
+using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Contracts.HumanAuthentication;
 using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
 using ExitPass.CentralPms.IntegrationTests.Shared;
@@ -51,7 +52,10 @@ public sealed class HumanAuthenticationApiIntegrationTests
         body!.Authenticated.Should().BeTrue();
         body.AptSessionToken.Should().BeNull();
         body.Session!.Audience.Should().Be(HumanSessionAudiences.OperatorConsole);
-        body.Session.Permissions.Should().BeEmpty();
+        body.Session.Permissions.Should().NotBeEmpty();
+        body.Session.Permissions.Should().OnlyContain(permission =>
+            ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(
+                permission, HumanSessionAudiences.OperatorConsole));
     }
 
     [Fact]
@@ -87,12 +91,8 @@ public sealed class HumanAuthenticationApiIntegrationTests
     }
 
     [Fact]
-    public async Task Password_reset_request_is_anti_enumerating_for_email_no_email_unknown_and_disabled_delivery()
+    public async Task Email_password_reset_request_route_is_not_exposed()
     {
-        var withEmail = $"W43Email{Guid.NewGuid():N}"[..24];
-        var withoutEmail = $"W43NoEmail{Guid.NewGuid():N}"[..24];
-        await SeedUserAsync(withEmail, "correct horse battery staple", "employee@example.test");
-        await SeedUserAsync(withoutEmail, "correct horse battery staple");
         await using var factory = Factory();
         using var client = factory.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions
         {
@@ -101,18 +101,10 @@ public sealed class HumanAuthenticationApiIntegrationTests
         });
         client.DefaultRequestHeaders.Add("Origin", "https://localhost");
 
-        foreach (var username in new[] { withEmail, withoutEmail, $"W43Unknown{Guid.NewGuid():N}"[..24] })
-        {
-            var response = await client.PostAsJsonAsync("/v1/human-authentication/password-reset-requests",
-                new HumanPasswordResetStartRequest(username));
-            response.StatusCode.Should().Be(HttpStatusCode.Accepted);
-            response.Headers.CacheControl!.NoStore.Should().BeTrue();
-            var body = await response.Content.ReadFromJsonAsync<HumanChallengeAcceptedResponse>();
-            body!.Outcome.Should().Be("REQUEST_ACCEPTED");
-            body.CorrelationId.Should().NotBeEmpty();
-        }
+        var response = await client.PostAsJsonAsync("/v1/human-authentication/password-reset-requests",
+            new HumanPasswordResetStartRequest($"W43Unknown{Guid.NewGuid():N}"[..24]));
 
-        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.credential_challenges WHERE user_id IN (SELECT user_id FROM identity.users WHERE username=ANY(@usernames));", [withEmail, withoutEmail])).Should().Be(0);
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     private CustomWebApplicationFactory Factory()
@@ -154,6 +146,13 @@ public sealed class HumanAuthenticationApiIntegrationTests
                 created_by_service_identity_id,updated_by_service_identity_id)
             SELECT gen_random_uuid(),user_id,'ACTIVE',@verifier,@salt,@algorithm,@algorithm_version,@work_factor,
                 @memory_kib,@parallelism,now(),now(),@service_id,@service_id FROM new_user;
+
+            INSERT INTO identity.user_roles (user_role_id,user_id,role_id,assignment_status,assignment_reason_code,
+                assigned_by_service_identity_id,effective_from,created_by_service_identity_id,updated_by_service_identity_id)
+            SELECT gen_random_uuid(),u.user_id,r.role_id,'ACTIVE','I020_API_TEST',@service_id,
+                now()-interval '1 day',@service_id,@service_id
+            FROM identity.users u CROSS JOIN identity.roles r
+            WHERE u.username=@username AND r.role_code='SITE_OPERATOR';
             """;
         await using var connection = new NpgsqlConnection(_database.ConnectionString);
         await connection.OpenAsync();

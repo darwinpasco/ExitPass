@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.ManagementPlatform;
+using ExitPass.CentralPms.Contracts.ManagementPlatform;
 using FluentAssertions;
 using Xunit;
 
@@ -74,6 +75,17 @@ public sealed class HumanAuthenticationPolicySurfaceTests
             .And.NotContain("TotpProvisioningUri")
             .And.NotContain("OneTimeBootstrap");
         typeof(CreateIdentityUserResult).GetProperty("OneTimeBootstrap").Should().NotBeNull();
+    }
+
+    [Fact]
+    public void Create_user_contract_has_optional_descriptive_user_type_and_no_delivery_or_precreation_handoff()
+    {
+        var properties = typeof(CreateIdentityUserRequest).GetProperties().Select(property => property.Name).ToArray();
+
+        properties.Should().Contain("UserType")
+            .And.NotContain("ActivationDeliveryMode")
+            .And.NotContain("AdminIssuedHandoffAcknowledged");
+        typeof(OneTimeHumanBootstrapMaterial).GetProperty("PasswordChangeRequired").Should().NotBeNull();
     }
 
     private static string ReadRepoFile(params string[] path)

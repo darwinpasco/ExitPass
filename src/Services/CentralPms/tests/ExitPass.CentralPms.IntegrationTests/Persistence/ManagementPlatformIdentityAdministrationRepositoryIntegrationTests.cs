@@ -34,17 +34,18 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             new CreateIdentityUserCommand(
                 username, "I-021 User", "i021.user@example.invalid", "***0000",
                 "SITE_OPERATOR", seed.DelegableRoleId, "SITE", seed.SiteId, null,
-                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_TEST_CREATE", "create-user", correlationId),
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_TEST_CREATE", "create-user", correlationId,
+                Bootstrap: BootstrapMaterial()),
             CancellationToken.None);
 
         created.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
-        created.Value!.Status.Should().Be("INVITED");
+        created.Value!.Status.Should().Be("ACTIVE");
         created.Value.MaskedEmail.Should().Be("i***@example.invalid");
         var createdDetail = await repository.GetUserAsync(seed.Actor, created.Value.UserReference, Guid.NewGuid(), CancellationToken.None);
         createdDetail.Value!.RoleAssignments.Should().ContainSingle(item => item.RoleReference == seed.DelegableRoleId);
         createdDetail.Value.ScopeGrants.Should().ContainSingle(item => item.ScopeType == "SITE" && item.SiteReference == seed.SiteId);
         var listed = await repository.ListUsersAsync(
-            seed.Actor, new IdentityUserSearch(0, 10, "INVITED", username), Guid.NewGuid(), CancellationToken.None);
+            seed.Actor, new IdentityUserSearch(0, 10, "ACTIVE", username), Guid.NewGuid(), CancellationToken.None);
         listed.Value.Should().ContainSingle(user => user.UserReference == created.Value.UserReference);
 
         var staleUpdate = await repository.UpdateUserAsync(
@@ -190,11 +191,11 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         var siteResult = await repository.CreateUserAsync(seed.Actor, new CreateIdentityUserCommand(
             siteUsername, "Synthetic Site Rejection", null, null, "SITE_OPERATOR", seed.DelegableRoleId,
             "SITE", syntheticSiteId, null, DateTimeOffset.UtcNow.AddMinutes(-1), null,
-            "I021_SYNTHETIC_REJECTION", "synthetic-site", Guid.NewGuid()), CancellationToken.None);
+            "I021_SYNTHETIC_REJECTION", "synthetic-site", Guid.NewGuid(), Bootstrap: BootstrapMaterial()), CancellationToken.None);
         var groupResult = await repository.CreateUserAsync(seed.Actor, new CreateIdentityUserCommand(
             groupUsername, "Synthetic Group Rejection", null, null, "SITE_OPERATOR", seed.DelegableRoleId,
             "SITE_GROUP", null, syntheticGroupId, DateTimeOffset.UtcNow.AddMinutes(-1), null,
-            "I021_SYNTHETIC_REJECTION", "synthetic-group", Guid.NewGuid()), CancellationToken.None);
+            "I021_SYNTHETIC_REJECTION", "synthetic-group", Guid.NewGuid(), Bootstrap: BootstrapMaterial()), CancellationToken.None);
 
         siteResult.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
         groupResult.Outcome.Should().Be(IdentityAdministrationOutcome.Invalid);
@@ -237,7 +238,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         var result = await repository.CreateUserAsync(seed.Actor, new CreateIdentityUserCommand(
             username, "Real Outside-Ceiling Rejection", null, null, "SITE_OPERATOR", seed.DelegableRoleId,
             "SITE", pitxLevel3Id, null, DateTimeOffset.UtcNow.AddMinutes(-1), null,
-            "I021_REAL_OUTSIDE_REJECTION", "real-outside", Guid.NewGuid()), CancellationToken.None);
+            "I021_REAL_OUTSIDE_REJECTION", "real-outside", Guid.NewGuid(), Bootstrap: BootstrapMaterial()), CancellationToken.None);
 
         result.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
         result.Classification.Should().Be("DELEGATION_CEILING_EXCEEDED");
@@ -262,7 +263,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         var result = await repository.CreateUserAsync(seed.Actor, new CreateIdentityUserCommand(
             username, "Inactive Canonical Rejection", null, null, "SITE_OPERATOR", seed.DelegableRoleId,
             "SITE", seed.SiteId, null, DateTimeOffset.UtcNow.AddMinutes(-1), null,
-            "I021_INACTIVE_REJECTION", "inactive-canonical", Guid.NewGuid()), CancellationToken.None);
+            "I021_INACTIVE_REJECTION", "inactive-canonical", Guid.NewGuid(), Bootstrap: BootstrapMaterial()), CancellationToken.None);
 
         result.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
         result.Classification.Should().Be("DELEGATION_CEILING_EXCEEDED");
@@ -309,7 +310,8 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             new CreateIdentityUserCommand(
                 username, "I-021 Atomic Failure", null, null, "SITE_OPERATOR",
                 seed.DelegableRoleId, "SITE", outsideSiteId, null,
-                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_ATOMIC_FAILURE", "atomic-failure", Guid.NewGuid()),
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_ATOMIC_FAILURE", "atomic-failure", Guid.NewGuid(),
+                Bootstrap: BootstrapMaterial()),
             CancellationToken.None);
 
         result.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
@@ -318,7 +320,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
     }
 
     [Fact]
-    public async Task CreateUser_WhenUserTypeAndRoleAreIncompatible_ReturnsControlledValidationAndCreatesNothing()
+    public async Task CreateUser_UserTypeIsDescriptiveAndDoesNotRestrictRole()
     {
         var seed = await SeedAdministratorAsync();
         var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
@@ -329,13 +331,13 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             new CreateIdentityUserCommand(
                 username, "I-021 Incompatible Role", null, null, "SUPPORT_USER",
                 seed.DelegableRoleId, "SITE", seed.SiteId, null,
-                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_INCOMPATIBLE_ROLE", "incompatible-role", Guid.NewGuid()),
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_INCOMPATIBLE_ROLE", "incompatible-role", Guid.NewGuid(),
+                Bootstrap: BootstrapMaterial()),
             CancellationToken.None);
 
-        result.Outcome.Should().Be(IdentityAdministrationOutcome.Invalid);
-        result.Classification.Should().Be("USER_TYPE_ROLE_INCOMPATIBLE");
-        result.Message.Should().Be("The identity administration request is invalid.");
-        (await CountUsersByUsernameAsync(username)).Should().Be(0);
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        result.Value!.Status.Should().Be("ACTIVE");
+        (await CountUsersByUsernameAsync(username)).Should().Be(1);
     }
 
     [Fact]
@@ -351,7 +353,8 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             new CreateIdentityUserCommand(
                 username, "I-021 Direct Privileged Role", null, null, "INTERNAL_ADMIN",
                 systemAdministratorRoleId, "GLOBAL", null, null,
-                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_DIRECT_PRIVILEGED", "direct-privileged", Guid.NewGuid()),
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_DIRECT_PRIVILEGED", "direct-privileged", Guid.NewGuid(),
+                Bootstrap: BootstrapMaterial()),
             CancellationToken.None);
 
         result.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
@@ -372,7 +375,8 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             new CreateIdentityUserCommand(
                 username, "I-021 Site-scoped Executive", null, null, "OTHER",
                 executiveRoleId, "SITE", seed.SiteId, null,
-                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_EXECUTIVE_SITE", "executive-site", Guid.NewGuid()),
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_EXECUTIVE_SITE", "executive-site", Guid.NewGuid(),
+                Bootstrap: BootstrapMaterial()),
             CancellationToken.None);
 
         result.Outcome.Should().Be(IdentityAdministrationOutcome.Invalid);
@@ -418,7 +422,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
     }
 
     [Fact]
-    public async Task RoleCatalog_IsCanonicalServerFilteredAndDirectAddUserSafe()
+    public async Task RoleCatalog_IsCanonicalAndUserTypeDoesNotFilterDirectAddRoles()
     {
         var seed = await SeedAdministratorAsync();
         var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
@@ -433,14 +437,11 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             role.Code == "OPERATOR_SUPPORT_STAFF" || role.Code == "FINANCE_RECONCILIATION");
 
         var finance = await repository.ListRolesAsync(seed.Actor, new("FINANCE_USER", true), Guid.NewGuid(), CancellationToken.None);
-        finance.Value.Should().ContainSingle();
-        finance.Value!.Single().Code.Should().Be("FINANCE_RECONCILIATION_ANALYST");
-        finance.Value.Single().Name.Should().Be("Finance / Reconciliation Analyst");
-        finance.Value.Single().DirectAddUserEligible.Should().BeTrue();
-        finance.Value.Single().IsPrivileged.Should().BeFalse();
+        finance.Value.Should().Contain(role => role.Code == "FINANCE_RECONCILIATION_ANALYST" &&
+            role.Name == "Finance / Reconciliation Analyst" && role.DirectAddUserEligible && !role.IsPrivileged);
 
         var internalDirect = await repository.ListRolesAsync(seed.Actor, new("INTERNAL_ADMIN", true), Guid.NewGuid(), CancellationToken.None);
-        internalDirect.Value.Should().BeEmpty();
+        internalDirect.Value!.Select(role => role.Code).Should().BeEquivalentTo(finance.Value!.Select(role => role.Code));
     }
 
     [Fact]
@@ -499,7 +500,8 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             new CreateIdentityUserCommand(
                 $"i021.later.{Guid.NewGuid():N}", "I-021 Later Assignment", null, null, "SITE_OPERATOR",
                 seed.DelegableRoleId, "SITE", seed.SiteId, null,
-                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_LATER_TARGET", "later-target", Guid.NewGuid()),
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_LATER_TARGET", "later-target", Guid.NewGuid(),
+                Bootstrap: BootstrapMaterial()),
             CancellationToken.None);
         var supportRoleId = await GetRoleIdAsync("SUPPORT_AGENT");
         var historicalRoleId = await GetRoleIdAsync("OPERATOR_SUPPORT_STAFF");
@@ -548,47 +550,29 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             new CreateIdentityUserCommand(
                 $"i021.lifecycle.{Guid.NewGuid():N}", "I-021 Lifecycle User", null, null, "SITE_OPERATOR",
                 seed.DelegableRoleId, "SITE", seed.SiteId, null,
-                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_LIFECYCLE", "lifecycle-user", Guid.NewGuid()),
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_LIFECYCLE", "lifecycle-user", Guid.NewGuid(),
+                Bootstrap: BootstrapMaterial()),
             CancellationToken.None);
 
-        var bypass = await repository.ChangeUserLifecycleAsync(
+        created.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        created.Value!.Status.Should().Be("ACTIVE");
+        var detail = await repository.GetUserAsync(seed.Actor, created.Value.UserReference, Guid.NewGuid(), CancellationToken.None);
+        detail.Value!.Invitation.Should().BeNull("bootstrap material is returned only by the create operation");
+        detail.Value.RoleAssignments.Should().ContainSingle();
+        detail.Value.ScopeGrants.Should().ContainSingle();
+
+        var redundantActivation = await repository.ChangeUserLifecycleAsync(
             seed.Actor,
             new ChangeIdentityUserLifecycleCommand(created.Value!.UserReference, "ACTIVATE", null, created.Value.RowVersion, "I021_ACTIVATE", Guid.NewGuid()),
             CancellationToken.None);
-        bypass.Outcome.Should().Be(IdentityAdministrationOutcome.Conflict);
-        bypass.Classification.Should().Be("INVITED_ACTIVATION_CHALLENGE_REQUIRED");
+        redundantActivation.Outcome.Should().Be(IdentityAdministrationOutcome.Conflict);
 
-        var challengeTokens = new HumanSessionTokenService();
-        var authentication = new PostgresHumanAuthenticationRepository(_database.ConnectionString, challengeTokens);
-        var supersededChallenge = await authentication.CreateCredentialChallengeAsync(
-            created.Value.UserReference, "ACCOUNT_ACTIVATION", "ACCOUNT_ACTIVATION_ADMIN_ISSUED",
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(30),
-            new HumanAuthenticationOptions().CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
-        (await GetChallengeHashAsync(supersededChallenge.Reference)).Should().Be(challengeTokens.HashSecret(supersededChallenge.Secret));
-        (await GetChallengeHashAsync(supersededChallenge.Reference)).Should().NotBe(supersededChallenge.Secret);
-        var activationChallenge = await authentication.CreateCredentialChallengeAsync(
-            created.Value.UserReference, "ACCOUNT_ACTIVATION", "ACCOUNT_ACTIVATION_EMAIL",
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(30),
-            new HumanAuthenticationOptions().CentralPmsServiceIdentityId, Guid.NewGuid(), CancellationToken.None);
-        (await GetChallengeStatusAsync(supersededChallenge.Reference)).Should().Be("REVOKED");
-
-        var cancelled = await repository.CancelInvitationAsync(
+        var suspended = await repository.ChangeUserLifecycleAsync(
             seed.Actor,
-            new CancelIdentityInvitationCommand(created.Value.UserReference, created.Value.RowVersion, "I021_CANCEL", Guid.NewGuid()),
+            new ChangeIdentityUserLifecycleCommand(created.Value.UserReference, "SUSPEND", null, created.Value.RowVersion, "I021_SUSPEND", Guid.NewGuid()),
             CancellationToken.None);
-        cancelled.Value!.Status.Should().Be("INACTIVE");
-        (await GetChallengeStatusAsync(activationChallenge.Reference)).Should().Be("REVOKED");
-        var cancelledDetail = await repository.GetUserAsync(
-            seed.Actor, created.Value.UserReference, Guid.NewGuid(), CancellationToken.None);
-        cancelledDetail.Value!.Invitation!.InvitationState.Should().Be("CANCELLED");
-        cancelledDetail.Value.Invitation.DeliveryClassification.Should().Be("CANCELLED");
-
-        var cancelledBypass = await repository.ChangeUserLifecycleAsync(
-            seed.Actor,
-            new ChangeIdentityUserLifecycleCommand(created.Value.UserReference, "ACTIVATE", null, cancelled.Value.RowVersion, "I021_INVALID", Guid.NewGuid()),
-            CancellationToken.None);
-        cancelledBypass.Outcome.Should().Be(IdentityAdministrationOutcome.Conflict);
-        cancelledBypass.Classification.Should().Be("ACTIVE_LOCAL_CREDENTIAL_REQUIRED");
+        suspended.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        suspended.Value!.Status.Should().Be("SUSPENDED");
 
         var selfUnlock = await repository.ChangeUserLifecycleAsync(
             seed.Actor,
@@ -609,8 +593,8 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         var sessions = await repository.ListSessionsAsync(seed.Actor, created.Value.UserReference, Guid.NewGuid(), CancellationToken.None);
         sessions.Value.Should().BeEmpty();
         var mfa = await repository.GetMfaStatusAsync(seed.Actor, created.Value.UserReference, Guid.NewGuid(), CancellationToken.None);
-        mfa.Value!.Status.Should().Be("NOT_ENROLLED");
-        mfa.Value.Enrolled.Should().BeFalse();
+        mfa.Value!.Status.Should().Be("ACTIVE");
+        mfa.Value.Enrolled.Should().BeTrue();
     }
 
     [Fact]
@@ -733,7 +717,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
     }
 
     [Fact]
-    public async Task AdminIssuedPasswordRecovery_UsesCanonicalChallengeAndResetRuntimeWithoutChangingAuthority()
+    public async Task LegacyAdminIssuedPasswordChallenge_CannotResetCredentialsWithoutTotp()
     {
         var actor = await SeedAdministratorAsync();
         var target = await SeedAdministratorAsync();
@@ -798,12 +782,12 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             second.Value.OneTimeCredential.ChallengeSecret, "replacement horse battery staple", resetContext,
             CancellationToken.None);
 
-        reset.Response.Outcome.Should().Be("PASSWORD_RESET_COMPLETED");
-        (await GetChallengeStatusAsync(second.Value.ChallengeReference)).Should().Be("CONSUMED");
+        reset.HttpStatusCode.Should().Be(410);
+        reset.Response.ErrorCode.Should().Be("TOTP_RESET_REQUIRED");
+        (await GetChallengeStatusAsync(second.Value.ChallengeReference)).Should().Be("ISSUED");
         (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.local_credentials WHERE user_id=@user_id AND credential_status IN ('ACTIVE','CHANGE_REQUIRED','LOCKED');", target.Actor.UserId)).Should().Be(1);
-        (await ScalarAsync<long>("SELECT credential_version FROM identity.local_credentials WHERE user_id=@user_id;", target.Actor.UserId)).Should().Be(localVersionBefore + 1);
-        (await ScalarAsync<long>("SELECT credential_version FROM identity.users WHERE user_id=@user_id;", target.Actor.UserId)).Should().Be(userVersionBefore + 1);
-        (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.human_sessions WHERE user_id=@user_id AND session_status='ACTIVE';", target.Actor.UserId)).Should().Be(0);
+        (await ScalarAsync<long>("SELECT credential_version FROM identity.local_credentials WHERE user_id=@user_id;", target.Actor.UserId)).Should().Be(localVersionBefore);
+        (await ScalarAsync<long>("SELECT credential_version FROM identity.users WHERE user_id=@user_id;", target.Actor.UserId)).Should().Be(userVersionBefore);
         (await ScalarAsync<string>("SELECT authenticator_status::text FROM identity.user_mfa_authenticators WHERE user_id=@user_id ORDER BY created_at DESC LIMIT 1;", target.Actor.UserId)).Should().Be("ACTIVE");
         (await ScalarAsync<long>("SELECT authorization_epoch FROM identity.users WHERE user_id=@user_id;", target.Actor.UserId)).Should().Be(epochBefore);
         (await ScalarAsync<int>("SELECT count(*)::integer FROM identity.user_roles WHERE user_id=@user_id;", target.Actor.UserId)).Should().Be(roleCountBefore);
@@ -812,7 +796,29 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         var replay = await authentication.ResetPasswordAsync(second.Value.ChallengeReference,
             second.Value.OneTimeCredential.ChallengeSecret, "another replacement battery staple", resetContext,
             CancellationToken.None);
-        replay.Response.ErrorCode.Should().Be("INVALID_OR_EXPIRED_CHALLENGE");
+        replay.Response.ErrorCode.Should().Be("TOTP_RESET_REQUIRED");
+    }
+
+    private static HumanBootstrapPersistenceMaterial BootstrapMaterial()
+    {
+        var options = Options.Create(new HumanAuthenticationOptions());
+        var passwordHash = new Argon2idHumanPasswordHasher(options)
+            .HashAsync(Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24)),
+                CancellationToken.None).GetAwaiter().GetResult();
+        var protector = new AesGcmTotpSecretProtector(Options.Create(new HumanAuthenticationOptions
+        {
+            TotpProtectionKeyBase64 = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+            TotpProtectionKeyReference = "i021-test",
+            TotpProtectionKeyVersion = "1"
+        }));
+        var userId = Guid.NewGuid();
+        var authenticatorId = Guid.NewGuid();
+        var protectedSecret = protector.Protect(userId, authenticatorId,
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(20));
+        return new HumanBootstrapPersistenceMaterial(userId, Guid.NewGuid(), passwordHash,
+            DateTimeOffset.UtcNow.AddHours(HumanAuthenticationOptions.RequiredTemporaryPasswordHours),
+            authenticatorId, protectedSecret, protector.KeyReference,
+            protector.KeyVersion, protector.EnvelopeFormatVersion);
     }
 
     private async Task<SeedContext> SeedAdministratorAsync()

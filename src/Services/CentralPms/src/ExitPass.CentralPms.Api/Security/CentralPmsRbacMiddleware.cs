@@ -40,6 +40,7 @@ public sealed class CentralPmsRbacMiddleware
     {
         var metadata = context.GetEndpoint()?.Metadata.GetMetadata<ReconciliationPolicyMetadata>();
         var policyName = metadata?.PolicyName ?? "HumanPasswordLifecycle";
+        var requiredPermissions = CentralPmsRbacPolicyCatalog.ResolvePermissions(policyName);
         var correlationId = ResolveCorrelationId(context);
         var fixtureHeadersAllowed = (environment.IsDevelopment() || environment.IsEnvironment("SecureDevelopment") || environment.IsEnvironment("Test")) && options.Value.AllowFixtureIdentityHeaders;
         var userId = ResolveGuid(context, fixtureHeadersAllowed ? CentralPmsRbacPolicyCatalog.UserIdHeaderName : null, ClaimTypes.NameIdentifier, "sub", "user_id");
@@ -90,8 +91,6 @@ public sealed class CentralPmsRbacMiddleware
             await _next(context);
             return;
         }
-
-        var requiredPermissions = CentralPmsRbacPolicyCatalog.ResolvePermissions(policyName);
 
         if (userId is null && serviceIdentityId is null && !HasAnyPermissionHeader(context, requiredPermissions, fixtureHeadersAllowed && options.Value.AllowPermissionHeader))
         {

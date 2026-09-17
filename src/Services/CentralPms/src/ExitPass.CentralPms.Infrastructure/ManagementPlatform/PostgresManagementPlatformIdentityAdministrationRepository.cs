@@ -129,11 +129,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         {
             return Invalid<IdentityUserSummary>(command.CorrelationId, "INVALID_EFFECTIVE_WINDOW");
         }
-        if (command.Bootstrap is null)
-        {
-            return Invalid<IdentityUserSummary>(command.CorrelationId, "HUMAN_BOOTSTRAP_REQUIRED");
-        }
-
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         if (!await IsAuthorizedAsync(connection, transaction, actor, UserManagePermission, cancellationToken) ||
@@ -174,15 +169,15 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return Forbidden<IdentityUserSummary>(command.CorrelationId, "DIRECT_ADD_USER_ROLE_REQUIRED");
         }
 
-        if (!IsRoleCompatibleWithUserType(command.UserType, role))
-        {
-            return Invalid<IdentityUserSummary>(command.CorrelationId, "USER_TYPE_ROLE_INCOMPATIBLE");
-        }
-
         if (!await ActorMayDelegateRoleAsync(connection, transaction, actor.UserId, command.InitialRoleReference, cancellationToken) ||
             !await ActorMayDelegateScopeAsync(connection, transaction, actor.UserId, command.InitialScopeType, command.InitialSiteReference, command.InitialSiteGroupReference, cancellationToken))
         {
             return Forbidden<IdentityUserSummary>(command.CorrelationId, "DELEGATION_CEILING_EXCEEDED");
+        }
+
+        if (command.Bootstrap is null)
+        {
+            return Invalid<IdentityUserSummary>(command.CorrelationId, "HUMAN_BOOTSTRAP_REQUIRED");
         }
 
         const string sql = """
@@ -566,10 +561,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
               AND r.role_status = 'ACTIVE'
               AND r.effective_from <= now()
               AND (r.effective_to IS NULL OR r.effective_to > now())
-              AND (@user_type IS NULL OR EXISTS (
-                    SELECT 1 FROM identity.role_user_type_compatibility compatible
-                    WHERE compatible.role_id=r.role_id
-                      AND compatible.user_type::text=@user_type))
               AND (NOT @direct_add_user_only OR (
                     r.direct_add_user_eligible
                     AND NOT r.is_privileged
@@ -579,7 +570,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             """;
         var roles = new List<IdentityRoleDefinition>();
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.Add("user_type", NpgsqlDbType.Text).Value = Db(query.UserType);
         command.Parameters.AddWithValue("approved_role_codes", ApprovedIdentityRoleCatalog.AssignableCodes);
         command.Parameters.AddWithValue("direct_add_user_only", query.DirectAddUserOnly);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -764,11 +754,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             (target.EffectiveTo is not null && target.EffectiveTo <= DateTimeOffset.UtcNow))
         {
             return NotFound<IdentityRoleAssignment>(command.CorrelationId);
-        }
-
-        if (!IsRoleCompatibleWithUserType(target.UserType, role))
-        {
-            return Invalid<IdentityRoleAssignment>(command.CorrelationId, "USER_TYPE_ROLE_INCOMPATIBLE");
         }
 
         // Role assignment and scope grant are separate operations. Executive authority must
@@ -1055,11 +1040,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return Invalid<IdentityPrivilegedAccessRequest>(command.CorrelationId, "ROLE_NOT_HUMAN_ASSIGNABLE");
         }
 
-        if (!IsRoleCompatibleWithUserType(target.UserType, role))
-        {
-            return Invalid<IdentityPrivilegedAccessRequest>(command.CorrelationId, "USER_TYPE_ROLE_INCOMPATIBLE");
-        }
-
         if (!role.IsPrivileged && !role.RequiresElevatedApproval)
         {
             return Invalid<IdentityPrivilegedAccessRequest>(command.CorrelationId, "PRIVILEGED_ROLE_REQUIRED");
@@ -1193,11 +1173,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                 (!approvedRole.IsPrivileged && !approvedRole.RequiresElevatedApproval))
             {
                 return Invalid<IdentityPrivilegedAccessRequest>(command.CorrelationId, "ROLE_NOT_HUMAN_ASSIGNABLE");
-            }
-
-            if (!IsRoleCompatibleWithUserType(target.UserType, approvedRole))
-            {
-                return Invalid<IdentityPrivilegedAccessRequest>(command.CorrelationId, "USER_TYPE_ROLE_INCOMPATIBLE");
             }
 
             if ((request.RequestedScopeType is null && approvedRole.Code == ApprovedIdentityRoleCatalog.ExecutiveManagement) ||
@@ -2141,9 +2116,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             reader.GetFieldValue<DateTimeOffset>(8), GetNullableDateTimeOffset(reader, 9), reader.GetInt64(10),
             reader.GetString(11), reader.GetBoolean(12), reader.GetBoolean(13), reader.GetFieldValue<string[]>(14));
     }
-
-    private static bool IsRoleCompatibleWithUserType(string userType, IdentityRoleDefinition role) =>
-        role.AllowedUserTypes?.Contains(userType.Trim().ToUpperInvariant(), StringComparer.Ordinal) == true;
 
     private static bool IsCanonicalHumanRole(IdentityRoleDefinition role) =>
         role.Provenance == "CANONICAL_ROLE" && role.HumanAssignable &&

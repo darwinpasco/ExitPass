@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.HumanAuthentication;
+using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.HumanAuthentication;
 using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
@@ -70,6 +71,137 @@ public sealed class HumanAuthenticationServiceTests
         result.Response.Authenticated.Should().BeTrue();
         result.Response.Session!.MfaRequired.Should().BeFalse();
         result.Response.AptSessionToken.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Wrong_application_login_fails_closed_before_session_issuance()
+    {
+        var fixture = new Fixture
+        {
+            EffectiveRoleCodes = [ApprovedIdentityRoleCatalog.SiteOperator]
+        };
+        fixture.Login = fixture.CreateLogin(privileged: false);
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.NativeParkingApp);
+
+        result.HttpStatusCode.Should().Be(403);
+        result.Response.ErrorCode.Should().Be("APPLICATION_AUDIENCE_DENIED");
+        await fixture.Repository.DidNotReceiveWithAnyArgs().CreateSessionAsync(
+            default, default, default!, default, default, default, default, default!, default, default,
+            default, default, default, default, default!, default);
+    }
+
+    [Fact]
+    public async Task Unknown_role_policy_fails_closed_before_session_issuance()
+    {
+        var fixture = new Fixture { EffectiveRoleCodes = ["UNKNOWN_ROLE"] };
+        fixture.Login = fixture.CreateLogin(privileged: false);
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.OperatorConsole);
+
+        result.HttpStatusCode.Should().Be(403);
+        result.Response.ErrorCode.Should().Be("APPLICATION_AUDIENCE_POLICY_UNKNOWN");
+    }
+
+    [Fact]
+    public async Task Unavailable_role_policy_fails_closed_before_session_issuance()
+    {
+        var fixture = new Fixture();
+        fixture.Login = fixture.CreateLogin(privileged: false);
+        fixture.Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+                Arg.Any<CancellationToken>())
+            .Returns<EffectiveHumanAuthorization>(_ => throw new InvalidOperationException("unavailable"));
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.OperatorConsole);
+
+        result.HttpStatusCode.Should().Be(503);
+        result.Response.ErrorCode.Should().Be("APPLICATION_AUDIENCE_POLICY_UNAVAILABLE");
+        result.Response.Retryable.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Continue_session_rechecks_application_audience_before_rotation()
+    {
+        var fixture = new Fixture { EffectiveRoleCodes = [ApprovedIdentityRoleCatalog.SiteOperator] };
+        var token = fixture.Tokens.Create();
+        var now = DateTimeOffset.UtcNow;
+        fixture.Repository.FindSessionAsync(token.SessionReference, Arg.Any<CancellationToken>()).Returns(
+            Fixture.Session(Guid.NewGuid(), token.SessionReference, HumanSessionAudiences.NativeParkingApp,
+                null, false, null, null, "PASSWORD", now, now.AddMinutes(15), now.AddHours(8),
+                Guid.NewGuid(), false) with { SessionSecretHash = fixture.Tokens.HashSecret(token.Secret) });
+
+        var result = await fixture.Service.ContinueSessionAsync(token.SerializedToken, fixture.Context(),
+            CancellationToken.None);
+
+        result.Response.ErrorCode.Should().Be("APPLICATION_AUDIENCE_DENIED");
+        await fixture.Repository.DidNotReceiveWithAnyArgs().RotateSessionAsync(
+            default!, default!, default, default, default, default!, default, default, default, default,
+            default);
+    }
+
+    [Fact]
+    public async Task Fresh_authentication_rechecks_application_audience_before_rotation()
+    {
+        var fixture = new Fixture { EffectiveRoleCodes = [ApprovedIdentityRoleCatalog.SiteOperator] };
+        fixture.Login = fixture.CreateLogin(privileged: false);
+        var token = fixture.Tokens.Create();
+        var now = DateTimeOffset.UtcNow;
+        fixture.Repository.FindSessionAsync(token.SessionReference, Arg.Any<CancellationToken>()).Returns(
+            Fixture.Session(fixture.Login.UserId, token.SessionReference, HumanSessionAudiences.NativeParkingApp,
+                null, false, null, null, "PASSWORD", now, now.AddMinutes(15), now.AddHours(8),
+                Guid.NewGuid(), false) with { SessionSecretHash = fixture.Tokens.HashSecret(token.Secret) });
+
+        var result = await fixture.Service.FreshAuthenticateAsync(token.SerializedToken, "valid-password", null,
+            fixture.Context(), CancellationToken.None);
+
+        result.Response.ErrorCode.Should().Be("APPLICATION_AUDIENCE_DENIED");
+        await fixture.Repository.DidNotReceiveWithAnyArgs().RotateSessionAsync(
+            default!, default!, default, default, default, default!, default, default, default, default,
+            default);
+    }
+
+    [Fact]
+    public async Task Operations_supervisor_operator_session_keeps_assigned_site_and_excludes_management_statutory_authority()
+    {
+        var fixture = new Fixture { EffectiveRoleCodes = [ApprovedIdentityRoleCatalog.OperationsSupervisor] };
+        fixture.Login = fixture.CreateLogin(privileged: true);
+        fixture.Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+                Arg.Any<CancellationToken>())
+            .Returns(_ => new EffectiveHumanAuthorization(
+                ["shift.manage", "statutory-discounts.decision.approve"], [fixture.SiteId], [], false,
+                fixture.EffectiveRoleCodes));
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.OperatorConsole);
+
+        result.Response.Authenticated.Should().BeTrue();
+        result.Response.Session!.Permissions.Should().Contain("shift.manage");
+        result.Response.Session.Permissions.Should().NotContain("statutory-discounts.decision.approve");
+        result.Response.Session.SiteReferences.Should().Equal(fixture.SiteId);
+        result.Response.Session.HasGlobalScope.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Operations_supervisor_management_session_exposes_statutory_permission_without_global_operational_scope()
+    {
+        var fixture = new Fixture(totpSucceeds: true)
+        {
+            EffectiveRoleCodes = [ApprovedIdentityRoleCatalog.OperationsSupervisor]
+        };
+        fixture.Login = fixture.CreateLogin(privileged: true, fixture.Authenticator);
+        fixture.Repository.TryRecordTotpSuccessAsync(Arg.Any<Guid>(), Arg.Any<long>(), Arg.Any<long>(),
+            Arg.Any<DateTimeOffset>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(true);
+        fixture.Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+                Arg.Any<CancellationToken>())
+            .Returns(_ => new EffectiveHumanAuthorization(
+                ["statutory-discounts.decision.approve"], [fixture.SiteId], [], false,
+                fixture.EffectiveRoleCodes));
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.ManagementPlatform, "123456");
+
+        result.Response.Authenticated.Should().BeTrue();
+        result.Response.Session!.Permissions.Should().Contain("statutory-discounts.decision.approve");
+        result.Response.Session.SiteReferences.Should().Equal(fixture.SiteId);
+        result.Response.Session.HasGlobalScope.Should().BeFalse();
     }
 
     [Fact]
@@ -184,6 +316,32 @@ public sealed class HumanAuthenticationServiceTests
         result.Response.Outcome.Should().Be(HumanAuthenticationOutcomes.PasswordChangeRequired);
         result.Response.Session!.PasswordChangeRequired.Should().BeTrue();
         result.Response.Session.Permissions.Should().BeEmpty();
+        result.Response.Session.SiteReferences.Should().BeEmpty();
+        result.Response.Session.SiteGroupReferences.Should().BeEmpty();
+        result.Response.Session.HasGlobalScope.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Password_change_required_session_never_acquires_normal_authority_when_policy_is_unavailable()
+    {
+        var fixture = new Fixture();
+        var login = fixture.CreateLogin(privileged: false, fixture.Authenticator);
+        fixture.Login = login with
+        {
+            Credential = login.Credential! with
+            {
+                Status = "CHANGE_REQUIRED",
+                TemporaryPasswordExpiresAt = DateTimeOffset.UtcNow.AddHours(1)
+            }
+        };
+        fixture.Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+                Arg.Any<CancellationToken>())
+            .Returns<EffectiveHumanAuthorization>(_ => throw new InvalidOperationException("unavailable"));
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.OperatorConsole);
+
+        result.Response.Outcome.Should().Be(HumanAuthenticationOutcomes.PasswordChangeRequired);
+        result.Response.Session!.Permissions.Should().BeEmpty();
         result.Response.Session.SiteReferences.Should().BeEmpty();
         result.Response.Session.SiteGroupReferences.Should().BeEmpty();
         result.Response.Session.HasGlobalScope.Should().BeFalse();
@@ -439,7 +597,8 @@ public sealed class HumanAuthenticationServiceTests
         var fixture = new Fixture();
         fixture.Login = fixture.CreateLogin(privileged: false);
         fixture.Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
-            .Returns(new EffectiveHumanAuthorization([], [], [], false));
+            .Returns(new EffectiveHumanAuthorization([], [], [], false,
+                [ApprovedIdentityRoleCatalog.SiteOperator]));
 
         var result = await fixture.LoginAsync(HumanSessionAudiences.OperatorConsole);
 
@@ -775,6 +934,7 @@ public sealed class HumanAuthenticationServiceTests
         public readonly Guid SiteId = Guid.NewGuid();
         public readonly TotpAuthenticatorRecord Authenticator = new(Guid.NewGuid(), "ACTIVE", new byte[48], "test", "1", 1, null, 1);
         public HumanLoginRecord? Login { get; set; }
+        public IReadOnlyList<string> EffectiveRoleCodes { get; set; } = ApprovedIdentityRoleCatalog.AssignableCodes;
         public HumanAuthenticationService Service { get; }
 
         public Fixture(bool passwordSucceeds = true, bool totpSucceeds = false, TimeProvider? timeProvider = null)
@@ -790,7 +950,9 @@ public sealed class HumanAuthenticationServiceTests
             Totp.Verify(Arg.Any<byte[]>(), Arg.Any<string>(), Arg.Any<DateTimeOffset>()).Returns(new TotpVerificationResult(totpSucceeds, totpSucceeds ? 123 : null));
             Repository.FindLocalLoginAsync(Arg.Any<string>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>()).Returns(_ => Login);
             Repository.CountRecentFailedAttemptsAsync(Arg.Any<Guid?>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<string>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>()).Returns(0);
-            Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>()).Returns(new EffectiveHumanAuthorization(["test.permission"], [SiteId], [], false));
+            Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+                .Returns(_ => new EffectiveHumanAuthorization(["test.permission"], [SiteId], [], false,
+                    EffectiveRoleCodes));
             Repository.CreateSessionAsync(Arg.Any<Guid>(), Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<Guid?>(), Arg.Any<bool>(), Arg.Any<Guid?>(), Arg.Any<DateTimeOffset?>(), Arg.Any<string>(), Arg.Any<long>(), Arg.Any<long>(), Arg.Any<DateTimeOffset>(), Arg.Any<DateTimeOffset>(), Arg.Any<DateTimeOffset>(), Arg.Any<Guid>(), Arg.Any<SessionCredential>(), Arg.Any<CancellationToken>())
                 .Returns(call =>
                 {

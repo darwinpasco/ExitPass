@@ -5,7 +5,6 @@ public sealed record CreateIdentityUserRequest(
     string DisplayName,
     string? Email,
     string? MaskedMobileNumber,
-    string UserType,
     Guid InitialRoleReference,
     string InitialScopeType,
     Guid? InitialSiteReference,
@@ -14,8 +13,7 @@ public sealed record CreateIdentityUserRequest(
     DateTimeOffset? EffectiveTo,
     string ReasonCode,
     string IdempotencyKey,
-    string ActivationDeliveryMode,
-    bool AdminIssuedHandoffAcknowledged = false);
+    string? UserType = null);
 
 public sealed record UpdateIdentityUserRequest(
     string DisplayName,

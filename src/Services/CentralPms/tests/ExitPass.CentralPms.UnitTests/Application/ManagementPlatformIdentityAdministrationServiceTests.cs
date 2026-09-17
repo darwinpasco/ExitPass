@@ -30,7 +30,7 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
         protector.KeyVersion.Returns("1");
         protector.EnvelopeFormatVersion.Returns((short)1);
         protector.Protect(Arg.Any<Guid>(), Arg.Any<Guid>(), Arg.Any<byte[]>()).Returns(new byte[48]);
-        var command = CreateInvitation(null, ActivationDeliveryModes.AdminIssued, true);
+        var command = CreateInvitation(null);
         repository.CreateUserAsync(Actor, Arg.Any<CreateIdentityUserCommand>(), Arg.Any<CancellationToken>())
             .Returns(call =>
             {
@@ -49,6 +49,7 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
         result.Value.OneTimeBootstrap!.TemporaryPassword.Should().StartWith("Ep1!");
         result.Value.OneTimeBootstrap.TotpSharedSecret.Should().Be("TOTP-SHARED-SECRET");
         result.Value.OneTimeBootstrap.TemporaryPasswordExpiresAt.Should().Be(issuedAt.AddHours(72));
+        result.Value.OneTimeBootstrap.PasswordChangeRequired.Should().BeTrue();
         await repository.Received(1).CreateUserAsync(Actor,
             Arg.Is<CreateIdentityUserCommand>(value => value.Bootstrap != null &&
                 value.Bootstrap.TemporaryPasswordExpiresAt == issuedAt.AddHours(72)),
@@ -68,7 +69,7 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
             Options.Create(new HumanAuthenticationOptions()), TimeProvider.System, passwords, totp, protector);
 
         var result = await service.CreateInvitedUserAsync(Actor,
-            CreateInvitation(null, ActivationDeliveryModes.AdminIssued, true), CancellationToken.None);
+            CreateInvitation(null), CancellationToken.None);
 
         result.Classification.Should().Be("HUMAN_BOOTSTRAP_CRYPTOGRAPHY_UNAVAILABLE");
         await repository.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default);
@@ -120,6 +121,54 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
 
         result.Should().BeSameAs(expected);
         await repository.Received(1).GetDelegableScopesAsync(Actor, correlationId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ListRoles_ProjectsAuthoritativeApplicationAndScopePolicy()
+    {
+        var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
+        var service = new ManagementPlatformIdentityAdministrationService(
+            repository, Substitute.For<IHumanAuthenticationAdministrationGateway>());
+        var correlationId = Guid.NewGuid();
+        var role = RoleDefinition(ApprovedIdentityRoleCatalog.OperationsSupervisor);
+        repository.ListRolesAsync(Actor, Arg.Any<IdentityRoleCatalogQuery>(), correlationId,
+                Arg.Any<CancellationToken>())
+            .Returns(IdentityAdministrationResult<IReadOnlyList<IdentityRoleDefinition>>.Succeeded(
+                [role], correlationId));
+
+        var result = await service.ListRolesAsync(Actor, new("SITE_OPERATOR", false), correlationId,
+            CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        result.Value.Should().ContainSingle();
+        result.Value![0].ApplicationAccess.Should().BeEquivalentTo(
+            ApprovedIdentityRoleCatalog.ManagementPlatformAudience,
+            ApprovedIdentityRoleCatalog.OperatorConsoleAudience);
+        result.Value[0].ScopePolicy.Should().BeEquivalentTo(new IdentityRoleScopePolicy(
+            [ApprovedIdentityRoleCatalog.SiteScope], true, ApprovedIdentityRoleCatalog.SiteScope));
+        await repository.Received(1).ListRolesAsync(Actor,
+            Arg.Is<IdentityRoleCatalogQuery>(query => query.UserType == null), correlationId,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ListRoles_UnknownRoleFailsClosedWithoutPartialCatalog()
+    {
+        var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
+        var service = new ManagementPlatformIdentityAdministrationService(
+            repository, Substitute.For<IHumanAuthenticationAdministrationGateway>());
+        var correlationId = Guid.NewGuid();
+        repository.ListRolesAsync(Actor, Arg.Any<IdentityRoleCatalogQuery>(), correlationId,
+                Arg.Any<CancellationToken>())
+            .Returns(IdentityAdministrationResult<IReadOnlyList<IdentityRoleDefinition>>.Succeeded(
+                [RoleDefinition("UNKNOWN_ROLE")], correlationId));
+
+        var result = await service.ListRolesAsync(Actor, new(null, false), correlationId,
+            CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.IntegrationUnavailable);
+        result.Classification.Should().Be("IDENTITY_ROLE_POLICY_UNAVAILABLE");
+        result.Value.Should().BeNull();
     }
 
     [Fact]
@@ -275,10 +324,13 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
         await gateway.DidNotReceiveWithAnyArgs().ChangeMfaAsync(default!, default!, default);
     }
 
-    private static CreateIdentityUserCommand CreateInvitation(string? email, string mode, bool acknowledged) =>
+    private static CreateIdentityUserCommand CreateInvitation(string? email) =>
         new("operator01", "Operator One", email, null, "SITE_OPERATOR", Guid.NewGuid(), "SITE",
-            Guid.NewGuid(), null, DateTimeOffset.UtcNow, null, "ONBOARDING", "invite-1", Guid.NewGuid(),
-            mode, acknowledged);
+            Guid.NewGuid(), null, DateTimeOffset.UtcNow, null, "ONBOARDING", "invite-1", Guid.NewGuid());
+
+    private static IdentityRoleDefinition RoleDefinition(string code) =>
+        new(Guid.NewGuid(), code, code, null, "SYSTEM", "ACTIVE", false, false,
+            DateTimeOffset.UtcNow.AddDays(-1), null, 1, "CANONICAL_ROLE", true, true, []);
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {

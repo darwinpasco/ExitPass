@@ -86,7 +86,7 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
         var provisioningUri = _totpProvider.BuildProvisioningUri(normalized.Username, totpSecret);
         var protectedSecret = _totpProtector.Protect(userReference, authenticatorReference, totpSecret);
         CryptographicOperations.ZeroMemory(totpSecret);
-        var expiresAt = now.AddHours(_authenticationOptions.TemporaryPasswordHours);
+        var expiresAt = now.AddHours(HumanAuthenticationOptions.RequiredTemporaryPasswordHours);
         normalized = normalized with
         {
             Bootstrap = new HumanBootstrapPersistenceMaterial(userReference, Guid.NewGuid(), passwordHash, expiresAt,
@@ -100,7 +100,7 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
             return Propagate<CreateIdentityUserResult, IdentityUserSummary>(created);
         }
 
-        var invitation = new IdentityInvitationStatus("PASSWORD_CHANGE_REQUIRED", "ADMIN_ISSUED", null,
+        var invitation = new IdentityInvitationStatus("PASSWORD_CHANGE_REQUIRED", null, null,
             null, now, expiresAt, "ONE_TIME_BOOTSTRAP");
         return IdentityAdministrationResult<CreateIdentityUserResult>.Succeeded(
             new(created.Value, invitation, null,
@@ -161,14 +161,41 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
                 command.CorrelationId, mode, command.AdminIssuedHandoffAcknowledged), cancellationToken);
     }
 
-    public Task<IdentityAdministrationResult<IReadOnlyList<IdentityRoleDefinition>>> ListRolesAsync(
-        IdentityAdministrationActor actor, IdentityRoleCatalogQuery query, Guid correlationId, CancellationToken cancellationToken) =>
-        _repository.ListRolesAsync(actor, query with
+    public async Task<IdentityAdministrationResult<IReadOnlyList<IdentityRoleDefinition>>> ListRolesAsync(
+        IdentityAdministrationActor actor, IdentityRoleCatalogQuery query, Guid correlationId, CancellationToken cancellationToken)
+    {
+        var result = await _repository.ListRolesAsync(actor, query with { UserType = null }, correlationId, cancellationToken);
+        if (result.Outcome != IdentityAdministrationOutcome.Success || result.Value is null) return result;
+
+        var projected = new List<IdentityRoleDefinition>(result.Value.Count);
+        foreach (var role in result.Value)
         {
-            UserType = string.IsNullOrWhiteSpace(query.UserType)
-                ? null
-                : RequireUserType(query.UserType, nameof(query.UserType))
-        }, correlationId, cancellationToken);
+            if (!ApprovedIdentityRoleCatalog.TryGetPolicy(role.Code, out var policy) ||
+                policy is null ||
+                policy.AllowedApplicationAudiences.Count == 0 ||
+                policy.AllowedAssignmentScopes.Count == 0 ||
+                (policy.DefaultAssignmentScope is not null &&
+                 !policy.AllowedAssignmentScopes.Contains(policy.DefaultAssignmentScope, StringComparer.OrdinalIgnoreCase)))
+            {
+                return IdentityAdministrationResult<IReadOnlyList<IdentityRoleDefinition>>.Failed(
+                    IdentityAdministrationOutcome.IntegrationUnavailable,
+                    "IDENTITY_ROLE_POLICY_UNAVAILABLE",
+                    "The authoritative role policy is unavailable.",
+                    correlationId);
+            }
+
+            projected.Add(role with
+            {
+                ApplicationAccess = policy.AllowedApplicationAudiences.ToArray(),
+                ScopePolicy = new IdentityRoleScopePolicy(
+                    policy.AllowedAssignmentScopes.ToArray(),
+                    AssignmentRequired: true,
+                    DefaultScope: policy.DefaultAssignmentScope)
+            });
+        }
+
+        return result with { Value = projected };
+    }
 
     public Task<IdentityAdministrationResult<IReadOnlyList<IdentityPermissionDefinition>>> ListPermissionsAsync(
         IdentityAdministrationActor actor, Guid correlationId, CancellationToken cancellationToken) =>
@@ -357,8 +384,7 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
         InitialRoleReference = RequireReference(command.InitialRoleReference),
         InitialScopeType = RequireCode(command.InitialScopeType, nameof(command.InitialScopeType)),
         ReasonCode = RequireCode(command.ReasonCode, nameof(command.ReasonCode)),
-        IdempotencyKey = RequireText(command.IdempotencyKey, 128, nameof(command.IdempotencyKey)),
-        ActivationDeliveryMode = RequireCode(command.ActivationDeliveryMode, nameof(command.ActivationDeliveryMode))
+        IdempotencyKey = RequireText(command.IdempotencyKey, 128, nameof(command.IdempotencyKey))
     };
 
     private IdentityAdministrationResult<T>? ValidateActivationDelivery<T>(
