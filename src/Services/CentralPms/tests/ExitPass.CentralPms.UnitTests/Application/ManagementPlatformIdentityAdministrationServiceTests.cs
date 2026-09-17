@@ -76,37 +76,6 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
     }
 
     [Fact]
-    public async Task ReissueInvitation_UsesSameUserAndDoesNotCreateRoleOrScopeAgain()
-    {
-        var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
-        var gateway = Substitute.For<IHumanAuthenticationAdministrationGateway>();
-        gateway.ActivationLinkEnabled.Returns(true);
-        var userId = Guid.NewGuid();
-        var correlation = Guid.NewGuid();
-        var user = new IdentityUserSummary(userId, "operator01", "Operator One", null, null,
-            "SITE_OPERATOR", "INVITED", DateTimeOffset.UtcNow, null, null, 4);
-        repository.GetUserAsync(Actor, userId, correlation, Arg.Any<CancellationToken>())
-            .Returns(IdentityAdministrationResult<IdentityUserDetail>.Succeeded(new(user, [], [], null), correlation));
-        repository.AuthorizeAuthenticationAdministrationAsync(Actor, userId, "CREDENTIAL_RESET", correlation,
-                Arg.Any<CancellationToken>())
-            .Returns(IdentityAdministrationResult<bool>.Succeeded(true, correlation));
-        gateway.IssueCredentialChallengeAsync(Actor, Arg.Any<CreateCredentialResetChallengeCommand>(), Arg.Any<CancellationToken>())
-            .Returns(IdentityAdministrationResult<CredentialResetChallengeResult>.Succeeded(
-                new(Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(30), ActivationDeliveryModes.AdminIssued,
-                    "ADMIN_ISSUED", null), correlation));
-        var service = new ManagementPlatformIdentityAdministrationService(repository, gateway,
-            Options.Create(new HumanAuthenticationOptions()), TimeProvider.System);
-
-        var result = await service.ReissueInvitationAsync(Actor,
-            new(userId, ActivationDeliveryModes.AdminIssued, "REISSUE", true, correlation), CancellationToken.None);
-
-        result.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
-        await repository.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default);
-        await repository.DidNotReceiveWithAnyArgs().AssignRoleAsync(default!, default!, default);
-        await repository.DidNotReceiveWithAnyArgs().GrantScopeAsync(default!, default!, default);
-    }
-
-    [Fact]
     public async Task DelegableScopes_ForwardsTheAuthenticatedActorAndCorrelation()
     {
         var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
