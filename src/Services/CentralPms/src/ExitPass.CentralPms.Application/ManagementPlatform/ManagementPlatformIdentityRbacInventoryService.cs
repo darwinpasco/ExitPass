@@ -37,9 +37,9 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
     private static IReadOnlyList<ManagementPlatformRoleBundle> BuildRoleBundles() =>
     [
         new(
-            "system-rbac-administrator",
-            "System / RBAC Administrator",
-            "Owns identity and access administration, role/permission governance, assignments, and access audit visibility.",
+            "system-administrator",
+            "System Administrator",
+            "Owns identity, access, device, shift, site, POS Server/fiscal, connector, and platform configuration administration; grants no business workflow authority.",
             [
                 "user.view",
                 "user.manage",
@@ -51,48 +51,28 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
                 "permission.manage",
                 "assignment.view",
                 "assignment.manage",
-                "access-audit.view"
+                "access-audit.view",
+                "site.view", "site.manage", "site-group.view", "site-group.manage",
+                "device.view", "device.manage", "device-binding.view", "device-binding.manage",
+                "shift.view", "shift.manage", "pos-server-config.view", "pos-server-config.manage",
+                "connector-config.view", "connector-config.manage", "platform-config.view", "platform-config.manage"
             ],
             [
                 "No automatic statutory discount approval.",
                 "No automatic Sales Invoice void authority.",
-                "Business workflow permissions must be separately granted."
+                "No inherited cashier, operator, finance, compliance, or other business workflow authority."
             ],
             "ExitPass Management Platform -> Identity & RBAC Administration"),
         new(
-            "platform-administrator",
-            "Platform Administrator",
-            "Manages operational platform configuration for sites, devices, POS Server assignments, connectors, readiness, and UAT setup.",
-            [
-                "site.view",
-                "site.manage",
-                "site-group.view",
-                "site-group.manage",
-                "device.view",
-                "device.manage",
-                "device-binding.view",
-                "device-binding.manage",
-                "shift.view",
-                "shift.manage",
-                "pos-server-config.view",
-                "pos-server-config.manage",
-                "connector-config.view",
-                "connector-config.manage",
-                "operational-monitoring.view"
-            ],
-            [
-                "No user/RBAC administration unless separately granted.",
-                "No statutory discount approval unless separately granted.",
-                "No Sales Invoice void authority unless separately granted."
-            ],
-            "ExitPass Management Platform -> Central PMS Admin / Platform Configuration"),
-        new(
             "operations-supervisor",
             "Operations Supervisor",
-            "Supervises operational workflows and approves or rejects statutory privilege eligibility without applying payable-basis changes.",
+            "Combines site operations, operational exception, shift, and statutory discount supervision in one role.",
             [
+                "statutory-discounts.session.lookup",
                 "statutory-discounts.draft.view",
+                "statutory-discounts.draft.create",
                 "statutory-discounts.evidence.view",
+                "statutory-discounts.evidence.capture",
                 "statutory-discounts.evidence.review.view",
                 "statutory-discounts.review.queue.read",
                 "statutory-discounts.review.detail.read",
@@ -101,7 +81,8 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
                 "statutory-discounts.decision.reject",
                 "fiscal-issuance.status.read",
                 "fiscal-issuance.void.command",
-                "operator-workflow-audit.view"
+                "operator-workflow-audit.view",
+                "shift.view", "shift.manage", "projection-health.view", "vendor-acknowledgments.view"
             ],
             [
                 "No user/RBAC administration.",
@@ -109,11 +90,11 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
                 "No payable-basis application authority.",
                 "Requester cannot approve their own statutory discount."
             ],
-            "Operator Console for workflow; Management Platform for supervisor reports"),
+            "Operator Console and Management Platform; assigned-site operations, all-site statutory supervision"),
         new(
-            "operator-support-staff",
-            "Operator / Support Staff",
-            "Performs site-scoped operational lookup and support workflows.",
+            "site-operator",
+            "Site Operator",
+            "Combines site operation, support, and statutory discount processing at assigned sites.",
             [
                 "statutory-discounts.session.lookup",
                 "statutory-discounts.draft.view",
@@ -124,12 +105,24 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
                 "ticket.lookup"
             ],
             [
-                "Cannot approve own statutory discount.",
+                "Cannot approve or reject statutory discounts.",
                 "No payable-basis apply unless separately granted.",
                 "No Sales Invoice void unless separately granted.",
                 "No admin/RBAC/configuration authority."
             ],
             "Operator Console"),
+        new(
+            "parking-attendant", "Parking Attendant",
+            "Performs assigned-site and assigned-device parking tasks.",
+            ["parking-attendant.operate"],
+            ["No Operator Console, APT, or Management Platform authority."],
+            "Native Parking App"),
+        new(
+            "apt-cashier-operator", "APT / Cashier Operator",
+            "Performs assigned-site and assigned-terminal cashier operations.",
+            ["apt.cashier.operate"],
+            ["No Operator Console, Native Parking App, or Management Platform authority."],
+            "APT"),
         new(
             "finance-reconciliation-analyst",
             "Finance / Reconciliation Analyst",
@@ -202,7 +195,7 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
                 "No Sales Invoice void.",
                 "No user/RBAC/platform configuration administration."
             ],
-            "ExitPass Management Platform -> Management Dashboard & Reporting")
+            "ExitPass Management Platform -> Management Dashboard & Reporting; Global scope only")
     ];
 
     private static IReadOnlyList<ManagementPlatformPolicyMapping> BuildPolicyMappings() =>

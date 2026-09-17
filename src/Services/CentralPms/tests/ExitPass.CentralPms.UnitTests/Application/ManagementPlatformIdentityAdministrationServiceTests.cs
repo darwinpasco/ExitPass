@@ -12,126 +12,67 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
     private static readonly IdentityAdministrationActor Actor = new(Guid.NewGuid(), Guid.NewGuid());
 
     [Fact]
-    public async Task CreateInvitedUser_EmailRequiresUsableAddressBeforePersistence()
+    public async Task CreateUser_GeneratesTemporaryPasswordAndTotpForEveryHuman()
     {
+        var issuedAt = new DateTimeOffset(2026, 9, 17, 12, 0, 0, TimeSpan.Zero);
         var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
         var gateway = Substitute.For<IHumanAuthenticationAdministrationGateway>();
-        gateway.ActivationLinkEnabled.Returns(true);
-        gateway.EmailDeliveryEnabled.Returns(true);
-        var service = new ManagementPlatformIdentityAdministrationService(repository, gateway,
-            Options.Create(new HumanAuthenticationOptions()), TimeProvider.System);
-        var command = CreateInvitation(null, ActivationDeliveryModes.Email, false);
-
-        var result = await service.CreateInvitedUserAsync(Actor, command, CancellationToken.None);
-
-        result.Classification.Should().Be("ACTIVATION_EMAIL_REQUIRED");
-        await repository.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default);
-    }
-
-    [Fact]
-    public async Task CreateInvitedUser_AdminIssuedAllowsNoEmailAndReturnsOneTimeMaterial()
-    {
-        var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
-        var gateway = Substitute.For<IHumanAuthenticationAdministrationGateway>();
-        gateway.ActivationLinkEnabled.Returns(true);
-        var command = CreateInvitation(null, ActivationDeliveryModes.AdminIssued, true);
-        var user = new IdentityUserSummary(Guid.NewGuid(), "operator01", "Operator One", null, null,
-            "SITE_OPERATOR", "INVITED", DateTimeOffset.UtcNow, null, null, 1);
+        var passwords = Substitute.For<IHumanPasswordHasher>();
+        var totp = Substitute.For<ITotpProvider>();
+        var protector = Substitute.For<ITotpSecretProtector>();
+        passwords.HashAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(
+            new PasswordHashMaterial(new byte[32], new byte[16], "ARGON2ID", 19, 3, 65536, 1));
+        totp.GenerateSecret().Returns(new byte[20]);
+        totp.EncodeSecret(Arg.Any<byte[]>()).Returns("TOTP-SHARED-SECRET");
+        totp.BuildProvisioningUri("operator01", Arg.Any<byte[]>()).Returns("otpauth://totp/ExitPass:operator01");
+        protector.IsConfigured.Returns(true);
+        protector.KeyReference.Returns("test-key");
+        protector.KeyVersion.Returns("1");
+        protector.EnvelopeFormatVersion.Returns((short)1);
+        protector.Protect(Arg.Any<Guid>(), Arg.Any<Guid>(), Arg.Any<byte[]>()).Returns(new byte[48]);
+        var command = CreateInvitation(null);
         repository.CreateUserAsync(Actor, Arg.Any<CreateIdentityUserCommand>(), Arg.Any<CancellationToken>())
-            .Returns(IdentityAdministrationResult<IdentityUserSummary>.Succeeded(user, command.CorrelationId));
-        var challengeReference = Guid.NewGuid();
-        var material = new OneTimeActivationMaterial(challengeReference, "one-time-secret",
-            DateTimeOffset.UtcNow.AddMinutes(30), "https://accounts.example.test/account/activate?challenge", "qr");
-        gateway.IssueCredentialChallengeAsync(Actor, Arg.Any<CreateCredentialResetChallengeCommand>(), Arg.Any<CancellationToken>())
-            .Returns(call => IdentityAdministrationResult<CredentialResetChallengeResult>.Succeeded(
-                new(challengeReference, call.ArgAt<CreateCredentialResetChallengeCommand>(1).ExpiresAt,
-                    ActivationDeliveryModes.AdminIssued, "ADMIN_ISSUED", material), command.CorrelationId));
+            .Returns(call =>
+            {
+                var persisted = call.ArgAt<CreateIdentityUserCommand>(1);
+                var user = new IdentityUserSummary(persisted.Bootstrap!.UserReference, "operator01", "Operator One",
+                    null, null, "SITE_OPERATOR", "ACTIVE", DateTimeOffset.UtcNow, null, null, 1);
+                return IdentityAdministrationResult<IdentityUserSummary>.Succeeded(user, command.CorrelationId);
+            });
         var service = new ManagementPlatformIdentityAdministrationService(repository, gateway,
-            Options.Create(new HumanAuthenticationOptions()), TimeProvider.System);
+            Options.Create(new HumanAuthenticationOptions()), new FixedTimeProvider(issuedAt), passwords, totp, protector);
 
         var result = await service.CreateInvitedUserAsync(Actor, command, CancellationToken.None);
 
         result.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
-        result.Value!.User.Should().Be(user);
-        result.Value.OneTimeActivation.Should().Be(material);
-        await gateway.Received(1).IssueCredentialChallengeAsync(Actor,
-            Arg.Is<CreateCredentialResetChallengeCommand>(value => value.Purpose == "ACCOUNT_ACTIVATION" &&
-                value.DeliveryMode == ActivationDeliveryModes.AdminIssued && value.AdminIssuedHandoffAcknowledged),
+        result.Value!.Invitation.InvitationState.Should().Be("PASSWORD_CHANGE_REQUIRED");
+        result.Value.OneTimeBootstrap!.TemporaryPassword.Should().StartWith("Ep1!");
+        result.Value.OneTimeBootstrap.TotpSharedSecret.Should().Be("TOTP-SHARED-SECRET");
+        result.Value.OneTimeBootstrap.TemporaryPasswordExpiresAt.Should().Be(issuedAt.AddHours(72));
+        result.Value.OneTimeBootstrap.PasswordChangeRequired.Should().BeTrue();
+        await repository.Received(1).CreateUserAsync(Actor,
+            Arg.Is<CreateIdentityUserCommand>(value => value.Bootstrap != null &&
+                value.Bootstrap.TemporaryPasswordExpiresAt == issuedAt.AddHours(72)),
             Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task CreateInvitedUser_EmailConfigurationUnavailableFailsBeforePersistence()
+    public async Task CreateUser_FailsClosedWhenTotpProtectionIsUnavailable()
     {
         var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
         var gateway = Substitute.For<IHumanAuthenticationAdministrationGateway>();
-        gateway.ActivationLinkEnabled.Returns(true);
-        gateway.EmailDeliveryEnabled.Returns(false);
+        var passwords = Substitute.For<IHumanPasswordHasher>();
+        var totp = Substitute.For<ITotpProvider>();
+        var protector = Substitute.For<ITotpSecretProtector>();
+        protector.IsConfigured.Returns(false);
         var service = new ManagementPlatformIdentityAdministrationService(repository, gateway,
-            Options.Create(new HumanAuthenticationOptions()), TimeProvider.System);
+            Options.Create(new HumanAuthenticationOptions()), TimeProvider.System, passwords, totp, protector);
 
         var result = await service.CreateInvitedUserAsync(Actor,
-            CreateInvitation("operator@example.test", ActivationDeliveryModes.Email, false), CancellationToken.None);
+            CreateInvitation(null), CancellationToken.None);
 
-        result.Classification.Should().Be("CREDENTIAL_CHALLENGE_EMAIL_DELIVERY_NOT_CONFIGURED");
+        result.Classification.Should().Be("HUMAN_BOOTSTRAP_CRYPTOGRAPHY_UNAVAILABLE");
         await repository.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default);
-    }
-
-    [Fact]
-    public async Task CreateInvitedUser_EmailDeliveryFailureLeavesPersistedInvitationAvailableForReissue()
-    {
-        var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
-        var gateway = Substitute.For<IHumanAuthenticationAdministrationGateway>();
-        gateway.ActivationLinkEnabled.Returns(true);
-        gateway.EmailDeliveryEnabled.Returns(true);
-        var command = CreateInvitation("operator@example.test", ActivationDeliveryModes.Email, false);
-        var user = new IdentityUserSummary(Guid.NewGuid(), "operator01", "Operator One", "o***@example.test", null,
-            "SITE_OPERATOR", "INVITED", DateTimeOffset.UtcNow, null, null, 1);
-        repository.CreateUserAsync(Actor, Arg.Any<CreateIdentityUserCommand>(), Arg.Any<CancellationToken>())
-            .Returns(IdentityAdministrationResult<IdentityUserSummary>.Succeeded(user, command.CorrelationId));
-        gateway.IssueCredentialChallengeAsync(Actor, Arg.Any<CreateCredentialResetChallengeCommand>(), Arg.Any<CancellationToken>())
-            .Returns(IdentityAdministrationResult<CredentialResetChallengeResult>.Failed(
-                IdentityAdministrationOutcome.IntegrationUnavailable, "CREDENTIAL_CHALLENGE_DELIVERY_FAILED",
-                "Invitation delivery failed.", command.CorrelationId));
-        var service = new ManagementPlatformIdentityAdministrationService(repository, gateway,
-            Options.Create(new HumanAuthenticationOptions()), TimeProvider.System);
-
-        var result = await service.CreateInvitedUserAsync(Actor, command, CancellationToken.None);
-
-        result.Classification.Should().Be("CREDENTIAL_CHALLENGE_DELIVERY_FAILED");
-        await repository.Received(1).CreateUserAsync(Actor, Arg.Any<CreateIdentityUserCommand>(), Arg.Any<CancellationToken>());
-        await repository.DidNotReceiveWithAnyArgs().CancelInvitationAsync(default!, default!, default);
-    }
-
-    [Fact]
-    public async Task ReissueInvitation_UsesSameUserAndDoesNotCreateRoleOrScopeAgain()
-    {
-        var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
-        var gateway = Substitute.For<IHumanAuthenticationAdministrationGateway>();
-        gateway.ActivationLinkEnabled.Returns(true);
-        var userId = Guid.NewGuid();
-        var correlation = Guid.NewGuid();
-        var user = new IdentityUserSummary(userId, "operator01", "Operator One", null, null,
-            "SITE_OPERATOR", "INVITED", DateTimeOffset.UtcNow, null, null, 4);
-        repository.GetUserAsync(Actor, userId, correlation, Arg.Any<CancellationToken>())
-            .Returns(IdentityAdministrationResult<IdentityUserDetail>.Succeeded(new(user, [], [], null), correlation));
-        repository.AuthorizeAuthenticationAdministrationAsync(Actor, userId, "CREDENTIAL_RESET", correlation,
-                Arg.Any<CancellationToken>())
-            .Returns(IdentityAdministrationResult<bool>.Succeeded(true, correlation));
-        gateway.IssueCredentialChallengeAsync(Actor, Arg.Any<CreateCredentialResetChallengeCommand>(), Arg.Any<CancellationToken>())
-            .Returns(IdentityAdministrationResult<CredentialResetChallengeResult>.Succeeded(
-                new(Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(30), ActivationDeliveryModes.AdminIssued,
-                    "ADMIN_ISSUED", null), correlation));
-        var service = new ManagementPlatformIdentityAdministrationService(repository, gateway,
-            Options.Create(new HumanAuthenticationOptions()), TimeProvider.System);
-
-        var result = await service.ReissueInvitationAsync(Actor,
-            new(userId, ActivationDeliveryModes.AdminIssued, "REISSUE", true, correlation), CancellationToken.None);
-
-        result.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
-        await repository.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default);
-        await repository.DidNotReceiveWithAnyArgs().AssignRoleAsync(default!, default!, default);
-        await repository.DidNotReceiveWithAnyArgs().GrantScopeAsync(default!, default!, default);
     }
 
     [Fact]
@@ -149,6 +90,54 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
 
         result.Should().BeSameAs(expected);
         await repository.Received(1).GetDelegableScopesAsync(Actor, correlationId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ListRoles_ProjectsAuthoritativeApplicationAndScopePolicy()
+    {
+        var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
+        var service = new ManagementPlatformIdentityAdministrationService(
+            repository, Substitute.For<IHumanAuthenticationAdministrationGateway>());
+        var correlationId = Guid.NewGuid();
+        var role = RoleDefinition(ApprovedIdentityRoleCatalog.OperationsSupervisor);
+        repository.ListRolesAsync(Actor, Arg.Any<IdentityRoleCatalogQuery>(), correlationId,
+                Arg.Any<CancellationToken>())
+            .Returns(IdentityAdministrationResult<IReadOnlyList<IdentityRoleDefinition>>.Succeeded(
+                [role], correlationId));
+
+        var result = await service.ListRolesAsync(Actor, new("SITE_OPERATOR", false), correlationId,
+            CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        result.Value.Should().ContainSingle();
+        result.Value![0].ApplicationAccess.Should().BeEquivalentTo(
+            ApprovedIdentityRoleCatalog.ManagementPlatformAudience,
+            ApprovedIdentityRoleCatalog.OperatorConsoleAudience);
+        result.Value[0].ScopePolicy.Should().BeEquivalentTo(new IdentityRoleScopePolicy(
+            [ApprovedIdentityRoleCatalog.SiteScope], true, ApprovedIdentityRoleCatalog.SiteScope));
+        await repository.Received(1).ListRolesAsync(Actor,
+            Arg.Is<IdentityRoleCatalogQuery>(query => query.UserType == null), correlationId,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ListRoles_UnknownRoleFailsClosedWithoutPartialCatalog()
+    {
+        var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
+        var service = new ManagementPlatformIdentityAdministrationService(
+            repository, Substitute.For<IHumanAuthenticationAdministrationGateway>());
+        var correlationId = Guid.NewGuid();
+        repository.ListRolesAsync(Actor, Arg.Any<IdentityRoleCatalogQuery>(), correlationId,
+                Arg.Any<CancellationToken>())
+            .Returns(IdentityAdministrationResult<IReadOnlyList<IdentityRoleDefinition>>.Succeeded(
+                [RoleDefinition("UNKNOWN_ROLE")], correlationId));
+
+        var result = await service.ListRolesAsync(Actor, new(null, false), correlationId,
+            CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.IntegrationUnavailable);
+        result.Classification.Should().Be("IDENTITY_ROLE_POLICY_UNAVAILABLE");
+        result.Value.Should().BeNull();
     }
 
     [Fact]
@@ -304,8 +293,16 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
         await gateway.DidNotReceiveWithAnyArgs().ChangeMfaAsync(default!, default!, default);
     }
 
-    private static CreateIdentityUserCommand CreateInvitation(string? email, string mode, bool acknowledged) =>
+    private static CreateIdentityUserCommand CreateInvitation(string? email) =>
         new("operator01", "Operator One", email, null, "SITE_OPERATOR", Guid.NewGuid(), "SITE",
-            Guid.NewGuid(), null, DateTimeOffset.UtcNow, null, "ONBOARDING", "invite-1", Guid.NewGuid(),
-            mode, acknowledged);
+            Guid.NewGuid(), null, DateTimeOffset.UtcNow, null, "ONBOARDING", "invite-1", Guid.NewGuid());
+
+    private static IdentityRoleDefinition RoleDefinition(string code) =>
+        new(Guid.NewGuid(), code, code, null, "SYSTEM", "ACTIVE", false, false,
+            DateTimeOffset.UtcNow.AddDays(-1), null, 1, "CANONICAL_ROLE", true, true, []);
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
 }

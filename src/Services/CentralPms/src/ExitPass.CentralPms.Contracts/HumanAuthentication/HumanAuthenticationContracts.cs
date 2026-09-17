@@ -23,7 +23,11 @@ public sealed record HumanPasswordChangeRequest(
     string NewPassword,
     string? TotpCode = null);
 
-public sealed record HumanPasswordResetRequest(Guid ChallengeReference, string ChallengeSecret, string NewPassword);
+public sealed record HumanPasswordResetRequest(
+    string Username,
+    string TotpCode,
+    string NewPassword,
+    string? ExpiredTemporaryPassword = null);
 
 public sealed record HumanActivationRequest(Guid ChallengeReference, string ChallengeSecret, string NewPassword);
 

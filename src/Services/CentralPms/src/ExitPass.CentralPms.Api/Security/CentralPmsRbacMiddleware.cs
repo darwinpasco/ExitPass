@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.Common;
 using Microsoft.Extensions.Options;
@@ -38,13 +39,7 @@ public sealed class CentralPmsRbacMiddleware
         ILogger<CentralPmsRbacMiddleware> logger)
     {
         var metadata = context.GetEndpoint()?.Metadata.GetMetadata<ReconciliationPolicyMetadata>();
-        if (metadata is null || !options.Value.Enabled)
-        {
-            await _next(context);
-            return;
-        }
-
-        var policyName = metadata.PolicyName;
+        var policyName = metadata?.PolicyName ?? "HumanPasswordLifecycle";
         var requiredPermissions = CentralPmsRbacPolicyCatalog.ResolvePermissions(policyName);
         var correlationId = ResolveCorrelationId(context);
         var fixtureHeadersAllowed = (environment.IsDevelopment() || environment.IsEnvironment("SecureDevelopment") || environment.IsEnvironment("Test")) && options.Value.AllowFixtureIdentityHeaders;
@@ -55,19 +50,45 @@ public sealed class CentralPmsRbacMiddleware
             "service_identity_id",
             "client_id");
 
+        var humanAudience = context.User.Identity?.IsAuthenticated == true
+            ? context.User.FindFirst("exitpass_audience")?.Value
+            : null;
+        if (humanAudience is not null &&
+            requiredPermissions.Any(permission =>
+                !ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, humanAudience)))
+        {
+            await DenyAsync(
+                context,
+                repository,
+                logger,
+                StatusCodes.Status403Forbidden,
+                "APPLICATION_PERMISSION_BOUNDARY_DENIED",
+                "The required permission is not available in this application.",
+                policyName,
+                userId,
+                serviceIdentityId,
+                correlationId);
+            return;
+        }
+
         var restrictedHumanSession =
             context.User.Identity?.IsAuthenticated == true &&
             (string.Equals(context.User.FindFirst("password_change_required")?.Value, "true", StringComparison.OrdinalIgnoreCase) ||
              (string.Equals(context.User.FindFirst("exitpass_audience")?.Value, "MANAGEMENT_PLATFORM", StringComparison.OrdinalIgnoreCase) &&
-              string.Equals(context.User.FindFirst("privileged_account")?.Value, "true", StringComparison.OrdinalIgnoreCase) &&
               !string.Equals(context.User.FindFirst("mfa_satisfied")?.Value, "true", StringComparison.OrdinalIgnoreCase)));
 
-        if (restrictedHumanSession)
+        if (restrictedHumanSession && !IsHumanPasswordLifecyclePath(context.Request.Path))
         {
             await DenyAsync(context, repository, logger, StatusCodes.Status403Forbidden,
                 "HUMAN_SESSION_ASSURANCE_REQUIRED",
                 "The current human session does not satisfy the required authentication assurance.",
                 policyName, userId, serviceIdentityId, correlationId);
+            return;
+        }
+
+        if (metadata is null || !options.Value.Enabled)
+        {
+            await _next(context);
             return;
         }
 
@@ -165,6 +186,24 @@ public sealed class CentralPmsRbacMiddleware
 
     private static bool IsServicePolicy(string policyName) =>
         string.Equals(policyName, "EventOutboxDispatcher", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsHumanPasswordLifecyclePath(PathString path)
+    {
+        if (path.StartsWithSegments("/v1/apt/human-sessions", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var value = path.Value ?? string.Empty;
+        return value.Equals("/v1/human-authentication/login", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("/v1/human-authentication/session", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("/v1/human-authentication/session/continue", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("/v1/human-authentication/logout", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("/v1/human-authentication/logout-all", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("/v1/human-authentication/reauthenticate", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("/v1/human-authentication/password/change", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("/v1/human-authentication/password-resets", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool HasAnyClaimPermission(ClaimsPrincipal principal, IReadOnlyList<string> requiredPermissions)
     {

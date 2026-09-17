@@ -21,7 +21,7 @@ public static class ManagementPlatformIdentityAdministrationEndpoints
         group.MapGet("/users", async (HttpRequest request, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, string? status, string? query, int? offset, int? limit, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.ListUsersAsync(actor, new(offset ?? 0, limit ?? 50, status, query), correlation, ct)));
         group.MapPost("/users", async (HttpRequest request, CreateIdentityUserRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
-            await ExecuteAsync(request, actors, (actor, correlation) => service.CreateInvitedUserAsync(actor, new(body.Username, body.DisplayName, body.Email, body.MaskedMobileNumber, body.UserType, body.InitialRoleReference, body.InitialScopeType, body.InitialSiteReference, body.InitialSiteGroupReference, body.EffectiveFrom, body.EffectiveTo, body.ReasonCode, body.IdempotencyKey, correlation, body.ActivationDeliveryMode, body.AdminIssuedHandoffAcknowledged), ct)));
+            await ExecuteAsync(request, actors, (actor, correlation) => service.CreateInvitedUserAsync(actor, new(body.Username, body.DisplayName, body.Email, body.MaskedMobileNumber, body.UserType ?? "OTHER", body.InitialRoleReference, body.InitialScopeType, body.InitialSiteReference, body.InitialSiteGroupReference, body.EffectiveFrom, body.EffectiveTo, body.ReasonCode, body.IdempotencyKey, correlation), ct)));
         group.MapGet("/users/{userReference:guid}", async (HttpRequest request, Guid userReference, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.GetUserAsync(actor, userReference, correlation, ct)));
         group.MapPatch("/users/{userReference:guid}", async (HttpRequest request, Guid userReference, UpdateIdentityUserRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
@@ -33,16 +33,6 @@ public static class ManagementPlatformIdentityAdministrationEndpoints
         MapLifecycle(group, "retire", "RETIRE");
         MapLifecycle(group, "lock", "LOCK");
         MapLifecycle(group, "unlock", "UNLOCK");
-
-        group.MapPost("/users/{userReference:guid}/credential-reset-challenges", async (HttpRequest request, Guid userReference, CredentialResetChallengeRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, IOptions<HumanAuthenticationOptions> authenticationOptions, TimeProvider timeProvider, CancellationToken ct) =>
-        {
-            var expiresAt = body.ExpiresAt ?? timeProvider.GetUtcNow().AddMinutes(authenticationOptions.Value.CredentialChallengeMinutes);
-            return await ExecuteAsync(request, actors, (actor, correlation) => service.IssueCredentialChallengeAsync(actor, new(userReference, body.Purpose, expiresAt, body.ReasonCode, correlation, body.DeliveryMode, body.AdminIssuedHandoffAcknowledged), ct));
-        });
-        group.MapPost("/users/{userReference:guid}/invitation/reissue", async (HttpRequest request, Guid userReference, ReissueIdentityInvitationRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
-            await ExecuteAsync(request, actors, (actor, correlation) => service.ReissueInvitationAsync(actor, new(userReference, body.ActivationDeliveryMode, body.ReasonCode, body.AdminIssuedHandoffAcknowledged, correlation), ct)));
-        group.MapPost("/users/{userReference:guid}/invitation/cancel", async (HttpRequest request, Guid userReference, CancelIdentityInvitationRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
-            await ExecuteAsync(request, actors, (actor, correlation) => service.CancelInvitationAsync(actor, new(userReference, body.ExpectedRowVersion, body.ReasonCode, correlation), ct)));
 
         group.MapGet("/roles", async (HttpRequest request, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, string? userType, bool? directAddUserOnly, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.ListRolesAsync(actor, new(userType, directAddUserOnly ?? false), correlation, ct)));
@@ -79,10 +69,6 @@ public static class ManagementPlatformIdentityAdministrationEndpoints
 
         group.MapGet("/users/{userReference:guid}/mfa-status", async (HttpRequest request, Guid userReference, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.GetMfaStatusAsync(actor, userReference, correlation, ct)));
-        group.MapPost("/users/{userReference:guid}/mfa-authenticators/reset", async (HttpRequest request, Guid userReference, ChangeIdentityMfaRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
-            await ExecuteAsync(request, actors, (actor, correlation) => service.ChangeMfaAsync(actor, new(userReference, "RESET", body.ExpectedRowVersion, body.ReasonCode, correlation), ct)));
-        group.MapPost("/users/{userReference:guid}/mfa-authenticators/remove", async (HttpRequest request, Guid userReference, ChangeIdentityMfaRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
-            await ExecuteAsync(request, actors, (actor, correlation) => service.ChangeMfaAsync(actor, new(userReference, "REMOVE", body.ExpectedRowVersion, body.ReasonCode, correlation), ct)));
 
         group.MapGet("/users/{userReference:guid}/audit-events", async (HttpRequest request, Guid userReference, int? limit, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.ListAuditEventsAsync(actor, userReference, limit ?? 100, correlation, ct)));

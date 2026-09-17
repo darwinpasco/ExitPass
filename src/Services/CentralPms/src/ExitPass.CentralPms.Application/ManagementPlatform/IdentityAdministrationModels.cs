@@ -1,3 +1,5 @@
+using ExitPass.CentralPms.Application.HumanAuthentication;
+
 namespace ExitPass.CentralPms.Application.ManagementPlatform;
 
 public sealed record IdentityAdministrationActor(Guid UserId, Guid HumanSessionId);
@@ -74,7 +76,26 @@ public sealed record OneTimeActivationMaterial(
 public sealed record CreateIdentityUserResult(
     IdentityUserSummary User,
     IdentityInvitationStatus Invitation,
-    OneTimeActivationMaterial? OneTimeActivation);
+    OneTimeActivationMaterial? OneTimeActivation,
+    OneTimeHumanBootstrapMaterial? OneTimeBootstrap = null);
+
+public sealed record OneTimeHumanBootstrapMaterial(
+    string TemporaryPassword,
+    DateTimeOffset TemporaryPasswordExpiresAt,
+    string TotpSharedSecret,
+    string TotpProvisioningUri,
+    bool PasswordChangeRequired = true);
+
+public sealed record HumanBootstrapPersistenceMaterial(
+    Guid UserReference,
+    Guid CredentialReference,
+    PasswordHashMaterial PasswordHash,
+    DateTimeOffset TemporaryPasswordExpiresAt,
+    Guid AuthenticatorReference,
+    byte[] ProtectedTotpSecret,
+    string ProtectionKeyReference,
+    string ProtectionKeyVersion,
+    short EnvelopeFormatVersion);
 
 public sealed record IdentityRoleDefinition(
     Guid RoleReference,
@@ -91,7 +112,14 @@ public sealed record IdentityRoleDefinition(
     string Provenance = "HISTORICAL_LEGACY_ROLE",
     bool DirectAddUserEligible = false,
     bool HumanAssignable = false,
-    IReadOnlyList<string>? AllowedUserTypes = null);
+    IReadOnlyList<string>? AllowedUserTypes = null,
+    IReadOnlyList<string>? ApplicationAccess = null,
+    IdentityRoleScopePolicy? ScopePolicy = null);
+
+public sealed record IdentityRoleScopePolicy(
+    IReadOnlyList<string> AllowedScopeTypes,
+    bool AssignmentRequired,
+    string? DefaultScope = null);
 
 public sealed record IdentityRoleCatalogQuery(string? UserType, bool DirectAddUserOnly);
 
@@ -229,8 +257,7 @@ public sealed record CreateIdentityUserCommand(
     string ReasonCode,
     string IdempotencyKey,
     Guid CorrelationId,
-    string ActivationDeliveryMode = ActivationDeliveryModes.Email,
-    bool AdminIssuedHandoffAcknowledged = false);
+    HumanBootstrapPersistenceMaterial? Bootstrap = null);
 
 public sealed record UpdateIdentityUserCommand(
     Guid UserReference,

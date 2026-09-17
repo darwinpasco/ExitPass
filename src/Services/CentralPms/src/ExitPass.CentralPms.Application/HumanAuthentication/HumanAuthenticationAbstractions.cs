@@ -82,6 +82,7 @@ public interface IHumanAuthenticationService
     Task<HumanAuthenticationResult> LogoutAllAsync(string token, HumanAuthenticationContext context, CancellationToken cancellationToken);
     Task<HumanAuthenticationResult> FreshAuthenticateAsync(string token, string password, string? totpCode, HumanAuthenticationContext context, CancellationToken cancellationToken);
     Task<HumanAuthenticationResult> ChangePasswordAsync(string token, string currentPassword, string newPassword, string? totpCode, HumanAuthenticationContext context, CancellationToken cancellationToken);
+    Task<HumanAuthenticationResult> ResetPasswordWithTotpAsync(string username, string? expiredTemporaryPassword, string totpCode, string newPassword, HumanAuthenticationContext context, CancellationToken cancellationToken);
     Task<TotpEnrollmentResult> BeginTotpEnrollmentAsync(string token, HumanAuthenticationContext context, CancellationToken cancellationToken);
     Task<TotpEnrollmentResult> RestartTotpEnrollmentAsync(string token, HumanAuthenticationContext context, CancellationToken cancellationToken);
     Task<TotpEnrollmentResult> ConfirmTotpEnrollmentAsync(string token, string code, HumanAuthenticationContext context, CancellationToken cancellationToken);

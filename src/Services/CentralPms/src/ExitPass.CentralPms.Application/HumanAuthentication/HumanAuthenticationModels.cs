@@ -7,9 +7,10 @@ public static class HumanSessionAudiences
     public const string ManagementPlatform = "MANAGEMENT_PLATFORM";
     public const string OperatorConsole = "OPERATOR_CONSOLE";
     public const string Apt = "APT";
+    public const string NativeParkingApp = "NATIVE_PARKING_APP";
 
     public static bool IsWeb(string audience) =>
-        audience is ManagementPlatform or OperatorConsole;
+        audience is ManagementPlatform or OperatorConsole or NativeParkingApp;
 
     public static bool IsKnown(string audience) =>
         IsWeb(audience) || audience == Apt;
@@ -48,7 +49,8 @@ public sealed record LocalCredentialRecord(
     int? MemoryKiB,
     short? Parallelism,
     long CredentialVersion,
-    long RowVersion);
+    long RowVersion,
+    DateTimeOffset? TemporaryPasswordExpiresAt = null);
 
 public sealed record TotpAuthenticatorRecord(
     Guid AuthenticatorId,
@@ -114,7 +116,8 @@ public sealed record EffectiveHumanAuthorization(
     IReadOnlyList<string> Permissions,
     IReadOnlyList<Guid> SiteIds,
     IReadOnlyList<Guid> SiteGroupIds,
-    bool HasGlobalScope);
+    bool HasGlobalScope,
+    IReadOnlyList<string>? EffectiveRoleCodes = null);
 
 public sealed record SessionCredential(Guid SessionReference, string Secret, string SerializedToken);
 

@@ -129,7 +129,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         {
             return Invalid<IdentityUserSummary>(command.CorrelationId, "INVALID_EFFECTIVE_WINDOW");
         }
-
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         if (!await IsAuthorizedAsync(connection, transaction, actor, UserManagePermission, cancellationToken) ||
@@ -144,11 +143,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return Invalid<IdentityUserSummary>(command.CorrelationId, "INVALID_SCOPE_SHAPE");
         }
 
-        if (command.InitialScopeType == "GLOBAL")
-        {
-            return Forbidden<IdentityUserSummary>(command.CorrelationId, "GLOBAL_SCOPE_POLICY_NOT_APPROVED");
-        }
-
         var role = await ReadRoleAsync(connection, transaction, command.InitialRoleReference, cancellationToken);
         if (role is null)
         {
@@ -158,6 +152,11 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         if (!IsCanonicalHumanRole(role) || !RoleIsEffective(role))
         {
             return Invalid<IdentityUserSummary>(command.CorrelationId, "ROLE_NOT_HUMAN_ASSIGNABLE");
+        }
+
+        if (!ApprovedIdentityRoleCatalog.IsScopeAllowed(role.Code, command.InitialScopeType))
+        {
+            return Invalid<IdentityUserSummary>(command.CorrelationId, "ROLE_SCOPE_INCOMPATIBLE");
         }
 
         if (role.IsPrivileged || role.RequiresElevatedApproval)
@@ -170,15 +169,15 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return Forbidden<IdentityUserSummary>(command.CorrelationId, "DIRECT_ADD_USER_ROLE_REQUIRED");
         }
 
-        if (!IsRoleCompatibleWithUserType(command.UserType, role))
-        {
-            return Invalid<IdentityUserSummary>(command.CorrelationId, "USER_TYPE_ROLE_INCOMPATIBLE");
-        }
-
         if (!await ActorMayDelegateRoleAsync(connection, transaction, actor.UserId, command.InitialRoleReference, cancellationToken) ||
             !await ActorMayDelegateScopeAsync(connection, transaction, actor.UserId, command.InitialScopeType, command.InitialSiteReference, command.InitialSiteGroupReference, cancellationToken))
         {
             return Forbidden<IdentityUserSummary>(command.CorrelationId, "DELEGATION_CEILING_EXCEEDED");
+        }
+
+        if (command.Bootstrap is null)
+        {
+            return Invalid<IdentityUserSummary>(command.CorrelationId, "HUMAN_BOOTSTRAP_REQUIRED");
         }
 
         const string sql = """
@@ -187,8 +186,8 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                 user_type, user_status, effective_from, effective_to,
                 created_by_user_id, updated_by_user_id)
             VALUES (
-                gen_random_uuid(), @username, @email, @email_normalized, @display_name, @mobile,
-                @user_type::identity.user_type_enum, 'INVITED', @effective_from, @effective_to,
+                @user_id, @username, @email, @email_normalized, @display_name, @mobile,
+                @user_type::identity.user_type_enum, 'ACTIVE', @effective_from, @effective_to,
                 @actor_user_id, @actor_user_id)
             RETURNING user_id;
             """;
@@ -197,6 +196,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         try
         {
             await using var insert = new NpgsqlCommand(sql, connection, transaction);
+            insert.Parameters.AddWithValue("user_id", command.Bootstrap.UserReference);
             insert.Parameters.AddWithValue("username", command.Username);
             insert.Parameters.Add("email", NpgsqlDbType.Text).Value = Db(command.Email?.Trim());
             insert.Parameters.Add("email_normalized", NpgsqlDbType.Text).Value = Db(command.Email?.Trim().ToLowerInvariant());
@@ -213,6 +213,8 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             await transaction.RollbackAsync(cancellationToken);
             return Conflict<IdentityUserSummary>(command.CorrelationId, "IDENTITY_USER_ALREADY_EXISTS", "The requested user identifier conflicts with an existing identity.");
         }
+
+        await InsertHumanBootstrapAsync(connection, transaction, command.Bootstrap, actor.UserId, cancellationToken);
 
         const string roleSql = """
             INSERT INTO identity.user_roles (
@@ -256,13 +258,59 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         scopeInsert.Parameters.AddWithValue("actor_user_id", actor.UserId);
         var grantId = (Guid)(await scopeInsert.ExecuteScalarAsync(cancellationToken))!;
 
-        await InsertAuditAsync(connection, transaction, "USER_CREATED", "SUCCESS", command.ReasonCode, "IdentityUser", userId, actor.UserId, command.CorrelationId, "A human identity was invited.", cancellationToken);
+        await InsertAuditAsync(connection, transaction, "USER_CREATED", "SUCCESS", command.ReasonCode, "IdentityUser", userId, actor.UserId, command.CorrelationId, "A human identity was created with a password change required credential.", cancellationToken);
         await InsertAuditAsync(connection, transaction, "ROLE_ASSIGNED", "SUCCESS", command.ReasonCode, "UserRole", assignmentId, actor.UserId, command.CorrelationId, "A bounded role assignment was activated.", cancellationToken);
-        var scopeEventType = command.InitialScopeType == "SITE" ? "SITE_SCOPE_GRANTED" : "SITE_GROUP_SCOPE_GRANTED";
+        var scopeEventType = ScopeGrantedEventType(command.InitialScopeType);
         await InsertAuditAsync(connection, transaction, scopeEventType, "SUCCESS", command.ReasonCode, "UserRoleScopeGrant", grantId, actor.UserId, command.CorrelationId, "An assignment-scoped authorization grant was activated.", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         var created = await ReadUserAsync(connection, null, userId, cancellationToken);
         return IdentityAdministrationResult<IdentityUserSummary>.Succeeded(created!, command.CorrelationId, "CREATED");
+    }
+
+    private static async Task InsertHumanBootstrapAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        HumanBootstrapPersistenceMaterial bootstrap,
+        Guid actorUserId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO identity.local_credentials (
+                local_credential_id, user_id, credential_status, password_verifier, verifier_salt,
+                verifier_algorithm_code, verifier_algorithm_version, verifier_work_factor,
+                verifier_memory_kib, verifier_parallelism, temporary_password_expires_at, activated_at, last_changed_at,
+                created_by_user_id, updated_by_user_id)
+            VALUES (@credential_id, @user_id, 'CHANGE_REQUIRED', @verifier, @salt, @algorithm,
+                @algorithm_version, @work_factor, @memory_kib, @parallelism, @expires_at, now(), now(),
+                @actor_user_id, @actor_user_id);
+
+            INSERT INTO identity.user_mfa_authenticators (
+                user_mfa_authenticator_id, user_id, authenticator_type, authenticator_status,
+                protected_secret_envelope, protection_key_reference, protection_key_version,
+                envelope_format_version, enrollment_started_at, activated_at,
+                created_by_user_id, updated_by_user_id)
+            VALUES (@authenticator_id, @user_id, 'TOTP', 'ACTIVE', @protected_secret,
+                @key_reference, @key_version, @format_version, now(), now(),
+                @actor_user_id, @actor_user_id);
+            """;
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("credential_id", bootstrap.CredentialReference);
+        command.Parameters.AddWithValue("user_id", bootstrap.UserReference);
+        command.Parameters.AddWithValue("verifier", bootstrap.PasswordHash.Verifier);
+        command.Parameters.AddWithValue("salt", bootstrap.PasswordHash.Salt);
+        command.Parameters.AddWithValue("algorithm", bootstrap.PasswordHash.AlgorithmCode);
+        command.Parameters.AddWithValue("algorithm_version", bootstrap.PasswordHash.AlgorithmVersion);
+        command.Parameters.AddWithValue("work_factor", bootstrap.PasswordHash.Iterations);
+        command.Parameters.AddWithValue("memory_kib", bootstrap.PasswordHash.MemoryKiB);
+        command.Parameters.AddWithValue("parallelism", bootstrap.PasswordHash.Parallelism);
+        command.Parameters.AddWithValue("expires_at", bootstrap.TemporaryPasswordExpiresAt);
+        command.Parameters.AddWithValue("authenticator_id", bootstrap.AuthenticatorReference);
+        command.Parameters.AddWithValue("protected_secret", bootstrap.ProtectedTotpSecret);
+        command.Parameters.AddWithValue("key_reference", bootstrap.ProtectionKeyReference);
+        command.Parameters.AddWithValue("key_version", bootstrap.ProtectionKeyVersion);
+        command.Parameters.AddWithValue("format_version", bootstrap.EnvelopeFormatVersion);
+        command.Parameters.AddWithValue("actor_user_id", actorUserId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<IdentityAdministrationResult<IdentityUserSummary>> UpdateUserAsync(
@@ -507,15 +555,12 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                        FILTER (WHERE c.user_type IS NOT NULL), ARRAY[]::text[])
             FROM identity.roles r
             LEFT JOIN identity.role_user_type_compatibility c ON c.role_id = r.role_id
-            WHERE r.role_provenance = 'CANONICAL_ROLE'
+            WHERE r.role_code = ANY(@approved_role_codes)
+              AND r.role_provenance = 'CANONICAL_ROLE'
               AND r.human_assignable
               AND r.role_status = 'ACTIVE'
               AND r.effective_from <= now()
               AND (r.effective_to IS NULL OR r.effective_to > now())
-              AND (@user_type IS NULL OR EXISTS (
-                    SELECT 1 FROM identity.role_user_type_compatibility compatible
-                    WHERE compatible.role_id=r.role_id
-                      AND compatible.user_type::text=@user_type))
               AND (NOT @direct_add_user_only OR (
                     r.direct_add_user_eligible
                     AND NOT r.is_privileged
@@ -525,7 +570,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             """;
         var roles = new List<IdentityRoleDefinition>();
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.Add("user_type", NpgsqlDbType.Text).Value = Db(query.UserType);
+        command.Parameters.AddWithValue("approved_role_codes", ApprovedIdentityRoleCatalog.AssignableCodes);
         command.Parameters.AddWithValue("direct_add_user_only", query.DirectAddUserOnly);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -711,9 +756,11 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return NotFound<IdentityRoleAssignment>(command.CorrelationId);
         }
 
-        if (!IsRoleCompatibleWithUserType(target.UserType, role))
+        // Role assignment and scope grant are separate operations. Executive authority must
+        // never exist with a non-Global or absent scope, so use atomic create instead.
+        if (role.Code == ApprovedIdentityRoleCatalog.ExecutiveManagement)
         {
-            return Invalid<IdentityRoleAssignment>(command.CorrelationId, "USER_TYPE_ROLE_INCOMPATIBLE");
+            return Invalid<IdentityRoleAssignment>(command.CorrelationId, "EXECUTIVE_GLOBAL_SCOPE_REQUIRED");
         }
 
         if (role.IsPrivileged || role.RequiresElevatedApproval)
@@ -839,11 +886,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return Invalid<IdentityScopeGrant>(command.CorrelationId, "INVALID_SCOPE_SHAPE");
         }
 
-        if (command.ScopeType == "GLOBAL")
-        {
-            return Forbidden<IdentityScopeGrant>(command.CorrelationId, "GLOBAL_SCOPE_POLICY_NOT_APPROVED");
-        }
-
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         if (!await IsAuthorizedAnyAsync(connection, transaction, actor, [ScopeAssignmentPermission, "assignment.manage"], cancellationToken) ||
@@ -851,6 +893,13 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             !await AssignmentBelongsToUserAsync(connection, transaction, command.AssignmentReference, command.UserReference, cancellationToken))
         {
             return NotFound<IdentityScopeGrant>(command.CorrelationId);
+        }
+
+        var assignedRole = await ReadAssignmentRoleAsync(connection, transaction, command.AssignmentReference, cancellationToken);
+        if (assignedRole is null || !IsCanonicalHumanRole(assignedRole) ||
+            !ApprovedIdentityRoleCatalog.IsScopeAllowed(assignedRole.Code, command.ScopeType))
+        {
+            return Invalid<IdentityScopeGrant>(command.CorrelationId, "ROLE_SCOPE_INCOMPATIBLE");
         }
 
         if (!await ActorMayDelegateScopeAsync(connection, transaction, actor.UserId, command.ScopeType, command.SiteReference, command.SiteGroupReference, cancellationToken))
@@ -894,7 +943,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         }
 
         await IncrementAuthorizationEpochAsync(connection, transaction, command.UserReference, actor.UserId, cancellationToken);
-        var eventType = command.ScopeType == "SITE" ? "SITE_SCOPE_GRANTED" : "SITE_GROUP_SCOPE_GRANTED";
+        var eventType = ScopeGrantedEventType(command.ScopeType);
         await InsertAuditAsync(connection, transaction, eventType, "SUCCESS", command.ReasonCode, "UserRoleScopeGrant", grantId, actor.UserId, command.CorrelationId, "An assignment-scoped authorization grant was activated.", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         var grant = (await ReadScopeGrantsAsync(connection, null, command.UserReference, cancellationToken)).Single(item => item.GrantReference == grantId);
@@ -991,11 +1040,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return Invalid<IdentityPrivilegedAccessRequest>(command.CorrelationId, "ROLE_NOT_HUMAN_ASSIGNABLE");
         }
 
-        if (!IsRoleCompatibleWithUserType(target.UserType, role))
-        {
-            return Invalid<IdentityPrivilegedAccessRequest>(command.CorrelationId, "USER_TYPE_ROLE_INCOMPATIBLE");
-        }
-
         if (!role.IsPrivileged && !role.RequiresElevatedApproval)
         {
             return Invalid<IdentityPrivilegedAccessRequest>(command.CorrelationId, "PRIVILEGED_ROLE_REQUIRED");
@@ -1006,11 +1050,14 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return Forbidden<IdentityPrivilegedAccessRequest>(command.CorrelationId, "DELEGATION_CEILING_EXCEEDED");
         }
 
-        if (command.ScopeType == "GLOBAL")
+        if ((command.ScopeType is null && role.Code == ApprovedIdentityRoleCatalog.ExecutiveManagement) ||
+            (command.ScopeType is not null &&
+             (!ValidScopeShape(command.ScopeType, command.SiteReference, command.SiteGroupReference) ||
+              !ApprovedIdentityRoleCatalog.IsScopeAllowed(role.Code, command.ScopeType))))
         {
-            return Forbidden<IdentityPrivilegedAccessRequest>(command.CorrelationId, "GLOBAL_SCOPE_POLICY_NOT_APPROVED");
+            return Invalid<IdentityPrivilegedAccessRequest>(command.CorrelationId, "ROLE_SCOPE_INCOMPATIBLE");
         }
-        else if (command.ScopeType is not null &&
+        if (command.ScopeType is not null &&
                  !await ActorMayDelegateScopeAsync(connection, transaction, actor.UserId, command.ScopeType, command.SiteReference, command.SiteGroupReference, cancellationToken))
         {
             return Forbidden<IdentityPrivilegedAccessRequest>(command.CorrelationId, "DELEGATION_CEILING_EXCEEDED");
@@ -1128,9 +1175,12 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                 return Invalid<IdentityPrivilegedAccessRequest>(command.CorrelationId, "ROLE_NOT_HUMAN_ASSIGNABLE");
             }
 
-            if (!IsRoleCompatibleWithUserType(target.UserType, approvedRole))
+            if ((request.RequestedScopeType is null && approvedRole.Code == ApprovedIdentityRoleCatalog.ExecutiveManagement) ||
+                (request.RequestedScopeType is not null &&
+                 (!ValidScopeShape(request.RequestedScopeType, request.RequestedSiteReference, request.RequestedSiteGroupReference) ||
+                  !ApprovedIdentityRoleCatalog.IsScopeAllowed(approvedRole.Code, request.RequestedScopeType))))
             {
-                return Invalid<IdentityPrivilegedAccessRequest>(command.CorrelationId, "USER_TYPE_ROLE_INCOMPATIBLE");
+                return Invalid<IdentityPrivilegedAccessRequest>(command.CorrelationId, "ROLE_SCOPE_INCOMPATIBLE");
             }
 
             if (!ValidEffectiveWindow(request.RequestedEffectiveFrom, request.RequestedEffectiveTo))
@@ -1238,7 +1288,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                     grantInsert.Parameters.AddWithValue("actor_user_id", actor.UserId);
                     scopeGrantId = (Guid)(await grantInsert.ExecuteScalarAsync(cancellationToken))!;
                     authorityChanged = true;
-                    var scopeEvent = request.RequestedScopeType == "SITE" ? "SITE_SCOPE_GRANTED" : "SITE_GROUP_SCOPE_GRANTED";
+                    var scopeEvent = ScopeGrantedEventType(request.RequestedScopeType);
                     await InsertAuditAsync(connection, transaction, scopeEvent, "SUCCESS", command.ReasonCode,
                         "UserRoleScopeGrant", scopeGrantId.Value, actor.UserId, command.CorrelationId,
                         "An independently approved privileged scope grant was activated.", cancellationToken);
@@ -1637,7 +1687,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                   AND ur.effective_from <= now()
                   AND (ur.effective_to IS NULL OR ur.effective_to > now())
                   AND r.role_status = 'ACTIVE'
-                  AND (ur.role_id = @role_id OR r.role_code = 'SYSTEM_RBAC_ADMINISTRATOR')
+                  AND (ur.role_id = @role_id OR r.role_code = 'SYSTEM_ADMINISTRATOR')
             );
             """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -1657,7 +1707,8 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
     {
         const string sql = """
             SELECT (
-                (@scope_type = 'SITE' AND EXISTS (
+                (@scope_type = 'GLOBAL')
+                OR (@scope_type = 'SITE' AND EXISTS (
                     SELECT 1
                     FROM sites.real_carpark_catalog_sites catalog
                     JOIN sites.sites s ON s.site_id = catalog.site_id
@@ -1732,6 +1783,16 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
 
+    private static async Task<IdentityRoleDefinition?> ReadAssignmentRoleAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid assignmentId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand("SELECT role_id FROM identity.user_roles WHERE user_role_id = @assignment_id AND assignment_status = 'ACTIVE';", connection, transaction);
+        command.Parameters.AddWithValue("assignment_id", assignmentId);
+        var roleId = await command.ExecuteScalarAsync(cancellationToken);
+        return roleId is Guid id ? await ReadRoleAsync(connection, transaction, id, cancellationToken) : null;
+    }
+
     private static async Task<bool> AssignmentIsIdentityAdministratorAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -1741,7 +1802,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         const string sql = """
             SELECT EXISTS (
                 SELECT 1 FROM identity.user_roles ur JOIN identity.roles r ON r.role_id = ur.role_id
-                WHERE ur.user_role_id = @assignment_id AND r.role_code = 'SYSTEM_RBAC_ADMINISTRATOR'
+                WHERE ur.user_role_id = @assignment_id AND r.role_code = 'SYSTEM_ADMINISTRATOR'
                   AND ur.assignment_status = 'ACTIVE'
             );
             """;
@@ -1763,7 +1824,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                   AND tur.effective_from <= now() AND (tur.effective_to IS NULL OR tur.effective_to > now())
                   AND tr.role_status = 'ACTIVE' AND tr.effective_from <= now()
                   AND (tr.effective_to IS NULL OR tr.effective_to > now())
-                  AND tr.role_code = 'SYSTEM_RBAC_ADMINISTRATOR'
+                  AND tr.role_code = 'SYSTEM_ADMINISTRATOR'
             ) AND (
                 SELECT count(DISTINCT u.user_id)
                 FROM identity.users u
@@ -1773,7 +1834,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                   AND u.effective_from <= now() AND (u.effective_to IS NULL OR u.effective_to > now())
                   AND ur.assignment_status = 'ACTIVE'
                   AND ur.effective_from <= now() AND (ur.effective_to IS NULL OR ur.effective_to > now())
-                  AND r.role_status = 'ACTIVE' AND r.role_code = 'SYSTEM_RBAC_ADMINISTRATOR'
+                  AND r.role_status = 'ACTIVE' AND r.role_code = 'SYSTEM_ADMINISTRATOR'
             ) <= 1;
             """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -1823,7 +1884,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                   AND ur.effective_from <= now()
                   AND (ur.effective_to IS NULL OR ur.effective_to > now())
                   AND r.role_status = 'ACTIVE'
-                  AND r.role_code = 'SYSTEM_RBAC_ADMINISTRATOR'
+                  AND r.role_code = 'SYSTEM_ADMINISTRATOR'
             );
             """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -2056,11 +2117,9 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             reader.GetString(11), reader.GetBoolean(12), reader.GetBoolean(13), reader.GetFieldValue<string[]>(14));
     }
 
-    private static bool IsRoleCompatibleWithUserType(string userType, IdentityRoleDefinition role) =>
-        role.AllowedUserTypes?.Contains(userType.Trim().ToUpperInvariant(), StringComparer.Ordinal) == true;
-
     private static bool IsCanonicalHumanRole(IdentityRoleDefinition role) =>
-        role.Provenance == "CANONICAL_ROLE" && role.HumanAssignable;
+        role.Provenance == "CANONICAL_ROLE" && role.HumanAssignable &&
+        ApprovedIdentityRoleCatalog.IsAssignable(role.Code);
 
     private static bool RoleIsEffective(IdentityRoleDefinition role)
     {
@@ -2141,6 +2200,14 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
 
     private static bool ValidOptionalScopeShape(string? scopeType, Guid? siteId, Guid? siteGroupId) =>
         scopeType is null ? !siteId.HasValue && !siteGroupId.HasValue : ValidScopeShape(scopeType, siteId, siteGroupId);
+
+    private static string ScopeGrantedEventType(string scopeType) => scopeType switch
+    {
+        "SITE" => "SITE_SCOPE_GRANTED",
+        "SITE_GROUP" => "SITE_GROUP_SCOPE_GRANTED",
+        "GLOBAL" => "GLOBAL_SCOPE_GRANTED",
+        _ => throw new ArgumentOutOfRangeException(nameof(scopeType))
+    };
 
     private static bool ValidEffectiveWindow(DateTimeOffset effectiveFrom, DateTimeOffset? effectiveTo) =>
         effectiveFrom != default && (effectiveTo is null || effectiveTo > effectiveFrom);

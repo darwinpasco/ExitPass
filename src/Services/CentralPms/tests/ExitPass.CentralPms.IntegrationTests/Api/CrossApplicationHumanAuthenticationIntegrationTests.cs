@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.HumanAuthentication;
+using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.HumanAuthentication;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
@@ -17,6 +18,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using OtpNet;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
@@ -28,6 +30,7 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
     private const string CertificateHeader = "X-I022-Certificate";
     private static readonly Guid CentralPmsServiceIdentityId = Guid.Parse("8063c159-dae6-57af-9f1f-e0a07d519fb2");
     private readonly StatutoryDiscountCanonicalDatabaseFixture _database;
+    private readonly string _totpProtectionKeyBase64 = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
     public CrossApplicationHumanAuthenticationIntegrationTests(StatutoryDiscountCanonicalDatabaseFixture database) =>
         _database = database;
@@ -35,21 +38,17 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
     [Fact]
     public async Task Production_sessions_are_audience_isolated_and_live_role_scope_changes_converge()
     {
-        var seed = await SeedScopedUserAsync(
-            ["user.view", "statutory-discounts.evidence.review.view"],
-            includeSiteScope: true,
-            includeSiteGroupScope: true);
+        var seed = await SeedScopedUserAsync([ApprovedIdentityRoleCatalog.OperationsSupervisor]);
         await using var factory = ProductionFactory();
         using var management = WebClient(factory);
         using var review = WebClient(factory);
 
-        var managementLogin = await LoginWebAsync(management, seed.Username, HumanSessionAudiences.ManagementPlatform);
+        var managementLogin = await LoginWebAsync(management, seed, HumanSessionAudiences.ManagementPlatform);
         await EstablishOperatorDeviceAsync(review, seed);
-        var reviewLogin = await LoginWebAsync(review, seed.Username, HumanSessionAudiences.OperatorConsole);
+        var reviewLogin = await LoginWebAsync(review, seed, HumanSessionAudiences.OperatorConsole);
 
-        managementLogin.Session!.Permissions.Should().Contain("user.view");
+        managementLogin.Session!.Permissions.Should().Contain("statutory-discounts.evidence.review.view");
         managementLogin.Session.SiteReferences.Should().Contain(seed.SiteId);
-        managementLogin.Session.SiteGroupReferences.Should().Contain(seed.SiteGroupId);
         managementLogin.Session.HasGlobalScope.Should().BeFalse();
         reviewLogin.Session!.Audience.Should().Be(HumanSessionAudiences.OperatorConsole);
         reviewLogin.Session.SessionReference.Should().NotBe(managementLogin.Session.SessionReference);
@@ -69,20 +68,13 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
             .StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 
         await ExecuteAsync("""
-            UPDATE identity.role_permissions rp
-            SET binding_status='REVOKED', revoked_at=now(), revocation_reason_code='I022_PROOF',
-                revoked_by_service_identity_id=@service_id, updated_by_service_identity_id=@service_id,
-                row_version=rp.row_version+1
-            FROM identity.permissions p
-            WHERE rp.role_id=@role_id AND rp.permission_id=p.permission_id
-              AND p.permission_code='user.view' AND rp.binding_status='ACTIVE';
-            UPDATE identity.user_role_scope_grants
-            SET grant_status='REVOKED', revoked_at=now(), revocation_reason_code='I022_PROOF',
+            UPDATE identity.user_roles
+            SET assignment_status='REVOKED', revoked_at=now(), assignment_reason_code='I022_PROOF',
                 revoked_by_service_identity_id=@service_id, updated_by_service_identity_id=@service_id,
                 row_version=row_version+1
-            WHERE user_role_id=@user_role_id AND scope_type='SITE' AND grant_status='ACTIVE';
+            WHERE user_id=@user_id AND assignment_status='ACTIVE';
             UPDATE identity.users SET authorization_epoch=authorization_epoch+1 WHERE user_id=@user_id;
-            """, ("role_id", seed.RoleId), ("user_role_id", seed.UserRoleId), ("user_id", seed.UserId),
+            """, ("user_id", seed.UserId),
             ("service_id", CentralPmsServiceIdentityId));
 
         (await review.GetAsync("/v1/human-authentication/session")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -92,7 +84,7 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
     [Fact]
     public async Task Production_apt_session_is_device_site_and_permission_bound_without_payable_basis_conflation()
     {
-        var seed = await SeedScopedUserAsync(AptHumanPermissionCatalog.OperationalPermissions, true, true);
+        var seed = await SeedScopedUserAsync([ApprovedIdentityRoleCatalog.AptCashierOperator]);
         var device = await SeedAptDeviceAsync(seed.SiteId);
         using var certificate = CreateCertificate("i022-apt-client");
         await using var factory = ProductionFactory(certificate);
@@ -112,7 +104,7 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         login!.Authenticated.Should().BeTrue();
         login.Session!.Audience.Should().Be(HumanSessionAudiences.Apt);
         login.Session.DeviceServiceIdentityReference.Should().Be(device);
-        login.Session.Permissions.Should().Contain(AptHumanPermissionCatalog.OperationalPermissions);
+        login.Session.Permissions.Should().Contain("apt.cashier.operate");
         login.Session.Permissions.Should().NotContain(AptHumanPermissionCatalog.PayableBasisRead);
         login.Session.HasGlobalScope.Should().BeFalse();
 
@@ -148,179 +140,89 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
     [Fact]
     public async Task Production_authenticated_browser_can_establish_first_operator_device_cookie()
     {
-        var seed = await SeedScopedUserAsync([], true, true);
+        var seed = await SeedScopedUserAsync([ApprovedIdentityRoleCatalog.OperationsSupervisor]);
         await using var factory = ProductionFactory();
         using var client = WebClient(factory);
-        await LoginWebAsync(client, seed.Username, HumanSessionAudiences.ManagementPlatform);
+        await LoginWebAsync(client, seed, HumanSessionAudiences.ManagementPlatform);
 
         await EstablishOperatorDeviceAsync(client, seed);
     }
 
     [Fact]
-    public async Task Production_operator_login_requiresServerIssuedDeviceCookie_and_liveRevocationBlocksQueue()
+    public async Task Production_operations_supervisor_operator_login_uses_no_totp_and_filters_management_only_permissions()
     {
-        var seed = await SeedScopedUserAsync(
-            [
-                "statutory-discounts.review.queue.read",
-                "statutory-discounts.review.detail.read",
-                "statutory-discounts.decision.approve",
-                "statutory-discounts.decision.reject"
-            ],
-            true,
-            true);
-        await InsertScopeAsync(seed.UserRoleId, "GLOBAL", null, null);
-        var webPayReview = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
-            nameof(Production_operator_login_requiresServerIssuedDeviceCookie_and_liveRevocationBlocksQueue) + "WebPay",
-            "WEBPAY",
-            seed.SiteId,
-            seed.SiteGroupId);
+        var seed = await SeedScopedUserAsync([ApprovedIdentityRoleCatalog.OperationsSupervisor]);
         await using var factory = ProductionFactory();
         using var operatorClient = WebClient(factory);
         using var managementClient = WebClient(factory);
 
-        using (var missingProofLogin = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
+        using (var passwordOnlyLogin = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
         {
             Content = JsonContent.Create(new HumanLoginRequest(seed.Username, Password, HumanSessionAudiences.OperatorConsole))
         })
         {
-            missingProofLogin.Headers.Add("Origin", "https://localhost");
-            var response = await operatorClient.SendAsync(missingProofLogin);
-            response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-            (await response.Content.ReadFromJsonAsync<HumanAuthenticationResponse>())!.ErrorCode
-                .Should().Be("OPERATOR_DEVICE_BINDING_REQUIRED");
+            passwordOnlyLogin.Headers.Add("Origin", "https://localhost");
+            var response = await operatorClient.SendAsync(passwordOnlyLogin);
+            response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            var body = await response.Content.ReadFromJsonAsync<HumanAuthenticationResponse>();
+            body!.Authenticated.Should().BeTrue();
+            body.Session!.MfaRequired.Should().BeFalse();
+            body.Session.Permissions.Should().NotContain("statutory-discounts.decision.approve");
         }
 
-        var managementLogin = await LoginWebAsync(managementClient, seed.Username, HumanSessionAudiences.ManagementPlatform);
-        managementLogin.Authenticated.Should().BeTrue("Management Platform has no Operator Console device or shift requirement");
-        managementLogin.Session!.OperatorDeviceBindingReference.Should().BeNull();
-        managementLogin.Session.OperatorShiftReference.Should().BeNull();
-        var managementQueue = await managementClient.GetAsync("/v1/management-platform/statutory-benefit-requests?page=1&pageSize=1");
-        managementQueue.StatusCode.Should().Be(HttpStatusCode.OK,
-            "a GLOBAL Management Platform reviewer remains authorized without an Operator Console device or shift");
+        using (var missingTotpLogin = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
+        {
+            Content = JsonContent.Create(new HumanLoginRequest(seed.Username, Password, HumanSessionAudiences.ManagementPlatform))
+        })
+        {
+            missingTotpLogin.Headers.Add("Origin", "https://localhost");
+            var response = await managementClient.SendAsync(missingTotpLogin);
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            (await response.Content.ReadFromJsonAsync<HumanAuthenticationResponse>())!.ErrorCode
+                .Should().Be("TOTP_REQUIRED");
+        }
 
-        var device = await EstablishOperatorDeviceAsync(operatorClient, seed);
-        var operatorLogin = await LoginWebWithCsrfAsync(operatorClient, seed.Username, HumanSessionAudiences.OperatorConsole);
-        var login = operatorLogin.Response;
-        login.Session!.OperatorDeviceBindingReference.Should().BeNull("canonical storage references are not serialized to the browser");
-        login.Session.OperatorShiftReference.Should().BeNull("canonical storage references are not serialized to the browser");
-        (await ScalarAsync<Guid>("""
-            SELECT operator_device_binding_id
-            FROM operator_console.operator_session_contexts
-            WHERE operator_user_id=@user_id AND context_status='ACTIVE'
-            ORDER BY bound_at DESC LIMIT 1;
-            """, ("user_id", seed.UserId))).Should().Be(device.DeviceId);
-        (await ScalarAsync<Guid>("""
-            SELECT operator_shift_id
-            FROM operator_console.operator_session_contexts
-            WHERE operator_user_id=@user_id AND context_status='ACTIVE'
-            ORDER BY bound_at DESC LIMIT 1;
-            """, ("user_id", seed.UserId))).Should().Be(device.ShiftId);
+        await EstablishOperatorDeviceAsync(operatorClient, seed);
+        var operatorLogin = await LoginWebAsync(operatorClient, seed, HumanSessionAudiences.OperatorConsole);
+        operatorLogin.Session!.SiteReferences.Should().ContainSingle().Which.Should().Be(seed.SiteId);
+        operatorLogin.Session.HasGlobalScope.Should().BeFalse();
+        operatorLogin.Session.Permissions.Should().NotContain([
+            "statutory-discounts.review.queue.read",
+            "statutory-discounts.review.detail.read",
+            "statutory-discounts.evidence.review.view",
+            "statutory-discounts.decision.approve",
+            "statutory-discounts.decision.reject"
+        ]);
 
-        var forgedReadiness = await operatorClient.PostAsJsonAsync(
-            "/v1/ops/operator-console/access/readiness/evaluate",
-            new OperatorConsoleAccessReadinessRequest(
-                Guid.NewGuid(),
-                Guid.NewGuid(),
-                Guid.NewGuid(),
-                Guid.NewGuid(),
-                Guid.NewGuid(),
-                "SESSION_LOOKUP",
-                null,
-                null,
-                null,
-                Guid.NewGuid(),
-                null,
-                new OperatorConsoleAccessReadinessClientContextDto("forged-browser", "forged-browser"),
-                new OperatorConsoleAccessReadinessDevModeContextDto(true, "Development")));
-        forgedReadiness.StatusCode.Should().Be(HttpStatusCode.OK, await forgedReadiness.Content.ReadAsStringAsync());
-        var serverReadiness = await forgedReadiness.Content.ReadFromJsonAsync<OperatorConsoleAccessReadinessResponse>();
-        serverReadiness!.OperatorReadiness.OperatorUserId.Should().Be(seed.UserId);
-        serverReadiness.DeviceReadiness.OperatorDeviceBindingId.Should().Be(device.DeviceId);
-        serverReadiness.ShiftReadiness.OperatorShiftId.Should().Be(device.ShiftId);
-        serverReadiness.SiteReadiness.SiteId.Should().Be(seed.SiteId);
-        serverReadiness.SiteReadiness.SiteGroupId.Should().Be(seed.SiteGroupId);
+        var managementLogin = await LoginWebAsync(managementClient, seed, HumanSessionAudiences.ManagementPlatform);
+        managementLogin.Session!.Permissions.Should().Contain("statutory-discounts.review.queue.read");
+        managementLogin.Session.Permissions.Should().Contain("statutory-discounts.decision.approve");
+        managementLogin.Session.SiteReferences.Should().ContainSingle().Which.Should().Be(seed.SiteId);
+        managementLogin.Session.HasGlobalScope.Should().BeFalse();
 
-        var queue = await operatorClient.GetAsync(
-            $"/v1/ops/operator-console/statutory-discounts/reviews?parkingSessionId={webPayReview.Context.ParkingSessionId:D}&page=1&pageSize=1");
-        queue.StatusCode.Should().Be(HttpStatusCode.OK, await queue.Content.ReadAsStringAsync());
-        var queueBody = await queue.Content.ReadFromJsonAsync<OperatorConsoleServiceChannelStatutoryDiscountReviewQueueResponse>();
-        queueBody!.Items.Should().Contain(item => item.StatutoryDiscountDecisionCommandId == webPayReview.Decision.StatutoryDiscountDecisionCommandId);
-
-        var detail = await operatorClient.GetAsync(
-            $"/v1/ops/operator-console/statutory-discounts/reviews/{webPayReview.Decision.StatutoryDiscountDecisionCommandId:D}");
-        detail.StatusCode.Should().Be(HttpStatusCode.OK, await detail.Content.ReadAsStringAsync());
-        (await detail.Content.ReadFromJsonAsync<OperatorConsoleServiceChannelStatutoryDiscountReviewDetailResponse>())!
-            .EvidenceReferences.Should().NotBeEmpty();
-
-        var approved = await DecideAsync(
-            operatorClient,
-            webPayReview.Decision.StatutoryDiscountDecisionCommandId,
-            "APPROVE",
-            "ELIGIBLE",
-            "i022-h006-approve",
-            operatorLogin.Csrf);
-        approved.CurrentValidationStatus.Should().Be("APPROVED");
-        await AssertReviewAttributionAsync(webPayReview, seed.UserId, device.DeviceId, device.ShiftId);
-        await StatutoryDiscountReviewIntegrationTestSupport.RemoveReviewOnlyAsync(webPayReview.Context);
-
-        var aptReview = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
-            webPayReview.Context,
-            "ASSISTED_PAYMENT_TERMINAL",
-            "SENIOR_CITIZEN");
-        var rejected = await DecideAsync(
-            operatorClient,
-            aptReview.Decision.StatutoryDiscountDecisionCommandId,
-            "REJECT",
-            "DOCUMENT_INVALID",
-            "i022-h006-reject",
-            operatorLogin.Csrf);
-        rejected.CurrentValidationStatus.Should().Be("REJECTED");
-        await AssertReviewAttributionAsync(aptReview, seed.UserId, device.DeviceId, device.ShiftId);
-
-        using var forged = new HttpRequestMessage(HttpMethod.Get, "/v1/ops/operator-console/statutory-discounts/reviews?limit=1&offset=0");
-        forged.Headers.Add("X-Operator-Device-Binding-Id", Guid.NewGuid().ToString("D"));
-        var forgedResponse = await operatorClient.SendAsync(forged);
-        forgedResponse.StatusCode.Should().NotBe(HttpStatusCode.OK);
-
-        await ExecuteAsync("""
-            UPDATE operator_console.operator_shifts
-            SET operational_status='ENDED', active_to=now()-interval '1 second', row_version=row_version+1
-            WHERE operator_shift_id=@shift_id;
-            """, ("shift_id", device.ShiftId));
-        var closedShift = await operatorClient.GetAsync("/v1/ops/operator-console/statutory-discounts/reviews?limit=1&offset=0");
-        closedShift.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        (await closedShift.Content.ReadAsStringAsync()).Should().Contain("OPERATOR_SHIFT_CLOSED_OR_EXPIRED");
-
-        await ExecuteAsync("""
-            UPDATE operator_console.operator_shifts
-            SET operational_status='ACTIVE', active_to=now()+interval '8 hours', row_version=row_version+1
-            WHERE operator_shift_id=@shift_id;
-            """, ("shift_id", device.ShiftId));
-        (await LoginWebAsync(operatorClient, seed.Username, HumanSessionAudiences.OperatorConsole)).Authenticated.Should().BeTrue();
-
-        await ExecuteAsync("""
-            UPDATE operator_console.operator_device_bindings
-            SET device_status='REVOKED', revoked_at=now(), revocation_reason_code='I022_PROOF', row_version=row_version+1
-            WHERE operator_device_binding_id=@device_id;
-            """, ("device_id", device.DeviceId));
-        var revoked = await operatorClient.GetAsync("/v1/ops/operator-console/statutory-discounts/reviews?limit=1&offset=0");
-        revoked.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        (await revoked.Content.ReadAsStringAsync()).Should().Contain("OPERATOR_DEVICE_BINDING_REVOKED");
-
+        var managementQueue = await managementClient.GetAsync(
+            "/v1/management-platform/statutory-benefit-requests?page=1&pageSize=1");
+        managementQueue.StatusCode.Should().Be(HttpStatusCode.OK, await managementQueue.Content.ReadAsStringAsync());
+        var operatorQueue = await operatorClient.GetAsync(
+            "/v1/ops/operator-console/statutory-discounts/reviews?limit=1&offset=0");
+        operatorQueue.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
     public async Task Production_logout_all_revokes_each_audience_and_fixture_headers_cannot_restore_authority()
     {
-        var seed = await SeedScopedUserAsync(["user.view", .. AptHumanPermissionCatalog.OperationalPermissions], true, false);
+        var seed = await SeedScopedUserAsync([
+            ApprovedIdentityRoleCatalog.OperationsSupervisor,
+            ApprovedIdentityRoleCatalog.AptCashierOperator
+        ]);
         var device = await SeedAptDeviceAsync(seed.SiteId);
         using var certificate = CreateCertificate("i022-apt-revocation-client");
         await using var factory = ProductionFactory(certificate);
         using var management = WebClient(factory);
         using var review = WebClient(factory);
-        var managementLogin = await LoginWebWithCsrfAsync(management, seed.Username, HumanSessionAudiences.ManagementPlatform);
+        var managementLogin = await LoginWebWithCsrfAsync(management, seed, HumanSessionAudiences.ManagementPlatform);
         await EstablishOperatorDeviceAsync(review, seed);
-        await LoginWebAsync(review, seed.Username, HumanSessionAudiences.OperatorConsole);
+        await LoginWebAsync(review, seed, HumanSessionAudiences.OperatorConsole);
         using var apt = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://localhost"),
@@ -367,6 +269,22 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         activeSessions.Should().Be(0);
     }
 
+    [Fact]
+    public async Task Production_superseded_activation_reset_token_and_totp_enrollment_routes_are_not_mapped()
+    {
+        await using var factory = ProductionFactory();
+        using var client = WebClient(factory);
+
+        (await client.PostAsJsonAsync("/v1/human-authentication/activations", new { }))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await client.PostAsJsonAsync("/v1/human-authentication/password-reset-requests", new { }))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await client.PostAsJsonAsync("/v1/human-authentication/password-resets/complete", new { }))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await client.PostAsJsonAsync("/v1/human-authentication/totp/enrollment", new { }))
+            .StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
     private CustomWebApplicationFactory ProductionFactory(X509Certificate2? certificate = null)
     {
         var factory = new CustomWebApplicationFactory()
@@ -379,7 +297,7 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
                 ["HumanAuthentication:Argon2Iterations"] = "1",
                 ["HumanAuthentication:Argon2MemoryKiB"] = "19456",
                 ["HumanAuthentication:Argon2Parallelism"] = "1",
-                ["HumanAuthentication:TotpProtectionKeyBase64"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+                ["HumanAuthentication:TotpProtectionKeyBase64"] = _totpProtectionKeyBase64,
                 ["HumanAuthentication:TotpProtectionKeyReference"] = "i022-proof-key",
                 ["HumanAuthentication:TotpProtectionKeyVersion"] = "1",
                 ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost",
@@ -403,17 +321,20 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
             AllowAutoRedirect = false
         });
 
-    private static async Task<HumanAuthenticationResponse> LoginWebAsync(HttpClient client, string username, string audience) =>
-        (await LoginWebWithCsrfAsync(client, username, audience)).Response;
+    private static async Task<HumanAuthenticationResponse> LoginWebAsync(HttpClient client, Seed seed, string audience) =>
+        (await LoginWebWithCsrfAsync(client, seed, audience)).Response;
 
     private static async Task<(HumanAuthenticationResponse Response, string Csrf)> LoginWebWithCsrfAsync(
         HttpClient client,
-        string username,
+        Seed seed,
         string audience)
     {
+        var totpCode = audience == HumanSessionAudiences.ManagementPlatform
+            ? new Totp(seed.TotpSecret).ComputeTotp(DateTime.UtcNow)
+            : null;
         using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
         {
-            Content = JsonContent.Create(new HumanLoginRequest(username, Password, audience))
+            Content = JsonContent.Create(new HumanLoginRequest(seed.Username, Password, audience, totpCode))
         };
         request.Headers.Add("Origin", "https://localhost");
         var response = await client.SendAsync(request);
@@ -483,22 +404,26 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
             """, ("decision_id", review.Decision.StatutoryDiscountDecisionCommandId))).Should().Be(1);
     }
 
-    private async Task<Seed> SeedScopedUserAsync(
-        IReadOnlyCollection<string> permissions,
-        bool includeSiteScope,
-        bool includeSiteGroupScope)
+    private async Task<Seed> SeedScopedUserAsync(IReadOnlyCollection<string> roleCodes)
     {
-        var hasher = new Argon2idHumanPasswordHasher(Options.Create(new HumanAuthenticationOptions
+        var authenticationOptions = new HumanAuthenticationOptions
         {
             Argon2Iterations = 1,
             Argon2MemoryKiB = 19456,
             Argon2Parallelism = 1,
-            PasswordMinimumLength = 15
-        }));
+            PasswordMinimumLength = 15,
+            TotpProtectionKeyBase64 = _totpProtectionKeyBase64,
+            TotpProtectionKeyReference = "i022-proof-key",
+            TotpProtectionKeyVersion = "1"
+        };
+        var configured = Options.Create(authenticationOptions);
+        var hasher = new Argon2idHumanPasswordHasher(configured);
         var material = await hasher.HashAsync(Password, CancellationToken.None);
         var userId = Guid.NewGuid();
-        var roleId = Guid.NewGuid();
-        var userRoleId = Guid.NewGuid();
+        var authenticatorId = Guid.NewGuid();
+        var totpSecret = RandomNumberGenerator.GetBytes(20);
+        var protector = new AesGcmTotpSecretProtector(configured);
+        var protectedSecret = protector.Protect(userId, authenticatorId, totpSecret);
         var siteGroupId = Guid.Parse("a6dbadf6-68b5-5bed-a7e0-a75faee70841");
         var siteId = Guid.Parse("2d1dcdf8-f563-537c-8542-0bde7cc9da97");
         await ExecuteAsync("""
@@ -517,45 +442,42 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
                 created_by_service_identity_id,updated_by_service_identity_id)
             VALUES (gen_random_uuid(),@user_id,'ACTIVE',@verifier,@salt,@algorithm,@algorithm_version,@work_factor,
                 @memory_kib,@parallelism,now(),now(),@service_id,@service_id);
-            INSERT INTO identity.roles (role_id,role_code,role_name,role_type,role_status,is_privileged,
-                requires_elevated_approval,effective_from,created_by_service_identity_id,updated_by_service_identity_id)
-            VALUES (@role_id,@role_code,'I-022 integration role','OTHER','ACTIVE',false,false,
-                now()-interval '1 minute',@service_id,@service_id);
-            INSERT INTO identity.user_roles (user_role_id,user_id,role_id,assignment_status,assignment_reason_code,
-                assigned_by_service_identity_id,effective_from,created_by_service_identity_id,updated_by_service_identity_id)
-            VALUES (@user_role_id,@user_id,@role_id,'ACTIVE','I022_PROOF',@service_id,
-                now()-interval '1 minute',@service_id,@service_id);
-            INSERT INTO identity.permissions (permission_id,permission_code,permission_name,permission_description,
-                permission_domain,permission_action,permission_status,is_sensitive,requires_audit,
+            INSERT INTO identity.user_mfa_authenticators (user_mfa_authenticator_id,user_id,authenticator_type,
+                authenticator_status,protected_secret_envelope,protection_key_reference,protection_key_version,
+                envelope_format_version,enrollment_started_at,activated_at,
                 created_by_service_identity_id,updated_by_service_identity_id)
-            SELECT gen_random_uuid(),code,code,'I-022 disposable canonical permission binding proof.',
-                'OPERATOR_CONSOLE','AUTHORIZE','ACTIVE',true,true,@service_id,@service_id
-            FROM unnest(@permissions::varchar[]) AS code
-            ON CONFLICT (permission_code) DO NOTHING;
-            INSERT INTO identity.role_permissions (role_permission_id,role_id,permission_id,binding_status,
-                binding_reason_code,assigned_by_service_identity_id,effective_from,
-                created_by_service_identity_id,updated_by_service_identity_id)
-            SELECT gen_random_uuid(),@role_id,p.permission_id,'ACTIVE','I022_PROOF',@service_id,
-                now()-interval '1 minute',@service_id,@service_id
-            FROM identity.permissions p WHERE p.permission_code=ANY(@permissions);
+            VALUES (@authenticator_id,@user_id,'TOTP','ACTIVE',@protected_secret,@key_reference,@key_version,
+                @format_version,now(),now(),@service_id,@service_id);
             """;
         await ExecuteAsync(sql,
             ("user_id", userId), ("username", username), ("service_id", CentralPmsServiceIdentityId),
             ("verifier", material.Verifier), ("salt", material.Salt), ("algorithm", material.AlgorithmCode),
             ("algorithm_version", material.AlgorithmVersion), ("work_factor", material.Iterations),
             ("memory_kib", material.MemoryKiB), ("parallelism", material.Parallelism),
-            ("role_id", roleId), ("role_code", $"I022_{roleId:N}"[..32]),
-            ("user_role_id", userRoleId), ("permissions", permissions.ToArray()));
+            ("authenticator_id", authenticatorId), ("protected_secret", protectedSecret),
+            ("key_reference", protector.KeyReference), ("key_version", protector.KeyVersion),
+            ("format_version", protector.EnvelopeFormatVersion));
 
-        if (includeSiteScope)
+        Guid? firstRoleId = null;
+        Guid? firstUserRoleId = null;
+        foreach (var roleCode in roleCodes)
         {
+            var roleId = await ScalarAsync<Guid>(
+                "SELECT role_id FROM identity.roles WHERE role_code=@role_code AND role_status='ACTIVE';",
+                ("role_code", roleCode));
+            var userRoleId = Guid.NewGuid();
+            firstRoleId ??= roleId;
+            firstUserRoleId ??= userRoleId;
+            await ExecuteAsync("""
+                INSERT INTO identity.user_roles (user_role_id,user_id,role_id,assignment_status,assignment_reason_code,
+                    assigned_by_service_identity_id,effective_from,created_by_service_identity_id,updated_by_service_identity_id)
+                VALUES (@user_role_id,@user_id,@role_id,'ACTIVE','I022_PROOF',@service_id,
+                    now()-interval '1 minute',@service_id,@service_id);
+                """, ("user_id", userId), ("role_id", roleId), ("user_role_id", userRoleId),
+                ("service_id", CentralPmsServiceIdentityId));
             await InsertScopeAsync(userRoleId, "SITE", siteId, null);
         }
-        if (includeSiteGroupScope)
-        {
-            await InsertScopeAsync(userRoleId, "SITE_GROUP", null, siteGroupId);
-        }
-        return new Seed(userId, username, roleId, userRoleId, siteId, siteGroupId);
+        return new Seed(userId, username, firstRoleId!.Value, firstUserRoleId!.Value, siteId, siteGroupId, totpSecret);
     }
 
     private Task InsertScopeAsync(Guid userRoleId, string scopeType, Guid? siteId, Guid? siteGroupId) =>
@@ -677,6 +599,13 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
             Task.FromResult(context.Request.Headers[CertificateHeader] == "trusted" ? certificate : null as X509Certificate2);
     }
 
-    private sealed record Seed(Guid UserId, string Username, Guid RoleId, Guid UserRoleId, Guid SiteId, Guid SiteGroupId);
+    private sealed record Seed(
+        Guid UserId,
+        string Username,
+        Guid RoleId,
+        Guid UserRoleId,
+        Guid SiteId,
+        Guid SiteGroupId,
+        byte[] TotpSecret);
     private sealed record OperatorDeviceSeed(Guid DeviceId, Guid ShiftId);
 }
