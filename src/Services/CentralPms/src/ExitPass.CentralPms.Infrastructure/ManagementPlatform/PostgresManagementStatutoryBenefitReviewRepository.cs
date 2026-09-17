@@ -20,6 +20,11 @@ public sealed class PostgresManagementStatutoryBenefitReviewRepository : IManage
         string permission,
         CancellationToken cancellationToken)
     {
+        if (!ApprovedIdentityRoleCatalog.IsManagementPlatformStatutoryReviewPermission(permission))
+        {
+            return null;
+        }
+
         const string sql = """
             WITH valid_actor AS (
                 SELECT 1
@@ -37,7 +42,7 @@ public sealed class PostgresManagementStatutoryBenefitReviewRepository : IManage
                   AND u.effective_from <= now()
                   AND (u.effective_to IS NULL OR u.effective_to > now())
             ), permitted_roles AS (
-                SELECT ur.user_role_id
+                SELECT ur.user_role_id, r.role_code
                 FROM valid_actor
                 JOIN identity.user_roles ur ON ur.user_id = @actor_user_id
                 JOIN identity.roles r ON r.role_id = ur.role_id
@@ -57,7 +62,7 @@ public sealed class PostgresManagementStatutoryBenefitReviewRepository : IManage
                   AND p.permission_status = 'ACTIVE'
                   AND p.permission_code = @permission_code
             ), grants AS (
-                SELECT g.scope_type::text AS scope_type, g.site_id, g.site_group_id
+                SELECT pr.role_code, g.scope_type::text AS scope_type, g.site_id, g.site_group_id
                 FROM permitted_roles pr
                 JOIN identity.user_role_scope_grants g ON g.user_role_id = pr.user_role_id
                 WHERE g.grant_status = 'ACTIVE'
@@ -67,11 +72,13 @@ public sealed class PostgresManagementStatutoryBenefitReviewRepository : IManage
             ), authorized_sites AS (
                 SELECT DISTINCT s.site_id
                 FROM sites.sites s
-                JOIN grants g ON g.scope_type = 'GLOBAL'
+                JOIN grants g ON (g.role_code = 'OPERATIONS_SUPERVISOR')
+                              OR g.scope_type = 'GLOBAL'
                               OR (g.scope_type = 'SITE' AND g.site_id = s.site_id)
                               OR (g.scope_type = 'SITE_GROUP' AND g.site_group_id = s.site_group_id)
             )
-            SELECT site_id, EXISTS (SELECT 1 FROM grants WHERE scope_type = 'GLOBAL') AS has_global
+            SELECT site_id, EXISTS (SELECT 1 FROM grants
+                WHERE scope_type = 'GLOBAL' OR role_code = 'OPERATIONS_SUPERVISOR') AS has_global
             FROM authorized_sites
             ORDER BY site_id;
             """;

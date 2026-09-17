@@ -7,24 +7,26 @@ public sealed class ManagementPlatformUatIdentityRbacSeedTests
 {
     private static readonly string[] RoleCodes =
     [
-        "SYSTEM_RBAC_ADMINISTRATOR",
-        "PLATFORM_ADMINISTRATOR",
+        "SYSTEM_ADMINISTRATOR",
         "OPERATIONS_SUPERVISOR",
         "SITE_OPERATOR",
+        "PARKING_ATTENDANT",
+        "APT_CASHIER_OPERATOR",
         "FINANCE_RECONCILIATION_ANALYST",
         "COMPLIANCE_POLICY_ADMINISTRATOR",
         "EXECUTIVE_MANAGEMENT"
     ];
 
     [Fact]
-    public void SeedSql_AssignsSevenUatUsersOnlyToCompatibleCanonicalRoles()
+    public void SeedSql_AssignsEightUatUsersOnlyToCompatibleCanonicalRoles()
     {
         var sql = ReadRepoFile("scripts", "management-platform", "Seed-ManagementPlatformUatIdentityRbac.sql");
 
-        sql.Should().Contain("uat-system-rbac-admin");
-        sql.Should().Contain("uat-platform-admin");
+        sql.Should().Contain("uat-system-admin");
         sql.Should().Contain("uat-operations-supervisor");
         sql.Should().Contain("uat-operator-support");
+        sql.Should().Contain("uat-parking-attendant");
+        sql.Should().Contain("uat-apt-cashier");
         sql.Should().Contain("uat-finance-reconciliation");
         sql.Should().Contain("uat-compliance-policy-admin");
         sql.Should().Contain("uat-executive-management");
@@ -34,12 +36,14 @@ public sealed class ManagementPlatformUatIdentityRbacSeedTests
             sql.Should().Contain(roleCode);
         }
 
-        sql.Should().Contain("'INTERNAL_ADMIN', 'PLATFORM_ADMINISTRATOR'");
+        sql.Should().Contain("'INTERNAL_ADMIN', 'SYSTEM_ADMINISTRATOR'");
         sql.Should().Contain("'OPERATIONS_USER', 'OPERATIONS_SUPERVISOR'");
         sql.Should().Contain("'SITE_OPERATOR', 'SITE_OPERATOR'");
         sql.Should().Contain("'OTHER', 'EXECUTIVE_MANAGEMENT'");
         sql.Should().Contain("role.role_provenance = 'CANONICAL_ROLE'");
         sql.Should().Contain("identity.role_user_type_compatibility");
+        sql.Should().Contain("EXECUTIVE_GLOBAL_SCOPE_REQUIRED");
+        sql.Should().Contain("'GLOBAL', 'ACTIVE'");
     }
 
     [Fact]
@@ -76,6 +80,30 @@ public sealed class ManagementPlatformUatIdentityRbacSeedTests
         sql.Should().Contain("identity.role_user_type_compatibility");
         sql.Should().Contain("uat-fixture.manage is assigned to a canonical role");
         sql.Should().Contain("superseded UAT bundles");
+    }
+
+    [Fact]
+    public void ApprovedRolePatch_ReplacesAdministrativeAndOperationalBundlesFailClosed()
+    {
+        var sql = ReadRepoFile("infra", "db", "patches", "ExitPass_IdentityRbacApprovedRoleCatalog_v1.3.sql");
+
+        foreach (var roleCode in RoleCodes)
+        {
+            sql.Should().Contain($"('{roleCode}'");
+        }
+
+        sql.Should().Contain("human_assignable=false");
+        sql.Should().Contain("role_status='RETIRED'");
+        sql.Should().Contain("role_code NOT IN (SELECT role_code FROM approved_roles)");
+        sql.Should().Contain("('SYSTEM_ADMINISTRATOR','site.manage')");
+        sql.Should().Contain("('OPERATIONS_SUPERVISOR','statutory-discounts.decision.approve')");
+        sql.Should().Contain("Management Platform-only");
+        sql.Should().Contain("('OPERATIONS_SUPERVISOR','shift.manage')");
+        sql.Should().Contain("('SITE_OPERATOR','statutory-discounts.draft.create')");
+        sql.Should().NotContain("('SYSTEM_ADMINISTRATOR','statutory-discounts.");
+        sql.Should().NotContain("('SYSTEM_ADMINISTRATOR','reconciliation.");
+        sql.Should().NotContain("('SYSTEM_ADMINISTRATOR','policy-import.");
+        sql.Should().NotContain("('SYSTEM_ADMINISTRATOR','apt.");
     }
 
     [Fact]

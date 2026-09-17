@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.Common;
 using Microsoft.Extensions.Options;
@@ -54,6 +55,27 @@ public sealed class CentralPmsRbacMiddleware
             fixtureHeadersAllowed ? CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName : null,
             "service_identity_id",
             "client_id");
+
+        var humanAudience = context.User.Identity?.IsAuthenticated == true
+            ? context.User.FindFirst("exitpass_audience")?.Value
+            : null;
+        if (humanAudience is not null &&
+            requiredPermissions.Any(permission =>
+                !ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, humanAudience)))
+        {
+            await DenyAsync(
+                context,
+                repository,
+                logger,
+                StatusCodes.Status403Forbidden,
+                "APPLICATION_PERMISSION_BOUNDARY_DENIED",
+                "The required permission is not available in this application.",
+                policyName,
+                userId,
+                serviceIdentityId,
+                correlationId);
+            return;
+        }
 
         var restrictedHumanSession =
             context.User.Identity?.IsAuthenticated == true &&

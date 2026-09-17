@@ -19,10 +19,11 @@ DECLARE
 BEGIN
     WITH expected(user_id, username, user_type, role_code) AS (
         VALUES
-        ('79000000-0000-0000-0000-000000000001'::uuid, 'uat-system-rbac-admin', 'INTERNAL_ADMIN'::identity.user_type_enum, 'SYSTEM_RBAC_ADMINISTRATOR'),
-        ('79000000-0000-0000-0000-000000000002'::uuid, 'uat-platform-admin', 'INTERNAL_ADMIN'::identity.user_type_enum, 'PLATFORM_ADMINISTRATOR'),
+        ('79000000-0000-0000-0000-000000000001'::uuid, 'uat-system-admin', 'INTERNAL_ADMIN'::identity.user_type_enum, 'SYSTEM_ADMINISTRATOR'),
         ('77000000-0000-0000-0000-000000000012'::uuid, 'uat-operations-supervisor', 'OPERATIONS_USER'::identity.user_type_enum, 'OPERATIONS_SUPERVISOR'),
         ('77000000-0000-0000-0000-000000000010'::uuid, 'uat-operator-support', 'SITE_OPERATOR'::identity.user_type_enum, 'SITE_OPERATOR'),
+        ('79000000-0000-0000-0000-000000000008'::uuid, 'uat-parking-attendant', 'OPERATIONS_USER'::identity.user_type_enum, 'PARKING_ATTENDANT'),
+        ('79000000-0000-0000-0000-000000000009'::uuid, 'uat-apt-cashier', 'OPERATIONS_USER'::identity.user_type_enum, 'APT_CASHIER_OPERATOR'),
         ('79000000-0000-0000-0000-000000000005'::uuid, 'uat-finance-reconciliation', 'FINANCE_USER'::identity.user_type_enum, 'FINANCE_RECONCILIATION_ANALYST'),
         ('79000000-0000-0000-0000-000000000006'::uuid, 'uat-compliance-policy-admin', 'COMPLIANCE_USER'::identity.user_type_enum, 'COMPLIANCE_POLICY_ADMINISTRATOR'),
         ('79000000-0000-0000-0000-000000000007'::uuid, 'uat-executive-management', 'OTHER'::identity.user_type_enum, 'EXECUTIVE_MANAGEMENT')
@@ -38,7 +39,7 @@ BEGIN
     WHERE u.user_id IS NULL OR r.role_id IS NULL OR c.role_id IS NULL OR ur.user_role_id IS NULL;
 
     IF v_problem_count <> 0 THEN
-        RAISE EXCEPTION 'Management Platform UAT users are not aligned to the canonical Wave 3 role catalog (% invalid rows).', v_problem_count;
+        RAISE EXCEPTION 'Management Platform UAT users are not aligned to the approved v1.3 role catalog (% invalid rows).', v_problem_count;
     END IF;
 
     IF EXISTS (
@@ -49,6 +50,47 @@ BEGIN
           AND p.permission_code='uat-fixture.manage'
     ) THEN
         RAISE EXCEPTION 'uat-fixture.manage is assigned to a canonical role.';
+    END IF;
+
+    IF (SELECT count(*) FROM identity.roles WHERE role_status='ACTIVE'
+        AND role_provenance='CANONICAL_ROLE' AND human_assignable) <> 8 THEN
+        RAISE EXCEPTION 'The exposed assignable role catalog must contain exactly eight roles.';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM identity.role_permissions rp
+        JOIN identity.roles r ON r.role_id=rp.role_id
+        JOIN identity.permissions p ON p.permission_id=rp.permission_id
+        WHERE rp.binding_status='ACTIVE' AND r.role_code='SYSTEM_ADMINISTRATOR'
+          AND (p.permission_code LIKE 'statutory-discounts.%'
+            OR p.permission_code LIKE 'reconciliation.%'
+            OR p.permission_code LIKE 'policy-import.%'
+            OR p.permission_code LIKE 'apt.%'
+            OR p.permission_code='fiscal-issuance.void.command')
+    ) THEN
+        RAISE EXCEPTION 'System Administrator contains business-workflow authority.';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM identity.users u
+        JOIN identity.user_roles ur ON ur.user_id=u.user_id
+        JOIN identity.roles r ON r.role_id=ur.role_id
+        JOIN identity.user_role_scope_grants g ON g.user_role_id=ur.user_role_id
+        WHERE u.user_id='79000000-0000-0000-0000-000000000007'
+          AND r.role_code='EXECUTIVE_MANAGEMENT'
+          AND ur.assignment_status='ACTIVE' AND g.grant_status='ACTIVE'
+          AND g.scope_type='GLOBAL'
+    ) OR EXISTS (
+        SELECT 1 FROM identity.users u
+        JOIN identity.user_roles ur ON ur.user_id=u.user_id
+        JOIN identity.roles r ON r.role_id=ur.role_id
+        JOIN identity.user_role_scope_grants g ON g.user_role_id=ur.user_role_id
+        WHERE u.user_id='79000000-0000-0000-0000-000000000007'
+          AND r.role_code='EXECUTIVE_MANAGEMENT'
+          AND ur.assignment_status='ACTIVE' AND g.grant_status='ACTIVE'
+          AND g.scope_type<>'GLOBAL'
+    ) THEN
+        RAISE EXCEPTION 'Executive / Management must have exactly Global scope semantics.';
     END IF;
 END
 $wave3$;
