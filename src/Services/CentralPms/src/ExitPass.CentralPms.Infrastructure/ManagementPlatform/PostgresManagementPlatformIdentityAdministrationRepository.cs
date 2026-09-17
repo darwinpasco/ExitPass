@@ -129,6 +129,10 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         {
             return Invalid<IdentityUserSummary>(command.CorrelationId, "INVALID_EFFECTIVE_WINDOW");
         }
+        if (command.Bootstrap is null)
+        {
+            return Invalid<IdentityUserSummary>(command.CorrelationId, "HUMAN_BOOTSTRAP_REQUIRED");
+        }
 
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
@@ -187,8 +191,8 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                 user_type, user_status, effective_from, effective_to,
                 created_by_user_id, updated_by_user_id)
             VALUES (
-                gen_random_uuid(), @username, @email, @email_normalized, @display_name, @mobile,
-                @user_type::identity.user_type_enum, 'INVITED', @effective_from, @effective_to,
+                @user_id, @username, @email, @email_normalized, @display_name, @mobile,
+                @user_type::identity.user_type_enum, 'ACTIVE', @effective_from, @effective_to,
                 @actor_user_id, @actor_user_id)
             RETURNING user_id;
             """;
@@ -197,6 +201,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         try
         {
             await using var insert = new NpgsqlCommand(sql, connection, transaction);
+            insert.Parameters.AddWithValue("user_id", command.Bootstrap.UserReference);
             insert.Parameters.AddWithValue("username", command.Username);
             insert.Parameters.Add("email", NpgsqlDbType.Text).Value = Db(command.Email?.Trim());
             insert.Parameters.Add("email_normalized", NpgsqlDbType.Text).Value = Db(command.Email?.Trim().ToLowerInvariant());
@@ -213,6 +218,8 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             await transaction.RollbackAsync(cancellationToken);
             return Conflict<IdentityUserSummary>(command.CorrelationId, "IDENTITY_USER_ALREADY_EXISTS", "The requested user identifier conflicts with an existing identity.");
         }
+
+        await InsertHumanBootstrapAsync(connection, transaction, command.Bootstrap, actor.UserId, cancellationToken);
 
         const string roleSql = """
             INSERT INTO identity.user_roles (
@@ -256,13 +263,59 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         scopeInsert.Parameters.AddWithValue("actor_user_id", actor.UserId);
         var grantId = (Guid)(await scopeInsert.ExecuteScalarAsync(cancellationToken))!;
 
-        await InsertAuditAsync(connection, transaction, "USER_CREATED", "SUCCESS", command.ReasonCode, "IdentityUser", userId, actor.UserId, command.CorrelationId, "A human identity was invited.", cancellationToken);
+        await InsertAuditAsync(connection, transaction, "USER_CREATED", "SUCCESS", command.ReasonCode, "IdentityUser", userId, actor.UserId, command.CorrelationId, "A human identity was created with a password change required credential.", cancellationToken);
         await InsertAuditAsync(connection, transaction, "ROLE_ASSIGNED", "SUCCESS", command.ReasonCode, "UserRole", assignmentId, actor.UserId, command.CorrelationId, "A bounded role assignment was activated.", cancellationToken);
         var scopeEventType = command.InitialScopeType == "SITE" ? "SITE_SCOPE_GRANTED" : "SITE_GROUP_SCOPE_GRANTED";
         await InsertAuditAsync(connection, transaction, scopeEventType, "SUCCESS", command.ReasonCode, "UserRoleScopeGrant", grantId, actor.UserId, command.CorrelationId, "An assignment-scoped authorization grant was activated.", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         var created = await ReadUserAsync(connection, null, userId, cancellationToken);
         return IdentityAdministrationResult<IdentityUserSummary>.Succeeded(created!, command.CorrelationId, "CREATED");
+    }
+
+    private static async Task InsertHumanBootstrapAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        HumanBootstrapPersistenceMaterial bootstrap,
+        Guid actorUserId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO identity.local_credentials (
+                local_credential_id, user_id, credential_status, password_verifier, verifier_salt,
+                verifier_algorithm_code, verifier_algorithm_version, verifier_work_factor,
+                verifier_memory_kib, verifier_parallelism, temporary_password_expires_at, activated_at, last_changed_at,
+                created_by_user_id, updated_by_user_id)
+            VALUES (@credential_id, @user_id, 'CHANGE_REQUIRED', @verifier, @salt, @algorithm,
+                @algorithm_version, @work_factor, @memory_kib, @parallelism, @expires_at, now(), now(),
+                @actor_user_id, @actor_user_id);
+
+            INSERT INTO identity.user_mfa_authenticators (
+                user_mfa_authenticator_id, user_id, authenticator_type, authenticator_status,
+                protected_secret_envelope, protection_key_reference, protection_key_version,
+                envelope_format_version, enrollment_started_at, activated_at,
+                created_by_user_id, updated_by_user_id)
+            VALUES (@authenticator_id, @user_id, 'TOTP', 'ACTIVE', @protected_secret,
+                @key_reference, @key_version, @format_version, now(), now(),
+                @actor_user_id, @actor_user_id);
+            """;
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("credential_id", bootstrap.CredentialReference);
+        command.Parameters.AddWithValue("user_id", bootstrap.UserReference);
+        command.Parameters.AddWithValue("verifier", bootstrap.PasswordHash.Verifier);
+        command.Parameters.AddWithValue("salt", bootstrap.PasswordHash.Salt);
+        command.Parameters.AddWithValue("algorithm", bootstrap.PasswordHash.AlgorithmCode);
+        command.Parameters.AddWithValue("algorithm_version", bootstrap.PasswordHash.AlgorithmVersion);
+        command.Parameters.AddWithValue("work_factor", bootstrap.PasswordHash.Iterations);
+        command.Parameters.AddWithValue("memory_kib", bootstrap.PasswordHash.MemoryKiB);
+        command.Parameters.AddWithValue("parallelism", bootstrap.PasswordHash.Parallelism);
+        command.Parameters.AddWithValue("expires_at", bootstrap.TemporaryPasswordExpiresAt);
+        command.Parameters.AddWithValue("authenticator_id", bootstrap.AuthenticatorReference);
+        command.Parameters.AddWithValue("protected_secret", bootstrap.ProtectedTotpSecret);
+        command.Parameters.AddWithValue("key_reference", bootstrap.ProtectionKeyReference);
+        command.Parameters.AddWithValue("key_version", bootstrap.ProtectionKeyVersion);
+        command.Parameters.AddWithValue("format_version", bootstrap.EnvelopeFormatVersion);
+        command.Parameters.AddWithValue("actor_user_id", actorUserId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<IdentityAdministrationResult<IdentityUserSummary>> UpdateUserAsync(

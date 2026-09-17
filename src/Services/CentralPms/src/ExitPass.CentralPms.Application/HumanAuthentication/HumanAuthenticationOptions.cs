@@ -21,6 +21,7 @@ public sealed record HumanAuthenticationOptions
     public int AptAbsoluteHours { get; init; } = 12;
     public int FreshAuthenticationMinutes { get; init; } = 5;
     public int CredentialChallengeMinutes { get; init; } = 30;
+    public int TemporaryPasswordHours { get; init; } = 72;
     public string CookieName { get; init; } = "__Host-ExitPass-HumanSession";
     public string AptSessionAuthorizationScheme { get; init; } = "ExitPass-HumanSession";
     public string TotpIssuer { get; init; } = "ExitPass";

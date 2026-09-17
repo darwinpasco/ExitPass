@@ -20,18 +20,14 @@ public static class HumanAuthenticationEndpoints
         web.MapPost("/logout-all", LogoutAllAsync);
         web.MapPost("/reauthenticate", FreshAuthenticateAsync);
         web.MapPost("/password/change", ChangePasswordAsync);
-        web.MapPost("/password-reset-requests", RequestPasswordResetAsync).DisableAntiforgery();
         web.MapPost("/password-resets", ResetPasswordAsync).DisableAntiforgery();
-        web.MapPost("/activations", ActivateAsync).DisableAntiforgery();
-        web.MapPost("/totp/enrollment", BeginTotpEnrollmentAsync);
-        web.MapPost("/totp/enrollment/restart", RestartTotpEnrollmentAsync);
-        web.MapPost("/totp/enrollment/confirm", ConfirmTotpEnrollmentAsync);
 
         var apt = app.MapGroup("/v1/apt/human-sessions").WithTags("AptHumanAuthentication");
         apt.MapPost("", CreateAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls();
         apt.MapGet("/{sessionReference:guid}", GetAptSessionAsync).RequireInternalServiceMtls();
         apt.MapPost("/{sessionReference:guid}/continue", ContinueAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls();
         apt.MapPost("/{sessionReference:guid}/reauthenticate", ReauthenticateAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls();
+        apt.MapPost("/{sessionReference:guid}/password/change", ChangeAptPasswordAsync).DisableAntiforgery().RequireInternalServiceMtls();
         apt.MapPost("/{sessionReference:guid}/logout", LogoutAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls();
         return app;
     }
@@ -170,7 +166,8 @@ public static class HumanAuthenticationEndpoints
     {
         var correlationId = HumanSessionAuthenticationHandler.ResolveCorrelationId(request);
         if (!originValidator.IsAllowed(request)) return SafeFailure(400, "INVALID_REQUEST_ORIGIN", correlationId);
-        var result = await service.ResetPasswordAsync(body.ChallengeReference, body.ChallengeSecret, body.NewPassword, BuildContext(request, options.Value, tokens, null, null), cancellationToken);
+        var result = await service.ResetPasswordWithTotpAsync(body.Username, body.ExpiredTemporaryPassword,
+            body.TotpCode, body.NewPassword, BuildContext(request, options.Value, tokens, null, null), cancellationToken);
         SetNoStore(response);
         return Results.Json(result.Response, statusCode: result.HttpStatusCode);
     }
@@ -228,6 +225,17 @@ public static class HumanAuthenticationEndpoints
         var deviceId = ResolveDeviceServiceIdentity(request);
         if (token is null || !_tokensMatchReference(tokens, token, sessionReference)) return SafeFailure(404, "SESSION_NOT_FOUND", HumanSessionAuthenticationHandler.ResolveCorrelationId(request));
         var result = await service.FreshAuthenticateAsync(token, body.Password, body.TotpCode, BuildContext(request, options.Value, tokens, deviceId, null), cancellationToken);
+        SetNoStore(response);
+        return Results.Json(result.Response, statusCode: result.HttpStatusCode);
+    }
+
+    private static async Task<IResult> ChangeAptPasswordAsync(Guid sessionReference, HumanPasswordChangeRequest body, HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, CancellationToken cancellationToken)
+    {
+        var token = HumanSessionAuthenticationHandler.ResolveToken(request, options.Value);
+        var deviceId = ResolveDeviceServiceIdentity(request);
+        if (token is null || !_tokensMatchReference(tokens, token, sessionReference)) return SafeFailure(404, "SESSION_NOT_FOUND", HumanSessionAuthenticationHandler.ResolveCorrelationId(request));
+        var result = await service.ChangePasswordAsync(token, body.CurrentPassword, body.NewPassword, body.TotpCode,
+            BuildContext(request, options.Value, tokens, deviceId, null), cancellationToken);
         SetNoStore(response);
         return Results.Json(result.Response, statusCode: result.HttpStatusCode);
     }

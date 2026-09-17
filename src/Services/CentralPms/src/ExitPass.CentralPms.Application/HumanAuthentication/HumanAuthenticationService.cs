@@ -100,7 +100,15 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         }
 
         var passwordChangeRequired = credential.Status == "CHANGE_REQUIRED";
-        var mfaRequired = audience == HumanSessionAudiences.ManagementPlatform && login.HasPrivilegedRole;
+        if (passwordChangeRequired &&
+            (credential.TemporaryPasswordExpiresAt is not { } expiresAt || expiresAt <= now))
+        {
+            await RecordSecurityAsync("LOGIN_FAILED", "FAILED", "TEMPORARY_PASSWORD_EXPIRED", login.UserId,
+                login.UserId, context, now, cancellationToken);
+            return Failure(401, HumanAuthenticationOutcomes.InvalidCredentials, "TEMPORARY_PASSWORD_EXPIRED",
+                context.CorrelationId);
+        }
+        var mfaRequired = audience == HumanSessionAudiences.ManagementPlatform;
         var mfaSatisfied = false;
         Guid? mfaAuthenticatorId = null;
         DateTimeOffset? mfaVerifiedAt = null;
@@ -110,7 +118,8 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
             var authenticator = login.TotpAuthenticator;
             if (authenticator is null || authenticator.Status is "PENDING_ENROLLMENT" or "RESET_REQUIRED")
             {
-                return await IssueSessionAsync(login, credential, audience, context, now, passwordChangeRequired, true, false, null, null, HumanAuthenticationOutcomes.MfaEnrollmentRequired, cancellationToken);
+                return Failure(403, HumanAuthenticationOutcomes.AccountUnavailable,
+                    "TOTP_AUTHENTICATOR_UNAVAILABLE", context.CorrelationId);
             }
 
             if (authenticator.Status != "ACTIVE")
@@ -235,7 +244,7 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         var mfaSatisfied = false;
         Guid? mfaAuthenticatorId = null;
         DateTimeOffset? mfaVerifiedAt = null;
-        if (record.Audience == HumanSessionAudiences.ManagementPlatform && login.HasPrivilegedRole)
+        if (record.Audience == HumanSessionAudiences.ManagementPlatform)
         {
             var authenticator = login.TotpAuthenticator;
             if (!_totpProtector.IsConfigured)
@@ -311,10 +320,6 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
                 record.UserId, context, now, cancellationToken);
             return Failure(401, HumanAuthenticationOutcomes.InvalidCredentials, "CURRENT_PASSWORD_INVALID", context.CorrelationId);
         }
-        var mfaSatisfied = false;
-        Guid? mfaAuthenticatorId = null;
-        DateTimeOffset? mfaVerifiedAt = null;
-        if (record.Audience == HumanSessionAudiences.ManagementPlatform && login.HasPrivilegedRole)
         {
             var authenticator = login.TotpAuthenticator;
             if (!_totpProtector.IsConfigured) return Failure(503, HumanAuthenticationOutcomes.AccountUnavailable, "TOTP_PROTECTION_UNAVAILABLE", context.CorrelationId, true);
@@ -343,23 +348,62 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
                 "TOTP_VERIFIED", context, now, cancellationToken);
             await RecordSecurityAsync("TOTP_VERIFICATION_SUCCEEDED", "ALLOWED", "TOTP_VERIFIED", login.UserId,
                 login.UserId, context, now, cancellationToken);
-            mfaSatisfied = true;
-            mfaAuthenticatorId = authenticator.AuthenticatorId;
-            mfaVerifiedAt = now;
         }
 
         PasswordHashMaterial material;
         try { material = await _passwords.HashAsync(newPassword, cancellationToken); }
         catch (ArgumentException) { return Failure(400, "PASSWORD_REJECTED", "PASSWORD_POLICY_FAILED", context.CorrelationId); }
-        var replacement = _tokens.Create();
-        var absolute = now.AddHours(record.Audience == HumanSessionAudiences.Apt ? _options.AptAbsoluteHours : _options.WebAbsoluteHours);
-        var issue = await _repository.ChangePasswordAndRotateSessionAsync(record, login.Credential.RowVersion,
-            material, replacement, mfaSatisfied, mfaAuthenticatorId, mfaVerifiedAt,
-            mfaSatisfied ? "PASSWORD_TOTP" : "PASSWORD", now,
-            ComputeIdleExpiry(record.Audience, now, absolute), absolute, context.CorrelationId, cancellationToken);
-        if (issue is null) return Failure(409, HumanAuthenticationOutcomes.SessionInvalid, "CREDENTIAL_CHANGE_CONFLICT", context.CorrelationId, true);
+        await _repository.ChangePasswordAsync(record.UserId, login.Credential.LocalCredentialId,
+            login.Credential.RowVersion, material, now, record.UserId, cancellationToken);
         await RecordSecurityAsync("CREDENTIAL_CHANGED", "ALLOWED", "PASSWORD_CHANGED", record.UserId, record.UserId, context, now, cancellationToken);
-        return await SuccessFromSessionAsync(issue.Record, replacement, context.CorrelationId, cancellationToken, "PASSWORD_CHANGED");
+        return Failure(200, "PASSWORD_CHANGED", null, context.CorrelationId);
+    }
+
+    public async Task<HumanAuthenticationResult> ResetPasswordWithTotpAsync(
+        string username,
+        string? expiredTemporaryPassword,
+        string totpCode,
+        string newPassword,
+        HumanAuthenticationContext context,
+        CancellationToken cancellationToken)
+    {
+        var now = _timeProvider.GetUtcNow();
+        var normalized = NormalizeUsername(username);
+        var loginHash = _tokens.HashPrivacyValue(normalized);
+        var login = await _repository.FindLocalLoginAsync(normalized, now, cancellationToken);
+        if (login?.Credential is null || login.UserStatus != "ACTIVE")
+        {
+            await RecordAttemptAsync(login?.UserId, loginHash, "TOTP", "INVALID",
+                HumanSessionAudiences.ManagementPlatform, "PASSWORD_RESET_REJECTED", context, now, cancellationToken);
+            return Failure(401, HumanAuthenticationOutcomes.InvalidCredentials, "RESET_AUTHENTICATION_FAILED", context.CorrelationId);
+        }
+
+        var credential = login.Credential;
+        var expiredBootstrap = credential.Status == "CHANGE_REQUIRED" &&
+            credential.TemporaryPasswordExpiresAt is { } expiresAt && expiresAt <= now;
+        if (credential.Status is not ("ACTIVE" or "CHANGE_REQUIRED") ||
+            (credential.Status == "CHANGE_REQUIRED" &&
+             (!expiredBootstrap || string.IsNullOrEmpty(expiredTemporaryPassword) ||
+              !await VerifyPasswordSafelyAsync(expiredTemporaryPassword, credential, cancellationToken))))
+        {
+            return Failure(401, HumanAuthenticationOutcomes.InvalidCredentials,
+                expiredBootstrap ? "EXPIRED_TEMPORARY_PASSWORD_REQUIRED" : "RESET_AUTHENTICATION_FAILED",
+                context.CorrelationId);
+        }
+
+        var totpFailure = await VerifyPasswordMutationTotpAsync(login, loginHash, totpCode,
+            HumanSessionAudiences.ManagementPlatform, context, now, cancellationToken);
+        if (totpFailure is not null) return totpFailure;
+
+        PasswordHashMaterial material;
+        try { material = await _passwords.HashAsync(newPassword, cancellationToken); }
+        catch (ArgumentException) { return Failure(400, "PASSWORD_REJECTED", "PASSWORD_POLICY_FAILED", context.CorrelationId); }
+
+        await _repository.ChangePasswordAsync(login.UserId, credential.LocalCredentialId, credential.RowVersion,
+            material, now, login.UserId, cancellationToken);
+        await RecordSecurityAsync("CREDENTIAL_CHANGED", "ALLOWED", "PASSWORD_RESET_WITH_TOTP", login.UserId,
+            login.UserId, context, now, cancellationToken);
+        return Failure(200, "PASSWORD_RESET_COMPLETED", null, context.CorrelationId);
     }
 
     public async Task<TotpEnrollmentResult> BeginTotpEnrollmentAsync(string token, HumanAuthenticationContext context, CancellationToken cancellationToken)
@@ -459,63 +503,19 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
 
     public async Task RequestPasswordResetAsync(string username, HumanAuthenticationContext context, CancellationToken cancellationToken)
     {
-        var now = _timeProvider.GetUtcNow();
-        var login = await _repository.FindLocalLoginAsync(NormalizeUsername(username), now, cancellationToken);
-        if (_challengeDelivery.Enabled && login is not null && login.UserStatus is "ACTIVE" or "LOCKED" &&
-            login.Credential is { Status: "ACTIVE" or "CHANGE_REQUIRED" or "LOCKED" } &&
-            !string.IsNullOrWhiteSpace(login.Email))
-        {
-            var expiresAt = now.AddMinutes(_options.CredentialChallengeMinutes);
-            var challenge = await _repository.CreateCredentialChallengeAsync(login.UserId, "PASSWORD_RESET", "PASSWORD_RESET_EMAIL", now, expiresAt, context.CentralPmsServiceIdentityId, context.CorrelationId, cancellationToken);
-            try
-            {
-                await _challengeDelivery.DeliverAsync(new CredentialChallengeDeliveryRequest(
-                    login.UserId, login.Email, "PASSWORD_RESET", challenge.Reference, challenge.Secret, expiresAt,
-                    context.CorrelationId), cancellationToken);
-            }
-            catch when (!cancellationToken.IsCancellationRequested)
-            {
-                await _repository.RevokeCredentialChallengeAsync(challenge.Reference,
-                    context.CentralPmsServiceIdentityId, "PASSWORD_RESET_EMAIL_DELIVERY_FAILED", now, cancellationToken);
-                await RecordSecurityAsync("CREDENTIAL_CHALLENGE_DELIVERY_FAILED", "FAILED",
-                    "PASSWORD_RESET_EMAIL_DELIVERY_FAILED", challenge.Reference, login.UserId,
-                    context, now, cancellationToken);
-            }
-        }
+        await Task.CompletedTask;
     }
 
     public async Task<HumanAuthenticationResult> ResetPasswordAsync(Guid challengeReference, string challengeSecret, string newPassword, HumanAuthenticationContext context, CancellationToken cancellationToken)
     {
-        PasswordHashMaterial material;
-        try { material = await _passwords.HashAsync(newPassword, cancellationToken); }
-        catch (ArgumentException)
-        {
-            await RecordChallengePolicyFailureAsync(challengeReference, "PASSWORD_RESET_CHALLENGE", context, cancellationToken);
-            return Failure(400, "PASSWORD_REJECTED", "PASSWORD_POLICY_FAILED", context.CorrelationId);
-        }
-        var now = _timeProvider.GetUtcNow();
-        var completion = await _repository.CompleteCredentialChallengeAsync(challengeReference,
-            _tokens.HashSecret(challengeSecret), _tokens.HashPrivacyValue(challengeReference.ToString("D")),
-            "PASSWORD_RESET", material, now, context, cancellationToken);
-        if (!completion.Succeeded) return Failure(400, "CHALLENGE_REJECTED", "INVALID_OR_EXPIRED_CHALLENGE", context.CorrelationId);
-        return Failure(200, "PASSWORD_RESET_COMPLETED", null, context.CorrelationId);
+        await Task.CompletedTask;
+        return Failure(410, "PASSWORD_RESET_FLOW_DISABLED", "TOTP_RESET_REQUIRED", context.CorrelationId);
     }
 
     public async Task<HumanAuthenticationResult> ActivateAsync(Guid challengeReference, string challengeSecret, string newPassword, HumanAuthenticationContext context, CancellationToken cancellationToken)
     {
-        PasswordHashMaterial material;
-        try { material = await _passwords.HashAsync(newPassword, cancellationToken); }
-        catch (ArgumentException)
-        {
-            await RecordChallengePolicyFailureAsync(challengeReference, "ACTIVATION_CHALLENGE", context, cancellationToken);
-            return Failure(400, "PASSWORD_REJECTED", "PASSWORD_POLICY_FAILED", context.CorrelationId);
-        }
-        var now = _timeProvider.GetUtcNow();
-        var completion = await _repository.CompleteCredentialChallengeAsync(challengeReference,
-            _tokens.HashSecret(challengeSecret), _tokens.HashPrivacyValue(challengeReference.ToString("D")),
-            "ACCOUNT_ACTIVATION", material, now, context, cancellationToken);
-        if (!completion.Succeeded) return Failure(400, "CHALLENGE_REJECTED", "INVALID_OR_EXPIRED_CHALLENGE", context.CorrelationId);
-        return Failure(200, "ACCOUNT_ACTIVATED", null, context.CorrelationId);
+        await Task.CompletedTask;
+        return Failure(410, "ACTIVATION_FLOW_DISABLED", "TEMPORARY_PASSWORD_LOGIN_REQUIRED", context.CorrelationId);
     }
 
     private async Task RecordChallengePolicyFailureAsync(
@@ -580,10 +580,11 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
     private async Task<HumanAuthenticationResult> SuccessFromSessionAsync(HumanSessionRecord record, SessionCredential credential, Guid correlationId, CancellationToken cancellationToken, string outcome = HumanAuthenticationOutcomes.Authenticated, bool? passwordChangeRequired = null, bool? mfaRequired = null)
     {
         var authorization = await _repository.GetEffectiveAuthorizationAsync(record.UserId, _timeProvider.GetUtcNow(), cancellationToken);
-        var requiresMfa = mfaRequired ?? (record.Audience == HumanSessionAudiences.ManagementPlatform && record.HasPrivilegedRole);
-        var restricted = (requiresMfa && !record.MfaRequirementSatisfied) || record.LocalCredentialStatus == "CHANGE_REQUIRED";
+        var requiresMfa = mfaRequired ?? record.Audience == HumanSessionAudiences.ManagementPlatform;
+        var mustChangePassword = passwordChangeRequired ?? record.LocalCredentialStatus == "CHANGE_REQUIRED";
+        var restricted = (requiresMfa && !record.MfaRequirementSatisfied) || mustChangePassword;
         var dto = new HumanSessionDto(record.SessionReference, record.UserId, record.Username, record.DisplayName, record.Audience, record.AssuranceContext,
-            record.HasPrivilegedRole, passwordChangeRequired ?? record.LocalCredentialStatus == "CHANGE_REQUIRED", requiresMfa, record.MfaRequirementSatisfied,
+            record.HasPrivilegedRole, mustChangePassword, requiresMfa, record.MfaRequirementSatisfied,
             record.AuthenticatedAt, record.LastSeenAt, record.IdleExpiresAt, record.AbsoluteExpiresAt,
             restricted ? [] : authorization.Permissions, restricted ? [] : authorization.SiteIds,
             restricted ? [] : authorization.SiteGroupIds, !restricted && authorization.HasGlobalScope,
@@ -650,6 +651,46 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         {
             if (secret is not null) CryptographicOperations.ZeroMemory(secret);
         }
+    }
+
+    private async Task<HumanAuthenticationResult?> VerifyPasswordMutationTotpAsync(
+        HumanLoginRecord login,
+        string loginHash,
+        string? totpCode,
+        string audience,
+        HumanAuthenticationContext context,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (!_totpProtector.IsConfigured)
+        {
+            return Failure(503, HumanAuthenticationOutcomes.AccountUnavailable,
+                "TOTP_PROTECTION_UNAVAILABLE", context.CorrelationId, true);
+        }
+        var authenticator = login.TotpAuthenticator;
+        if (authenticator?.Status != "ACTIVE" || string.IsNullOrWhiteSpace(totpCode))
+        {
+            return Failure(401, HumanAuthenticationOutcomes.MfaRequired, "TOTP_REQUIRED", context.CorrelationId);
+        }
+        var failures = await _repository.CountRecentFailedAttemptsAsync(login.UserId, loginHash,
+            context.SourceIpHash, "TOTP", now.AddMinutes(-_options.FailureWindowMinutes), cancellationToken);
+        if (failures >= _options.MaximumFailures)
+        {
+            return Failure(429, HumanAuthenticationOutcomes.Throttled, "TOTP_THROTTLED",
+                context.CorrelationId, true);
+        }
+        var verification = VerifyTotp(login.UserId, authenticator, totpCode, now);
+        if (!verification.Succeeded || !verification.MatchedTimeStep.HasValue ||
+            !await _repository.TryRecordTotpSuccessAsync(authenticator.AuthenticatorId, authenticator.RowVersion,
+                verification.MatchedTimeStep.Value, now, context.CentralPmsServiceIdentityId, cancellationToken))
+        {
+            await RecordAttemptAsync(login.UserId, loginHash, "TOTP", "INVALID", audience,
+                "TOTP_INVALID_OR_REPLAYED", context, now, cancellationToken);
+            return Failure(401, HumanAuthenticationOutcomes.MfaRequired, "TOTP_INVALID", context.CorrelationId);
+        }
+        await RecordAttemptAsync(login.UserId, loginHash, "TOTP", "SUCCESS", audience,
+            "TOTP_VERIFIED_FOR_PASSWORD_MUTATION", context, now, cancellationToken);
+        return null;
     }
 
     private async Task<bool> VerifyPasswordSafelyAsync(string password, LocalCredentialRecord? credential, CancellationToken cancellationToken)
