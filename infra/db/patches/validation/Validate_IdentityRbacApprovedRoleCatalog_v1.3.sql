@@ -15,7 +15,7 @@ BEGIN
     SELECT array_agg(role_code ORDER BY role_code)
     INTO actual_codes
     FROM identity.roles
-    WHERE human_assignable
+    WHERE human_assignable AND direct_add_user_eligible
       AND role_status = 'ACTIVE'
       AND effective_from <= now()
       AND (effective_to IS NULL OR effective_to > now());
@@ -29,9 +29,9 @@ BEGIN
         SELECT 1
         FROM identity.roles
         WHERE role_code = ANY(expected_codes)
-          AND (role_provenance <> 'CANONICAL_ROLE' OR NOT human_assignable OR role_status <> 'ACTIVE')
+          AND (role_provenance <> 'CANONICAL_ROLE' OR NOT human_assignable OR NOT direct_add_user_eligible OR role_status <> 'ACTIVE')
     ) THEN
-        RAISE EXCEPTION 'An approved role is not active, canonical, and human-assignable.';
+        RAISE EXCEPTION 'An approved role is not active, canonical, human-assignable, and direct-add eligible.';
     END IF;
 
     IF EXISTS (
