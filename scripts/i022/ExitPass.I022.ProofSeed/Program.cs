@@ -18,7 +18,7 @@ var options = Options.Create(new HumanAuthenticationOptions
     Argon2Iterations = 1,
     Argon2MemoryKiB = 19456,
     Argon2Parallelism = 1,
-    PasswordMinimumLength = 15
+    PasswordMinimumLength = 8
 });
 var material = await new Argon2idHumanPasswordHasher(options).HashAsync(password, CancellationToken.None);
 var userId = Guid.NewGuid();

@@ -411,7 +411,7 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
             Argon2Iterations = 1,
             Argon2MemoryKiB = 19456,
             Argon2Parallelism = 1,
-            PasswordMinimumLength = 15,
+            PasswordMinimumLength = 8,
             TotpProtectionKeyBase64 = _totpProtectionKeyBase64,
             TotpProtectionKeyReference = "i022-proof-key",
             TotpProtectionKeyVersion = "1"
