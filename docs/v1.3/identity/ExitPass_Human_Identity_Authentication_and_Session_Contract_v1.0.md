@@ -77,7 +77,7 @@ Local credentials belong in PostgreSQL in a dedicated restricted table, not in `
 - Argon2id parameters are security-owned configuration, validated against a minimum at startup, benchmarked for deployed hardware, and upgradeable on successful login. OWASP's current minimum is a floor, not a permanent hard-coded target.
 - PBKDF2-HMAC-SHA-256 is permitted only when documented FIPS/runtime constraints require it and security approves its configured work factor.
 - A server-side pepper is optional defense in depth. If approved, it is versioned in a secrets manager/HSM boundary, never stored beside verifiers, and has a tested compromise/rotation procedure; inability to retrieve it fails authentication closed.
-- Passwords are at least 15 characters for single-factor use, allow at least 64 characters, accept Unicode, are checked against compromised/common blocklists, and have no arbitrary composition rule.
+- Local human passwords are at least 8 characters for every audience and role, including initial temporary-password replacement, voluntary change, active-account reset, and expired temporary-password recovery. Passwords allow at least 64 characters, accept Unicode, are checked against compromised/common blocklists, and have no arbitrary composition rule.
 - No scheduled password expiry is imposed without compromise or policy cause. Credential compromise, reset, or administrative action can force change.
 - Password entry and verification require TLS. Plaintext exists only in bounded request and verifier memory, is never logged, audited, queued, cached, or persisted, and references are released promptly.
 - Password history is not required for v1.3 by default; if policy requires it, retain only prior verifiers and prevent recent reuse without recoverable passwords.
@@ -90,6 +90,7 @@ Lockout never changes roles or scopes. An administrator with explicit unlock aut
 
 ### 5.2 Change and reset
 
+- Password mutation endpoints return `PASSWORD_POLICY_FAILED` when the replacement is rejected. Management Platform must show "Password must be at least 8 characters." for a replacement shorter than eight characters; other policy failures require their own accurate message.
 - Authenticated password change requires fresh authentication, rotates the credential version, and revokes other sessions.
 - Self-service reset is available only through a verified recovery channel. Otherwise an authorized administrator issues a single-use, short-lived reset challenge; administrators never choose or see the replacement password.
 - Reset challenges are stored only as hashes, are audience/user/purpose bound, expire, and are consumed once.
