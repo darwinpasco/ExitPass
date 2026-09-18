@@ -159,11 +159,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return Invalid<IdentityUserSummary>(command.CorrelationId, "ROLE_SCOPE_INCOMPATIBLE");
         }
 
-        if (role.IsPrivileged || role.RequiresElevatedApproval)
-        {
-            return Forbidden<IdentityUserSummary>(command.CorrelationId, "PRIVILEGED_ACCESS_REQUEST_REQUIRED");
-        }
-
         if (!role.DirectAddUserEligible)
         {
             return Forbidden<IdentityUserSummary>(command.CorrelationId, "DIRECT_ADD_USER_ROLE_REQUIRED");
@@ -561,10 +556,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
               AND r.role_status = 'ACTIVE'
               AND r.effective_from <= now()
               AND (r.effective_to IS NULL OR r.effective_to > now())
-              AND (NOT @direct_add_user_only OR (
-                    r.direct_add_user_eligible
-                    AND NOT r.is_privileged
-                    AND NOT r.requires_elevated_approval))
+              AND (NOT @direct_add_user_only OR r.direct_add_user_eligible)
             GROUP BY r.role_id
             ORDER BY r.role_code;
             """;

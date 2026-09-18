@@ -340,26 +340,40 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         (await CountUsersByUsernameAsync(username)).Should().Be(1);
     }
 
-    [Fact]
-    public async Task CreateUser_WithPrivilegedRole_RequiresGovernedRequestAndCreatesNothing()
+    [Theory]
+    [InlineData("SYSTEM_ADMINISTRATOR", "GLOBAL")]
+    [InlineData("OPERATIONS_SUPERVISOR", "SITE")]
+    [InlineData("SITE_OPERATOR", "SITE")]
+    [InlineData("PARKING_ATTENDANT", "SITE")]
+    [InlineData("APT_CASHIER_OPERATOR", "SITE")]
+    [InlineData("FINANCE_RECONCILIATION_ANALYST", "SITE_GROUP")]
+    [InlineData("COMPLIANCE_POLICY_ADMINISTRATOR", "GLOBAL")]
+    [InlineData("EXECUTIVE_MANAGEMENT", "GLOBAL")]
+    public async Task CreateUser_AcceptsEveryApprovedInitialRoleAtPermittedScope(string roleCode, string scopeType)
     {
         var seed = await SeedAdministratorAsync();
         var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
-        var username = $"i021.direct-privileged.{Guid.NewGuid():N}";
-        var systemAdministratorRoleId = await GetRoleIdAsync("SYSTEM_ADMINISTRATOR");
+        var username = $"i021.direct-add.{Guid.NewGuid():N}";
+        var roleId = await GetRoleIdAsync(roleCode);
+        var siteId = scopeType == "SITE" ? seed.SiteId : (Guid?)null;
+        var siteGroupId = scopeType == "SITE_GROUP" ? seed.SiteGroupId : (Guid?)null;
 
         var result = await repository.CreateUserAsync(
             seed.Actor,
             new CreateIdentityUserCommand(
-                username, "I-021 Direct Privileged Role", null, null, "INTERNAL_ADMIN",
-                systemAdministratorRoleId, "GLOBAL", null, null,
-                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_DIRECT_PRIVILEGED", "direct-privileged", Guid.NewGuid(),
+                username, $"I-021 {roleCode}", null, null, "INTERNAL_ADMIN",
+                roleId, scopeType, siteId, siteGroupId,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_DIRECT_ADD", "direct-add", Guid.NewGuid(),
                 Bootstrap: BootstrapMaterial()),
             CancellationToken.None);
 
-        result.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
-        result.Classification.Should().Be("PRIVILEGED_ACCESS_REQUEST_REQUIRED");
-        (await CountUsersByUsernameAsync(username)).Should().Be(0);
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        result.Value!.Status.Should().Be("ACTIVE");
+        var detail = await repository.GetUserAsync(seed.Actor, result.Value.UserReference, Guid.NewGuid(), CancellationToken.None);
+        detail.Value!.RoleAssignments.Should().ContainSingle(item => item.RoleReference == roleId);
+        detail.Value.ScopeGrants.Should().ContainSingle(item => item.ScopeType == scopeType &&
+            item.SiteReference == siteId && item.SiteGroupReference == siteGroupId);
+        (await CountUsersByUsernameAsync(username)).Should().Be(1);
     }
 
     [Fact]
@@ -431,12 +445,13 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         all.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
         all.Value.Should().HaveCount(8);
         all.Value!.Select(role => role.Code).Should().BeEquivalentTo(ApprovedIdentityRoleCatalog.AssignableCodes);
-        all.Value.Should().OnlyContain(role => role.Provenance == "CANONICAL_ROLE" && role.HumanAssignable);
+        all.Value.Should().OnlyContain(role => role.Provenance == "CANONICAL_ROLE" && role.HumanAssignable && role.DirectAddUserEligible);
         all.Value.Should().NotContain(role =>
             role.Code == "SERVICE_PRINCIPAL" || role.Code == "SITE_ADMINISTRATOR" ||
             role.Code == "OPERATOR_SUPPORT_STAFF" || role.Code == "FINANCE_RECONCILIATION");
 
         var finance = await repository.ListRolesAsync(seed.Actor, new("FINANCE_USER", true), Guid.NewGuid(), CancellationToken.None);
+        finance.Value.Should().HaveCount(8);
         finance.Value.Should().Contain(role => role.Code == "FINANCE_RECONCILIATION_ANALYST" &&
             role.Name == "Finance / Reconciliation Analyst" && role.DirectAddUserEligible && !role.IsPrivileged);
 
