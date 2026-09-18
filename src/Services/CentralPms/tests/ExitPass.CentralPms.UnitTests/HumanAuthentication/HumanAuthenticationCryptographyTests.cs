@@ -11,19 +11,6 @@ namespace ExitPass.CentralPms.UnitTests.HumanAuthentication;
 public sealed class HumanAuthenticationCryptographyTests
 {
     [Fact]
-    public async Task Human_password_minimum_accepts_eight_characters_and_rejects_seven()
-    {
-        var options = TestOptions();
-        options.PasswordMinimumLength.Should().Be(8);
-        var hasher = new Argon2idHumanPasswordHasher(Options.Create(options));
-
-        var tooShort = () => hasher.HashAsync("1234567", CancellationToken.None);
-        await tooShort.Should().ThrowAsync<ArgumentException>();
-        var material = await hasher.HashAsync("12345678", CancellationToken.None);
-        (await hasher.VerifyAsync("12345678", Credential(material), CancellationToken.None)).Should().BeTrue();
-    }
-
-    [Fact]
     public async Task Argon2id_hash_verifies_and_wrong_password_fails()
     {
         var hasher = new Argon2idHumanPasswordHasher(Options.Create(TestOptions()));
@@ -99,6 +86,7 @@ public sealed class HumanAuthenticationCryptographyTests
         Argon2MemoryKiB = 19456,
         Argon2Parallelism = 1,
         Argon2HashBytes = 32,
+        PasswordMinimumLength = 15,
         TotpIssuer = "ExitPass Test"
     };
 

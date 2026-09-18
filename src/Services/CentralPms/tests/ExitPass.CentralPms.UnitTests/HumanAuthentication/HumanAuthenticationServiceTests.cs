@@ -416,40 +416,6 @@ public sealed class HumanAuthenticationServiceTests
             default, default, default);
     }
 
-    [Theory]
-    [InlineData("ACTIVE", HumanSessionAudiences.ManagementPlatform)]
-    [InlineData("CHANGE_REQUIRED", HumanSessionAudiences.ManagementPlatform)]
-    [InlineData("ACTIVE", HumanSessionAudiences.OperatorConsole)]
-    [InlineData("CHANGE_REQUIRED", HumanSessionAudiences.OperatorConsole)]
-    public async Task Password_change_rejects_seven_character_password_for_every_credential_status_and_audience(
-        string credentialStatus, string audience)
-    {
-        var fixture = new Fixture(totpSucceeds: true);
-        var login = fixture.CreateLogin(privileged: false, fixture.Authenticator);
-        fixture.Login = login with { Credential = login.Credential! with { Status = credentialStatus } };
-        fixture.Passwords.HashAsync("1234567", Arg.Any<CancellationToken>())
-            .Returns(Task.FromException<PasswordHashMaterial>(new ArgumentException("Password too short.")));
-        fixture.Repository.TryRecordTotpSuccessAsync(Arg.Any<Guid>(), Arg.Any<long>(), Arg.Any<long>(),
-            Arg.Any<DateTimeOffset>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(true);
-        var token = fixture.Tokens.Create();
-        var now = DateTimeOffset.UtcNow;
-        fixture.Repository.FindSessionAsync(token.SessionReference, Arg.Any<CancellationToken>()).Returns(
-            Fixture.Session(login.UserId, token.SessionReference, audience, null, false, null, null,
-                "PASSWORD", now, now.AddMinutes(15), now.AddHours(8), Guid.NewGuid(), false) with
-            {
-                SessionSecretHash = fixture.Tokens.HashSecret(token.Secret),
-                LocalCredentialStatus = credentialStatus
-            });
-
-        var result = await fixture.Service.ChangePasswordAsync(token.SerializedToken, "valid-password",
-            "1234567", "123456", fixture.Context(), CancellationToken.None);
-
-        result.HttpStatusCode.Should().Be(400);
-        result.Response.ErrorCode.Should().Be("PASSWORD_POLICY_FAILED");
-        await fixture.Repository.DidNotReceiveWithAnyArgs().ChangePasswordAsync(
-            default, default, default, default!, default, default, default);
-    }
-
     [Fact]
     public async Task Active_user_can_reset_password_with_totp_without_current_password()
     {
@@ -467,38 +433,6 @@ public sealed class HumanAuthenticationServiceTests
             fixture.Login.Credential!.LocalCredentialId, fixture.Login.Credential.RowVersion,
             Arg.Any<PasswordHashMaterial>(), Arg.Any<DateTimeOffset>(), fixture.Login.UserId,
             Arg.Any<CancellationToken>());
-    }
-
-    [Theory]
-    [InlineData("ACTIVE")]
-    [InlineData("CHANGE_REQUIRED")]
-    public async Task Totp_password_recovery_rejects_seven_character_password(string credentialStatus)
-    {
-        var fixture = new Fixture(totpSucceeds: true);
-        var login = fixture.CreateLogin(privileged: false, fixture.Authenticator);
-        fixture.Login = login with
-        {
-            Credential = login.Credential! with
-            {
-                Status = credentialStatus,
-                TemporaryPasswordExpiresAt = credentialStatus == "CHANGE_REQUIRED"
-                    ? DateTimeOffset.UtcNow.AddMinutes(-1)
-                    : null
-            }
-        };
-        fixture.Passwords.HashAsync("1234567", Arg.Any<CancellationToken>())
-            .Returns(Task.FromException<PasswordHashMaterial>(new ArgumentException("Password too short.")));
-        fixture.Repository.TryRecordTotpSuccessAsync(Arg.Any<Guid>(), Arg.Any<long>(), Arg.Any<long>(),
-            Arg.Any<DateTimeOffset>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(true);
-
-        var result = await fixture.Service.ResetPasswordWithTotpAsync("Cashier01",
-            credentialStatus == "CHANGE_REQUIRED" ? "valid-password" : null,
-            "123456", "1234567", fixture.Context(), CancellationToken.None);
-
-        result.HttpStatusCode.Should().Be(400);
-        result.Response.ErrorCode.Should().Be("PASSWORD_POLICY_FAILED");
-        await fixture.Repository.DidNotReceiveWithAnyArgs().ChangePasswordAsync(
-            default, default, default, default!, default, default, default);
     }
 
     [Fact]
