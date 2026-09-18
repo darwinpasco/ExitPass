@@ -18,7 +18,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Persistence;
 public sealed class HumanAuthenticationRepositoryIntegrationTests
 {
     private const string Password = "correct horse battery staple";
-    private const string ReplacementPassword = "newpass8";
+    private const string ReplacementPassword = "replacement horse battery staple";
     private static readonly Guid CentralPmsServiceIdentityId = Guid.Parse("8063c159-dae6-57af-9f1f-e0a07d519fb2");
     private readonly StatutoryDiscountCanonicalDatabaseFixture _database;
 
@@ -560,7 +560,7 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
         Argon2MemoryKiB = 19456,
         Argon2Parallelism = 1,
         Argon2HashBytes = 32,
-        PasswordMinimumLength = 8,
+        PasswordMinimumLength = 15,
         TotpAllowedPreviousSteps = 0,
         TotpAllowedFutureSteps = 0,
         TotpProtectionKeyBase64 = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
