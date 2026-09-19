@@ -29,9 +29,29 @@ BEGIN
         SELECT 1
         FROM identity.roles
         WHERE role_code = ANY(expected_codes)
-          AND (role_provenance <> 'CANONICAL_ROLE' OR NOT human_assignable OR NOT direct_add_user_eligible OR role_status <> 'ACTIVE')
+          AND (role_provenance <> 'CANONICAL_ROLE' OR NOT human_assignable OR NOT direct_add_user_eligible OR requires_elevated_approval OR role_status <> 'ACTIVE')
     ) THEN
-        RAISE EXCEPTION 'An approved role is not active, canonical, human-assignable, and direct-add eligible.';
+        RAISE EXCEPTION 'An approved role is not active, canonical, human-assignable, direct-add eligible, and free of elevated approval.';
+    END IF;
+
+    IF EXISTS (
+        SELECT required.permission_code
+        FROM unnest(ARRAY[
+            'human-authentication.session.admin.view',
+            'human-authentication.session.admin.revoke',
+            'human-authentication.credential.reset',
+            'human-authentication.mfa.status.view',
+            'human-authentication.mfa.reset',
+            'human-authentication.mfa.remove']) required(permission_code)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM identity.role_permissions rp
+            JOIN identity.roles r ON r.role_id = rp.role_id
+            JOIN identity.permissions p ON p.permission_id = rp.permission_id
+            WHERE r.role_code = 'SYSTEM_ADMINISTRATOR'
+              AND rp.binding_status = 'ACTIVE'
+              AND p.permission_code = required.permission_code)
+    ) THEN
+        RAISE EXCEPTION 'System Administrator is missing a required human-authentication administration permission.';
     END IF;
 
     IF EXISTS (

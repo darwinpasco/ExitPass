@@ -11,14 +11,14 @@ CREATE TEMP TABLE approved_roles (
 ) ON COMMIT DROP;
 
 INSERT INTO approved_roles VALUES
-('SYSTEM_ADMINISTRATOR','System Administrator','Administrative authority only: identity/RBAC, site, device, shift, POS Server/fiscal configuration, connector, platform configuration, and access audit.','SYSTEM',true,true,true,'INTERNAL_ADMIN'),
-('OPERATIONS_SUPERVISOR','Operations Supervisor','Assigned-site operations, operational exception, and shift supervision; plus all-site statutory discount supervision on Management Platform only.','OPERATIONS',true,true,true,'OPERATIONS_USER'),
+('SYSTEM_ADMINISTRATOR','System Administrator','Administrative authority only: identity/RBAC, site, device, shift, POS Server/fiscal configuration, connector, platform configuration, and access audit.','SYSTEM',true,false,true,'INTERNAL_ADMIN'),
+('OPERATIONS_SUPERVISOR','Operations Supervisor','Assigned-site operations, operational exception, and shift supervision; plus all-site statutory discount supervision on Management Platform only.','OPERATIONS',true,false,true,'OPERATIONS_USER'),
 ('SITE_OPERATOR','Site Operator','Assigned-site operation, support, and statutory discount processing without approval.','OPERATIONS',false,false,true,'SITE_OPERATOR'),
 ('PARKING_ATTENDANT','Parking Attendant','Native Parking App authority at assigned sites and devices.','OPERATIONS',false,false,true,'OPERATIONS_USER'),
 ('APT_CASHIER_OPERATOR','APT / Cashier Operator','APT authority at assigned sites and terminals.','OPERATIONS',false,false,true,'OPERATIONS_USER'),
 ('FINANCE_RECONCILIATION_ANALYST','Finance / Reconciliation Analyst','Finance and reconciliation responsibilities within assigned scope.','FINANCE',false,false,true,'FINANCE_USER'),
-('COMPLIANCE_POLICY_ADMINISTRATOR','Compliance / Policy Administrator','Global-by-default compliance and policy responsibilities.','COMPLIANCE',true,true,true,'COMPLIANCE_USER'),
-('EXECUTIVE_MANAGEMENT','Executive / Management','Read-only management reporting with mandatory Global scope.','OTHER',false,true,true,'OTHER');
+('COMPLIANCE_POLICY_ADMINISTRATOR','Compliance / Policy Administrator','Global-by-default compliance and policy responsibilities.','COMPLIANCE',true,false,true,'COMPLIANCE_USER'),
+('EXECUTIVE_MANAGEMENT','Executive / Management','Read-only management reporting with mandatory Global scope.','OTHER',false,false,true,'OTHER');
 
 INSERT INTO identity.roles (
     role_id, role_code, role_name, role_description, role_type, role_status,
@@ -92,6 +92,10 @@ INSERT INTO approved_role_permissions VALUES
 ('SYSTEM_ADMINISTRATOR','identity.access-review.manage'),
 ('SYSTEM_ADMINISTRATOR','human-authentication.session.admin.view'),
 ('SYSTEM_ADMINISTRATOR','human-authentication.session.admin.revoke'),
+('SYSTEM_ADMINISTRATOR','human-authentication.credential.reset'),
+('SYSTEM_ADMINISTRATOR','human-authentication.mfa.status.view'),
+('SYSTEM_ADMINISTRATOR','human-authentication.mfa.reset'),
+('SYSTEM_ADMINISTRATOR','human-authentication.mfa.remove'),
 ('SYSTEM_ADMINISTRATOR','site.view'),('SYSTEM_ADMINISTRATOR','site.manage'),
 ('SYSTEM_ADMINISTRATOR','site-group.view'),('SYSTEM_ADMINISTRATOR','site-group.manage'),
 ('SYSTEM_ADMINISTRATOR','device.view'),('SYSTEM_ADMINISTRATOR','device.manage'),

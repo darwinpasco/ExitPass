@@ -376,6 +376,92 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         (await CountUsersByUsernameAsync(username)).Should().Be(1);
     }
 
+    [Theory]
+    [InlineData("SYSTEM_ADMINISTRATOR", "GLOBAL")]
+    [InlineData("OPERATIONS_SUPERVISOR", "SITE")]
+    [InlineData("COMPLIANCE_POLICY_ADMINISTRATOR", "GLOBAL")]
+    [InlineData("EXECUTIVE_MANAGEMENT", "GLOBAL")]
+    public async Task AssignRole_DirectlyAssignsApprovedRolesWithCanonicalScope(string roleCode, string expectedScope)
+    {
+        var seed = await SeedAdministratorAsync();
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var username = $"i021.assign.{Guid.NewGuid():N}";
+        var created = await repository.CreateUserAsync(
+            seed.Actor,
+            new CreateIdentityUserCommand(
+                username, "I-021 Assignment Target", null, null, "SITE_OPERATOR",
+                seed.DelegableRoleId, "SITE", seed.SiteId, null,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_ASSIGN_TARGET", "assign-target", Guid.NewGuid(),
+                Bootstrap: BootstrapMaterial()),
+            CancellationToken.None);
+        var roleId = await GetRoleIdAsync(roleCode);
+
+        var assigned = await repository.AssignRoleAsync(
+            seed.Actor,
+            new AssignIdentityRoleCommand(created.Value!.UserReference, roleId,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_DIRECT_ASSIGN", $"assign-{roleCode}", Guid.NewGuid()),
+            CancellationToken.None);
+
+        assigned.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        assigned.Value!.RoleCode.Should().Be(roleCode);
+        if (expectedScope == "SITE")
+        {
+            var grant = await repository.GrantScopeAsync(
+                seed.Actor,
+                new GrantIdentityScopeCommand(created.Value.UserReference, assigned.Value.AssignmentReference,
+                    "SITE", seed.SiteId, null, DateTimeOffset.UtcNow.AddMinutes(-1), null,
+                    "I021_DIRECT_ASSIGN_SCOPE", $"scope-{roleCode}", Guid.NewGuid()),
+                CancellationToken.None);
+            grant.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        }
+
+        var detail = await repository.GetUserAsync(seed.Actor, created.Value.UserReference, Guid.NewGuid(), CancellationToken.None);
+        detail.Value!.ScopeGrants.Should().ContainSingle(grant =>
+            grant.AssignmentReference == assigned.Value.AssignmentReference && grant.ScopeType == expectedScope);
+    }
+
+    [Fact]
+    public async Task AssignRole_GlobalDefaultOutsideActorsDelegationCeilingPersistsNothing()
+    {
+        var seed = await SeedAdministratorAsync();
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var created = await repository.CreateUserAsync(
+            seed.Actor,
+            new CreateIdentityUserCommand(
+                $"i021.assign.global.denied.{Guid.NewGuid():N}", "I-021 Global Assignment Rejection", null, null,
+                "SITE_OPERATOR", seed.DelegableRoleId, "SITE", seed.SiteId, null,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_ASSIGN_GLOBAL_DENIED", "assign-global-denied",
+                Guid.NewGuid(), Bootstrap: BootstrapMaterial()),
+            CancellationToken.None);
+        var executiveRoleId = await GetRoleIdAsync("EXECUTIVE_MANAGEMENT");
+
+        await using (var connection = new NpgsqlConnection(_database.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand("""
+                UPDATE identity.user_role_scope_grants
+                SET scope_type = 'SITE', site_id = @site_id, site_group_id = NULL
+                WHERE user_role_id IN (SELECT user_role_id FROM identity.user_roles WHERE user_id = @actor_user_id)
+                  AND grant_status = 'ACTIVE';
+                """, connection);
+            command.Parameters.AddWithValue("site_id", seed.SiteId);
+            command.Parameters.AddWithValue("actor_user_id", seed.Actor.UserId);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var result = await repository.AssignRoleAsync(
+            seed.Actor,
+            new AssignIdentityRoleCommand(created.Value!.UserReference, executiveRoleId,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_ASSIGN_GLOBAL_DENIED",
+                "assign-global-denied", Guid.NewGuid()),
+            CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
+        result.Classification.Should().Be("DELEGATION_CEILING_EXCEEDED");
+        var detail = await repository.GetUserAsync(seed.Actor, created.Value.UserReference, Guid.NewGuid(), CancellationToken.None);
+        detail.Value!.RoleAssignments.Should().NotContain(assignment => assignment.RoleCode == "EXECUTIVE_MANAGEMENT");
+    }
+
     [Fact]
     public async Task CreateUser_WithNonGlobalExecutiveAssignment_FailsClosedBeforePersistence()
     {
@@ -595,12 +681,12 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             CancellationToken.None);
         selfUnlock.Classification.Should().Be("SELF_LIFECYCLE_CHANGE_PROHIBITED");
 
-        (await repository.AuthorizeAuthenticationAdministrationAsync(
-            seed.Actor, created.Value.UserReference, "CREDENTIAL_RESET", Guid.NewGuid(), CancellationToken.None)).Outcome
-            .Should().Be(IdentityAdministrationOutcome.Success);
-        (await repository.AuthorizeAuthenticationAdministrationAsync(
-            seed.Actor, created.Value.UserReference, "SESSION_REVOKE", Guid.NewGuid(), CancellationToken.None)).Outcome
-            .Should().Be(IdentityAdministrationOutcome.Success);
+        foreach (var action in new[] { "CREDENTIAL_RESET", "SESSION_REVOKE", "MFA_RESET", "MFA_REMOVE" })
+        {
+            (await repository.AuthorizeAuthenticationAdministrationAsync(
+                seed.Actor, created.Value.UserReference, action, Guid.NewGuid(), CancellationToken.None)).Outcome
+                .Should().Be(IdentityAdministrationOutcome.Success);
+        }
         (await repository.AuthorizeAuthenticationAdministrationAsync(
             seed.Actor, seed.Actor.UserId, "MFA_REMOVE", Guid.NewGuid(), CancellationToken.None)).Classification
             .Should().Be("SELF_AUTHENTICATION_ADMINISTRATION_PROHIBITED");
@@ -703,6 +789,12 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         var gateway = new HumanAuthenticationAdministrationGateway(
             authenticationRepository, authentication, delivery, links, administrationRepository, options, TimeProvider.System);
         var service = new ManagementPlatformIdentityAdministrationService(administrationRepository, gateway);
+
+        var credentialReset = await service.IssueCredentialChallengeAsync(actor.Actor,
+            new(target.Actor.UserId, "PASSWORD_RESET", DateTimeOffset.UtcNow.AddMinutes(15),
+                "I021_CREDENTIAL_RESET", Guid.NewGuid()), CancellationToken.None);
+        credentialReset.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        delivery.DeliveredReference.Should().Be(credentialReset.Value!.ChallengeReference);
 
         var revokeCorrelation = Guid.NewGuid();
         (await service.RevokeSessionsAsync(actor.Actor,

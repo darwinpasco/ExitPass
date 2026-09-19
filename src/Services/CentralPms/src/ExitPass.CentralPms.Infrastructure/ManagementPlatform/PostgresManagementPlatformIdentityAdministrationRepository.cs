@@ -748,19 +748,21 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return NotFound<IdentityRoleAssignment>(command.CorrelationId);
         }
 
-        // Role assignment and scope grant are separate operations. Executive authority must
-        // never exist with a non-Global or absent scope, so use atomic create instead.
-        if (role.Code == ApprovedIdentityRoleCatalog.ExecutiveManagement)
-        {
-            return Invalid<IdentityRoleAssignment>(command.CorrelationId, "EXECUTIVE_GLOBAL_SCOPE_REQUIRED");
-        }
-
-        if (role.IsPrivileged || role.RequiresElevatedApproval)
-        {
-            return Forbidden<IdentityRoleAssignment>(command.CorrelationId, "PRIVILEGED_ACCESS_REQUEST_REQUIRED");
-        }
-
         if (!await ActorMayDelegateRoleAsync(connection, transaction, actor.UserId, command.RoleReference, cancellationToken))
+        {
+            return Forbidden<IdentityRoleAssignment>(command.CorrelationId, "DELEGATION_CEILING_EXCEEDED");
+        }
+
+        var assignsDefaultGlobalScope = ApprovedIdentityRoleCatalog.TryGetPolicy(role.Code, out var rolePolicy) &&
+            rolePolicy!.DefaultAssignmentScope == ApprovedIdentityRoleCatalog.GlobalScope;
+        if (assignsDefaultGlobalScope &&
+            !await IsAuthorizedAnyAsync(connection, transaction, actor, [ScopeAssignmentPermission, "assignment.manage"], cancellationToken))
+        {
+            return NotFound<IdentityRoleAssignment>(command.CorrelationId);
+        }
+        if (assignsDefaultGlobalScope &&
+            !await ActorMayDelegateScopeAsync(connection, transaction, actor.UserId,
+                ApprovedIdentityRoleCatalog.GlobalScope, null, null, cancellationToken))
         {
             return Forbidden<IdentityRoleAssignment>(command.CorrelationId, "DELEGATION_CEILING_EXCEEDED");
         }
@@ -796,6 +798,30 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return existing is not null
                 ? IdentityAdministrationResult<IdentityRoleAssignment>.Succeeded(existing, command.CorrelationId, "IDEMPOTENT_REPLAY")
                 : Conflict<IdentityRoleAssignment>(command.CorrelationId);
+        }
+
+        if (assignsDefaultGlobalScope)
+        {
+            const string globalScopeSql = """
+                INSERT INTO identity.user_role_scope_grants (
+                    user_role_scope_grant_id, user_role_id, scope_type, site_id, site_group_id,
+                    grant_status, grant_reason_code, effective_from, effective_to,
+                    granted_by_user_id, created_by_user_id, updated_by_user_id)
+                VALUES (gen_random_uuid(), @assignment_id, 'GLOBAL', NULL, NULL, 'ACTIVE',
+                    @reason_code, @effective_from, @effective_to,
+                    @actor_user_id, @actor_user_id, @actor_user_id)
+                RETURNING user_role_scope_grant_id;
+                """;
+            await using var globalScopeInsert = new NpgsqlCommand(globalScopeSql, connection, transaction);
+            globalScopeInsert.Parameters.AddWithValue("assignment_id", assignmentId);
+            globalScopeInsert.Parameters.AddWithValue("reason_code", command.ReasonCode);
+            globalScopeInsert.Parameters.AddWithValue("effective_from", command.EffectiveFrom);
+            globalScopeInsert.Parameters.Add("effective_to", NpgsqlDbType.TimestampTz).Value = Db(command.EffectiveTo);
+            globalScopeInsert.Parameters.AddWithValue("actor_user_id", actor.UserId);
+            var globalGrantId = (Guid)(await globalScopeInsert.ExecuteScalarAsync(cancellationToken))!;
+            await InsertAuditAsync(connection, transaction, "GLOBAL_SCOPE_GRANTED", "SUCCESS", command.ReasonCode,
+                "UserRoleScopeGrant", globalGrantId, actor.UserId, command.CorrelationId,
+                "The role's canonical Global scope was activated atomically.", cancellationToken);
         }
 
         await IncrementAuthorizationEpochAsync(connection, transaction, command.UserReference, actor.UserId, cancellationToken);
