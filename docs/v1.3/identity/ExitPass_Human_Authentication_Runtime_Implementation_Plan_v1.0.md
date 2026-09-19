@@ -25,7 +25,7 @@ I-019 must:
 
 - normalize and uniquely constrain local login identifiers;
 - add local credential verifiers and external issuer/subject bindings;
-- add the minimum privileged-administrator TOTP authenticator persistence: user/authenticator identity, controlled authenticator type, protected-secret ciphertext or approved credential reference, protection-key version, status, enrollment/verification metadata, reset/revocation actor and reason, timestamps, and row version;
+- add the minimum authorized-administrator TOTP authenticator persistence: user/authenticator identity, controlled authenticator type, protected-secret ciphertext or approved credential reference, protection-key version, status, enrollment/verification metadata, reset/revocation actor and reason, timestamps, and row version;
 - add durable opaque human sessions and revocation/version posture;
 - add login/TOTP verification-attempt throttling and one-time activation/reset challenge records;
 - add assignment-scoped Site/Site Group/explicit-global grants;
@@ -45,7 +45,7 @@ I-020 must implement:
 - provider-neutral authenticator interface;
 - Argon2id local verification and rehash-on-login;
 - standards-compatible TOTP enrollment and verification for privileged Management Platform administrators;
-- governed TOTP reset/removal that invalidates the old authenticator, protects enrollment material, and never lets an administrator retrieve a user's secret;
+- governed administrator TOTP setup/reset/removal that invalidates the old authenticator where applicable, protects new enrollment material, returns new setup/reset provisioning material once, and never exposes an existing secret;
 - failed TOTP throttling, successful-code replay prevention, bounded clock handling, and privacy-safe events;
 - session assurance indicating whether the current account's required TOTP MFA was satisfied, without exposing secret or code material;
 - OIDC BFF adapter contract, with provider disabled until configured;
@@ -75,7 +75,7 @@ I-021 must implement SELECT and mutation APIs for:
 - access reviews;
 - safe session enumeration/revocation;
 - privacy-safe identity audit history.
-- safe TOTP status/readiness and governed privileged-administrator enrollment/reset/removal operations with no secret readback.
+- safe TOTP status/readiness and governed administrator setup/reset/removal operations; setup/reset return only the newly generated provisioning material once and ordinary reads provide no secret readback.
 
 Tests must prove no self-escalation/self-unlock, assignment ceiling, last-active-admin protection, separation of duties, optimistic concurrency, idempotency/conflict, effectivity, immediate revocation, anti-enumeration, atomic audit, no secret DTOs, and Site/Site Group scope.
 
@@ -93,7 +93,7 @@ Tests must prove no self-escalation/self-unlock, assignment ceiling, last-active
 ### H-007
 
 - complete bounded user/role/scope/session administration UI;
-- safe privileged-administrator TOTP status, enrollment, and reset/removal ceremonies with no post-enrollment secret display;
+- safe administrator TOTP status, setup/reset/remove ceremonies with one-time display of newly generated setup/reset material and no later secret display;
 - privileged approval and access-review workflows;
 - version conflict and safe-error handling;
 - no client-authored actor, role, permission, or scope authority.

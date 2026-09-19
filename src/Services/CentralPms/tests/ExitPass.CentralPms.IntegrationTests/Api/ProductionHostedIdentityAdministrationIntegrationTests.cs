@@ -171,6 +171,76 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
     }
 
     [Fact]
+    public async Task ProductionHost_AdministratorMfaEndpoints_ReturnProvisioningOnlyForSetupAndReset()
+    {
+        var password = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
+        var actor = await SeedOrdinaryAdministratorAsync(password);
+        var target = await SeedOrdinaryAdministratorAsync(Convert.ToBase64String(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(24)));
+        using var factory = CreateProductionFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+            HandleCookies = true,
+            AllowAutoRedirect = false
+        });
+        using var login = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
+        {
+            Content = JsonContent.Create(new HumanLoginRequest(actor.Username, password,
+                HumanSessionAudiences.ManagementPlatform, CurrentTotpCode()))
+        };
+        login.Headers.Add("Origin", "https://localhost");
+        var loginResponse = await client.SendAsync(login);
+        loginResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var csrf = loginResponse.Headers.GetValues("X-CSRF-Token").Single();
+
+        var statusResponse = await client.GetAsync(
+            $"/v1/management-platform/identity/users/{target.UserId:D}/mfa-status");
+        statusResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var status = await statusResponse.Content.ReadFromJsonAsync<IdentityMfaStatus>();
+        var resetResponse = await SendMutationAsync(client, HttpMethod.Post,
+            $"/v1/management-platform/identity/users/{target.UserId:D}/mfa-authenticators/reset",
+            new ProvisionIdentityMfaRequest(status!.RowVersion, "HOSTED_ADMIN_RESET"), csrf);
+
+        resetResponse.StatusCode.Should().Be(HttpStatusCode.OK, await resetResponse.Content.ReadAsStringAsync());
+        var reset = await resetResponse.Content.ReadFromJsonAsync<IdentityMfaProvisioningResult>();
+        reset!.MfaStatus.Status.Should().Be("ACTIVE");
+        reset.Provisioning.DisplayOnce.Should().BeTrue();
+        reset.Provisioning.TotpSharedSecret.Should().NotBeNullOrWhiteSpace();
+        reset.Provisioning.TotpProvisioningUri.Should().Contain(reset.Provisioning.TotpSharedSecret);
+        (await resetResponse.Content.ReadAsStringAsync()).Should().NotContain("protectedSecretEnvelope");
+
+        var staleResetResponse = await SendMutationAsync(client, HttpMethod.Post,
+            $"/v1/management-platform/identity/users/{target.UserId:D}/mfa-authenticators/reset",
+            new ProvisionIdentityMfaRequest(status.RowVersion, "HOSTED_STALE_ADMIN_RESET"), csrf);
+        staleResetResponse.StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+        var safeStatusBody = await client.GetStringAsync(
+            $"/v1/management-platform/identity/users/{target.UserId:D}/mfa-status");
+        safeStatusBody.Should().NotContain(reset.Provisioning.TotpSharedSecret)
+            .And.NotContain("otpauth://")
+            .And.NotContain("protectedSecretEnvelope");
+
+        var removeResponse = await SendMutationAsync(client, HttpMethod.Post,
+            $"/v1/management-platform/identity/users/{target.UserId:D}/mfa-authenticators/remove",
+            new RemoveIdentityMfaRequest(reset.MfaStatus.RowVersion!.Value, "HOSTED_ADMIN_REMOVE"), csrf);
+        removeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var removeBody = await removeResponse.Content.ReadAsStringAsync();
+        removeBody.Should().NotContain("totpSharedSecret").And.NotContain("totpProvisioningUri");
+        var removed = System.Text.Json.JsonSerializer.Deserialize<IdentityMfaStatus>(removeBody,
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        removed!.Enrolled.Should().BeFalse();
+
+        var setupResponse = await SendMutationAsync(client, HttpMethod.Post,
+            $"/v1/management-platform/identity/users/{target.UserId:D}/mfa-authenticators/setup",
+            new ProvisionIdentityMfaRequest(removed.RowVersion, "HOSTED_ADMIN_SETUP"), csrf);
+        setupResponse.StatusCode.Should().Be(HttpStatusCode.OK, await setupResponse.Content.ReadAsStringAsync());
+        var setup = await setupResponse.Content.ReadFromJsonAsync<IdentityMfaProvisioningResult>();
+        setup!.Provisioning.TotpSharedSecret.Should().NotBe(reset.Provisioning.TotpSharedSecret);
+        setup.MfaStatus.Status.Should().Be("ACTIVE");
+    }
+
+    [Fact]
     public async Task ProductionHost_UserTypeDoesNotDetermineRoleOrScope()
     {
         var password = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));

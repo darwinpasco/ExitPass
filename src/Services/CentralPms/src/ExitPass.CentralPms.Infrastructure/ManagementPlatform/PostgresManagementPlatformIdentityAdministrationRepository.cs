@@ -1480,7 +1480,8 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             LEFT JOIN LATERAL (
                 SELECT * FROM identity.user_mfa_authenticators
                 WHERE user_id = @user_id AND authenticator_type = 'TOTP'
-                ORDER BY created_at DESC LIMIT 1
+                ORDER BY (authenticator_status IN ('PENDING_ENROLLMENT','ACTIVE','SUSPENDED','RESET_REQUIRED')) DESC,
+                         created_at DESC, user_mfa_authenticator_id DESC LIMIT 1
             ) a ON true;
             """;
         await using var command = new NpgsqlCommand(sql, connection);
@@ -1489,7 +1490,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         await reader.ReadAsync(cancellationToken);
         var status = reader.IsDBNull(1) ? "NOT_ENROLLED" : reader.GetString(1);
         var value = new IdentityMfaStatus(
-            reader.GetBoolean(0), status is "ACTIVE" or "SUSPENDED" or "RESET_REQUIRED", status,
+            reader.GetBoolean(0), status == "ACTIVE", status,
             GetNullableDateTimeOffset(reader, 2), GetNullableDateTimeOffset(reader, 3), GetNullableDateTimeOffset(reader, 4),
             GetNullableDateTimeOffset(reader, 5), GetNullableDateTimeOffset(reader, 6), reader.IsDBNull(7) ? null : reader.GetInt64(7));
         return IdentityAdministrationResult<IdentityMfaStatus>.Succeeded(value, correlationId);

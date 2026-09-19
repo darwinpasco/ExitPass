@@ -47,26 +47,52 @@ public sealed class HumanAuthenticationAdministrationGatewayTests
     }
 
     [Theory]
-    [InlineData("RESET")]
-    [InlineData("REMOVE")]
-    public async Task ChangeMfa_UsesAdministrativePrimitiveAndReturnsSafeRepositoryStatus(string action)
+    [InlineData("SETUP", null)]
+    [InlineData("RESET", 7L)]
+    public async Task ProvisionMfa_ReturnsOneTimeMaterialAndCurrentSafeStatus(string action, long? rowVersion)
     {
         var fixture = new Fixture();
         var targetUser = Guid.NewGuid();
         var correlation = Guid.NewGuid();
-        var status = new IdentityMfaStatus(true, action == "RESET", action == "RESET" ? "RESET_REQUIRED" : "REVOKED",
-            null, null, null, action == "RESET" ? DateTimeOffset.UtcNow : null,
-            action == "REMOVE" ? DateTimeOffset.UtcNow : null, 8);
-        fixture.Mfa.ChangeTotpAsync(targetUser, 7, action, Actor.UserId, "SECURITY_RESPONSE", correlation,
+        var status = new IdentityMfaStatus(true, true, "ACTIVE", null, DateTimeOffset.UtcNow, null,
+            null, null, 1);
+        fixture.Identity.GetUserAsync(Actor, targetUser, correlation, Arg.Any<CancellationToken>())
+            .Returns(IdentityAdministrationResult<IdentityUserDetail>.Succeeded(UserDetail(targetUser), correlation));
+        fixture.Mfa.ProvisionTotpAsync(targetUser, "target.user", rowVersion, action, Actor.UserId,
+                "SECURITY_RESPONSE", correlation, Arg.Any<CancellationToken>())
+            .Returns(new AdminTotpProvisioningMaterial("NEW-BASE32-SECRET", "otpauth://totp/ExitPass:target.user"));
+        fixture.Identity.GetMfaStatusAsync(Actor, targetUser, correlation, Arg.Any<CancellationToken>())
+            .Returns(IdentityAdministrationResult<IdentityMfaStatus>.Succeeded(status, correlation));
+
+        var result = await fixture.Gateway.ProvisionMfaAsync(Actor,
+            new(targetUser, action, rowVersion, "SECURITY_RESPONSE", correlation), CancellationToken.None);
+
+        result.Value!.MfaStatus.Should().Be(status);
+        result.Value.Provisioning.TotpSharedSecret.Should().Be("NEW-BASE32-SECRET");
+        result.Value.Provisioning.TotpProvisioningUri.Should().StartWith("otpauth://");
+        result.Value.Provisioning.DisplayOnce.Should().BeTrue();
+        await fixture.Mfa.Received(1).ProvisionTotpAsync(targetUser, "target.user", rowVersion, action, Actor.UserId,
+            "SECURITY_RESPONSE", correlation, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RemoveMfa_ReturnsOnlySafeRepositoryStatus()
+    {
+        var fixture = new Fixture();
+        var targetUser = Guid.NewGuid();
+        var correlation = Guid.NewGuid();
+        var status = new IdentityMfaStatus(true, false, "REVOKED", null, null, null, null,
+            DateTimeOffset.UtcNow, 8);
+        fixture.Mfa.RemoveTotpAsync(targetUser, 7, Actor.UserId, "SECURITY_RESPONSE", correlation,
                 Arg.Any<CancellationToken>()).Returns(true);
         fixture.Identity.GetMfaStatusAsync(Actor, targetUser, correlation, Arg.Any<CancellationToken>())
             .Returns(IdentityAdministrationResult<IdentityMfaStatus>.Succeeded(status, correlation));
 
-        var result = await fixture.Gateway.ChangeMfaAsync(Actor,
-            new(targetUser, action, 7, "SECURITY_RESPONSE", correlation), CancellationToken.None);
+        var result = await fixture.Gateway.RemoveMfaAsync(Actor,
+            new(targetUser, 7, "SECURITY_RESPONSE", correlation), CancellationToken.None);
 
         result.Value.Should().Be(status);
-        await fixture.Mfa.Received(1).ChangeTotpAsync(targetUser, 7, action, Actor.UserId,
+        await fixture.Mfa.Received(1).RemoveTotpAsync(targetUser, 7, Actor.UserId,
             "SECURITY_RESPONSE", correlation, Arg.Any<CancellationToken>());
     }
 
@@ -94,5 +120,12 @@ public sealed class HumanAuthenticationAdministrationGatewayTests
             now.AddDays(-1), null, null, "LOCAL", Guid.NewGuid(), "ACTIVE", null,
             "MANAGEMENT_PLATFORM", null, "ACTIVE", "PASSWORD_TOTP", true, Guid.NewGuid(), now,
             now, now, now.AddMinutes(15), now.AddHours(8), 1, 1, 1, 1, true, Guid.NewGuid(), 1);
+    }
+
+    private static IdentityUserDetail UserDetail(Guid userId)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new(new(userId, "target.user", "Target User", null, null, "SYSTEM_ADMINISTRATOR",
+            "ACTIVE", now.AddDays(-1), null, null, 1), [], []);
     }
 }

@@ -240,16 +240,16 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
         var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
         var gateway = Substitute.For<IHumanAuthenticationAdministrationGateway>();
         var service = new ManagementPlatformIdentityAdministrationService(repository, gateway);
-        var command = new ChangeIdentityMfaCommand(Guid.NewGuid(), "reset", 3, "security response", Guid.NewGuid());
+        var command = new ProvisionIdentityMfaCommand(Guid.NewGuid(), "reset", 3, "security response", Guid.NewGuid());
         repository.AuthorizeAuthenticationAdministrationAsync(
                 Actor, command.UserReference, "MFA_RESET", command.CorrelationId, Arg.Any<CancellationToken>())
             .Returns(IdentityAdministrationResult<bool>.Succeeded(true, command.CorrelationId));
 
-        await service.ChangeMfaAsync(Actor, command, CancellationToken.None);
+        await service.ProvisionMfaAsync(Actor, command, CancellationToken.None);
 
-        await gateway.Received(1).ChangeMfaAsync(
+        await gateway.Received(1).ProvisionMfaAsync(
             Actor,
-            Arg.Is<ChangeIdentityMfaCommand>(value => value.Action == "RESET" && value.ReasonCode == "SECURITY RESPONSE"),
+            Arg.Is<ProvisionIdentityMfaCommand>(value => value.Action == "RESET" && value.ReasonCode == "SECURITY RESPONSE"),
             Arg.Any<CancellationToken>());
     }
 
@@ -278,7 +278,7 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
         var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
         var gateway = Substitute.For<IHumanAuthenticationAdministrationGateway>();
         var service = new ManagementPlatformIdentityAdministrationService(repository, gateway);
-        var command = new ChangeIdentityMfaCommand(Guid.NewGuid(), "remove", 4, "security response", Guid.NewGuid());
+        var command = new RemoveIdentityMfaCommand(Guid.NewGuid(), 4, "security response", Guid.NewGuid());
         repository.AuthorizeAuthenticationAdministrationAsync(
                 Actor, command.UserReference, "MFA_REMOVE", command.CorrelationId, Arg.Any<CancellationToken>())
             .Returns(IdentityAdministrationResult<bool>.Failed(
@@ -287,10 +287,10 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
                 "The operation is not permitted.",
                 command.CorrelationId));
 
-        var result = await service.ChangeMfaAsync(Actor, command, CancellationToken.None);
+        var result = await service.RemoveMfaAsync(Actor, command, CancellationToken.None);
 
         result.Classification.Should().Be("MFA_PRIVILEGE_CEILING_EXCEEDED");
-        await gateway.DidNotReceiveWithAnyArgs().ChangeMfaAsync(default!, default!, default);
+        await gateway.DidNotReceiveWithAnyArgs().RemoveMfaAsync(default!, default!, default);
     }
 
     private static CreateIdentityUserCommand CreateInvitation(string? email) =>

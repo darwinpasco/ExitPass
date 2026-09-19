@@ -192,6 +192,15 @@ public sealed record IdentityMfaStatus(
     DateTimeOffset? RevokedAt,
     long? RowVersion);
 
+public sealed record OneTimeTotpProvisioningMaterial(
+    string TotpSharedSecret,
+    string TotpProvisioningUri,
+    bool DisplayOnce = true);
+
+public sealed record IdentityMfaProvisioningResult(
+    IdentityMfaStatus MfaStatus,
+    OneTimeTotpProvisioningMaterial Provisioning);
+
 public sealed record IdentitySessionSummary(
     Guid SessionReference,
     string Audience,
@@ -384,9 +393,15 @@ public sealed record RevokeIdentitySessionCommand(
     string ReasonCode,
     Guid CorrelationId);
 
-public sealed record ChangeIdentityMfaCommand(
+public sealed record ProvisionIdentityMfaCommand(
     Guid UserReference,
     string Action,
+    long? ExpectedRowVersion,
+    string ReasonCode,
+    Guid CorrelationId);
+
+public sealed record RemoveIdentityMfaCommand(
+    Guid UserReference,
     long ExpectedRowVersion,
     string ReasonCode,
     Guid CorrelationId);

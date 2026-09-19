@@ -6,6 +6,7 @@ using ExitPass.CentralPms.Contracts.ManagementPlatform;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using System.Net;
+using System.Net.Http.Json;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
@@ -69,12 +70,23 @@ public sealed class IdentityAdministrationSecurityBoundaryTests
         {
             typeof(CreateIdentityUserRequest), typeof(UpdateIdentityUserRequest), typeof(IdentityLifecycleRequest),
             typeof(CredentialResetChallengeRequest), typeof(AssignIdentityRoleRequest), typeof(GrantIdentityScopeRequest),
-            typeof(CreatePrivilegedAccessRequest), typeof(DecidePrivilegedAccessRequest), typeof(ChangeIdentityMfaRequest)
+            typeof(CreatePrivilegedAccessRequest), typeof(DecidePrivilegedAccessRequest),
+            typeof(ProvisionIdentityMfaRequest), typeof(RemoveIdentityMfaRequest)
         };
         var forbidden = new[] { "actor", "password", "secret", "token", "cipher", "totp", "sessionid" };
 
         requestTypes.SelectMany(type => type.GetProperties()).Select(property => property.Name)
             .Should().NotContain(name => forbidden.Any(term => name.Contains(term, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [Fact]
+    public void OneTimeMfaProvisioningResponse_ExposesOnlySharedSecretUriAndDisplayOnceMarker()
+    {
+        typeof(OneTimeTotpProvisioningMaterial).GetProperties().Select(property => property.Name)
+            .Should().BeEquivalentTo("TotpSharedSecret", "TotpProvisioningUri", "DisplayOnce")
+            .And.NotContain(name => name.Contains("Protected", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Cipher", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Key", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -105,5 +117,14 @@ public sealed class IdentityAdministrationSecurityBoundaryTests
         var response = await client.GetAsync("/v1/management-platform/identity/users");
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        using var setupRequest = new HttpRequestMessage(HttpMethod.Post,
+            $"/v1/management-platform/identity/users/{Guid.NewGuid():D}/mfa-authenticators/setup")
+        {
+            Content = JsonContent.Create(new ProvisionIdentityMfaRequest(null, "UNAUTHORIZED_SETUP"))
+        };
+        setupRequest.Headers.Add("Origin", "https://localhost");
+        var setupResponse = await client.SendAsync(setupRequest);
+        setupResponse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 }

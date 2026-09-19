@@ -21,8 +21,9 @@ public sealed class HumanAuthenticationPolicySurfaceTests
         humanEndpoints.Should().NotContain("MapPost(\"/password-reset-requests\"");
         humanEndpoints.Should().NotContain("MapPost(\"/activations\"");
         administrationEndpoints.Should().NotContain("credential-reset-challenges");
-        administrationEndpoints.Should().NotContain("mfa-authenticators/reset");
-        administrationEndpoints.Should().NotContain("mfa-authenticators/remove");
+        administrationEndpoints.Should().Contain("mfa-authenticators/setup");
+        administrationEndpoints.Should().Contain("mfa-authenticators/reset");
+        administrationEndpoints.Should().Contain("mfa-authenticators/remove");
     }
 
     [Fact]
@@ -75,6 +76,12 @@ public sealed class HumanAuthenticationPolicySurfaceTests
             .And.NotContain("TotpProvisioningUri")
             .And.NotContain("OneTimeBootstrap");
         typeof(CreateIdentityUserResult).GetProperty("OneTimeBootstrap").Should().NotBeNull();
+        typeof(IdentityMfaStatus).GetProperties().Select(property => property.Name)
+            .Should().NotContain(name => name.Contains("Secret", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Provision", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Cipher", StringComparison.OrdinalIgnoreCase));
+        typeof(OneTimeTotpProvisioningMaterial).GetProperties().Select(property => property.Name)
+            .Should().BeEquivalentTo("TotpSharedSecret", "TotpProvisioningUri", "DisplayOnce");
     }
 
     [Fact]

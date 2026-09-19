@@ -26,8 +26,8 @@ public interface IHumanAuthenticationRepository
     Task<TotpAuthenticatorRecord?> RestartPendingTotpAuthenticatorAsync(Guid currentAuthenticatorId, long expectedRowVersion, Guid replacementAuthenticatorId, Guid userId, byte[] protectedEnvelope, string keyReference, string keyVersion, short formatVersion, DateTimeOffset now, Guid actorUserId, CancellationToken cancellationToken);
     Task<TotpAuthenticatorRecord?> GetCurrentTotpAuthenticatorAsync(Guid userId, CancellationToken cancellationToken);
     Task<bool> ConfirmTotpAuthenticatorAsync(Guid authenticatorId, long expectedRowVersion, long matchedTimeStep, DateTimeOffset now, Guid actorUserId, CancellationToken cancellationToken);
-    Task ResetTotpAuthenticatorAsync(Guid userId, Guid actorUserId, string reasonCode, DateTimeOffset now, CancellationToken cancellationToken);
-    Task<bool> ChangeTotpAuthenticatorAsync(Guid userId, long expectedRowVersion, string action, Guid actorUserId, string reasonCode, Guid correlationId, Guid serviceIdentityId, DateTimeOffset now, CancellationToken cancellationToken);
+    Task<bool> ReplaceTotpAuthenticatorAsync(Guid userId, long? expectedRowVersion, string action, AdminTotpPersistenceMaterial replacement, Guid actorUserId, string reasonCode, Guid correlationId, Guid serviceIdentityId, DateTimeOffset now, CancellationToken cancellationToken);
+    Task<bool> RemoveTotpAuthenticatorAsync(Guid userId, long expectedRowVersion, Guid actorUserId, string reasonCode, Guid correlationId, Guid serviceIdentityId, DateTimeOffset now, CancellationToken cancellationToken);
     Task ChangePasswordAsync(Guid userId, Guid localCredentialId, long expectedCredentialRowVersion, PasswordHashMaterial material, DateTimeOffset now, Guid actorUserId, CancellationToken cancellationToken);
     Task<(Guid Reference, string Secret)> CreateCredentialChallengeAsync(Guid userId, string purpose, string reasonCode, DateTimeOffset issuedAt, DateTimeOffset expiresAt, Guid requestorServiceIdentityId, Guid correlationId, CancellationToken cancellationToken);
     Task<(Guid Reference, string Secret)> CreateCredentialChallengeAsync(Guid userId, string purpose, DateTimeOffset issuedAt, DateTimeOffset expiresAt, Guid requestorServiceIdentityId, Guid correlationId, CancellationToken cancellationToken);
@@ -93,8 +93,8 @@ public interface IHumanAuthenticationService
 
 public interface IHumanMfaAdministrationService
 {
-    Task ResetTotpAsync(Guid targetUserId, Guid actorUserId, string reasonCode, Guid correlationId, CancellationToken cancellationToken);
-    Task<bool> ChangeTotpAsync(Guid targetUserId, long expectedRowVersion, string action, Guid actorUserId, string reasonCode, Guid correlationId, CancellationToken cancellationToken);
+    Task<AdminTotpProvisioningMaterial?> ProvisionTotpAsync(Guid targetUserId, string accountName, long? expectedRowVersion, string action, Guid actorUserId, string reasonCode, Guid correlationId, CancellationToken cancellationToken);
+    Task<bool> RemoveTotpAsync(Guid targetUserId, long expectedRowVersion, Guid actorUserId, string reasonCode, Guid correlationId, CancellationToken cancellationToken);
 }
 
 public interface IExternalHumanAuthenticationAdapter

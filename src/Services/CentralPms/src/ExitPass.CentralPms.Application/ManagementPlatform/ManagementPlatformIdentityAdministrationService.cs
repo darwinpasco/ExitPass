@@ -322,8 +322,8 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
         _repository.AuthorizeAuthenticationAdministrationAsync(
             actor, RequireReference(userReference), RequireCode(action, nameof(action)), correlationId, cancellationToken);
 
-    public async Task<IdentityAdministrationResult<IdentityMfaStatus>> ChangeMfaAsync(
-        IdentityAdministrationActor actor, ChangeIdentityMfaCommand command, CancellationToken cancellationToken)
+    public async Task<IdentityAdministrationResult<IdentityMfaProvisioningResult>> ProvisionMfaAsync(
+        IdentityAdministrationActor actor, ProvisionIdentityMfaCommand command, CancellationToken cancellationToken)
     {
         var normalized = command with
         {
@@ -331,15 +331,31 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
             Action = RequireCode(command.Action, nameof(command.Action)),
             ReasonCode = RequireCode(command.ReasonCode, nameof(command.ReasonCode))
         };
-        if (normalized.Action is not ("RESET" or "REMOVE"))
+        if (normalized.Action is not ("SETUP" or "RESET") ||
+            (normalized.Action == "RESET" && normalized.ExpectedRowVersion is null))
         {
             throw new ArgumentException("The MFA administration action is invalid.", nameof(command));
         }
 
         var authorization = await _repository.AuthorizeAuthenticationAdministrationAsync(
-            actor, normalized.UserReference, $"MFA_{normalized.Action}", normalized.CorrelationId, cancellationToken);
+            actor, normalized.UserReference, "MFA_RESET", normalized.CorrelationId, cancellationToken);
         return authorization.Outcome == IdentityAdministrationOutcome.Success
-            ? await _authenticationGateway.ChangeMfaAsync(actor, normalized, cancellationToken)
+            ? await _authenticationGateway.ProvisionMfaAsync(actor, normalized, cancellationToken)
+            : Propagate<IdentityMfaProvisioningResult>(authorization);
+    }
+
+    public async Task<IdentityAdministrationResult<IdentityMfaStatus>> RemoveMfaAsync(
+        IdentityAdministrationActor actor, RemoveIdentityMfaCommand command, CancellationToken cancellationToken)
+    {
+        var normalized = command with
+        {
+            UserReference = RequireReference(command.UserReference),
+            ReasonCode = RequireCode(command.ReasonCode, nameof(command.ReasonCode))
+        };
+        var authorization = await _repository.AuthorizeAuthenticationAdministrationAsync(
+            actor, normalized.UserReference, "MFA_REMOVE", normalized.CorrelationId, cancellationToken);
+        return authorization.Outcome == IdentityAdministrationOutcome.Success
+            ? await _authenticationGateway.RemoveMfaAsync(actor, normalized, cancellationToken)
             : Propagate<IdentityMfaStatus>(authorization);
     }
 

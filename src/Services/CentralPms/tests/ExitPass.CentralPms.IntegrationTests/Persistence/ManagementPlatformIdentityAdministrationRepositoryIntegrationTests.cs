@@ -763,6 +763,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
     {
         var actor = await SeedAdministratorAsync();
         var target = await SeedAdministratorAsync();
+        var sessionTarget = await SeedAdministratorAsync();
         var options = Options.Create(new HumanAuthenticationOptions
         {
             TotpProtectionKeyBase64 = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
@@ -798,17 +799,23 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
 
         var revokeCorrelation = Guid.NewGuid();
         (await service.RevokeSessionsAsync(actor.Actor,
-            new(target.Actor.UserId, target.PublicSessionReference, "I021_ADMIN_REVOKE", revokeCorrelation),
+            new(sessionTarget.Actor.UserId, sessionTarget.PublicSessionReference, "I021_ADMIN_REVOKE", revokeCorrelation),
             CancellationToken.None)).Outcome.Should().Be(IdentityAdministrationOutcome.Success);
-        (await GetSessionStatusAsync(target.PublicSessionReference)).Should().Be("REVOKED");
+        (await GetSessionStatusAsync(sessionTarget.PublicSessionReference)).Should().Be("REVOKED");
 
-        var reset = await service.ChangeMfaAsync(actor.Actor,
+        var reset = await service.ProvisionMfaAsync(actor.Actor,
             new(target.Actor.UserId, "RESET", target.MfaRowVersion, "I021_MFA_RESET", Guid.NewGuid()),
             CancellationToken.None);
-        reset.Value!.Status.Should().Be("RESET_REQUIRED");
+        reset.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        reset.Value!.MfaStatus.Status.Should().Be("ACTIVE");
+        reset.Value.MfaStatus.Enrolled.Should().BeTrue();
+        reset.Value.Provisioning.TotpSharedSecret.Should().NotBeNullOrWhiteSpace();
+        reset.Value.Provisioning.TotpProvisioningUri.Should().StartWith("otpauth://");
+        reset.Value.Provisioning.DisplayOnce.Should().BeTrue();
+        (await GetSessionStatusAsync(target.PublicSessionReference)).Should().Be("REVOKED");
 
-        var remove = await service.ChangeMfaAsync(actor.Actor,
-            new(target.Actor.UserId, "REMOVE", reset.Value.RowVersion!.Value, "I021_MFA_REMOVE", Guid.NewGuid()),
+        var remove = await service.RemoveMfaAsync(actor.Actor,
+            new(target.Actor.UserId, reset.Value.MfaStatus.RowVersion!.Value, "I021_MFA_REMOVE", Guid.NewGuid()),
             CancellationToken.None);
         remove.Value!.Status.Should().Be("REVOKED");
         remove.Value.Enrolled.Should().BeFalse();

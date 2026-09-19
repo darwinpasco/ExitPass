@@ -84,7 +84,9 @@ public sealed record ReviewIdentityAccessRequest(
 
 public sealed record RevokeIdentitySessionRequest(string ReasonCode);
 
-public sealed record ChangeIdentityMfaRequest(long ExpectedRowVersion, string ReasonCode);
+public sealed record ProvisionIdentityMfaRequest(long? ExpectedRowVersion, string ReasonCode);
+
+public sealed record RemoveIdentityMfaRequest(long ExpectedRowVersion, string ReasonCode);
 
 public sealed record IdentityAdministrationErrorResponse(
     string Classification,

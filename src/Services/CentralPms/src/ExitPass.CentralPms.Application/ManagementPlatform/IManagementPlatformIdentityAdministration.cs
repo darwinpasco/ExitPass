@@ -20,9 +20,14 @@ public interface IHumanAuthenticationAdministrationGateway
         RevokeIdentitySessionCommand command,
         CancellationToken cancellationToken);
 
-    Task<IdentityAdministrationResult<IdentityMfaStatus>> ChangeMfaAsync(
+    Task<IdentityAdministrationResult<IdentityMfaProvisioningResult>> ProvisionMfaAsync(
         IdentityAdministrationActor actor,
-        ChangeIdentityMfaCommand command,
+        ProvisionIdentityMfaCommand command,
+        CancellationToken cancellationToken);
+
+    Task<IdentityAdministrationResult<IdentityMfaStatus>> RemoveMfaAsync(
+        IdentityAdministrationActor actor,
+        RemoveIdentityMfaCommand command,
         CancellationToken cancellationToken);
 }
 
@@ -166,8 +171,13 @@ public interface IManagementPlatformIdentityAdministrationService : IManagementP
         RevokeIdentitySessionCommand command,
         CancellationToken cancellationToken);
 
-    Task<IdentityAdministrationResult<IdentityMfaStatus>> ChangeMfaAsync(
+    Task<IdentityAdministrationResult<IdentityMfaProvisioningResult>> ProvisionMfaAsync(
         IdentityAdministrationActor actor,
-        ChangeIdentityMfaCommand command,
+        ProvisionIdentityMfaCommand command,
+        CancellationToken cancellationToken);
+
+    Task<IdentityAdministrationResult<IdentityMfaStatus>> RemoveMfaAsync(
+        IdentityAdministrationActor actor,
+        RemoveIdentityMfaCommand command,
         CancellationToken cancellationToken);
 }

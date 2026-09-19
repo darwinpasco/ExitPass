@@ -312,6 +312,128 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
     }
 
     [Fact]
+    public async Task Administrator_reset_replaces_totp_atomically_revokes_sessions_and_supports_remove_then_setup()
+    {
+        var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
+        var options = TestOptions();
+        var runtime = CreateRuntime(options, clock);
+        var seed = await SeedCurrentUserAsync(runtime, "I020AdminTotpReplace", ApprovedIdentityRoleCatalog.SystemAdministrator);
+        var actorUserId = seed.UserId;
+
+        var oldCode = TotpCode(seed.TotpSecret, options, clock.GetUtcNow());
+        var oldSession = await runtime.Service.LoginAsync(seed.Username, Password,
+            HumanSessionAudiences.ManagementPlatform, oldCode, Context(), CancellationToken.None);
+        oldSession.Response.Authenticated.Should().BeTrue();
+        var oldRowVersion = await ScalarAsync<long>(
+            "SELECT row_version FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='ACTIVE';",
+            seed.UserId);
+
+        var resetCorrelationId = Guid.NewGuid();
+        var reset = await runtime.Service.ProvisionTotpAsync(seed.UserId, seed.Username, oldRowVersion, "RESET",
+            actorUserId, "ADMIN_RESET", resetCorrelationId, CancellationToken.None);
+
+        reset.Should().NotBeNull();
+        reset!.SharedSecret.Should().NotBeNullOrWhiteSpace();
+        reset.ProvisioningUri.Should().StartWith("otpauth://totp/").And.Contain(reset.SharedSecret);
+        var replacementSecret = Base32Encoding.ToBytes(reset.SharedSecret);
+        replacementSecret.Should().NotEqual(seed.TotpSecret);
+        var storedEnvelope = await ScalarAsync<byte[]>(
+            "SELECT protected_secret_envelope FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='ACTIVE';",
+            seed.UserId);
+        storedEnvelope.Should().NotEqual(replacementSecret);
+        (await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='ACTIVE';",
+            seed.UserId)).Should().Be(1);
+        (await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='REVOKED';",
+            seed.UserId)).Should().Be(1);
+        (await runtime.Service.ResolveSessionAsync(oldSession.Credential!.SerializedToken,
+            HumanSessionAudiences.ManagementPlatform, null, Context(), false, CancellationToken.None))
+            .Response.Authenticated.Should().BeFalse();
+
+        var oldRejected = await runtime.Service.LoginAsync(seed.Username, Password,
+            HumanSessionAudiences.ManagementPlatform, TotpCode(seed.TotpSecret, options, clock.GetUtcNow()),
+            Context(), CancellationToken.None);
+        oldRejected.Response.Authenticated.Should().BeFalse();
+        oldRejected.Response.ErrorCode.Should().Be("TOTP_INVALID");
+        var newSession = await runtime.Service.LoginAsync(seed.Username, Password,
+            HumanSessionAudiences.ManagementPlatform, TotpCode(replacementSecret, options, clock.GetUtcNow()),
+            Context(), CancellationToken.None);
+        newSession.Response.Authenticated.Should().BeTrue();
+
+        var stale = await runtime.Service.ProvisionTotpAsync(seed.UserId, seed.Username, oldRowVersion, "RESET",
+            actorUserId, "STALE_RESET", Guid.NewGuid(), CancellationToken.None);
+        stale.Should().BeNull();
+        (await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='ACTIVE';",
+            seed.UserId)).Should().Be(1);
+
+        var replacementRowVersion = await ScalarAsync<long>(
+            "SELECT row_version FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='ACTIVE';",
+            seed.UserId);
+        var removeCorrelationId = Guid.NewGuid();
+        (await runtime.Service.RemoveTotpAsync(seed.UserId, replacementRowVersion, actorUserId, "ADMIN_REMOVE",
+            removeCorrelationId, CancellationToken.None)).Should().BeTrue();
+        (await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='ACTIVE';",
+            seed.UserId)).Should().Be(0);
+        (await runtime.Service.ResolveSessionAsync(newSession.Credential!.SerializedToken,
+            HumanSessionAudiences.ManagementPlatform, null, Context(), false, CancellationToken.None))
+            .Response.Authenticated.Should().BeFalse();
+
+        var removedRowVersion = await ScalarAsync<long>(
+            "SELECT row_version FROM identity.user_mfa_authenticators WHERE user_id=@id ORDER BY created_at DESC LIMIT 1;",
+            seed.UserId);
+        var setupCorrelationId = Guid.NewGuid();
+        var setup = await runtime.Service.ProvisionTotpAsync(seed.UserId, seed.Username, removedRowVersion, "SETUP",
+            actorUserId, "ADMIN_SETUP", setupCorrelationId, CancellationToken.None);
+        setup.Should().NotBeNull();
+        setup!.SharedSecret.Should().NotBe(reset.SharedSecret);
+        (await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='ACTIVE';",
+            seed.UserId)).Should().Be(1);
+        (await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM audit.security_events WHERE target_entity_id=@id AND security_event_type='TOTP_RESET';",
+            seed.UserId)).Should().BeGreaterThanOrEqualTo(1);
+        (await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM audit.security_events WHERE target_entity_id=@id AND security_event_type='TOTP_REMOVED';",
+            seed.UserId)).Should().BeGreaterThanOrEqualTo(1);
+        (await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM audit.security_events WHERE target_entity_id=@id AND security_event_type='TOTP_ADMIN_SETUP';",
+            seed.UserId)).Should().BeGreaterThanOrEqualTo(1);
+    }
+
+    [Fact]
+    public async Task Administrator_setup_recovers_legacy_reset_required_without_reusing_secret()
+    {
+        var options = TestOptions();
+        var runtime = CreateRuntime(options);
+        var seed = await SeedCurrentUserAsync(runtime, "I020LegacyAdminReset", ApprovedIdentityRoleCatalog.SystemAdministrator);
+        await ExecuteAsync("""
+            UPDATE identity.user_mfa_authenticators
+            SET authenticator_status='RESET_REQUIRED', reset_at=now(),
+                reset_or_revoked_by_user_id=@user_id, status_reason_code='LEGACY_ADMIN_RESET',
+                row_version=row_version+1
+            WHERE user_id=@user_id AND authenticator_status='ACTIVE';
+            """, ("user_id", seed.UserId));
+        var legacyVersion = await ScalarAsync<long>(
+            "SELECT row_version FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='RESET_REQUIRED';",
+            seed.UserId);
+
+        var recovered = await runtime.Service.ProvisionTotpAsync(seed.UserId, seed.Username, legacyVersion, "SETUP",
+            seed.UserId, "LEGACY_RECOVERY", Guid.NewGuid(), CancellationToken.None);
+
+        recovered.Should().NotBeNull();
+        Base32Encoding.ToBytes(recovered!.SharedSecret).Should().NotEqual(seed.TotpSecret);
+        (await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='ACTIVE';",
+            seed.UserId)).Should().Be(1);
+        (await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='RESET_REQUIRED';",
+            seed.UserId)).Should().Be(0);
+    }
+
+    [Fact]
     public async Task Password_failures_lock_and_expired_runtime_lockout_releases()
     {
         var options = TestOptions() with { MaximumFailures = 2, LockoutMinutes = 1 };

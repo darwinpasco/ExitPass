@@ -31,7 +31,7 @@ Enrollment returns the shared secret and provisioning URI once. Confirmation act
 
 The canonical database stores only an AES-GCM protected envelope plus non-secret key reference/version metadata. The protection key is supplied externally through configuration or a secret provider. It is not stored in source or ordinary database data. TOTP operations fail closed when key protection is unavailable. Enrollment, confirmation, verification, throttling, and reset events contain no code, seed, envelope, or provisioning URI.
 
-TOTP reset is an I-021 administration-service primitive. It moves the authenticator to `RESET_REQUIRED` and revokes active MFA-satisfied sessions in one database transaction.
+Administrator TOTP setup and reset generate a new protected secret and immediately persist an ACTIVE authenticator. Reset invalidates the old authenticator and revokes active MFA-satisfied sessions in the same database transaction; it never commits a `RESET_REQUIRED` dead end. Successful setup/reset returns the new shared secret and provisioning URI once. Administrator remove invalidates the current authenticator and revokes affected sessions without returning provisioning material.
 
 WebAuthn, FIDO2, and passkeys remain deferred. OIDC remains a disabled provider-neutral adapter boundary and supplies no ExitPass role or scope authority.
 
