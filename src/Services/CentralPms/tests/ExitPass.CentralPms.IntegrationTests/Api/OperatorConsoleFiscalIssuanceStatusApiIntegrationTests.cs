@@ -48,6 +48,8 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
         endpoints[0].Metadata.GetMetadata<ReconciliationPolicyMetadata>()?.PolicyName
             .Should()
             .Be("FiscalIssuanceStatusRead");
+        endpoints[0].Metadata.GetMetadata<OperatorConsoleOperatingContextRequirementMetadata>()
+            .Should().Be(OperatorConsoleOperatingContextRequirementMetadata.NotRequired);
     }
 
     [Fact]
@@ -81,6 +83,8 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
         endpoints[0].Metadata.GetMetadata<ReconciliationPolicyMetadata>()?.PolicyName
             .Should()
             .Be("FiscalIssuanceStatusRead");
+        endpoints[0].Metadata.GetMetadata<OperatorConsoleOperatingContextRequirementMetadata>()
+            .Should().Be(OperatorConsoleOperatingContextRequirementMetadata.NotRequired);
     }
 
     [Fact]

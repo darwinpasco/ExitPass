@@ -26,6 +26,7 @@ else {
 $environmentFile = Join-Path $privateRoot 'runtime\restart-41-business\central.env'
 $posApiKeyFile = Join-Path $privateRoot 'runtime\restart-41-business\pos-api-key'
 $adapterApiKeyFile = Join-Path $privateRoot 'site-adapters\pitx-level-3\central-pms-api-key'
+$dataProtectionKeyDirectory = Join-Path $privateRoot 'data-protection\central-pms'
 $mtlsProvisionerPath = Join-Path $PSScriptRoot 'Initialize-WebPayStatutoryMtls.ps1'
 $containerStarted = $false
 
@@ -99,6 +100,14 @@ foreach ($requiredFile in @($environmentFile, $posApiKeyFile, $adapterApiKeyFile
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Required persistent PITX private configuration was not found at $requiredFile."
     }
+}
+if (Test-Path -LiteralPath $dataProtectionKeyDirectory) {
+    if (-not (Test-Path -LiteralPath $dataProtectionKeyDirectory -PathType Container)) {
+        throw "Central PMS Data Protection key path is not a directory: $dataProtectionKeyDirectory"
+    }
+}
+else {
+    New-Item -ItemType Directory -Path $dataProtectionKeyDirectory -Force | Out-Null
 }
 
 $databaseConnection = Get-PrivateEnvironmentValue $environmentFile 'ConnectionStrings__MainDatabase'
@@ -195,6 +204,7 @@ try {
         --mount "type=bind,source=$($mtls.RootCertificatePemPath),target=/usr/local/share/ca-certificates/exitpass-local-statutory-root-ca.crt,readonly" `
         --mount "type=bind,source=$posApiKeyFile,target=/run/exitpass/pos-api-key,readonly" `
         --mount "type=bind,source=$adapterApiKeyFile,target=/run/exitpass/site-adapter-secrets/pitx-level-3/central-pms-api-key,readonly" `
+        --mount "type=bind,source=$dataProtectionKeyDirectory,target=/root/.aspnet/DataProtection-Keys" `
         --label 'com.exitpass.local-runtime=persistent-pitx-central-pms' `
         --entrypoint '/bin/sh' `
         $imageName `
@@ -210,6 +220,7 @@ try {
     Write-Host "HTTPS: $httpsUrl"
     Write-Host "HTTP:  $httpUrl"
     Write-Host "Database: $databaseContainer/$databaseName (volume $databaseVolume)"
+    Write-Host "Data Protection keys: $dataProtectionKeyDirectory"
     Write-Host 'Projection scheduler: enabled and required for this environment'
     Write-Host 'WebPay statutory service principal: HTTPS/mTLS enabled'
 

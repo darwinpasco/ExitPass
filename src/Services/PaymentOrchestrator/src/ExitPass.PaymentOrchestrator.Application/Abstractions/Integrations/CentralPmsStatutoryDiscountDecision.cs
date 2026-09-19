@@ -20,7 +20,8 @@ public sealed record CentralPmsStatutoryDiscountDecisionRequest(
     bool RequesterAttestation,
     string? AttestationNotes,
     string? ReasonCode,
-    Guid? OriginalTariffSnapshotId);
+    Guid? OriginalTariffSnapshotId,
+    bool? BeneficiaryResidencySatisfied = null);
 
 /// <summary>
 /// Metadata-only evidence reference forwarded to Central PMS.

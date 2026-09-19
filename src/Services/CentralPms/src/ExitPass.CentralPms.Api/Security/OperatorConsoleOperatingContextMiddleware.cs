@@ -14,6 +14,14 @@ public sealed class OperatorConsoleOperatingContextMiddleware(RequestDelegate ne
             return;
         }
 
+        var requirement = context.GetEndpoint()?.Metadata
+            .GetMetadata<OperatorConsoleOperatingContextRequirementMetadata>();
+        if (requirement is { Required: false })
+        {
+            await next(context);
+            return;
+        }
+
         var correlationId = HumanSessionAuthenticationHandler.ResolveCorrelationId(context.Request);
         if (!Guid.TryParse(context.User.FindFirst(HumanSessionAuthenticationHandler.InternalHumanSessionIdClaimType)?.Value, out var humanSessionId) ||
             humanSessionId == Guid.Empty)

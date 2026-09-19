@@ -807,6 +807,18 @@ describe("ExitPass WebPay UI", () => {
     expect(body.beneficiaryResidencySatisfied).toBe(true);
   });
 
+  it("WebPay_WhenPolicyAllowsNonResidents_DoesNotRequireResidencyConfirmation", async () => {
+    stubWebPayFetch({
+      statutoryAvailabilityPayload: statutoryAvailabilityResponse({ residencyRequirement: "NON_RESIDENT_ALLOWED" })
+    });
+
+    render(<App />);
+    await resolveTicket("TICKET-PITX-NON-RESIDENT");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+
+    expect(screen.queryByLabelText(/beneficiary is a resident/i)).not.toBeInTheDocument();
+  });
+
   it("WebPay_WhenAuthoritativeAvailabilityRequiresEvidence_RequestsCaptureAndBootstrapsI016AfterDecision", async () => {
     const fetchMock = stubWebPayFetch({
       statutoryAvailabilityPayload: statutoryAvailabilityResponse({
