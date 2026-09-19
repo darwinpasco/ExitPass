@@ -313,6 +313,10 @@ export interface OperatorTicketLookupResult {
   vendorConfirmationStatus?: string | null;
   vendorConfirmationTimestamp?: string;
   vendorMessage?: string;
+  sessionSource?: string;
+  projectionStatus?: string;
+  projectionSourceEventAt?: string;
+  projectionLastRefreshedAt?: string;
   diagnostics?: string[];
   correlationId?: string;
   message?: string;

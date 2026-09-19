@@ -476,6 +476,10 @@ interface OperatorTicketLookupResponseDto {
   vendorConfirmationStatus?: string | null;
   vendorConfirmationTimestamp?: string | null;
   vendorMessage?: string | null;
+  sessionSource?: string | null;
+  projectionStatus?: string | null;
+  projectionSourceEventAt?: string | null;
+  projectionLastRefreshedAt?: string | null;
   diagnostics?: string[] | null;
   correlationId?: string | null;
   message?: string | null;
@@ -2057,6 +2061,10 @@ function toTicketLookupResult(body: OperatorTicketLookupResponseDto): OperatorTi
     vendorConfirmationStatus: body.vendorConfirmationStatus ?? undefined,
     vendorConfirmationTimestamp: body.vendorConfirmationTimestamp ?? undefined,
     vendorMessage: body.vendorMessage ?? undefined,
+    sessionSource: body.sessionSource ?? undefined,
+    projectionStatus: body.projectionStatus ?? undefined,
+    projectionSourceEventAt: body.projectionSourceEventAt ?? undefined,
+    projectionLastRefreshedAt: body.projectionLastRefreshedAt ?? undefined,
     diagnostics: body.diagnostics ?? body.alerts ?? undefined,
     correlationId: body.correlationId ?? undefined,
     message: body.message ?? body.ineligibilityReason ?? body.errorCode ?? undefined
@@ -3661,6 +3669,24 @@ const mockTicketLookupResults: OperatorTicketLookupResult[] = [
     vendorConfirmationStatus: "FAILED",
     vendorMessage: "Vendor confirmation failed.",
     correlationId: "mock-ticket-lookup-vendor-failed"
+  },
+  {
+    sessionFound: true,
+    accessAllowed: true,
+    sessionEligible: false,
+    ticketNumber: "1474119573041",
+    cardNum: "1474119573041",
+    plateLicense: "ABC****",
+    siteName: "PITX Level 3",
+    parkingInTime: "2026-09-19T09:00:00+08:00",
+    vendorSystemCode: "HIKCENTRAL",
+    sessionSource: "VENDOR_SESSION_PROJECTION",
+    projectionStatus: "ACTIVE",
+    projectionSourceEventAt: "2026-09-19T09:00:00+08:00",
+    projectionLastRefreshedAt: "2026-09-19T09:01:00+08:00",
+    diagnostics: ["VENDOR_PROJECTION_ONLY"],
+    message: "TRANSACTIONAL_SESSION_NOT_STARTED",
+    correlationId: "mock-ticket-lookup-projection"
   }
 ];
 

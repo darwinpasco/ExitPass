@@ -17,6 +17,9 @@ public sealed class SiteVendorAdapterRoutingTests
     private static readonly Guid VendorB = Guid.Parse("30000000-0000-0000-0000-000000000002");
     private static readonly Guid AdapterA = Guid.Parse("40000000-0000-0000-0000-000000000001");
     private static readonly Guid AdapterB = Guid.Parse("40000000-0000-0000-0000-000000000002");
+    private static readonly Guid PitxGroup = Guid.Parse("a6dbadf6-68b5-5bed-a7e0-a75faee70841");
+    private static readonly Guid PitxSite = Guid.Parse("2d1dcdf8-f563-537c-8542-0bde7cc9da97");
+    private static readonly Guid PitxVendor = Guid.Parse("afdefaab-6be4-6b25-8f3f-3ad8309662e8");
 
     [Fact]
     public async Task SiteAAndSiteB_CallOnlyTheirSelectedAdapters()
@@ -27,6 +30,52 @@ public sealed class SiteVendorAdapterRoutingTests
         await client.ResolveSessionAsync(Request(SiteB, VendorB), default);
         Assert.Equal(new[] { "adapter-a.internal", "adapter-b.internal" }, transport.Hosts);
         Assert.Single(transport.ServiceIdentities.Distinct());
+    }
+
+    [Fact]
+    public async Task PitxCanonicalRoutingScope_UsesConfiguredAdapter()
+    {
+        var transport = new RecordingHandler();
+        var client = new SiteVendorAdapterHttpClient(
+            new HttpClient(transport),
+            new PitxRegistry(),
+            new CredentialResolver(),
+            Guid.NewGuid(),
+            true);
+
+        await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest(
+                null,
+                "1474119573041",
+                Guid.NewGuid(),
+                new(PitxSite, PitxGroup, PitxVendor, Guid.Empty)),
+            default);
+
+        Assert.Equal(new[] { "pitx-site-adapter" }, transport.Hosts);
+    }
+
+    [Fact]
+    public async Task PitxScope_WhenVendorUuidDoesNotMatch_FailsBeforeTransport()
+    {
+        var transport = new RecordingHandler();
+        var client = new SiteVendorAdapterHttpClient(
+            new HttpClient(transport),
+            new PitxRegistry(),
+            new CredentialResolver(),
+            Guid.NewGuid(),
+            true);
+
+        var action = () => client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest(
+                null,
+                "1474119573041",
+                Guid.NewGuid(),
+                new(PitxSite, PitxGroup, Guid.NewGuid(), Guid.Empty)),
+            default);
+
+        var error = await Assert.ThrowsAsync<SiteVendorAdapterRoutingException>(action);
+        Assert.Equal("SITE_ADAPTER_MAPPING_NOT_FOUND", error.ErrorCode);
+        Assert.Empty(transport.Hosts);
     }
 
     [Fact]
@@ -121,6 +170,33 @@ public sealed class SiteVendorAdapterRoutingTests
         public Task<SiteVendorAdapterRoute> ResolveAsync(Guid siteId, Guid siteGroupId, Guid? vendorSystemId,
             CancellationToken cancellationToken) =>
             Task.FromException<SiteVendorAdapterRoute>(new SiteVendorAdapterRoutingException("SITE_ADAPTER_MAPPING_NOT_FOUND"));
+    }
+
+    private sealed class PitxRegistry : ISiteVendorAdapterRouteRegistry
+    {
+        public Task<SiteVendorAdapterRoute> ResolveAsync(
+            Guid siteId,
+            Guid siteGroupId,
+            Guid? vendorSystemId,
+            CancellationToken cancellationToken)
+        {
+            if (siteId != PitxSite || siteGroupId != PitxGroup || vendorSystemId != PitxVendor)
+            {
+                return Task.FromException<SiteVendorAdapterRoute>(
+                    new SiteVendorAdapterRoutingException("SITE_ADAPTER_MAPPING_NOT_FOUND"));
+            }
+
+            return Task.FromResult(new SiteVendorAdapterRoute(
+                PitxSite,
+                PitxGroup,
+                PitxVendor,
+                AdapterA,
+                new Uri("http://pitx-site-adapter"),
+                "file:pitx-key",
+                "IST",
+                DateTimeOffset.UtcNow,
+                null));
+        }
     }
 
     private sealed class CredentialResolver : ISiteAdapterCredentialResolver

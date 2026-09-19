@@ -365,6 +365,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.True(state.ResolveVendorParkingWasCalled);
+        Assert.Equal("afdefaab-6be4-6b25-8f3f-3ad8309662e8", state.CapturedVendorSystemId);
         Assert.False(state.CreatePaymentAttemptWasCalled);
         Assert.Null(state.CapturedRouteRequest);
         Assert.Null(state.CapturedInitiateRequest);
@@ -871,7 +872,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         {
             SiteGroupId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
             SiteId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
-            VendorSystemId = "HIKCENTRAL",
+            VendorSystemId = "afdefaab-6be4-6b25-8f3f-3ad8309662e8",
             PlateNumber = "ABC1234",
             PaymentMethod = paymentMethod,
             CorrelationId = Guid.Parse("33333333-3333-3333-3333-333333333333")
@@ -1156,6 +1157,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
 
         public string? CapturedTicketReference { get; private set; }
 
+        public string? CapturedVendorSystemId { get; private set; }
+
         public ResolvePaymentProviderRouteRequest? CapturedRouteRequest { get; private set; }
 
         public InitiateProviderPaymentRequest? CapturedInitiateRequest { get; private set; }
@@ -1182,6 +1185,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         {
             ResolveVendorParkingWasCalled = true;
             CapturedTicketReference = ticketReference;
+            CapturedVendorSystemId = vendorSystemId;
             return Task.FromResult(ResolveResult);
         }
 

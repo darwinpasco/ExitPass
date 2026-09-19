@@ -873,6 +873,26 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(await screen.findByText("Ticket not found")).toBeInTheDocument();
   });
 
+  it("TicketLookup_WhenOnlyProjectionExists_ShowsVendorVisibilityWithoutTransactionalFacts", async () => {
+    render(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />);
+
+    await userEvent.type(
+      await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"),
+      "1474119573041"
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
+
+    expect(await screen.findByText("Projected session")).toBeInTheDocument();
+    expect(
+      screen.getByText("Current vendor session is visible. Transactional parking and payment state have not started.")
+    ).toBeInTheDocument();
+    expect(screen.getByText("PITX Level 3")).toBeInTheDocument();
+    expect(screen.getByText("ABC****")).toBeInTheDocument();
+    expect(screen.getAllByText("VENDOR_SESSION_PROJECTION").length).toBeGreaterThan(0);
+    expect(screen.queryByText("PHP 0.00")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create review draft" })).toBeDisabled();
+  });
+
   it("AuditReporting_RendersReadOnlyPanelRowsAndGuardrails", async () => {
     render(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/audit" />);
 
@@ -1539,6 +1559,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(result.cardNum).toBe("REAL-TICKET-001");
     expect(result.feeMinorUnits).toBe(12500);
     expect(result.paymentStatus).toBe("CONFIRMED");
+    expect(result.sessionSource).toBe("CORE_PARKING_SESSION");
     expect(fetchMock).toHaveBeenCalledWith(
       "http://central-pms.test/v1/ops/operator-console/sessions/lookup",
       expect.objectContaining({ method: "POST" })
@@ -1556,6 +1577,34 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(calledUrls).not.toMatch(/confirm/i);
     expect(calledUrls).not.toMatch(/hikcentral/i);
     expect(calledUrls).not.toMatch(/gate/i);
+  });
+
+  it("OperatorConsoleApi_MapsProjectionVisibilityWithoutInventingAmounts", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      sessionFound: true,
+      sessionEligible: false,
+      ticketReference: "1474119573041",
+      plateNumber: "ABC****",
+      siteName: "PITX Level 3",
+      sessionSource: "VENDOR_SESSION_PROJECTION",
+      projectionStatus: "ACTIVE",
+      projectionSourceEventAt: "2026-09-19T09:00:00+08:00",
+      projectionLastRefreshedAt: "2026-09-19T09:01:00+08:00",
+      currentPayableAmountMinorUnits: null,
+      currencyCode: null,
+      paymentStatus: null,
+      exitAuthorizationStatus: null
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const result = await client.lookupSessionByTicket({ ticketNumber: "1474119573041" });
+
+    expect(result.sessionSource).toBe("VENDOR_SESSION_PROJECTION");
+    expect(result.projectionStatus).toBe("ACTIVE");
+    expect(result.feeMinorUnits).toBeUndefined();
+    expect(result.currencyCode).toBeUndefined();
+    expect(result.paymentStatus).toBeUndefined();
   });
 
   it("OperatorConsoleApi_CreatesStatutoryDiscountDraftThroughSingularEndpoint", async () => {
@@ -3005,6 +3054,7 @@ function ticketLookupResponse(): OperatorTicketLookupResult {
     currentPayableAmountMinorUnits: 12500,
     currencyCode: "PHP",
     paymentStatus: "CONFIRMED",
+    sessionSource: "CORE_PARKING_SESSION",
     alerts: [],
     correlationId: "77000000-0000-0000-0000-000000000092"
   } as unknown as OperatorTicketLookupResult;

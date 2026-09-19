@@ -105,6 +105,27 @@ public sealed class ResolveVendorParkingHandlerTests
         result.TariffSnapshot!.NetPayable.Should().Be(125.50m);
     }
 
+    [Fact]
+    public async Task ResolveVendorSession_WhenVendorSystemIsTextualCode_FailsUuidRoutingValidation()
+    {
+        var sut = CreateSut(FakeVendorPmsParkingResolutionClient.FoundWithInlineQuote());
+        var command = new ResolveVendorParkingCommand
+        {
+            SiteGroupId = "a6dbadf6-68b5-5bed-a7e0-a75faee70841",
+            SiteId = "2d1dcdf8-f563-537c-8542-0bde7cc9da97",
+            VendorSystemId = "HIKCENTRAL",
+            TicketReference = "1474119573041",
+            CorrelationId = CorrelationId
+        };
+
+        var result = await sut.ExecuteAsync(command, CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.InvalidRequest);
+        result.ErrorCode.Should().Be("INVALID_VENDOR_ROUTING_SCOPE");
+        result.ParkingSession.Should().BeNull();
+        result.TariffSnapshot.Should().BeNull();
+    }
+
     /// <summary>
     /// Verifies configured friendly site metadata is preserved in resolved WebPay-facing context.
     /// </summary>

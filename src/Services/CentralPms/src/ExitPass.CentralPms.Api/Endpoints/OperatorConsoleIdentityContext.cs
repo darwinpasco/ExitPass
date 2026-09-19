@@ -67,13 +67,15 @@ internal sealed record OperatorConsoleIdentityContext(
             request,
             humanSession ? null : SiteIdHeader,
             fallbackSiteId,
-            humanSession ? "operator_effective_site_id" : "site_id");
+            humanSession ? "operator_effective_site_id" : "site_id",
+            "site_id");
 
         var siteGroupId = ResolveGuid(
             request,
             humanSession ? null : SiteGroupIdHeader,
             fallbackSiteGroupId,
-            humanSession ? "operator_effective_site_group_id" : "site_group_id");
+            humanSession ? "operator_effective_site_group_id" : "site_group_id",
+            "site_group_id");
 
         var correlationId = ResolveGuid(
             request,

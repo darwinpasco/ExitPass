@@ -294,10 +294,39 @@ export async function resolveParkingSession(
   const payload = (await response.json().catch(() => ({}))) as ParkingSessionResolveResponse | ApiError;
   if (!response.ok) {
     const error = payload as ApiError;
-    throw new Error(toFriendlyError(error.errorCode, error.message));
+    throw new Error(toParkingLookupError(error.errorCode));
   }
 
   return payload as ParkingSessionResolveResponse;
+}
+
+export function toParkingLookupError(errorCode?: string): string {
+  switch ((errorCode ?? "").toUpperCase()) {
+    case "INVALID_TICKET":
+    case "INVALID_PLATE":
+    case "INVALID_TICKET_OR_PLATE":
+    case "VALIDATION_FAILED":
+      return "Check the ticket reference or plate number and try again.";
+    case "SESSION_NOT_FOUND":
+    case "PARKING_SESSION_NOT_FOUND":
+      return "We could not find an active parking session for those details.";
+    case "AMBIGUOUS_MATCH":
+    case "VENDOR_SESSION_AMBIGUOUS":
+      return "Multiple matching parking sessions were found. Please use the ticket reference instead.";
+    case "INVALID_VENDOR_ROUTING_SCOPE":
+    case "SITE_ADAPTER_MAPPING_NOT_FOUND":
+    case "SITE_ADAPTER_IMMUTABLE_ROUTE_MISMATCH":
+    case "VENDOR_CONFIGURATION_ERROR":
+    case "VENDOR_UNAVAILABLE":
+    case "VENDOR_PARKING_RESOLUTION_FAILED":
+      return "Parking lookup is temporarily unavailable. Please try again shortly.";
+    case "TARIFF_CALCULATION_FAILED":
+    case "TARIFF_SNAPSHOT_NOT_FOUND":
+    case "TARIFF_SNAPSHOT_INVALID":
+      return "We could not calculate the parking fee. Please try again shortly.";
+    default:
+      return "Parking session could not be resolved. Please try again.";
+  }
 }
 
 export async function retrievePaymentStatus(

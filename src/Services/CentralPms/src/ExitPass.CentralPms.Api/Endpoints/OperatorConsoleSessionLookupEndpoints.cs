@@ -158,5 +158,10 @@ public static class OperatorConsoleSessionLookupEndpoints
             result.Session?.ExitAuthorizationStatus,
             result.Alerts,
             result.CorrelationId,
-            result.Session?.SiteName);
+            result.Session?.SiteName,
+            result.Session?.SessionSource,
+            result.Session?.VendorSystemCode,
+            result.Session?.ProjectionStatus,
+            result.Session?.ProjectionSourceEventAt,
+            result.Session?.ProjectionLastRefreshedAt);
 }

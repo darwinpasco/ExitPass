@@ -72,6 +72,30 @@ public sealed class OperatorConsoleSessionLookupServiceTests
             Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task LookupAsync_WhenOnlyVendorProjectionExists_ReturnsVisibleNonTransactionalContext()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(ProjectionSession());
+
+        var sut = CreateSut(AccessResult(allowed: true, []), repository);
+
+        var result = await sut.LookupAsync(
+            Command(parkingSessionId: null, lookupMode: "TICKET_REFERENCE"),
+            CancellationToken.None);
+
+        result.Session.Should().NotBeNull();
+        result.Session!.ParkingSessionId.Should().BeNull();
+        result.Session.SessionSource.Should().Be("VENDOR_SESSION_PROJECTION");
+        result.Session.CurrentPayableAmountMinorUnits.Should().BeNull();
+        result.Session.PaymentStatus.Should().BeNull();
+        result.Session.ExitAuthorizationStatus.Should().BeNull();
+        result.SessionEligible.Should().BeFalse();
+        result.IneligibilityReason.Should().Be("TRANSACTIONAL_SESSION_NOT_STARTED");
+        result.Alerts.Should().ContainSingle().Which.Should().Be("VENDOR_PROJECTION_ONLY");
+    }
+
     /// <summary>
     /// Verifies not-found lookup returns a deterministic non-eligible result.
     /// </summary>
@@ -230,4 +254,25 @@ public sealed class OperatorConsoleSessionLookupServiceTests
             PaymentStatus: null,
             DiscountStatus: "NOT_APPLIED",
             ExitAuthorizationStatus: null);
+
+    private static OperatorConsoleSessionReadModel ProjectionSession() =>
+        new(
+            ParkingSessionId: null,
+            "TICKET-001",
+            "ABC****",
+            SiteId,
+            SiteGroupId,
+            "ACTIVE",
+            EntryTime,
+            CurrentPayableAmountMinorUnits: null,
+            CurrencyCode: null,
+            PaymentStatus: null,
+            DiscountStatus: null,
+            ExitAuthorizationStatus: null,
+            SiteName: "PITX Level 3",
+            SessionSource: "VENDOR_SESSION_PROJECTION",
+            VendorSystemCode: "HIKCENTRAL",
+            ProjectionStatus: "ACTIVE",
+            ProjectionSourceEventAt: EntryTime,
+            ProjectionLastRefreshedAt: EntryTime.AddMinutes(1));
 }

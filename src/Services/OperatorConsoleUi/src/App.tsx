@@ -2503,7 +2503,11 @@ function TicketLookupPage({
                   {draftState.status === "loading" ? "Creating draft" : "Create review draft"}
                 </button>
                 {lookupState.data.sessionEligible === false && (
-                  <span className="notice">{lookupState.data.message ?? "Session is not eligible for operator workflow."}</span>
+                  <span className="notice">
+                    {normalizeStatus(lookupState.data.sessionSource) === "VENDOR_SESSION_PROJECTION"
+                      ? "Transactional parking and payment state have not started."
+                      : lookupState.data.message ?? "Session is not eligible for operator workflow."}
+                  </span>
                 )}
               </div>
             </form>
@@ -2577,6 +2581,12 @@ function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult })
           <DescriptionList
             items={[
               ["Vendor system code", displayValue(result.vendorSystemCode)],
+              ["Session source", displayValue(result.sessionSource)],
+              ["Projection status", displayValue(result.projectionStatus)],
+              [
+                "Projection refreshed",
+                result.projectionLastRefreshedAt ? formatDateTime(result.projectionLastRefreshedAt) : "Not available"
+              ],
               ["Vendor confirmation code", displayValue(result.vendorConfirmationCode)],
               ["Vendor confirmation status", result.vendorConfirmationStatus ?? "Vendor confirmation unavailable"],
               [
@@ -2594,6 +2604,11 @@ function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult })
         <DescriptionList
           items={[
             ["Vendor system code", displayValue(result.vendorSystemCode)],
+            ["Session source", displayValue(result.sessionSource)],
+            [
+              "Projection source event",
+              result.projectionSourceEventAt ? formatDateTime(result.projectionSourceEventAt) : "Not available"
+            ],
             ["Vendor confirmation code", displayValue(result.vendorConfirmationCode)],
             ["Vendor message", displayValue(result.vendorMessage)],
             ["Correlation ID", displayValue(result.correlationId)]
@@ -4335,6 +4350,15 @@ function NotFoundPage({ navigate }: { navigate: (path: string) => void }) {
 }
 
 function ticketLookupGuidance(result: OperatorTicketLookupResult) {
+  if (normalizeStatus(result.sessionSource) === "VENDOR_SESSION_PROJECTION") {
+    return {
+      label: "Projected session",
+      messages: ["Current vendor session is visible. Transactional parking and payment state have not started."],
+      messageClass: "notice",
+      className: "pending-review"
+    };
+  }
+
   const vendorStatus = normalizeStatus(result.vendorConfirmationStatus);
 
   if (!vendorStatus) {
