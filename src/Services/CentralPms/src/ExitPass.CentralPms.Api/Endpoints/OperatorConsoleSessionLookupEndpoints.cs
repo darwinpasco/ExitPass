@@ -156,5 +156,6 @@ public static class OperatorConsoleSessionLookupEndpoints
             result.Session?.DiscountStatus,
             result.Session?.ExitAuthorizationStatus,
             result.Alerts,
-            result.CorrelationId);
+            result.CorrelationId,
+            result.Session?.SiteName);
 }

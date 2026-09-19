@@ -135,7 +135,8 @@ public sealed class OperatorConsoleStatutoryDiscountEvidenceService
                 context.ParkingSessionId,
                 EvidenceAccessIntent: "OPERATOR_EVIDENCE_LIST",
                 IdempotencyKey: $"operator-console-evidence-list-{query.DraftId}-{query.CorrelationId}",
-                query.CorrelationId),
+                query.CorrelationId,
+                TargetSiteId: context.SiteId),
             cancellationToken);
 
         var persistedEvaluation = await _accessEvaluationWriter.PersistAsync(evaluation, cancellationToken);

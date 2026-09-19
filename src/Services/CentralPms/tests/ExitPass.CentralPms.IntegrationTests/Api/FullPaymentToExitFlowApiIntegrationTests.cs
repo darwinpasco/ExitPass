@@ -1,5 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Domain.FiscalIssuance;
+using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using Npgsql;
 using Xunit;
@@ -81,6 +84,8 @@ public sealed class FullPaymentToExitFlowApiIntegrationTests
                 "CONFIRMED",
                 "central-pms-finalizer",
                 context.CorrelationId);
+
+            await RecordReadyFiscalReferenceAsync(context, attempt, confirmation);
 
             using var issueRequest = new HttpRequestMessage(
                 HttpMethod.Post,
@@ -183,6 +188,51 @@ public sealed class FullPaymentToExitFlowApiIntegrationTests
             ProviderStatus: reader.GetString(reader.GetOrdinal("provider_status")),
             ConfirmationStatus: reader.GetString(reader.GetOrdinal("confirmation_status")),
             VerifiedTimestamp: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("verified_timestamp")));
+    }
+
+    private static async Task RecordReadyFiscalReferenceAsync(
+        PaymentTestContext context,
+        PaymentRoutineTestHelper.CreateAttemptResult attempt,
+        RecordPaymentConfirmationResult confirmation)
+    {
+        var repository = new PostgresFiscalIssuanceReferenceRepository(ConnectionString);
+        var sequenceValue = Math.Abs(attempt.PaymentAttemptId.GetHashCode()) + 1L;
+
+        await repository.CreateAsync(
+            new CreateFiscalIssuanceReferenceRequest(
+                PaymentConfirmationId: confirmation.PaymentConfirmationId,
+                PaymentAttemptId: attempt.PaymentAttemptId,
+                ParkingSessionId: attempt.ParkingSessionId,
+                TariffSnapshotId: attempt.TariffSnapshotId,
+                SiteId: context.SiteId,
+                SitePosServerId: Guid.NewGuid(),
+                SitePosServerRef: $"site-pos-server-{context.SiteCode}",
+                FiscalDocumentTypeCodeId: null,
+                FiscalDocumentTypeCodeKey: "SALES_INVOICE",
+                PayableBasisRef: $"tariff-snapshot:{attempt.TariffSnapshotId:N}",
+                UpstreamFinalityReference: confirmation.ProviderReference,
+                PosServerFiscalDocumentId: Guid.NewGuid(),
+                FiscalIdentityId: Guid.NewGuid(),
+                FiscalSequencePolicyId: Guid.NewGuid(),
+                FiscalSequenceValue: sequenceValue,
+                FiscalDocumentNumber: $"SI-{sequenceValue:000000}-TEST",
+                FiscalSeries: "SI",
+                FiscalNumberPrefixText: "SI-",
+                FiscalNumberSuffixText: "-TEST",
+                FiscalNumberAssignedAt: DateTimeOffset.UtcNow,
+                FiscalNumberAssignedByRef: "integration-test",
+                FiscalDocumentStatusCodeId: Guid.NewGuid(),
+                ResultClassification: FiscalIssuanceResultClassification.NewlyCreated,
+                FiscalIssuanceEvidenceStatus: FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned,
+                FiscalNumberAssignmentState: FiscalNumberAssignmentState.Assigned,
+                FiscalIssuanceState: FiscalIssuanceIntegrationState.FiscalIssuanceRecorded,
+                LatestExceptionReason: null,
+                LatestErrorCode: null,
+                LatestErrorPosture: null,
+                CorrelationId: context.CorrelationId,
+                PosServerResponseTimestamp: DateTimeOffset.UtcNow,
+                RecordedByServiceIdentityId: context.RequestedByUserId),
+            CancellationToken.None);
     }
 
     private sealed record RecordPaymentConfirmationResult(

@@ -72,7 +72,8 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
                 @p_exit_authorization_id,
                 @p_requested_by,
                 @p_correlation_id,
-                @p_now
+                @p_now,
+                @p_completion_basis
             );
             """;
 
@@ -110,8 +111,11 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
                 ea.exit_authorization_id,
                 uc.gate_authorization_consumption_id,
                 ea.parking_session_id,
+                ea.completion_basis,
+                ea.completion_authority_reference_id,
                 ea.payment_attempt_id,
-                pa.tariff_snapshot_id,
+                ea.payment_confirmation_id,
+                ea.tariff_snapshot_id,
                 uc.gate_device_id,
                 COALESCE(gd.device_code, @p_gate_device_identifier) AS gate_device_identifier,
                 uc.lane_id,
@@ -124,7 +128,7 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
               ON ea.exit_authorization_id = uc.exit_authorization_id
             JOIN core.parking_sessions AS ps
               ON ps.parking_session_id = ea.parking_session_id
-            JOIN core.payment_attempts AS pa
+            LEFT JOIN core.payment_attempts AS pa
               ON pa.payment_attempt_id = ea.payment_attempt_id
             LEFT JOIN gates.gate_devices AS gd
               ON gd.gate_device_id = uc.gate_device_id;
@@ -157,13 +161,29 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
 
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
-            await ValidateIssuedAuthorizationPaidChainAsync(
+            var completionContext = await ReadCompletionContextAsync(
                 connection,
                 transaction,
-                request,
+                request.ExitAuthorizationId,
                 cancellationToken);
+            var isZeroPayable = string.Equals(
+                completionContext.CompletionBasis,
+                CompletionBasisCodes.ZeroPayableStatutoryFinality,
+                StringComparison.Ordinal);
 
-            await using var dbCommand = new NpgsqlCommand(consumeSql, connection, transaction)
+            if (!isZeroPayable)
+            {
+                await ValidateIssuedAuthorizationPaidChainAsync(
+                    connection,
+                    transaction,
+                    request,
+                    cancellationToken);
+            }
+
+            await using var dbCommand = new NpgsqlCommand(
+                consumeSql,
+                connection,
+                transaction)
             {
                 CommandTimeout = 30
             };
@@ -172,6 +192,9 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
             dbCommand.Parameters.AddWithValue("p_requested_by", request.RequestedByUserId);
             dbCommand.Parameters.AddWithValue("p_correlation_id", request.CorrelationId);
             dbCommand.Parameters.AddWithValue("p_now", request.RequestedAt);
+            dbCommand.Parameters.AddWithValue(
+                "p_completion_basis",
+                completionContext.CompletionBasis!);
 
             ConsumeExitAuthorizationDbResult result;
 
@@ -182,19 +205,24 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
                     throw new InvalidOperationException("consume_exit_authorization() returned no rows.");
                 }
 
-                result = new ConsumeExitAuthorizationDbResult(
-                    ExitAuthorizationId: reader.GetGuid(reader.GetOrdinal("exit_authorization_id")),
-                    AuthorizationStatus: reader.GetString(reader.GetOrdinal("authorization_status")),
-                    ConsumedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("consumed_at")));
+                result = completionContext with
+                {
+                    ExitAuthorizationId = reader.GetGuid(reader.GetOrdinal("exit_authorization_id")),
+                    AuthorizationStatus = reader.GetString(reader.GetOrdinal("authorization_status")),
+                    ConsumedAt = reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("consumed_at"))
+                };
             }
 
-            result = await ReadGateIntegrationHandoffAsync(
-                connection,
-                transaction,
-                handoffSql,
-                request,
-                result,
-                cancellationToken);
+            if (!isZeroPayable)
+            {
+                result = await ReadGateIntegrationHandoffAsync(
+                    connection,
+                    transaction,
+                    handoffSql,
+                    request,
+                    result,
+                    cancellationToken);
+            }
 
             await transaction.CommitAsync(cancellationToken);
 
@@ -322,7 +350,11 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
             ConsumedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("consumed_at")),
             GateAuthorizationConsumptionId: ReadGuidNullable(reader, "gate_authorization_consumption_id"),
             ParkingSessionId: ReadGuidNullable(reader, "parking_session_id"),
+            CompletionBasis: ReadStringNullable(reader, "completion_basis"),
+            CompletionAuthorityReferenceId:
+                ReadGuidNullable(reader, "completion_authority_reference_id"),
             PaymentAttemptId: ReadGuidNullable(reader, "payment_attempt_id"),
+            PaymentConfirmationId: ReadGuidNullable(reader, "payment_confirmation_id"),
             TariffSnapshotId: ReadGuidNullable(reader, "tariff_snapshot_id"),
             GateDeviceId: ReadGuidNullable(reader, "gate_device_id"),
             GateDeviceIdentifier: ReadStringNullable(reader, "gate_device_identifier"),
@@ -345,6 +377,53 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
         return reader.IsDBNull(ordinal)
             ? null
             : reader.GetString(ordinal);
+    }
+
+    private static async Task<ConsumeExitAuthorizationDbResult> ReadCompletionContextAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid exitAuthorizationId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                ea.exit_authorization_id,
+                ea.parking_session_id,
+                ea.tariff_snapshot_id,
+                ea.completion_basis,
+                ea.completion_authority_reference_id,
+                ea.payment_attempt_id,
+                ea.payment_confirmation_id,
+                ea.authorization_status::text AS authorization_status,
+                ps.site_id,
+                ps.vendor_system_id
+            FROM core.exit_authorizations AS ea
+            JOIN core.parking_sessions AS ps
+              ON ps.parking_session_id = ea.parking_session_id
+            WHERE ea.exit_authorization_id = @exit_authorization_id;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("exit_authorization_id", exitAuthorizationId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new KeyNotFoundException($"exit authorization {exitAuthorizationId} was not found");
+        }
+
+        return new ConsumeExitAuthorizationDbResult(
+            ExitAuthorizationId: exitAuthorizationId,
+            AuthorizationStatus: reader.GetString(reader.GetOrdinal("authorization_status")),
+            ConsumedAt: DateTimeOffset.MinValue,
+            ParkingSessionId: reader.GetGuid(reader.GetOrdinal("parking_session_id")),
+            CompletionBasis: reader.GetString(reader.GetOrdinal("completion_basis")),
+            CompletionAuthorityReferenceId:
+                reader.GetGuid(reader.GetOrdinal("completion_authority_reference_id")),
+            PaymentAttemptId: ReadGuidNullable(reader, "payment_attempt_id"),
+            PaymentConfirmationId: ReadGuidNullable(reader, "payment_confirmation_id"),
+            TariffSnapshotId: reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
+            SiteId: reader.GetGuid(reader.GetOrdinal("site_id")),
+            VendorSystemId: ReadGuidNullable(reader, "vendor_system_id"));
     }
 
     private static async Task ValidateIssuedAuthorizationPaidChainAsync(

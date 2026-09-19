@@ -161,6 +161,7 @@ public static class CentralPmsRbacPolicyCatalog
 
             ["OperatorConsoleStatutoryDiscountSessionLookup"] =
             [
+                "ticket.lookup",
                 "statutory-discounts.session.lookup",
                 "reconciliation.manage"
             ],

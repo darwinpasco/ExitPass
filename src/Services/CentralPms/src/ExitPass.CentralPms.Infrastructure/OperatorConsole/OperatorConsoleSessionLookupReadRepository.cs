@@ -40,6 +40,7 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                 ps.parking_session_id,
                 ps.site_id,
                 ps.site_group_id,
+                site.site_name,
                 COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS ticket_reference,
                 ps.plate_number_masked,
                 COALESCE(ps.entry_at, ps.created_at) AS entry_time,
@@ -54,6 +55,7 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                 latest_attempt.attempt_status::text AS payment_status,
                 latest_exit.authorization_status::text AS exit_authorization_status
             FROM core.parking_sessions AS ps
+            INNER JOIN sites.sites AS site ON site.site_id = ps.site_id
             LEFT JOIN LATERAL (
                 SELECT
                     tariff_snapshot_id,
@@ -128,7 +130,8 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
             GetNullableString(reader, "tariff_currency_code"),
             GetNullableString(reader, "payment_status"),
             GetNullableString(reader, "discount_status"),
-            GetNullableString(reader, "exit_authorization_status"));
+            GetNullableString(reader, "exit_authorization_status"),
+            reader.GetString("site_name"));
     }
 
     private static long? ToMinorUnits(NpgsqlDataReader reader, string columnName)

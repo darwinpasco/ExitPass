@@ -25,8 +25,14 @@ public sealed class GateAuthorizationConsumedPayload
     /// </summary>
     public Guid? PaymentAttemptId { get; init; }
 
+    public Guid? PaymentConfirmationId { get; init; }
+
+    public string CompletionBasis { get; init; } = string.Empty;
+
+    public Guid? CompletionAuthorityReferenceId { get; init; }
+
     /// <summary>
-    /// Gets the paid tariff snapshot stored on the confirmed payment attempt.
+    /// Gets the immutable payable-basis snapshot stored on the authorization.
     /// </summary>
     public Guid? TariffSnapshotId { get; init; }
 

@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { App } from "./App";
+import { App as OperatorConsoleApp } from "./App";
 import {
   createHttpOperatorConsoleApiClient,
   createMockOperatorConsoleApiClient,
@@ -33,6 +33,10 @@ const verifiedLocalDraftId = "47000000-0000-0000-0000-000000000009";
 const blockedLocalDraftId = "47000000-0000-0000-0000-000000000010";
 const fiscalReferenceId = "5f000000-0000-0000-0000-000000000001";
 
+function App(props: Parameters<typeof OperatorConsoleApp>[0]) {
+  return <OperatorConsoleApp session={operatorSession("test.operator")} {...props} />;
+}
+
 describe("ExitPass Operator Console statutory discount foundation", () => {
   it("OperatorConsoleNavigation_ExposesExactlyOneCurrentRouteAndTransfersItOnSelection", async () => {
     const user = userEvent.setup();
@@ -40,6 +44,16 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       <App
         apiClient={createMockOperatorConsoleApiClient()}
         initialPath="/operator-console/statutory-discounts"
+        session={operatorSession("site.operator", [
+          "ticket.lookup",
+          "fiscal-issuance.status.read",
+          "statutory-discounts.session.lookup",
+          "statutory-discounts.draft.view",
+          "statutory-discounts.draft.create",
+          "statutory-discounts.evidence.view",
+          "statutory-discounts.evidence.capture",
+          "statutory-discounts.policy.resolve"
+        ])}
       />
     );
 
@@ -47,16 +61,9 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     const navigationItems = within(navigation).getAllByRole("button");
     expect(navigationItems.map((item) => item.textContent)).toEqual([
       "Overview",
-      "Shift Management",
       "Ticket Lookup",
       "Fiscal Status",
-      "Statutory Discounts",
-      "Audit / Reporting",
-      "Fiscal View Audit",
-      "Sales Invoice Void Audit",
-      "Vendor Acknowledgments",
-      "Projection Health",
-      "Policy Import Review"
+      "Statutory Discounts"
     ]);
     expect(navigationItems.every((item) => !item.hasAttribute("disabled"))).toBe(true);
 
@@ -3247,7 +3254,33 @@ function expectOperatorContextHeaders(headers: unknown) {
   expect(record["X-Site-Group-Id"]).toBeUndefined();
 }
 
-function operatorSession(userReference: string): OperatorConsoleHumanSession {
+function operatorSession(
+  userReference: string,
+  permissions: readonly string[] = [
+    "ticket.lookup",
+    "fiscal-issuance.status.read",
+    "statutory-discounts.session.lookup",
+    "statutory-discounts.draft.view",
+    "statutory-discounts.draft.create",
+    "statutory-discounts.evidence.view",
+    "statutory-discounts.evidence.capture",
+    "statutory-discounts.policy.resolve",
+    "statutory-discounts.review.queue.read",
+    "statutory-discounts.review.detail.read",
+    "statutory-discounts.decision.review",
+    "statutory-discounts.decision.approve",
+    "statutory-discounts.decision.reject",
+    "statutory-discounts.evidence.review.view",
+    "shift-management.view",
+    "fiscal-reporting.ej.read",
+    "statutory-discounts.audit.read",
+    "fiscal-view-audit.read",
+    "fiscal-issuance.void.audit.read",
+    "vendor-acknowledgments.view",
+    "projection-health.view",
+    "operator-console.policy-import-review.manage"
+  ]
+): OperatorConsoleHumanSession {
   return {
     sessionReference: "11000000-0000-0000-0000-000000000001",
     userReference,
@@ -3263,11 +3296,7 @@ function operatorSession(userReference: string): OperatorConsoleHumanSession {
     lastSeenAt: "2026-08-08T08:05:00+08:00",
     idleExpiresAt: "2099-08-08T08:35:00+08:00",
     absoluteExpiresAt: "2099-08-08T16:00:00+08:00",
-    permissions: [
-      "statutory-discounts.decision.approve",
-      "statutory-discounts.decision.reject",
-      "statutory-discounts.evidence.review.view"
-    ],
+    permissions: [...permissions],
     siteReferences: ["13000000-0000-0000-0000-000000000001"],
     siteGroupReferences: ["14000000-0000-0000-0000-000000000001"],
     hasGlobalScope: false,

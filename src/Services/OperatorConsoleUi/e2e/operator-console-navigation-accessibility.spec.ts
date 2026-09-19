@@ -5,12 +5,21 @@ const navigationLabels = [
   "Ticket Lookup",
   "Fiscal Status",
   "Statutory Discounts",
+  "Shift Management",
+  "Fiscal Reporting / EJ / X / Z",
   "Audit / Reporting",
   "Fiscal View Audit",
   "Sales Invoice Void Audit",
   "Vendor Acknowledgments",
   "Projection Health",
   "Policy Import Review"
+];
+
+const siteOperatorNavigationLabels = [
+  "Overview",
+  "Ticket Lookup",
+  "Fiscal Status",
+  "Statutory Discounts"
 ];
 
 const viewports = [
@@ -20,6 +29,30 @@ const viewports = [
 ];
 
 test.describe("Operator Console active navigation accessibility", () => {
+  test("PITX Site Operator sees only the approved permission-driven surface", async ({ page }) => {
+    await page.goto("/operator-console?auth=site-operator");
+
+    const navigation = page.getByRole("navigation", { name: "Operator Console routes" });
+    const items = navigation.getByRole("button");
+    await expect(items).toHaveCount(siteOperatorNavigationLabels.length);
+    await expect(items).toHaveText(siteOperatorNavigationLabels);
+    await expect(page.getByLabel("Operator identity")).toContainText("PITX Site Operator");
+
+    await navigation.getByRole("button", { name: "Ticket Lookup" }).click();
+    await expect(page.getByRole("heading", { name: "Ticket exit readiness" })).toBeVisible();
+
+    await navigation.getByRole("button", { name: "Fiscal Status" }).click();
+    await expect(page.getByRole("heading", { name: "Fiscal issuance status" })).toBeVisible();
+
+    await navigation.getByRole("button", { name: "Statutory Discounts" }).click();
+    await expect(page.getByRole("heading", { name: "Work queue" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^(Approve|Reject)$/i })).toHaveCount(0);
+
+    await page.goto("/operator-console/audit");
+    await expect(page.getByRole("heading", { name: "Function unavailable" })).toBeVisible();
+    await expect(page.getByText("This function is not available for your account.")).toBeVisible();
+  });
+
   for (const viewport of viewports) {
     test(`${viewport.name} navigation keeps current and focused labels readable`, async ({ page }, testInfo) => {
       await page.setViewportSize(viewport);

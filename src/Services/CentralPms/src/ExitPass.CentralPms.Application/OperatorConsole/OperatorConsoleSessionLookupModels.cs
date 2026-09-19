@@ -56,4 +56,5 @@ public sealed record OperatorConsoleSessionReadModel(
     string? CurrencyCode,
     string? PaymentStatus,
     string? DiscountStatus,
-    string? ExitAuthorizationStatus);
+    string? ExitAuthorizationStatus,
+    string? SiteName = null);

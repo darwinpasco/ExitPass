@@ -8,10 +8,13 @@ BEGIN
     FROM (VALUES
         ('tariff_snapshot_id'),
         ('completion_basis'),
+        ('completion_authority_reference_id'),
         ('statutory_discount_decision_command_id'),
         ('statutory_discount_payable_basis_application_command_id'),
         ('statutory_discount_validation_id'),
-        ('applied_policy_reference_id')
+        ('applied_policy_reference_id'),
+        ('statutory_discount_policy_version_id'),
+        ('consumed_at')
     ) AS expected(column_name)
     WHERE NOT EXISTS (
         SELECT 1
@@ -35,6 +38,14 @@ BEGIN
     END IF;
 
     IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ck_exit_authorizations__consumed_state'
+          AND conrelid = 'core.exit_authorizations'::regclass
+    ) OR to_regclass('core.ux_exit_authorizations__completion_authority') IS NULL THEN
+        RAISE EXCEPTION 'ExitAuthorization consumption constraint or completion authority index is missing';
+    END IF;
+
+    IF NOT EXISTS (
         SELECT 1 FROM pg_trigger
         WHERE tgname = 'trg_exit_authorizations_completion_ancestry'
           AND tgrelid = 'core.exit_authorizations'::regclass
@@ -48,14 +59,29 @@ BEGIN
     FROM core.exit_authorizations
     WHERE tariff_snapshot_id IS NULL
        OR completion_basis IS NULL
+       OR completion_authority_reference_id IS NULL
        OR (
             completion_basis = 'PAYMENT_FINALITY' AND
-            (payment_attempt_id IS NULL OR payment_confirmation_id IS NULL)
+            (payment_attempt_id IS NULL OR payment_confirmation_id IS NULL OR
+             completion_authority_reference_id IS DISTINCT FROM payment_confirmation_id OR
+             applied_policy_reference_id IS NOT NULL OR
+             statutory_discount_policy_version_id IS NOT NULL)
        )
        OR (
             completion_basis = 'ZERO_PAYABLE_STATUTORY_FINALITY' AND
-            (payment_attempt_id IS NOT NULL OR payment_confirmation_id IS NOT NULL)
+            (payment_attempt_id IS NOT NULL OR payment_confirmation_id IS NOT NULL OR
+             completion_authority_reference_id IS DISTINCT FROM
+                 statutory_discount_payable_basis_application_command_id OR
+             (applied_policy_reference_id IS NULL AND statutory_discount_policy_version_id IS NULL) OR
+             (applied_policy_reference_id IS NOT NULL AND statutory_discount_policy_version_id IS NOT NULL))
        );
+
+    IF EXISTS (
+        SELECT 1 FROM core.exit_authorizations
+        WHERE (authorization_status = 'CONSUMED') <> (consumed_at IS NOT NULL)
+    ) THEN
+        RAISE EXCEPTION 'ExitAuthorization consumed status/timestamp is inconsistent';
+    END IF;
 
     IF v_invalid_rows <> 0 THEN
         RAISE EXCEPTION 'ExitAuthorization completion ancestry has % invalid rows', v_invalid_rows;

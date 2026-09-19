@@ -14,7 +14,8 @@ public sealed record OperatorConsoleAccessEvaluationCommand(
     Guid? ParkingSessionId,
     string? EvidenceAccessIntent,
     string IdempotencyKey,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    Guid? TargetSiteId = null);
 
 /// <summary>
 /// Read-only access evaluation result.

@@ -416,6 +416,7 @@ public static class StatutoryDiscountDecisionEndpoints
                     result.CompletionAuthority.StatutoryDiscountPayableBasisApplicationCommandId,
                     result.CompletionAuthority.StatutoryDiscountValidationId,
                     result.CompletionAuthority.AppliedPolicyReferenceId,
+                    result.CompletionAuthority.StatutoryDiscountPolicyVersionId,
                     result.CompletionAuthority.AuthorityState),
             result.ExitAuthorizationEligibility is null
                 ? null
@@ -437,7 +438,20 @@ public static class StatutoryDiscountDecisionEndpoints
                     result.ZeroPayableFiscalCompletion.ElectronicJournalEventReference,
                     result.ZeroPayableFiscalCompletion.CompletionBasis,
                     result.ZeroPayableFiscalCompletion.CompletionAuthorityReferenceId,
-                    result.ZeroPayableFiscalCompletion.SafeErrorCode));
+                    result.ZeroPayableFiscalCompletion.SafeErrorCode),
+            result.ExitAuthorization is null
+                ? null
+                : new StatutoryExitAuthorizationResponse(
+                    result.ExitAuthorization.ExitAuthorizationId,
+                    result.ExitAuthorization.ParkingSessionId,
+                    result.ExitAuthorization.TariffSnapshotId,
+                    result.ExitAuthorization.CompletionBasis,
+                    result.ExitAuthorization.CompletionAuthorityReferenceId,
+                    result.ExitAuthorization.PaymentAttemptId,
+                    result.ExitAuthorization.PaymentConfirmationId,
+                    result.ExitAuthorization.AuthorizationStatus,
+                    result.ExitAuthorization.IssuedAt,
+                    result.ExitAuthorization.ExpirationTimestamp));
 
     private static StatutoryDiscountParkingAvailabilityResponse ToAvailabilityResponse(
         StatutoryDiscountParkingAvailabilityResult result) =>

@@ -28,6 +28,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
     private readonly IStatutoryDiscountParkingEligibilityRepository _parkingEligibilityRepository;
     private readonly IStatutoryDiscountZeroPayableFinalityReader _zeroPayableFinalityReader;
     private readonly IZeroPayableStatutoryFiscalIssuanceService? _zeroPayableFiscalIssuanceService;
+    private readonly IIssueExitAuthorizationUseCase? _issueExitAuthorizationUseCase;
 
     public StatutoryDiscountDecisionFacadeService(
         IStatutoryDiscountStagedCommandService stagedCommandService,
@@ -41,7 +42,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         IStatutoryDiscountParkingEligibilityResolver parkingEligibilityResolver,
         IStatutoryDiscountParkingEligibilityRepository parkingEligibilityRepository,
         IStatutoryDiscountZeroPayableFinalityReader zeroPayableFinalityReader,
-        IZeroPayableStatutoryFiscalIssuanceService? zeroPayableFiscalIssuanceService = null)
+        IZeroPayableStatutoryFiscalIssuanceService? zeroPayableFiscalIssuanceService = null,
+        IIssueExitAuthorizationUseCase? issueExitAuthorizationUseCase = null)
     {
         _stagedCommandService = stagedCommandService ?? throw new ArgumentNullException(nameof(stagedCommandService));
         _historicalRepository = historicalRepository ?? throw new ArgumentNullException(nameof(historicalRepository));
@@ -55,6 +57,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         _parkingEligibilityRepository = parkingEligibilityRepository ?? throw new ArgumentNullException(nameof(parkingEligibilityRepository));
         _zeroPayableFinalityReader = zeroPayableFinalityReader ?? throw new ArgumentNullException(nameof(zeroPayableFinalityReader));
         _zeroPayableFiscalIssuanceService = zeroPayableFiscalIssuanceService;
+        _issueExitAuthorizationUseCase = issueExitAuthorizationUseCase;
     }
 
     public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAvailabilityAsync(
@@ -176,7 +179,12 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
         var overall = ResolveOverallClassification(decisionStart, decision, application, applicationResultClassification, applicationRequested);
         var result = decision.ToFacadeResult(application, applicationRequested, overall, normalized.CorrelationId);
-        return await EnrichChannelSafeReadbackAsync(result, requestFiscalIssuance: true, cancellationToken).ConfigureAwait(false);
+        return await EnrichChannelSafeReadbackAsync(
+                result,
+                requestFiscalIssuance: true,
+                normalized.ReviewerUserId ?? normalized.ActorUserId,
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public async Task<StatutoryDiscountDecisionResult?> GetAsync(
@@ -212,7 +220,12 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                 ? StatutoryDiscountOneShotResultClassifications.HistoricalV1Replay
                 : ResolveReadbackOverallClassification(decision, application, applicationRequested);
             var result = decision.ToFacadeResult(application, applicationRequested, overall, correlationId);
-            return await EnrichChannelSafeReadbackAsync(result, requestFiscalIssuance: false, cancellationToken).ConfigureAwait(false);
+            return await EnrichChannelSafeReadbackAsync(
+                    result,
+                    requestFiscalIssuance: false,
+                    issuingUserId: null,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         var historical = await _historicalRepository.GetAsync(statutoryDiscountDecisionCommandId, correlationId, cancellationToken)
@@ -223,6 +236,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
     private async Task<StatutoryDiscountDecisionResult> EnrichChannelSafeReadbackAsync(
         StatutoryDiscountDecisionResult result,
         bool requestFiscalIssuance,
+        Guid? issuingUserId,
         CancellationToken cancellationToken)
     {
         var review = await _serviceChannelReviewRepository.GetAsync(
@@ -302,12 +316,38 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             authorityResolution.Authority,
             fiscalCompletion?.FiscalPrerequisiteSatisfied == true);
 
+        IssueExitAuthorizationResult? exitAuthorization = null;
+        if (requestFiscalIssuance &&
+            eligibility.ExitAuthorizationIssuanceAllowed &&
+            _issueExitAuthorizationUseCase is not null)
+        {
+            if (!issuingUserId.HasValue || issuingUserId == Guid.Empty)
+            {
+                throw new StatutoryDiscountDecisionRejectedException(
+                    "ZERO_PAYABLE_EXIT_AUTHORIZATION_ACTOR_REQUIRED",
+                    "Zero-payable ExitAuthorization requires the authorized decision actor.");
+            }
+
+            exitAuthorization = await _issueExitAuthorizationUseCase.ExecuteAsync(
+                    new IssueExitAuthorizationCommand(
+                        ParkingSessionId: authorityResolution.Authority.ParkingSessionId,
+                        PaymentAttemptId: null,
+                        RequestedByUserId: issuingUserId.Value,
+                        CorrelationId: authorityResolution.Authority.CorrelationId,
+                        CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality,
+                        CompletionAuthority: authorityResolution.Authority,
+                        FiscalPrerequisiteSatisfied: true),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         return enriched with
         {
             ZeroPayableStatutoryFinality = resolution.Finality,
             CompletionAuthority = authorityResolution.Authority,
             ExitAuthorizationEligibility = eligibility,
-            ZeroPayableFiscalCompletion = fiscalCompletion
+            ZeroPayableFiscalCompletion = fiscalCompletion,
+            ExitAuthorization = exitAuthorization
         };
     }
 

@@ -325,13 +325,17 @@ public sealed class ReportVerifiedPaymentOutcomeFiscalRecoveryTests
             .Returns(new FinalizePaymentAttemptResult(AttemptId, "CONFIRMED"));
         exitAuthorization.ExecuteAsync(Arg.Any<IssueExitAuthorizationCommand>(), Arg.Any<CancellationToken>())
             .Returns(new IssueExitAuthorizationResult(
-                Guid.NewGuid(),
-                SessionId,
-                AttemptId,
-                "IST-AUTH",
-                "ISSUED",
-                VerifiedAt.AddSeconds(2),
-                VerifiedAt.AddMinutes(15)));
+                ExitAuthorizationId: Guid.NewGuid(),
+                ParkingSessionId: SessionId,
+                TariffSnapshotId: Guid.NewGuid(),
+                CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                CompletionAuthorityReferenceId: ConfirmationId,
+                PaymentAttemptId: AttemptId,
+                PaymentConfirmationId: ConfirmationId,
+                AuthorizationToken: "IST-AUTH",
+                AuthorizationStatus: "ISSUED",
+                IssuedAt: VerifiedAt.AddSeconds(2),
+                ExpirationTimestamp: VerifiedAt.AddMinutes(15)));
 
         var sut = new ReportVerifiedPaymentOutcomeHandler(
             confirmation,

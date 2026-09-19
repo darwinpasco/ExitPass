@@ -1,7 +1,7 @@
 namespace ExitPass.CentralPms.Application.Payments;
 
 /// <summary>
-/// Requests DB-backed issuance of a single-use exit authorization for a confirmed payment attempt.
+/// Requests DB-backed issuance of a single-use exit authorization for an explicit completion authority.
 ///
 /// BRD:
 /// - 9.12 Exit Authorization
@@ -12,12 +12,15 @@ namespace ExitPass.CentralPms.Application.Payments;
 /// - 8.5 ExitAuthorization State Machine
 ///
 /// Invariants Enforced:
-/// - ExitAuthorization may only be issued after confirmed payment finality
-/// - ExitAuthorization issuance must remain bound to the canonical payment attempt
+/// - Payment completion remains bound to the canonical payment attempt and confirmation
+/// - Statutory zero-payable completion carries no payment identifiers
 /// - Issuance requests must carry correlation metadata for end-to-end traceability
 /// </summary>
 public sealed record IssueExitAuthorizationCommand(
     Guid ParkingSessionId,
-    Guid PaymentAttemptId,
+    Guid? PaymentAttemptId,
     Guid RequestedByUserId,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string CompletionBasis = CompletionBasisCodes.PaymentFinality,
+    CompletionAuthority? CompletionAuthority = null,
+    bool FiscalPrerequisiteSatisfied = false);

@@ -38,6 +38,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
                 applied_policy_reference_id,
+                statutory_discount_policy_version_id,
                 parking_session_id,
                 tariff_snapshot_id,
                 site_id,
@@ -78,7 +79,14 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 @statutory_discount_decision_command_id,
                 @statutory_discount_payable_basis_application_command_id,
                 @statutory_discount_validation_id,
-                @applied_policy_reference_id,
+                CASE
+                    WHEN @completion_basis = 'ZERO_PAYABLE_STATUTORY_FINALITY' THEN NULL
+                    ELSE @applied_policy_reference_id
+                END,
+                CASE
+                    WHEN @completion_basis = 'ZERO_PAYABLE_STATUTORY_FINALITY' THEN @applied_policy_reference_id
+                    ELSE NULL
+                END,
                 @parking_session_id,
                 @tariff_snapshot_id,
                 @site_id,
@@ -160,7 +168,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_decision_command_id,
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
-                applied_policy_reference_id;
+                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -277,7 +285,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_decision_command_id,
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
-                applied_policy_reference_id;
+                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -393,7 +401,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_decision_command_id,
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
-                applied_policy_reference_id;
+                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -618,7 +626,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_decision_command_id,
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
-                applied_policy_reference_id
+                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id
             FROM core.fiscal_issuance_references
             {whereClause}
             ORDER BY first_recorded_at DESC
@@ -696,7 +704,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_decision_command_id,
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
-                applied_policy_reference_id
+                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id
             FROM core.fiscal_issuance_references
             {whereClause};
             """;

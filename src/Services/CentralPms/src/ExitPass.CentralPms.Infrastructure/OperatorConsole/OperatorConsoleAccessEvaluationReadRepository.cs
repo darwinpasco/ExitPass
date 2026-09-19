@@ -34,6 +34,8 @@ public sealed class OperatorConsoleAccessEvaluationReadRepository : IOperatorCon
         var site = request.SiteId.HasValue
             ? await ReadSiteAsync(connection, request.SiteId.Value, cancellationToken)
             : null;
+        var hasEffectiveDirectSiteScope = request.SiteId.HasValue &&
+            await HasEffectiveDirectSiteScopeAsync(connection, request, cancellationToken);
 
         if (user is null)
         {
@@ -69,7 +71,43 @@ public sealed class OperatorConsoleAccessEvaluationReadRepository : IOperatorCon
             LatestShiftVersion: null,
             LatestShiftRevocation: null,
             ActiveShiftTakeover: null,
-            StatutoryEntitlementFingerprint: null);
+            StatutoryEntitlementFingerprint: null,
+            HasEffectiveDirectSiteScope: hasEffectiveDirectSiteScope);
+    }
+
+    private static async Task<bool> HasEffectiveDirectSiteScopeAsync(
+        NpgsqlConnection connection,
+        OperatorConsoleAccessEvaluationReadRequest request,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM identity.user_roles ur
+                JOIN identity.roles r ON r.role_id = ur.role_id
+                JOIN identity.user_role_scope_grants g ON g.user_role_id = ur.user_role_id
+                WHERE ur.user_id = @user_id
+                  AND ur.assignment_status = 'ACTIVE'
+                  AND ur.revoked_at IS NULL
+                  AND ur.effective_from <= @evaluated_at
+                  AND (ur.effective_to IS NULL OR ur.effective_to > @evaluated_at)
+                  AND r.role_status = 'ACTIVE'
+                  AND r.effective_from <= @evaluated_at
+                  AND (r.effective_to IS NULL OR r.effective_to > @evaluated_at)
+                  AND g.grant_status = 'ACTIVE'
+                  AND g.revoked_at IS NULL
+                  AND g.effective_from <= @evaluated_at
+                  AND (g.effective_to IS NULL OR g.effective_to > @evaluated_at)
+                  AND g.scope_type = 'SITE'
+                  AND g.site_id = @site_id
+            );
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = request.UserId;
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = request.SiteId!.Value;
+        command.Parameters.Add("evaluated_at", NpgsqlDbType.TimestampTz).Value = request.EvaluatedAt;
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
 
     private static async Task<UserRow?> ReadUserAsync(

@@ -65,8 +65,8 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
     public async Task LookupAsync_WhenFiscalDocumentNumberResolves_PersistsResolvedReferenceAuditAndReturnsStatus()
     {
         var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
-        statusReadService.LookupAsync("SI-OCVOID-0001-UAT", Arg.Any<CancellationToken>())
-            .Returns(FiscalIssuanceStatusLookupResult.Found(Status()));
+        statusReadService.LookupAsync("SI-00000024", Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuanceStatusLookupResult.Found(Status(fiscalDocumentNumber: "SI-00000024")));
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
             .Returns(AccessResult(allowed: true, []) with { EvaluationId = Guid.Empty, Persisted = false });
@@ -79,17 +79,34 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
             });
         var sut = new OperatorConsoleFiscalIssuanceStatusService(accessService, writer, statusReadService);
 
-        var result = await sut.LookupAsync(LookupQuery("SI-OCVOID-0001-UAT"), CancellationToken.None);
+        var result = await sut.LookupAsync(LookupQuery("SI-00000024"), CancellationToken.None);
 
         result.AccessAllowed.Should().BeTrue();
         result.Status.Should().NotBeNull();
         result.Status!.FiscalIssuanceReferenceId.Should().Be(FiscalIssuanceReferenceId);
+        result.Status.FiscalDocumentNumber.Should().Be("SI-00000024");
         await writer.Received(1).PersistAsync(
             Arg.Is<OperatorConsoleAccessEvaluationResult>(persisted =>
                 persisted.PersistenceContext.TargetEntityType == "FISCAL_ISSUANCE_REFERENCE" &&
                 persisted.PersistenceContext.TargetEntityId == FiscalIssuanceReferenceId &&
                 persisted.PersistenceContext.ResultClass == "SUCCEEDED"),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task LookupAsync_WhenFiscalDocumentBelongsToAnotherSite_DeniesWithoutReturningStatus()
+    {
+        var otherSiteId = Guid.Parse("4f000000-0000-0000-0000-000000000099");
+        var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
+        statusReadService.LookupAsync("SI-00000024", Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuanceStatusLookupResult.Found(Status(otherSiteId, "SI-00000024")));
+        var sut = CreateSut(AccessResult(allowed: true, []), statusReadService);
+
+        var result = await sut.LookupAsync(LookupQuery("SI-00000024"), CancellationToken.None);
+
+        result.AccessAllowed.Should().BeFalse();
+        result.Status.Should().BeNull();
+        result.SafeErrorCode.Should().Be("OPERATOR_CONSOLE_FISCAL_STATUS_SITE_SCOPE_DENIED");
     }
 
     [Fact]
@@ -338,7 +355,11 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
 
         var writer = Substitute.For<IOperatorConsoleAccessEvaluationWriter>();
         writer.PersistAsync(Arg.Any<OperatorConsoleAccessEvaluationResult>(), Arg.Any<CancellationToken>())
-            .Returns(accessResult with { EvaluationId = EvaluationId, Persisted = true });
+            .Returns(call => ((OperatorConsoleAccessEvaluationResult)call[0]!) with
+            {
+                EvaluationId = EvaluationId,
+                Persisted = true
+            });
 
         return new OperatorConsoleFiscalIssuanceStatusService(accessService, writer, statusReadService);
     }
@@ -391,7 +412,9 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
                 TargetEntityType: null,
                 TargetEntityId: null));
 
-    private static FiscalIssuanceStatusReadModel Status()
+    private static FiscalIssuanceStatusReadModel Status(
+        Guid? siteId = null,
+        string fiscalDocumentNumber = "SI-00000001-UAT")
     {
         var now = DateTimeOffset.Parse("2026-07-08T08:00:00Z");
         return new FiscalIssuanceStatusReadModel(
@@ -404,13 +427,13 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
             PaymentConfirmationId: Guid.Parse("4f000000-0000-0000-0000-000000000010"),
             PaymentAttemptId: Guid.Parse("4f000000-0000-0000-0000-000000000011"),
             ParkingSessionId: Guid.Parse("4f000000-0000-0000-0000-000000000012"),
-            SiteId,
+            siteId ?? SiteId,
             SitePosServerId: Guid.Parse("4f000000-0000-0000-0000-000000000013"),
             SitePosServerRef: "DEV-POS-SERVER-ATC-001",
             FiscalDocumentTypeCodeId: Guid.Parse("4f000000-0000-0000-0000-000000000014"),
             FiscalDocumentTypeCodeKey: "sales_invoice",
             PosServerFiscalDocumentId: Guid.Parse("4f000000-0000-0000-0000-000000000015"),
-            FiscalDocumentNumber: "SI-00000001-UAT",
+            FiscalDocumentNumber: fiscalDocumentNumber,
             FiscalIdentityId: Guid.Parse("4f000000-0000-0000-0000-000000000016"),
             FiscalSequencePolicyId: Guid.Parse("4f000000-0000-0000-0000-000000000017"),
             FiscalSequenceValue: 1,

@@ -18,14 +18,13 @@ public static class ExitAuthorizationEligibilityStatuses
     public const string PaymentCompletionAuthorityReady = "PAYMENT_COMPLETION_AUTHORITY_READY";
     public const string ZeroPayableCompletionAuthorityReady = "ZERO_PAYABLE_COMPLETION_AUTHORITY_READY";
     public const string ZeroPayableFiscalPrerequisiteSatisfied = "ZERO_PAYABLE_FISCAL_PREREQUISITE_SATISFIED";
+    public const string ZeroPayableExitAuthorizationReady = "ZERO_PAYABLE_EXIT_AUTHORIZATION_READY";
 }
 
 public static class ExitAuthorizationEligibilityBlockedReasons
 {
     public const string ZeroPayableFiscalPrerequisiteUnresolved =
         "ZERO_PAYABLE_FISCAL_PREREQUISITE_UNRESOLVED";
-    public const string ZeroPayableExitAuthorizationIssuancePathUnavailable =
-        "ZERO_PAYABLE_EXIT_AUTHORIZATION_ISSUANCE_PATH_UNAVAILABLE";
 }
 
 public sealed record CompletionAuthority(
@@ -45,6 +44,7 @@ public sealed record CompletionAuthority(
     Guid? StatutoryDiscountPayableBasisApplicationCommandId = null,
     Guid? StatutoryDiscountValidationId = null,
     Guid? AppliedPolicyReferenceId = null,
+    Guid? StatutoryDiscountPolicyVersionId = null,
     string AuthorityState = CompletionAuthorityStates.Established);
 
 public sealed record CompletionAuthorityResolution(
@@ -213,7 +213,8 @@ public static class CompletionAuthorityResolver
                 StatutoryDiscountPayableBasisApplicationCommandId:
                     finality.StatutoryDiscountPayableBasisApplicationCommandId,
                 StatutoryDiscountValidationId: finality.StatutoryDiscountValidationId,
-                AppliedPolicyReferenceId: finality.AppliedPolicyReferenceId),
+                AppliedPolicyReferenceId: finality.AppliedPolicyReferenceId,
+                StatutoryDiscountPolicyVersionId: finality.AppliedPolicyReferenceId),
             RejectionCode: null);
     }
 
@@ -232,12 +233,12 @@ public static class CompletionAuthorityResolver
 
         return new ExitAuthorizationEligibility(
             CompletionAuthorityEligible: true,
-            ExitAuthorizationIssuanceAllowed: false,
+            ExitAuthorizationIssuanceAllowed: fiscalPrerequisiteSatisfied,
             Status: fiscalPrerequisiteSatisfied
-                ? ExitAuthorizationEligibilityStatuses.ZeroPayableFiscalPrerequisiteSatisfied
+                ? ExitAuthorizationEligibilityStatuses.ZeroPayableExitAuthorizationReady
                 : ExitAuthorizationEligibilityStatuses.ZeroPayableCompletionAuthorityReady,
             BlockedReason: fiscalPrerequisiteSatisfied
-                ? ExitAuthorizationEligibilityBlockedReasons.ZeroPayableExitAuthorizationIssuancePathUnavailable
+                ? null
                 : ExitAuthorizationEligibilityBlockedReasons.ZeroPayableFiscalPrerequisiteUnresolved,
             CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality);
     }

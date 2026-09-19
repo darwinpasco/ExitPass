@@ -226,6 +226,10 @@ public static class GateExitAuthorizationConsumeEndpoints
 
             return Results.Ok(new ConsumeExitAuthorizationResponse(
                 result.ExitAuthorizationId,
+                result.CompletionBasis,
+                result.CompletionAuthorityReferenceId,
+                result.PaymentAttemptId,
+                result.PaymentConfirmationId,
                 result.AuthorizationStatus,
                 result.ConsumedAt));
         }
@@ -448,6 +452,10 @@ public static class GateExitAuthorizationConsumeEndpoints
     /// </summary>
     public sealed record ConsumeExitAuthorizationResponse(
         Guid ExitAuthorizationId,
+        string CompletionBasis,
+        Guid CompletionAuthorityReferenceId,
+        Guid? PaymentAttemptId,
+        Guid? PaymentConfirmationId,
         string AuthorizationStatus,
         DateTimeOffset ConsumedAt);
 }

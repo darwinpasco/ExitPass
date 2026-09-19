@@ -71,7 +71,17 @@ public sealed class DigitalPaymentFiscalIssuanceOrderingTests
                 Guid.NewGuid(), readyForExit, true, readyForExit ? null : "fiscal_issuance_failed", Guid.NewGuid(), "IST-POS-A"));
         exitAuthorization.ExecuteAsync(Arg.Any<IssueExitAuthorizationCommand>(), Arg.Any<CancellationToken>())
             .Returns(new IssueExitAuthorizationResult(
-                Guid.NewGuid(), SessionId, AttemptId, "IST-AUTH", "ISSUED", now, now.AddMinutes(15)));
+                ExitAuthorizationId: Guid.NewGuid(),
+                ParkingSessionId: SessionId,
+                TariffSnapshotId: Guid.NewGuid(),
+                CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                CompletionAuthorityReferenceId: ConfirmationId,
+                PaymentAttemptId: AttemptId,
+                PaymentConfirmationId: ConfirmationId,
+                AuthorizationToken: "IST-AUTH",
+                AuthorizationStatus: "ISSUED",
+                IssuedAt: now,
+                ExpirationTimestamp: now.AddMinutes(15)));
 
         var sut = new ReportVerifiedPaymentOutcomeHandler(
             confirmation,

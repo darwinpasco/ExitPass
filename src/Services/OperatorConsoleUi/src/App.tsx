@@ -55,25 +55,14 @@ import { OperatorFiscalReportingPage } from "./OperatorFiscalReportingPage";
 import {
   createOperatorFiscalReportingClient,
   createOperatorFiscalReportingFixture,
-  fiscalReportingPermissions,
   type OperatorFiscalReportingClient
 } from "./fiscalReporting";
-
-const routes = {
-  home: "/operator-console",
-  ticketLookup: "/operator-console/ticket-lookup",
-  fiscalStatus: "/operator-console/fiscal-issuance-status",
-  audit: "/operator-console/audit",
-  fiscalStatusViewAudit: "/operator-console/audit/fiscal-status-views",
-  fiscalVoidActionAudit: "/operator-console/audit/fiscal-void-actions",
-  queue: "/operator-console/statutory-discounts",
-  detail: "/operator-console/statutory-discounts/",
-  vendorAcknowledgments: "/operator-console/vendor-acknowledgments",
-  vendorProjectionHealth: "/operator-console/vendor-session-projections/health",
-  policyImportReview: "/operator-console/production-policy-import-review",
-  shiftManagement: "/operator-console/shift-management",
-  fiscalReporting: "/operator-console/fiscal-reporting"
-};
+import {
+  canAccessOperatorConsolePath,
+  hasStatutorySupervisorWorkspace,
+  routes,
+  visibleOperatorConsoleNavigation
+} from "./operatorConsoleRoutes";
 
 interface AppProps {
   apiClient?: OperatorConsoleApiClient;
@@ -148,7 +137,10 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
   const draftId = path.startsWith(routes.detail) ? path.slice(routes.detail.length) : null;
   const readiness = readinessState.status === "loaded" ? readinessState.data : null;
   const readinessBlockReason = readiness && !readiness.accessAllowed ? readinessBlockedActionReason(readiness) : null;
-  const canViewFiscalReporting = Object.values(fiscalReportingPermissions).some((permission) => session?.permissions.includes(permission));
+  const permissions = session?.permissions ?? [];
+  const navigationItems = visibleOperatorConsoleNavigation(permissions);
+  const routeAuthorized = canAccessOperatorConsolePath(path, permissions);
+  const supervisorStatutoryWorkspace = hasStatutorySupervisorWorkspace(permissions);
 
   return (
     <main className="appShell" aria-labelledby="app-title">
@@ -182,102 +174,20 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
           </div>
 
           <nav aria-label="Operator Console routes">
-            <button
-              aria-current={path === routes.home ? "page" : undefined}
-              className={`navLink ${path === routes.home ? "navLinkActive" : ""}`}
-              type="button"
-              onClick={() => navigate(routes.home)}
-            >
-              Overview
-            </button>
-            <button
-              aria-current={path === routes.shiftManagement ? "page" : undefined}
-              className={`navLink ${path === routes.shiftManagement ? "navLinkActive" : ""}`}
-              type="button"
-              onClick={() => navigate(routes.shiftManagement)}
-            >
-              Shift Management
-            </button>
-            <button
-              aria-current={path === routes.ticketLookup ? "page" : undefined}
-              className={`navLink ${path === routes.ticketLookup ? "navLinkActive" : ""}`}
-              type="button"
-              onClick={() => navigate(routes.ticketLookup)}
-            >
-              Ticket Lookup
-            </button>
-            <button
-              aria-current={path === routes.fiscalStatus ? "page" : undefined}
-              className={`navLink ${path === routes.fiscalStatus ? "navLinkActive" : ""}`}
-              type="button"
-              onClick={() => navigate(routes.fiscalStatus)}
-            >
-              Fiscal Status
-            </button>
-            {canViewFiscalReporting && <button
-              aria-current={path === routes.fiscalReporting ? "page" : undefined}
-              className={`navLink ${path === routes.fiscalReporting ? "navLinkActive" : ""}`}
-              type="button"
-              onClick={() => navigate(routes.fiscalReporting)}
-            >
-              Fiscal Reporting / EJ / X / Z
-            </button>}
-            <button
-              aria-current={path.startsWith(routes.queue) ? "page" : undefined}
-              className={`navLink ${path.startsWith(routes.queue) ? "navLinkActive" : ""}`}
-              type="button"
-              onClick={() => navigate(routes.queue)}
-            >
-              Statutory Discounts
-            </button>
-            <button
-              aria-current={path === routes.audit ? "page" : undefined}
-              className={`navLink ${path === routes.audit ? "navLinkActive" : ""}`}
-              type="button"
-              onClick={() => navigate(routes.audit)}
-            >
-              Audit / Reporting
-            </button>
-            <button
-              aria-current={path === routes.fiscalStatusViewAudit ? "page" : undefined}
-              className={`navLink ${path === routes.fiscalStatusViewAudit ? "navLinkActive" : ""}`}
-              type="button"
-              onClick={() => navigate(routes.fiscalStatusViewAudit)}
-            >
-              Fiscal View Audit
-            </button>
-            <button
-              aria-current={path === routes.fiscalVoidActionAudit ? "page" : undefined}
-              className={`navLink ${path === routes.fiscalVoidActionAudit ? "navLinkActive" : ""}`}
-              type="button"
-              onClick={() => navigate(routes.fiscalVoidActionAudit)}
-            >
-              Sales Invoice Void Audit
-            </button>
-            <button
-              aria-current={path === routes.vendorAcknowledgments ? "page" : undefined}
-              className={`navLink ${path === routes.vendorAcknowledgments ? "navLinkActive" : ""}`}
-              type="button"
-              onClick={() => navigate(routes.vendorAcknowledgments)}
-            >
-              Vendor Acknowledgments
-            </button>
-            <button
-              aria-current={path === routes.vendorProjectionHealth ? "page" : undefined}
-              className={`navLink ${path === routes.vendorProjectionHealth ? "navLinkActive" : ""}`}
-              type="button"
-              onClick={() => navigate(routes.vendorProjectionHealth)}
-            >
-              Projection Health
-            </button>
-            <button
-              aria-current={path === routes.policyImportReview ? "page" : undefined}
-              className={`navLink ${path === routes.policyImportReview ? "navLinkActive" : ""}`}
-              type="button"
-              onClick={() => navigate(routes.policyImportReview)}
-            >
-              Policy Import Review
-            </button>
+            {navigationItems.map((item) => {
+              const selected = item.matches ? item.matches(path) : path === item.route;
+              return (
+                <button
+                  key={item.route}
+                  aria-current={selected ? "page" : undefined}
+                  className={`navLink ${selected ? "navLinkActive" : ""}`}
+                  type="button"
+                  onClick={() => navigate(item.route)}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
           </nav>
 
           <div className="statusStack">
@@ -295,12 +205,27 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
               onRefresh={() => refreshReadiness("SESSION_LOOKUP")}
             />
           )}
-          {draftId ? (
-            <CanonicalStatutoryReviewDetailPage
-              client={client}
-              decisionId={draftId}
-              onBack={() => navigate(routes.queue)}
-            />
+          {!routeAuthorized ? (
+            <section className="stateMessage danger" role="alert">
+              <h2>Function unavailable</h2>
+              <p>This function is not available for your account.</p>
+            </section>
+          ) : draftId ? (
+            supervisorStatutoryWorkspace ? (
+              <CanonicalStatutoryReviewDetailPage
+                client={client}
+                decisionId={draftId}
+                onBack={() => navigate(routes.queue)}
+              />
+            ) : (
+              <StatutoryDiscountDetailPage
+                client={client}
+                draftId={draftId}
+                navigate={navigate}
+                readinessBlockReason={readinessBlockReason}
+                currentOperatorUserId={session?.userReference ?? ""}
+              />
+            )
           ) : path === routes.shiftManagement ? (
             <ShiftManagement client={client} />
           ) : path === routes.ticketLookup ? (
@@ -308,17 +233,21 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
           ) : path === routes.fiscalStatus ? (
             <FiscalIssuanceStatusPage client={client} />
           ) : path === routes.fiscalReporting ? (
-            canViewFiscalReporting && session
+            session
               ? <OperatorFiscalReportingPage client={fiscalClient} siteReferences={session.siteReferences} permissions={session.permissions} />
               : <section className="stateMessage danger" role="alert"><h2>Permission denied</h2><p>Your operator session cannot access fiscal reporting.</p></section>
           ) : path === routes.queue ? (
-            <CanonicalStatutoryReviewQueuePage
-              client={client}
-              session={session}
-              filters={statutoryReviewFilters}
-              onFiltersChange={setStatutoryReviewFilters}
-              onOpen={(decisionId) => navigate(`${routes.detail}${decisionId}`)}
-            />
+            supervisorStatutoryWorkspace ? (
+              <CanonicalStatutoryReviewQueuePage
+                client={client}
+                session={session}
+                filters={statutoryReviewFilters}
+                onFiltersChange={setStatutoryReviewFilters}
+                onOpen={(decisionId) => navigate(`${routes.detail}${decisionId}`)}
+              />
+            ) : (
+              <StatutoryDiscountQueuePage client={client} navigate={navigate} readinessBlockReason={null} />
+            )
           ) : path === routes.audit ? (
             <AuditReportPage client={client} />
           ) : path === routes.fiscalStatusViewAudit ? (
@@ -2363,10 +2292,10 @@ function OperatorConsoleHome({
         Citizen and PWD statutory discount validation.
       </p>
       {readinessBlockReason && <p className="notice">{readinessBlockReason}</p>}
-      <button type="button" disabled={readinessBlockReason !== null} onClick={() => navigate(routes.queue)}>
+      <button type="button" onClick={() => navigate(routes.queue)}>
         Open work queue
       </button>
-      <button type="button" disabled={readinessBlockReason !== null} onClick={() => navigate(routes.ticketLookup)}>
+      <button type="button" onClick={() => navigate(routes.ticketLookup)}>
         Open ticket lookup
       </button>
     </section>
@@ -2480,7 +2409,6 @@ function TicketLookupPage({
           <span className="statusPill">Read-only lookup</span>
         </div>
 
-        {readinessBlockReason && <p className="notice">{readinessBlockReason}</p>}
         <form className="ticketLookupForm" onSubmit={submitLookup}>
           <label>
             Ticket number
@@ -2494,7 +2422,7 @@ function TicketLookupPage({
               onChange={(event) => setTicketReference(event.target.value)}
             />
           </label>
-          <button type="submit" disabled={readinessBlockReason !== null || lookupState.status === "loading"}>
+          <button type="submit" disabled={lookupState.status === "loading"}>
             {lookupState.status === "loading" ? "Looking up" : "Lookup"}
           </button>
         </form>
@@ -2522,6 +2450,7 @@ function TicketLookupPage({
               This creates an Operator Console review draft only. It does not collect payment, open gate, call HikCentral,
               create Sales Invoice, or render final BIR documents.
             </p>
+            {readinessBlockReason && <p className="notice">Draft creation unavailable: {readinessBlockReason}</p>}
             {draftState.status === "error" && <p className="errorMessage">{draftState.message}</p>}
             {draftState.status === "loaded" && <p className="successMessage">{draftState.data}</p>}
             <form className="draftStartForm" onSubmit={createDraft}>
@@ -2613,6 +2542,7 @@ function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult })
               ["Sales Invoice number", "Not available"],
               ["Card number", displayValue(result.cardNum)],
               ["Plate license", displayPlateLicense(result.plateLicense)],
+              ["Site", displayValue(result.siteName ?? result.siteId)],
               ["Parking in time", result.parkingInTime ? formatDateTime(result.parkingInTime) : "Not available"],
               ["Parking duration seconds", formatSeconds(result.parkingDurationSeconds)]
             ]}

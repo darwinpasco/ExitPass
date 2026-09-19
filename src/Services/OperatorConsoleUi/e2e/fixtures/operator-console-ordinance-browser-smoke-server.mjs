@@ -89,6 +89,7 @@ function writeJson(response, statusCode, body, headers = {}) {
 const fixtureSessionCookie = "operator_console_fixture_session";
 const fixtureCsrfToken = "operator-console-fixture-csrf";
 const fixturePermissions = [
+  "ticket.lookup",
   "statutory-discounts.session.lookup",
   "statutory-discounts.request.create",
   "statutory-discounts.review.queue.view",
@@ -107,8 +108,30 @@ const fixturePermissions = [
   "operator-console.policy-import-review.approve.qa",
   "operator-console.policy-import-review.approve.db",
   "operator-console.vendor-projection-health.view",
+  "shift-management.view",
+  "shift-management.manage",
+  "fiscal-reporting.ej.read",
+  "fiscal-reporting.ej.export",
+  "fiscal-reporting.x.read",
+  "fiscal-reporting.x.generate",
+  "fiscal-reporting.z.read",
+  "fiscal-reporting.z.generate",
+  "statutory-discounts.audit.read",
   "fiscal-issuance.status.read",
-  "fiscal-issuance.void.audit.read"
+  "fiscal-view-audit.read",
+  "fiscal-issuance.void.audit.read",
+  "vendor-acknowledgments.view"
+];
+
+const siteOperatorPermissions = [
+  "ticket.lookup",
+  "fiscal-issuance.status.read",
+  "statutory-discounts.session.lookup",
+  "statutory-discounts.draft.view",
+  "statutory-discounts.draft.create",
+  "statutory-discounts.evidence.view",
+  "statutory-discounts.evidence.capture",
+  "statutory-discounts.policy.resolve"
 ];
 
 function fixtureAuthMode(request) {
@@ -141,7 +164,7 @@ function sessionResponse(overrides = {}) {
       lastSeenAt: "2026-08-08T08:05:00+08:00",
       idleExpiresAt: "2099-08-08T08:35:00+08:00",
       absoluteExpiresAt: "2099-08-08T16:00:00+08:00",
-      permissions: restricted ? [] : fixturePermissions,
+      permissions: restricted ? [] : (overrides.permissions ?? fixturePermissions),
       siteReferences: restricted ? [] : ["73000000-0000-0000-0000-000000000001"],
       siteGroupReferences: restricted ? [] : ["74000000-0000-0000-0000-000000000001"],
       hasGlobalScope: false,
@@ -165,15 +188,22 @@ function fixtureSessionResponse(mode) {
   if (mode === "multi-role") {
     return sessionResponse({ username: "multi.operator", displayName: "Multi Role Operator" });
   }
+  if (mode === "site-operator") {
+    return sessionResponse({
+      username: "JuanDC04-equivalent",
+      displayName: "PITX Site Operator",
+      permissions: siteOperatorPermissions
+    });
+  }
   return sessionResponse();
 }
 
 function isAuthenticatedFixtureMode(mode) {
-  return ["authenticated", "change-required", "first-user", "multi-role"].includes(mode);
+  return ["authenticated", "change-required", "first-user", "multi-role", "site-operator"].includes(mode);
 }
 
 function isBusinessAuthenticatedFixtureMode(mode) {
-  return ["authenticated", "first-user", "multi-role"].includes(mode);
+  return ["authenticated", "first-user", "multi-role", "site-operator"].includes(mode);
 }
 
 function sessionFailure(mode) {

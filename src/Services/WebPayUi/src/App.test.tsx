@@ -783,6 +783,30 @@ describe("ExitPass WebPay UI", () => {
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).not.toContainEqual(expect.stringContaining("/v1/statutory-discounts/decisions"));
   });
 
+  it("WebPay_WhenPolicyIsResidentOnly_RequiresAndSubmitsResidencyConfirmation", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutoryAvailabilityPayload: statutoryAvailabilityResponse({ residencyRequirement: "RESIDENT_ONLY" })
+    });
+
+    render(<App />);
+    await resolveTicket("TICKET-PITX-RESIDENT");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+    await userEvent.type(screen.getByLabelText(/id document type/i), "OSCA");
+    await userEvent.type(screen.getByLabelText(/issuing authority/i), "City of Paranaque");
+    await userEvent.type(screen.getByLabelText(/^id reference$/i), "SC00001234");
+    await userEvent.click(screen.getByLabelText(/i confirm these entitlement details/i));
+
+    const submit = screen.getByRole("button", { name: /submit for review/i });
+    expect(submit).toBeDisabled();
+    await userEvent.click(screen.getByLabelText(/beneficiary is a resident/i));
+    expect(submit).toBeEnabled();
+    await userEvent.click(submit);
+
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions")).toHaveLength(1));
+    const body = JSON.parse((firstRouteCall(fetchMock, "/v1/webpay/statutory-discounts/decisions")[1] as RequestInit).body as string);
+    expect(body.beneficiaryResidencySatisfied).toBe(true);
+  });
+
   it("WebPay_WhenAuthoritativeAvailabilityRequiresEvidence_RequestsCaptureAndBootstrapsI016AfterDecision", async () => {
     const fetchMock = stubWebPayFetch({
       statutoryAvailabilityPayload: statutoryAvailabilityResponse({
@@ -1288,10 +1312,67 @@ describe("ExitPass WebPay UI", () => {
     expect(await screen.findByRole("heading", { name: /statutory discount applied/i })).toBeInTheDocument();
     expect(screen.getByText("PHP 89.29")).toBeInTheDocument();
     expect(screen.getByText("PHP 10.71")).toBeInTheDocument();
-    expect(screen.getByText("-PHP 25.00")).toBeInTheDocument();
+    expect(screen.getByText("PHP 25.00")).toBeInTheDocument();
     expect(screen.getByText("PHP 100.00")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
     expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(0);
+  });
+
+  it("WebPay_WhenFullFeeExemptionIsApplied_CompletesWithoutPaymentIntent", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutorySubmitPayload: statutoryDecisionResponse({
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        payableBasisReadinessStatus: "DECISION_APPROVED_APPLICATION_NOT_REQUESTED",
+        payableBasisReadinessAction: "SUBMIT_APPLICATION_INTENT",
+        overallResultClassification: "COMPLETED"
+      }),
+      statutoryApplyPayload: statutoryDecisionResponse({
+        statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        statutoryDiscountValidationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "APPLIED",
+        applicationResultClassification: "APPLIED",
+        payableBasisReady: true,
+        payableBasisReadinessStatus: "READY",
+        payableBasisReadinessAction: null,
+        appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+        originalAmountMinorUnits: 10000,
+        vatExclusiveBasisAmountMinorUnits: 0,
+        vatAmountMinorUnits: 0,
+        vatTreatment: "VAT_EXEMPT",
+        statutoryDiscountAmountMinorUnits: 10000,
+        finalPayableAmountMinorUnits: 0,
+        currency: "PHP",
+        zeroPayableStatutoryFinality: {
+          finalityState: "ZERO_PAYABLE_STATUTORY_FINALITY"
+        },
+        zeroPayableFiscalCompletion: {
+          fiscalIssuanceReferenceId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          fiscalPrerequisiteSatisfied: true,
+          posServerCallAttempted: true,
+          fiscalIssuanceState: "FISCAL_ISSUANCE_RECORDED",
+          posServerFiscalDocumentId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+          fiscalDocumentNumber: "SI-00000024",
+          electronicJournalEventReference: "EJ-00000024",
+          completionBasis: "ZERO_PAYABLE_STATUTORY_FINALITY",
+          completionAuthorityReferenceId: "12121212-1212-4121-8121-121212121212",
+          safeErrorCode: null
+        }
+      })
+    });
+
+    render(<App />);
+    await submitBasicStatutoryRequest();
+    await userEvent.click(await screen.findByRole("button", { name: /apply approved discount/i }));
+
+    expect(await screen.findByRole("heading", { name: /free parking privilege applied/i })).toBeInTheDocument();
+    expect(screen.getAllByText(/No payment is required/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/SI-00000024/i)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /payment method/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /continue to payment/i })).not.toBeInTheDocument();
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
   });
 
   it("WebPay_WhenApplicationConflictOrTerminalReturned_StopsSafelyAndKeepsPaymentDisabled", async () => {
@@ -1415,7 +1496,7 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getAllByText("PHP 125.00").length).toBeGreaterThan(0);
     expect(screen.getByText("PHP 89.29")).toBeInTheDocument();
     expect(screen.getByText("PHP 10.71")).toBeInTheDocument();
-    expect(screen.getByText("-PHP 25.00")).toBeInTheDocument();
+    expect(screen.getByText("PHP 25.00")).toBeInTheDocument();
     expect(screen.getByText("PHP 100.00")).toBeInTheDocument();
     expect(screen.queryByText("VAT Treatment")).not.toBeInTheDocument();
     expect(screen.queryByText("VAT_EXEMPT_WITH_DISCOUNT")).not.toBeInTheDocument();

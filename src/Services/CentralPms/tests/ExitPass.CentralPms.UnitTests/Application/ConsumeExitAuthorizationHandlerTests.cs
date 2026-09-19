@@ -44,6 +44,7 @@ public sealed class ConsumeExitAuthorizationHandlerTests
         var gateAuthorizationConsumptionId = Guid.NewGuid();
         var parkingSessionId = Guid.NewGuid();
         var paymentAttemptId = Guid.NewGuid();
+        var paymentConfirmationId = Guid.NewGuid();
         var tariffSnapshotId = Guid.NewGuid();
         var gateDeviceId = Guid.NewGuid();
         var gateDeviceIdentifier = "GATE-EXIT-01";
@@ -70,7 +71,10 @@ public sealed class ConsumeExitAuthorizationHandlerTests
                 ConsumedAt: now,
                 GateAuthorizationConsumptionId: gateAuthorizationConsumptionId,
                 ParkingSessionId: parkingSessionId,
+                CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                CompletionAuthorityReferenceId: paymentConfirmationId,
                 PaymentAttemptId: paymentAttemptId,
+                PaymentConfirmationId: paymentConfirmationId,
                 TariffSnapshotId: tariffSnapshotId,
                 GateDeviceId: gateDeviceId,
                 GateDeviceIdentifier: gateDeviceIdentifier,
@@ -105,6 +109,7 @@ public sealed class ConsumeExitAuthorizationHandlerTests
                     exitAuthorizationId,
                     gateAuthorizationConsumptionId,
                     parkingSessionId,
+                    paymentConfirmationId,
                     paymentAttemptId,
                     tariffSnapshotId,
                     gateDeviceId,
@@ -127,12 +132,16 @@ public sealed class ConsumeExitAuthorizationHandlerTests
         _systemClock.UtcNow.Returns(now);
 
         var exitAuthorizationId = Guid.NewGuid();
+        var paymentConfirmationId = Guid.NewGuid();
         var requestedByUserId = Guid.NewGuid();
         var correlationId = Guid.NewGuid();
 
         _gateway.ConsumeAsync(Arg.Any<ConsumeExitAuthorizationDbRequest>(), Arg.Any<CancellationToken>())
             .Returns(new ConsumeExitAuthorizationDbResult(
                 ExitAuthorizationId: exitAuthorizationId,
+                CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                CompletionAuthorityReferenceId: paymentConfirmationId,
+                PaymentConfirmationId: paymentConfirmationId,
                 AuthorizationStatus: "CONSUMED",
                 ConsumedAt: now));
         _eventPublisher
@@ -150,6 +159,39 @@ public sealed class ConsumeExitAuthorizationHandlerTests
 
         Assert.Equal(exitAuthorizationId, result.ExitAuthorizationId);
         Assert.Equal("CONSUMED", result.AuthorizationStatus);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenZeroPayableAuthorizationIsConsumed_DoesNotRequirePaymentIdentifiers()
+    {
+        var now = new DateTimeOffset(2026, 9, 19, 8, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        var exitAuthorizationId = Guid.NewGuid();
+        var completionAuthorityReferenceId = Guid.NewGuid();
+
+        _gateway.ConsumeAsync(Arg.Any<ConsumeExitAuthorizationDbRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new ConsumeExitAuthorizationDbResult(
+                ExitAuthorizationId: exitAuthorizationId,
+                AuthorizationStatus: "CONSUMED",
+                ConsumedAt: now,
+                ParkingSessionId: Guid.NewGuid(),
+                CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality,
+                CompletionAuthorityReferenceId: completionAuthorityReferenceId,
+                PaymentAttemptId: null,
+                PaymentConfirmationId: null,
+                TariffSnapshotId: Guid.NewGuid()));
+
+        var result = await CreateSut().ExecuteAsync(
+            new ConsumeExitAuthorizationCommand(
+                ExitAuthorizationId: exitAuthorizationId,
+                RequestedByUserId: Guid.NewGuid(),
+                CorrelationId: Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(CompletionBasisCodes.ZeroPayableStatutoryFinality, result.CompletionBasis);
+        Assert.Equal(completionAuthorityReferenceId, result.CompletionAuthorityReferenceId);
+        Assert.Null(result.PaymentAttemptId);
+        Assert.Null(result.PaymentConfirmationId);
     }
 
     /// <summary>
@@ -259,6 +301,7 @@ public sealed class ConsumeExitAuthorizationHandlerTests
         Guid exitAuthorizationId,
         Guid gateAuthorizationConsumptionId,
         Guid parkingSessionId,
+        Guid paymentConfirmationId,
         Guid paymentAttemptId,
         Guid tariffSnapshotId,
         Guid gateDeviceId,
@@ -277,7 +320,10 @@ public sealed class ConsumeExitAuthorizationHandlerTests
         return payload.ExitAuthorizationId == exitAuthorizationId &&
                payload.GateAuthorizationConsumptionId == gateAuthorizationConsumptionId &&
                payload.ParkingSessionId == parkingSessionId &&
+               payload.CompletionBasis == CompletionBasisCodes.PaymentFinality &&
+               payload.CompletionAuthorityReferenceId == paymentConfirmationId &&
                payload.PaymentAttemptId == paymentAttemptId &&
+               payload.PaymentConfirmationId == paymentConfirmationId &&
                payload.TariffSnapshotId == tariffSnapshotId &&
                payload.GateDeviceId == gateDeviceId &&
                payload.GateDeviceIdentifier == gateDeviceIdentifier &&
