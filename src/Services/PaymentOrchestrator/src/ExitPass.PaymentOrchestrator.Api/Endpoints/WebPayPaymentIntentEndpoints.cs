@@ -206,7 +206,7 @@ public static class WebPayPaymentIntentEndpoints
                         centralPmsRequest.RequestReference,
                         centralPmsRequest.ParkingSessionId,
                         centralPmsRequest.EntitlementType,
-                        BeneficiaryResidencySatisfied: null),
+                        centralPmsRequest.BeneficiaryResidencySatisfied),
                     correlationId,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -734,7 +734,8 @@ public static class WebPayPaymentIntentEndpoints
             request.RequesterAttestation,
             BlankToNull(request.AttestationNotes),
             BlankToNull(request.ReasonCode),
-            request.OriginalTariffSnapshotId);
+            request.OriginalTariffSnapshotId,
+            request.BeneficiaryResidencySatisfied);
         error = new { };
         return true;
     }
@@ -1000,6 +1001,9 @@ public static class WebPayPaymentIntentEndpoints
             ParkingSessionId = availability.ParkingSessionId,
             SiteId = availability.SiteId,
             SiteGroupId = availability.SiteGroupId,
+            JurisdictionId = availability.JurisdictionId,
+            JurisdictionCode = availability.JurisdictionCode,
+            JurisdictionDisplayName = availability.JurisdictionDisplayName,
             AvailabilityStatus = availability.AvailabilityStatus,
             StatutoryParkingBenefitAvailable = availability.StatutoryParkingBenefitAvailable,
             CoveredEntitlementTypes = availability.CoveredEntitlementTypes
@@ -1007,6 +1011,13 @@ public static class WebPayPaymentIntentEndpoints
                 .Distinct(StringComparer.Ordinal)
                 .ToArray(),
             RequestedEntitlementType = availability.RequestedEntitlementType,
+            PolicyVersionId = availability.PolicyVersionId,
+            PolicyCode = availability.PolicyCode,
+            PolicyVersion = availability.PolicyVersion,
+            PolicyDisplayName = availability.PolicyDisplayName,
+            VerificationStatus = availability.VerificationStatus,
+            PublicationStatus = availability.PublicationStatus,
+            ResidencyRequirement = availability.ResidencyRequirement,
             SafeReasonCode = availability.SafeReasonCode,
             Retryable = availability.Retryable,
             RemediationAction = availability.RemediationAction,

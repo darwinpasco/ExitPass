@@ -29,6 +29,16 @@ public sealed record CentralPmsStatutoryDiscountAvailabilityRequest(
 /// <param name="RemediationAction">Browser-safe remediation action.</param>
 /// <param name="RequiredEvidenceTypes">Evidence requirement metadata returned for active coverage.</param>
 /// <param name="CorrelationId">Correlation identifier for diagnostics and support.</param>
+/// <param name="JurisdictionId">Resolved jurisdiction identifier.</param>
+/// <param name="JurisdictionCode">Browser-safe jurisdiction code.</param>
+/// <param name="JurisdictionDisplayName">Browser-safe jurisdiction display name.</param>
+/// <param name="PolicyVersionId">Resolved policy-version identifier.</param>
+/// <param name="PolicyCode">Browser-safe policy code.</param>
+/// <param name="PolicyVersion">Browser-safe policy version.</param>
+/// <param name="PolicyDisplayName">Browser-safe policy display name.</param>
+/// <param name="VerificationStatus">Policy source-verification status.</param>
+/// <param name="PublicationStatus">Policy transaction-publication status.</param>
+/// <param name="ResidencyRequirement">Policy residency requirement.</param>
 public sealed record CentralPmsStatutoryDiscountAvailability(
     Guid RequestReference,
     Guid ParkingSessionId,
@@ -42,7 +52,17 @@ public sealed record CentralPmsStatutoryDiscountAvailability(
     bool Retryable,
     string RemediationAction,
     IReadOnlyList<CentralPmsStatutoryDiscountAvailabilityEvidenceRequirement> RequiredEvidenceTypes,
-    Guid CorrelationId)
+    Guid CorrelationId,
+    Guid? JurisdictionId = null,
+    string? JurisdictionCode = null,
+    string? JurisdictionDisplayName = null,
+    Guid? PolicyVersionId = null,
+    string? PolicyCode = null,
+    string? PolicyVersion = null,
+    string? PolicyDisplayName = null,
+    string? VerificationStatus = null,
+    string? PublicationStatus = null,
+    string? ResidencyRequirement = null)
 {
     /// <summary>
     /// Returns true only when Central PMS explicitly reports active coverage for the entitlement.

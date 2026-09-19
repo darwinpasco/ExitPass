@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
@@ -43,6 +44,8 @@ public sealed class OperatorConsoleSessionLookupApiIntegrationTests
         endpoints.Should().ContainSingle();
         endpoints[0].Metadata.GetMetadata<HttpMethodMetadata>()!
             .HttpMethods.Should().ContainSingle().Which.Should().Be(HttpMethod.Post.Method);
+        endpoints[0].Metadata.GetMetadata<OperatorConsoleOperatingContextRequirementMetadata>()
+            .Should().Be(OperatorConsoleOperatingContextRequirementMetadata.NotRequired);
     }
 
     /// <summary>

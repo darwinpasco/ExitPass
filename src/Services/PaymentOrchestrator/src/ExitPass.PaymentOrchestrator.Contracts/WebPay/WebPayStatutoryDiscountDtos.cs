@@ -76,6 +76,12 @@ public sealed class WebPayStatutoryDiscountDecisionRequest
     public bool RequesterAttestation { get; set; }
 
     /// <summary>
+    /// Optional intake attestation that the beneficiary satisfies the policy residency condition.
+    /// Evidence capture and authorized review remain required by Central PMS policy.
+    /// </summary>
+    public bool? BeneficiaryResidencySatisfied { get; set; }
+
+    /// <summary>
     /// Safe attestation notes for human review.
     /// </summary>
     public string? AttestationNotes { get; set; }
@@ -194,6 +200,21 @@ public sealed class WebPayStatutoryDiscountAvailabilityResponse
     public Guid? SiteGroupId { get; set; }
 
     /// <summary>
+    /// Resolved jurisdiction identifier when active policy coverage is available.
+    /// </summary>
+    public Guid? JurisdictionId { get; set; }
+
+    /// <summary>
+    /// Browser-safe jurisdiction code.
+    /// </summary>
+    public string? JurisdictionCode { get; set; }
+
+    /// <summary>
+    /// Browser-safe jurisdiction display name.
+    /// </summary>
+    public string? JurisdictionDisplayName { get; set; }
+
+    /// <summary>
     /// Authoritative Central PMS availability status.
     /// </summary>
     public string AvailabilityStatus { get; set; } = string.Empty;
@@ -212,6 +233,41 @@ public sealed class WebPayStatutoryDiscountAvailabilityResponse
     /// Requested entitlement filter echoed when supplied.
     /// </summary>
     public string? RequestedEntitlementType { get; set; }
+
+    /// <summary>
+    /// Authoritative policy-version identifier selected by Central PMS.
+    /// </summary>
+    public Guid? PolicyVersionId { get; set; }
+
+    /// <summary>
+    /// Browser-safe policy code.
+    /// </summary>
+    public string? PolicyCode { get; set; }
+
+    /// <summary>
+    /// Browser-safe policy version.
+    /// </summary>
+    public string? PolicyVersion { get; set; }
+
+    /// <summary>
+    /// Browser-safe policy display name.
+    /// </summary>
+    public string? PolicyDisplayName { get; set; }
+
+    /// <summary>
+    /// Policy source-verification status.
+    /// </summary>
+    public string? VerificationStatus { get; set; }
+
+    /// <summary>
+    /// Policy transaction-publication status.
+    /// </summary>
+    public string? PublicationStatus { get; set; }
+
+    /// <summary>
+    /// Policy residency requirement used to drive intake attestation.
+    /// </summary>
+    public string? ResidencyRequirement { get; set; }
 
     /// <summary>
     /// Browser-safe reason code.

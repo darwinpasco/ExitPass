@@ -58,6 +58,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithMetadata(new ReconciliationPolicyMetadata(DraftViewPolicy))
+            .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
             .WithSummary("List Operator Console statutory discount validation drafts")
             .WithDescription("Returns a read-only queue of Operator Console statutory discount validation drafts from stored validation, policy, tariff, and payable-basis metadata. This endpoint does not resolve policies, apply discounts, upload evidence, or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
 
@@ -69,6 +70,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithMetadata(new ReconciliationPolicyMetadata(DraftViewPolicy))
+            .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
             .WithSummary("Get Operator Console statutory discount validation draft detail")
             .WithDescription("Returns read-only detail for one Operator Console statutory discount validation draft using the stored policy snapshot and payable-basis metadata. This endpoint does not resolve policies, apply discounts, upload evidence, or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
 
@@ -168,6 +170,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithMetadata(new ReconciliationPolicyMetadata(EvidenceViewPolicy))
+            .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
             .WithSummary("List Operator Console statutory discount evidence metadata")
             .WithDescription("Lists metadata-only statutory discount evidence records for an Operator Console validation draft. This endpoint does not return raw evidence, OCR data, raw ID numbers, or document verification results.");
 

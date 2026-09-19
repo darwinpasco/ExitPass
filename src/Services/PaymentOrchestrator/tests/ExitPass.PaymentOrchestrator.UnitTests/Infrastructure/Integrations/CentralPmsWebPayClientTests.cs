@@ -385,6 +385,7 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal("WEBPAY-REQ-001", root.GetProperty("ticketReference").GetString());
         Assert.Equal("SC-****-0001", root.GetProperty("maskedIdReference").GetString());
         Assert.Equal(TariffSnapshotId, root.GetProperty("originalTariffSnapshotId").GetGuid());
+        Assert.True(root.GetProperty("beneficiaryResidencySatisfied").GetBoolean());
         Assert.False(root.TryGetProperty("reviewerUserId", out _));
         Assert.False(root.TryGetProperty("reviewerAttestation", out _));
         Assert.False(root.TryGetProperty("operatorShiftId", out _));
@@ -612,11 +613,17 @@ public sealed class CentralPmsWebPayClientTests
 
         using var requestDocument = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("SENIOR_CITIZEN", requestDocument.RootElement.GetProperty("requestedEntitlementType").GetString());
+        Assert.True(requestDocument.RootElement.GetProperty("beneficiaryResidencySatisfied").GetBoolean());
         Assert.False(requestDocument.RootElement.TryGetProperty("sourceChannel", out _));
         Assert.False(requestDocument.RootElement.TryGetProperty("reviewerUserId", out _));
 
         Assert.Equal("AVAILABLE", result.Value!.AvailabilityStatus);
         Assert.Equal(new[] { "SENIOR_CITIZEN", "PWD" }, result.Value.CoveredEntitlementTypes);
+        Assert.Equal(Guid.Parse("f7a1b4b9-17a9-89de-5059-f72779616f23"), result.Value.JurisdictionId);
+        Assert.Equal("PARANAQUE", result.Value.JurisdictionCode);
+        Assert.Equal("City of Paranaque", result.Value.JurisdictionDisplayName);
+        Assert.Equal("PH_PARANAQUE_SENIOR_FREE_PARKING", result.Value.PolicyCode);
+        Assert.Equal("RESIDENT_ONLY", result.Value.ResidencyRequirement);
         Assert.True(result.Value.Covers("SENIOR_CITIZEN"));
         Assert.True(result.Value.Covers("PWD"));
     }
@@ -1052,7 +1059,8 @@ public sealed class CentralPmsWebPayClientTests
             true,
             "Customer attests eligibility for review.",
             null,
-            TariffSnapshotId);
+            TariffSnapshotId,
+            BeneficiaryResidencySatisfied: true);
     }
 
     private static CentralPmsStatutoryDiscountAvailabilityRequest StatutoryAvailabilityRequest()
@@ -1061,7 +1069,7 @@ public sealed class CentralPmsWebPayClientTests
             Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
             ParkingSessionId,
             "SENIOR_CITIZEN",
-            BeneficiaryResidencySatisfied: null);
+            BeneficiaryResidencySatisfied: true);
     }
 
     private static CentralPmsStatutoryDiscountPendingLifecycleRediscoveryRequest StatutoryPendingLifecycleRediscoveryRequest()
@@ -1085,10 +1093,20 @@ public sealed class CentralPmsWebPayClientTests
             parkingSessionId = ParkingSessionId,
             siteId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
             siteGroupId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            jurisdictionId = Guid.Parse("f7a1b4b9-17a9-89de-5059-f72779616f23"),
+            jurisdictionCode = "PARANAQUE",
+            jurisdictionDisplayName = "City of Paranaque",
             availabilityStatus = "AVAILABLE",
             statutoryParkingBenefitAvailable = true,
             coveredEntitlementTypes = new[] { "SENIOR_CITIZEN", "PWD" },
             requestedEntitlementType = "SENIOR_CITIZEN",
+            policyVersionId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            policyCode = "PH_PARANAQUE_SENIOR_FREE_PARKING",
+            policyVersion = "1.0",
+            policyDisplayName = "Paranaque Senior Citizen Free Parking",
+            verificationStatus = "VERIFIED_ACTIVE_OPERATIONAL",
+            publicationStatus = "ACTIVE_FOR_TRANSACTION_USE",
+            residencyRequirement = "RESIDENT_ONLY",
             safeReasonCode = (string?)null,
             retryable = false,
             remediationAction = "CONTINUE_WITH_ORDINARY_PAYMENT",

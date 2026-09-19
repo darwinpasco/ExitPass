@@ -38,6 +38,7 @@ public static class OperatorConsoleSessionLookupEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithMetadata(new ReconciliationPolicyMetadata(SessionLookupPolicy))
+            .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
             .WithSummary("Lookup Operator Console session")
             .WithDescription("Looks up read-only parking session context after evaluating and persisting Operator Console access. This endpoint does not mutate payment, gate, coupon, provider, statutory discount, settlement, or reconciliation state.");
 

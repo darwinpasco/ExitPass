@@ -442,6 +442,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.Equal("READY", body.PayableBasisReadinessStatus);
         Assert.Equal("statutory-decision:webpay:test", state.CapturedStatutorySubmitIdempotencyKey);
         Assert.Equal("SENIOR_CITIZEN", state.CapturedStatutorySubmitRequest!.EntitlementType);
+        Assert.True(state.CapturedStatutorySubmitRequest.BeneficiaryResidencySatisfied);
+        Assert.True(state.CapturedStatutoryAvailabilityRequest!.BeneficiaryResidencySatisfied);
     }
 
     /// <summary>
@@ -461,8 +463,40 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.Equal("AVAILABLE", body!.AvailabilityStatus);
         Assert.True(body.StatutoryParkingBenefitAvailable);
         Assert.Equal(new[] { "SENIOR_CITIZEN", "PWD" }, body.CoveredEntitlementTypes);
+        Assert.Equal(Guid.Parse("f7a1b4b9-17a9-89de-5059-f72779616f23"), body.JurisdictionId);
+        Assert.Equal("PARANAQUE", body.JurisdictionCode);
+        Assert.Equal("City of Paranaque", body.JurisdictionDisplayName);
+        Assert.Equal("PH_PARANAQUE_SENIOR_FREE_PARKING", body.PolicyCode);
+        Assert.Equal("VERIFIED_ACTIVE_OPERATIONAL", body.VerificationStatus);
+        Assert.Equal("ACTIVE_FOR_TRANSACTION_USE", body.PublicationStatus);
+        Assert.Equal("RESIDENT_ONLY", body.ResidencyRequirement);
         Assert.Equal(1, state.ResolveStatutoryDiscountAvailabilityCallCount);
         Assert.Equal(0, state.ApplyStatutoryDiscountPayableBasisCallCount);
+        Assert.Null(state.CapturedStatutorySubmitRequest);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(false)]
+    public async Task WebPayStatutoryDiscountSubmit_WhenResidentOnlyAttestationIsNotSatisfied_FailsClosed(bool? residencySatisfied)
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null)
+        {
+            RequireResidencyAttestation = true
+        };
+        using var client = CreateClient(state);
+        var decision = StatutoryDecisionRequest();
+        decision.BeneficiaryResidencySatisfied = residencySatisfied;
+        using var request = new HttpRequestMessage(HttpMethod.Post, StatutoryDecisionRoute)
+        {
+            Content = JsonContent.Create(decision)
+        };
+        request.Headers.Add("Idempotency-Key", $"statutory-decision:webpay:residency:{residencySatisfied}");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(residencySatisfied, state.CapturedStatutoryAvailabilityRequest!.BeneficiaryResidencySatisfied);
         Assert.Null(state.CapturedStatutorySubmitRequest);
     }
 
@@ -872,6 +906,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
                 }
             },
             RequesterAttestation = true,
+            BeneficiaryResidencySatisfied = true,
             AttestationNotes = "Customer attests eligibility for review.",
             OriginalTariffSnapshotId = Guid.Parse("55555555-5555-5555-5555-555555555555")
         };
@@ -973,7 +1008,17 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             retryable,
             retryable ? "WAIT_AND_RETRY" : "CONTINUE_WITH_ORDINARY_PAYMENT",
             Array.Empty<CentralPmsStatutoryDiscountAvailabilityEvidenceRequirement>(),
-            Guid.Parse("33333333-3333-3333-3333-333333333333"));
+            Guid.Parse("33333333-3333-3333-3333-333333333333"),
+            Guid.Parse("f7a1b4b9-17a9-89de-5059-f72779616f23"),
+            "PARANAQUE",
+            "City of Paranaque",
+            Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            "PH_PARANAQUE_SENIOR_FREE_PARKING",
+            "1.0",
+            "Paranaque Senior Citizen Free Parking",
+            "VERIFIED_ACTIVE_OPERATIONAL",
+            "ACTIVE_FOR_TRANSACTION_USE",
+            "RESIDENT_ONLY");
     }
 
     private static WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest StatutoryPendingLifecycleRediscoveryRequest()
@@ -1066,6 +1111,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         public CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability> StatutoryAvailabilityResult { get; set; } =
             CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability>.Success(StatutoryAvailability());
 
+        public bool RequireResidencyAttestation { get; set; }
+
         public CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery> PendingLifecycleRediscoveryResult { get; set; } =
             CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>.Success(PendingLifecycleRediscovery());
 
@@ -1143,6 +1190,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             Guid tariffSnapshotId,
             string paymentProvider,
             string paymentMethod,
+            CentralPmsInvoiceCustomerInformation? invoiceCustomerInformation,
             string idempotencyKey,
             Guid correlationId,
             CancellationToken cancellationToken)
@@ -1209,6 +1257,16 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         {
             ResolveStatutoryDiscountAvailabilityCallCount++;
             CapturedStatutoryAvailabilityRequest = request;
+            if (RequireResidencyAttestation &&
+                request.RequestedEntitlementType is not null &&
+                request.BeneficiaryResidencySatisfied is not true)
+            {
+                return Task.FromResult(CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability>.Success(
+                    StatutoryAvailability(
+                        Array.Empty<string>(),
+                        availabilityStatus: "NOT_AVAILABLE",
+                        statutoryParkingBenefitAvailable: false)));
+            }
             return Task.FromResult(StatutoryAvailabilityResult);
         }
 

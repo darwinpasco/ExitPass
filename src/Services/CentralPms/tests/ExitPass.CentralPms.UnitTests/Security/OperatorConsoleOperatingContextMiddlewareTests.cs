@@ -58,6 +58,86 @@ public sealed class OperatorConsoleOperatingContextMiddlewareTests
         response!.ErrorCode.Should().Be(OperatorConsoleOperatingContextFailureCodes.DeviceBindingRequired);
     }
 
+    [Theory]
+    [InlineData("POST", "/v1/ops/operator-console/sessions/lookup")]
+    [InlineData("GET", "/v1/ops/operator-console/fiscal-issuance/lookup")]
+    [InlineData("GET", "/v1/ops/operator-console/fiscal-issuance/references/3d63d347-dadf-4e9f-94fb-644eeb90207a")]
+    [InlineData("GET", "/v1/ops/operator-console/statutory-discounts/drafts")]
+    [InlineData("GET", "/v1/ops/operator-console/statutory-discounts/drafts/3d63d347-dadf-4e9f-94fb-644eeb90207a")]
+    [InlineData("GET", "/v1/ops/operator-console/statutory-discounts/3d63d347-dadf-4e9f-94fb-644eeb90207a/evidence")]
+    [InlineData("POST", "/v1/ops/operator-console/statutory-discounts/resolve-policy")]
+    public async Task Explicit_read_support_endpoint_bypasses_operating_context_validation(string method, string path)
+    {
+        var service = Substitute.For<IOperatorConsoleOperatingContextService>();
+        var nextCalled = false;
+        var middleware = new OperatorConsoleOperatingContextMiddleware(
+            _ => { nextCalled = true; return Task.CompletedTask; },
+            NullLogger<OperatorConsoleOperatingContextMiddleware>.Instance);
+        var context = AuthenticatedContext(Guid.NewGuid(), method, path);
+        context.SetEndpoint(new Endpoint(
+            _ => Task.CompletedTask,
+            new EndpointMetadataCollection(OperatorConsoleOperatingContextRequirementMetadata.NotRequired),
+            "read-support"));
+
+        await middleware.InvokeAsync(context, service);
+
+        nextCalled.Should().BeTrue();
+        service.ReceivedCalls().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Controlled_write_without_bypass_metadata_still_requires_operating_context()
+    {
+        var sessionId = Guid.NewGuid();
+        var service = Substitute.For<IOperatorConsoleOperatingContextService>();
+        service.ValidateSessionAsync(sessionId, null, Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(call => OperatorConsoleOperatingContextResult.Failure(
+                OperatorConsoleOperatingContextFailureCodes.DeviceBindingRequired,
+                call.ArgAt<Guid>(2)));
+        var middleware = new OperatorConsoleOperatingContextMiddleware(
+            _ => Task.CompletedTask,
+            NullLogger<OperatorConsoleOperatingContextMiddleware>.Instance);
+        var context = AuthenticatedContext(
+            sessionId,
+            HttpMethods.Post,
+            "/v1/ops/operator-console/statutory-discounts/draft");
+
+        await middleware.InvokeAsync(context, service);
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        await service.Received(1).ValidateSessionAsync(
+            sessionId,
+            null,
+            Arg.Any<Guid>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Unauthenticated_read_support_request_reaches_downstream_authentication_without_readiness_authority()
+    {
+        var service = Substitute.For<IOperatorConsoleOperatingContextService>();
+        var middleware = new OperatorConsoleOperatingContextMiddleware(
+            context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return Task.CompletedTask;
+            },
+            NullLogger<OperatorConsoleOperatingContextMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/v1/ops/operator-console/statutory-discounts/drafts";
+        context.Response.Body = new MemoryStream();
+        context.SetEndpoint(new Endpoint(
+            _ => Task.CompletedTask,
+            new EndpointMetadataCollection(OperatorConsoleOperatingContextRequirementMetadata.NotRequired),
+            "read-support"));
+
+        await middleware.InvokeAsync(context, service);
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
+        service.ReceivedCalls().Should().BeEmpty();
+    }
+
     [Fact]
     public async Task Shift_management_exclusion_remains_unchanged()
     {

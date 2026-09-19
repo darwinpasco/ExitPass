@@ -15,6 +15,13 @@ backend launchers read private runtime settings from
 `EXITPASS_PERSISTENT_IST_ROOT` only when that approved private root is elsewhere.
 Secrets remain outside Git.
 
+The Central PMS launcher persists its ASP.NET Core Data Protection key ring at
+`D:\SourceCodes\ExitPass.local\persistent-ist\data-protection\central-pms` and
+mounts it at the container's default private key-ring location. Recreating the
+Central PMS application container therefore does not by itself invalidate
+antiforgery tokens or protected browser cookies. The key files are private
+runtime material and must never be copied into a repository or browser asset.
+
 ## Canonical Ports
 
 | Component | Local/manual address |
@@ -66,6 +73,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\v1.3\local-runtime\Start-Oper
 Start the components in the order shown: Central PMS, Payment Orchestrator, POS Server, Management Platform, WebPay, APT, and Operator Console. Central PMS and Payment Orchestrator build from the current checkout and run in dedicated local-runtime containers attached to `exitpass-ist-persistent`; their canonical ports remain available on the host. This preserves the authoritative persistent database and Docker-network-only PITX routes without changing them. Management Platform and Operator Console proxy same-origin `/v1` requests to Central PMS. WebPay proxies same-origin `/v1` requests to Payment Orchestrator. The APT native host targets Central PMS over HTTPS. Central PMS keeps Site-specific fiscal routing; PITX Level 3 resolves to POS Server ID `3a138565-1b88-55f8-c83d-5380db6edccc`. Environment-specific proxy variables still override the browser UI defaults.
 
 After startup, the POS Server health endpoints are `http://127.0.0.1:56067/health/live` and `http://127.0.0.1:56067/health/ready`.
+
+After first adopting the persistent key ring, clear the existing Central PMS
+cookies once for `localhost` and `127.0.0.1`, then sign in again. Tokens issued
+before the persistent key ring was introduced may reference an ephemeral key
+that no longer exists. Do not disable antiforgery validation; this one-time
+cleanup only removes stale local browser state. Normal container recreation
+afterward reuses the persistent key ring. Any configured human-session
+lifetime or revocation policy remains authoritative.
 
 ## Stop
 

@@ -820,7 +820,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
             ReviewerUserId: null,
             ReviewerAttestation: null,
             applyPayableBasis,
-            request.OriginalTariffSnapshotId);
+            request.OriginalTariffSnapshotId,
+            request.BeneficiaryResidencySatisfied);
 
         using var message = new HttpRequestMessage(HttpMethod.Post, _statutoryDiscountDecisionsUri)
         {
@@ -1104,7 +1105,17 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
                         requirement.SafeRequirementLabel,
                         requirement.SafeRequirementNotes))
                 .ToArray() ?? Array.Empty<CentralPmsStatutoryDiscountAvailabilityEvidenceRequirement>(),
-            payload.CorrelationId);
+            payload.CorrelationId,
+            payload.JurisdictionId,
+            payload.JurisdictionCode,
+            payload.JurisdictionDisplayName,
+            payload.PolicyVersionId,
+            payload.PolicyCode,
+            payload.PolicyVersion,
+            payload.PolicyDisplayName,
+            payload.VerificationStatus,
+            payload.PublicationStatus,
+            payload.ResidencyRequirement);
 
     private static CentralPmsStatutoryDiscountPendingLifecycleRediscovery ToPendingLifecycleRediscovery(
         StatutoryDiscountPendingLifecycleRediscoveryResponse payload) =>
@@ -1283,7 +1294,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         Guid? ReviewerUserId,
         bool? ReviewerAttestation,
         bool ApplyPayableBasis,
-        Guid? OriginalTariffSnapshotId);
+        Guid? OriginalTariffSnapshotId,
+        bool? BeneficiaryResidencySatisfied);
 
     private sealed record StatutoryDiscountEvidenceReferenceRequest(
         string EvidenceType,
