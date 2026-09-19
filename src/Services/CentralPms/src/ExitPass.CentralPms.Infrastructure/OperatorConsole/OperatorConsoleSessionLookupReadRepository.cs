@@ -35,6 +35,31 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var coreSession = await FindCoreSessionAsync(connection, request, cancellationToken);
+        if (coreSession is not null)
+        {
+            return coreSession;
+        }
+
+        if (!string.Equals(request.LookupMode, "TICKET_REFERENCE", StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(request.TicketReference) ||
+            !request.SiteId.HasValue)
+        {
+            return null;
+        }
+
+        return await FindProjectionAsync(connection, request, cancellationToken);
+    }
+
+    private static async Task<OperatorConsoleSessionReadModel?> FindCoreSessionAsync(
+        NpgsqlConnection connection,
+        OperatorConsoleSessionLookupReadRequest request,
+        CancellationToken cancellationToken)
+    {
+
         const string sql = """
             SELECT
                 ps.parking_session_id,
@@ -53,9 +78,11 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                     ELSE 'NOT_APPLIED'
                 END AS discount_status,
                 latest_attempt.attempt_status::text AS payment_status,
-                latest_exit.authorization_status::text AS exit_authorization_status
+                latest_exit.authorization_status::text AS exit_authorization_status,
+                vendor.vendor_code AS vendor_system_code
             FROM core.parking_sessions AS ps
             INNER JOIN sites.sites AS site ON site.site_id = ps.site_id
+            LEFT JOIN integration.vendor_systems AS vendor ON vendor.vendor_system_id = ps.vendor_system_id
             LEFT JOIN LATERAL (
                 SELECT
                     tariff_snapshot_id,
@@ -97,9 +124,6 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
             LIMIT 1;
             """;
 
-        await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
-
         await using var command = new NpgsqlCommand(sql, connection)
         {
             CommandTimeout = 30
@@ -131,7 +155,92 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
             GetNullableString(reader, "payment_status"),
             GetNullableString(reader, "discount_status"),
             GetNullableString(reader, "exit_authorization_status"),
-            reader.GetString("site_name"));
+            reader.GetString("site_name"),
+            SessionSource: "CORE_PARKING_SESSION",
+            VendorSystemCode: GetNullableString(reader, "vendor_system_code"));
+    }
+
+    private static async Task<OperatorConsoleSessionReadModel?> FindProjectionAsync(
+        NpgsqlConnection connection,
+        OperatorConsoleSessionLookupReadRequest request,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                projection.card_num,
+                projection.plate_license,
+                projection.site_id,
+                projection.site_group_id,
+                site.site_name,
+                COALESCE(projection.enter_time, projection.first_seen_at) AS entry_time,
+                projection.projection_status,
+                vendor.vendor_code AS vendor_system_code,
+                projection.source_event_at,
+                projection.last_refreshed_at
+            FROM sessions.vendor_session_projections AS projection
+            INNER JOIN sites.sites AS site
+                ON site.site_id = projection.site_id
+               AND site.site_group_id = projection.site_group_id
+            INNER JOIN integration.vendor_systems AS vendor
+                ON vendor.vendor_system_id = projection.vendor_system_id
+            INNER JOIN sessions.vendor_session_projection_sync_targets AS target
+                ON target.site_id = projection.site_id
+               AND target.site_group_id = projection.site_group_id
+               AND target.vendor_system_id = projection.vendor_system_id
+               AND target.parking_lot_index_code = projection.parking_lot_index_code
+            WHERE projection.card_num = @ticket_reference
+              AND projection.site_id = @site_id
+              AND (@site_group_id IS NULL OR projection.site_group_id = @site_group_id)
+              AND projection.projection_status = 'ACTIVE'
+              AND projection.source_adapter_identity_id IS NOT NULL
+              AND target.enabled_flag
+            ORDER BY
+                projection.last_refreshed_at DESC,
+                projection.enter_time DESC NULLS LAST,
+                projection.created_at DESC
+            LIMIT 2;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+        command.Parameters.Add("ticket_reference", NpgsqlDbType.Text).Value = request.TicketReference!;
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = request.SiteId!.Value;
+        command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = DbValue(request.SiteGroupId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var result = new OperatorConsoleSessionReadModel(
+            ParkingSessionId: null,
+            TicketReference: GetNullableString(reader, "card_num"),
+            PlateNumber: MaskPlateNumber(GetNullableString(reader, "plate_license")),
+            reader.GetGuid("site_id"),
+            reader.GetGuid("site_group_id"),
+            reader.GetString("projection_status"),
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("entry_time")),
+            CurrentPayableAmountMinorUnits: null,
+            CurrencyCode: null,
+            PaymentStatus: null,
+            DiscountStatus: null,
+            ExitAuthorizationStatus: null,
+            SiteName: reader.GetString("site_name"),
+            SessionSource: "VENDOR_SESSION_PROJECTION",
+            VendorSystemCode: reader.GetString("vendor_system_code"),
+            ProjectionStatus: reader.GetString("projection_status"),
+            ProjectionSourceEventAt: GetNullableTimestamp(reader, "source_event_at"),
+            ProjectionLastRefreshedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("last_refreshed_at")));
+
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            throw new InvalidOperationException("OPERATOR_CONSOLE_PROJECTION_IDENTIFIER_AMBIGUOUS");
+        }
+
+        return result;
     }
 
     private static long? ToMinorUnits(NpgsqlDataReader reader, string columnName)
@@ -165,6 +274,27 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
     {
         var ordinal = reader.GetOrdinal(columnName);
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    }
+
+    private static DateTimeOffset? GetNullableTimestamp(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal)
+            ? null
+            : reader.GetFieldValue<DateTimeOffset>(ordinal);
+    }
+
+    private static string? MaskPlateNumber(string? plateNumber)
+    {
+        if (string.IsNullOrWhiteSpace(plateNumber))
+        {
+            return null;
+        }
+
+        var normalized = plateNumber.Trim().ToUpperInvariant();
+        return normalized.Length <= 3
+            ? new string('*', normalized.Length)
+            : string.Concat(normalized.AsSpan(0, 3), new string('*', normalized.Length - 3));
     }
 }
 

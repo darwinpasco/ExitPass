@@ -10,6 +10,8 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 /// </summary>
 public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessionLookupService
 {
+    private const string CoreParkingSessionSource = "CORE_PARKING_SESSION";
+    private const string VendorSessionProjectionSource = "VENDOR_SESSION_PROJECTION";
     private const string WorkflowCode = OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow;
     private const string ControlledActionCode = OperatorConsoleActionCodes.SessionLookup;
     private const string LookupModeParkingSessionId = "PARKING_SESSION_ID";
@@ -96,9 +98,16 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
                 persistedEvaluation.CorrelationId);
         }
 
-        var eligible = string.Equals(session.SessionStatus, "ACTIVE", StringComparison.Ordinal);
+        var isTransactionalSession = session.ParkingSessionId.HasValue &&
+            string.Equals(session.SessionSource, CoreParkingSessionSource, StringComparison.Ordinal);
+        var eligible = isTransactionalSession &&
+            string.Equals(session.SessionStatus, "ACTIVE", StringComparison.Ordinal);
         var alerts = new List<string>();
-        if (!eligible)
+        if (string.Equals(session.SessionSource, VendorSessionProjectionSource, StringComparison.Ordinal))
+        {
+            alerts.Add("VENDOR_PROJECTION_ONLY");
+        }
+        else if (!eligible)
         {
             alerts.Add("SESSION_NOT_ELIGIBLE_FOR_OPERATOR_WORKFLOW");
         }
@@ -111,7 +120,11 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
             persistedEvaluation.Persisted,
             session,
             eligible,
-            eligible ? null : "SESSION_NOT_ACTIVE",
+            eligible
+                ? null
+                : isTransactionalSession
+                    ? "SESSION_NOT_ACTIVE"
+                    : "TRANSACTIONAL_SESSION_NOT_STARTED",
             alerts,
             persistedEvaluation.CorrelationId);
     }

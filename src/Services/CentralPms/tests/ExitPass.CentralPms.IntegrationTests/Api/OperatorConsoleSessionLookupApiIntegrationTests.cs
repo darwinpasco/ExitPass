@@ -1,11 +1,14 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Claims;
+using ExitPass.CentralPms.Api.Endpoints;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using FluentAssertions;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
@@ -111,6 +114,53 @@ public sealed class OperatorConsoleSessionLookupApiIntegrationTests
         body.TicketReference.Should().Be("TICKET-001");
         body.CurrentPayableAmountMinorUnits.Should().Be(12500);
         body.CurrencyCode.Should().Be("PHP");
+    }
+
+    [Fact]
+    public void IdentityContext_WhenHumanSessionHasDirectSiteScope_UsesServerOwnedSiteClaim()
+    {
+        var context = new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, UserId.ToString("D")),
+                new Claim("site_id", SiteId.ToString("D"))
+            ], HumanSessionAuthenticationHandler.SchemeName))
+        };
+        var identityContextType = typeof(OperatorConsoleSessionLookupEndpoints).Assembly.GetType(
+            "ExitPass.CentralPms.Api.Endpoints.OperatorConsoleIdentityContext",
+            throwOnError: true)!;
+        var resolve = identityContextType.GetMethod("Resolve")!;
+
+        var identity = resolve.Invoke(null, [context.Request, null, null, null, null, null, CorrelationId])!;
+
+        identityContextType.GetProperty("UserId")!.GetValue(identity).Should().Be(UserId);
+        identityContextType.GetProperty("SiteId")!.GetValue(identity).Should().Be(SiteId);
+        identityContextType.GetProperty("SiteGroupId")!.GetValue(identity).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Lookup_WhenProjectionOnly_ReturnsSourceFactsWithoutTransactionalFacts()
+    {
+        using var factory = CreateFactory(ProjectionFoundResult());
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(Endpoint, Request());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleSessionLookupResponse>();
+        body.Should().NotBeNull();
+        body!.SessionFound.Should().BeTrue();
+        body.SessionEligible.Should().BeFalse();
+        body.ParkingSessionId.Should().BeNull();
+        body.PlateNumber.Should().Be("ABC****");
+        body.CurrentPayableAmountMinorUnits.Should().BeNull();
+        body.CurrencyCode.Should().BeNull();
+        body.PaymentStatus.Should().BeNull();
+        body.ExitAuthorizationStatus.Should().BeNull();
+        body.SessionSource.Should().Be("VENDOR_SESSION_PROJECTION");
+        body.VendorSystemCode.Should().Be("HIKCENTRAL");
+        body.ProjectionStatus.Should().Be("ACTIVE");
     }
 
     [Theory]
@@ -242,6 +292,37 @@ public sealed class OperatorConsoleSessionLookupApiIntegrationTests
             SessionEligible: false,
             IneligibilityReason: "SESSION_NOT_FOUND",
             Alerts: Array.Empty<string>(),
+            CorrelationId);
+
+    private static OperatorConsoleSessionLookupResult ProjectionFoundResult() =>
+        new(
+            EvaluationId,
+            AccessAllowed: true,
+            "ALLOWED",
+            Array.Empty<string>(),
+            AccessPersisted: true,
+            new OperatorConsoleSessionReadModel(
+                ParkingSessionId: null,
+                "TICKET-001",
+                "ABC****",
+                SiteId,
+                SiteGroupId,
+                "ACTIVE",
+                DateTimeOffset.Parse("2026-05-29T04:00:00Z"),
+                CurrentPayableAmountMinorUnits: null,
+                CurrencyCode: null,
+                PaymentStatus: null,
+                DiscountStatus: null,
+                ExitAuthorizationStatus: null,
+                SiteName: "PITX Level 3",
+                SessionSource: "VENDOR_SESSION_PROJECTION",
+                VendorSystemCode: "HIKCENTRAL",
+                ProjectionStatus: "ACTIVE",
+                ProjectionSourceEventAt: DateTimeOffset.Parse("2026-05-29T04:00:00Z"),
+                ProjectionLastRefreshedAt: DateTimeOffset.Parse("2026-05-29T04:01:00Z")),
+            SessionEligible: false,
+            IneligibilityReason: "TRANSACTIONAL_SESSION_NOT_STARTED",
+            Alerts: ["VENDOR_PROJECTION_ONLY"],
             CorrelationId);
 
     private sealed class FakeSessionLookupService : IOperatorConsoleSessionLookupService

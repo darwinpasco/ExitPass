@@ -23,7 +23,7 @@ try {
 
 $env:VITE_WEBPAY_DEFAULT_SITE_GROUP_ID = "a6dbadf6-68b5-5bed-a7e0-a75faee70841"
 $env:VITE_WEBPAY_DEFAULT_SITE_ID = "2d1dcdf8-f563-537c-8542-0bde7cc9da97"
-$env:VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID = "HIKCENTRAL"
+$env:VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID = "afdefaab-6be4-6b25-8f3f-3ad8309662e8"
 Remove-Item Env:\VITE_WEBPAY_API_BASE_URL -ErrorAction SilentlyContinue
 
 Write-Host "Payment Orchestrator readiness: PASS ($apiProxyTarget)"

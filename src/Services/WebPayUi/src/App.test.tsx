@@ -406,7 +406,7 @@ function stubClipboard(writeText: ReturnType<typeof vi.fn>) {
 beforeEach(() => {
   vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "11111111-1111-1111-1111-111111111111");
   vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_ID", "22222222-2222-2222-2222-222222222222");
-  vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "HIKCENTRAL");
+  vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "afdefaab-6be4-6b25-8f3f-3ad8309662e8");
   documentDownloadMocks.html2canvas.mockReset();
   documentDownloadMocks.addImage.mockReset();
   documentDownloadMocks.save.mockReset();

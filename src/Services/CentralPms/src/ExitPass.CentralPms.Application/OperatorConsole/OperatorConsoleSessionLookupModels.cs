@@ -45,7 +45,7 @@ public sealed record OperatorConsoleSessionLookupReadRequest(
 /// Read-only parking session context returned to Operator Console callers.
 /// </summary>
 public sealed record OperatorConsoleSessionReadModel(
-    Guid ParkingSessionId,
+    Guid? ParkingSessionId,
     string? TicketReference,
     string? PlateNumber,
     Guid SiteId,
@@ -57,4 +57,9 @@ public sealed record OperatorConsoleSessionReadModel(
     string? PaymentStatus,
     string? DiscountStatus,
     string? ExitAuthorizationStatus,
-    string? SiteName = null);
+    string? SiteName = null,
+    string SessionSource = "CORE_PARKING_SESSION",
+    string? VendorSystemCode = null,
+    string? ProjectionStatus = null,
+    DateTimeOffset? ProjectionSourceEventAt = null,
+    DateTimeOffset? ProjectionLastRefreshedAt = null);

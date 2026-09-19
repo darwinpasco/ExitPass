@@ -760,7 +760,7 @@ describe("WebPay QR and payment intent helpers", () => {
     });
 
     const result = await resolveParkingSession(
-      { ticketReference: "TICKET-TEST-023", vendorSystemId: "HIKCENTRAL" },
+      { ticketReference: "TICKET-TEST-023", vendorSystemId: "afdefaab-6be4-6b25-8f3f-3ad8309662e8" },
       fetchMock as never
     );
 
@@ -770,6 +770,7 @@ describe("WebPay QR and payment intent helpers", () => {
     const headers = request.headers as Record<string, string>;
     expect(headers["X-Correlation-Id"]).toBe(body.correlationId);
     expect(body.correlationId).toBeTruthy();
+    expect(body.vendorSystemId).toBe("afdefaab-6be4-6b25-8f3f-3ad8309662e8");
     expect(result.siteName).toBe("Mactan Newtown Parking");
     expect(result.siteGroupId).toBe("29b8b4f4-40dd-447b-ac06-dd52e6ad51c5");
     expect(result.siteId).toBe("93bd3cb3-e806-4c5c-ac8c-df6c4addff14");
@@ -777,6 +778,34 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(result.siteGroupName).toBe("WebPay Test Site Group 2026-05-19");
     expect(result.parkingStatus).toBe("PAYABLE");
     expect(result.amountMinorUnits).toBe(12500);
+  });
+
+  it("WebPay_WhenParkingRoutingConfigurationIsInvalid_ShowsSafeLookupUnavailableMessage", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ errorCode: "INVALID_VENDOR_ROUTING_SCOPE" })
+    });
+
+    await expect(
+      resolveParkingSession(
+        { ticketReference: "1474119573041", vendorSystemId: "afdefaab-6be4-6b25-8f3f-3ad8309662e8" },
+        fetchMock as never
+      )
+    ).rejects.toThrow("Parking lookup is temporarily unavailable. Please try again shortly.");
+  });
+
+  it("WebPay_WhenParkingResolutionFailsUnexpectedly_UsesParkingLookupWording", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ errorCode: "UNEXPECTED_RESOLUTION_FAILURE" })
+    });
+
+    await expect(
+      resolveParkingSession(
+        { ticketReference: "1474119573041", vendorSystemId: "afdefaab-6be4-6b25-8f3f-3ad8309662e8" },
+        fetchMock as never
+      )
+    ).rejects.toThrow("Parking session could not be resolved. Please try again.");
   });
 
   it("WebPay_WhenRetrievingPaymentStatus_UsesReadOnlyPaymentAttemptStatusPath", async () => {
@@ -1005,11 +1034,11 @@ describe("WebPay QR and payment intent helpers", () => {
   });
 
   it("WebPay_WhenDefaultVendorSystemIdIsConfigured_IncludesVendorSystemId", () => {
-    vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "HIKCENTRAL");
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "afdefaab-6be4-6b25-8f3f-3ad8309662e8");
 
     const body = buildPaymentIntentBody({ ticketReference: "TICKET-001", paymentMethod: "QRPH" });
 
-    expect(body.vendorSystemId).toBe("HIKCENTRAL");
+    expect(body.vendorSystemId).toBe("afdefaab-6be4-6b25-8f3f-3ad8309662e8");
   });
 
   it("WebPay_WhenVendorSystemIdIsMissing_ReturnsFriendlyConfigurationErrorBeforeSubmit", async () => {

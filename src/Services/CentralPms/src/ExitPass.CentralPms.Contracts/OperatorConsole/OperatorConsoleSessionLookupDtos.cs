@@ -42,4 +42,9 @@ public sealed record OperatorConsoleSessionLookupResponse(
     string? ExitAuthorizationStatus,
     IReadOnlyList<string> Alerts,
     Guid CorrelationId,
-    string? SiteName = null);
+    string? SiteName = null,
+    string? SessionSource = null,
+    string? VendorSystemCode = null,
+    string? ProjectionStatus = null,
+    DateTimeOffset? ProjectionSourceEventAt = null,
+    DateTimeOffset? ProjectionLastRefreshedAt = null);
