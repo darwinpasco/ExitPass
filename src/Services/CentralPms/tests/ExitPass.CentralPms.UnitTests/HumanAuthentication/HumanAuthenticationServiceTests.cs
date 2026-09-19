@@ -271,6 +271,7 @@ public sealed class HumanAuthenticationServiceTests
         var beforeLogin = beforeExpiry.CreateLogin(privileged: false);
         beforeExpiry.Login = beforeLogin with
         {
+            EffectiveFrom = now.AddDays(-1),
             Credential = beforeLogin.Credential! with
             {
                 Status = "CHANGE_REQUIRED",
@@ -281,6 +282,7 @@ public sealed class HumanAuthenticationServiceTests
         var expiredLogin = atExpiry.CreateLogin(privileged: false);
         atExpiry.Login = expiredLogin with
         {
+            EffectiveFrom = now.AddDays(-1),
             Credential = expiredLogin.Credential! with
             {
                 Status = "CHANGE_REQUIRED",

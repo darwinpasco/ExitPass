@@ -83,7 +83,7 @@ The authenticated administrator is derived from the session. `created_by`, `assi
 ### 6.1 Self and last-administrator protections
 
 - No self-role assignment, self-scope grant, self-privileged approval, self-unlock, or self-approval of a pending access change.
-- No administrator can retrieve, reveal, export, or generate a TOTP secret/code for another user. Management Platform is not an OTP generator.
+- An authorized administrator can generate a new TOTP secret only through Add User bootstrap or the governed administrator setup/reset operations. Those successful responses reveal the new provisioning material once; no API retrieves an existing secret or generates TOTP codes.
 - A lower-privilege administrator cannot reset/remove MFA from a higher-privilege account unless an explicit delegated policy authorizes it; removing MFA from a privileged administrator cannot leave privileged access active without the required authenticator.
 - An administrator may change their own non-authoritative profile fields but not status, privilege, scope, or credential-recovery channel without governed verification.
 - Disabling, retiring, or removing the final active eligible identity administrator is rejected transactionally.
@@ -155,11 +155,11 @@ Repository-consistent final naming is an I-021 concern. The frozen capabilities 
 - `POST /v1/management-platform/identity/users/{userReference}/unlock`
 - `POST /v1/management-platform/identity/users/{userReference}/credential-reset-challenges`
 - `GET /v1/management-platform/identity/users/{userReference}/mfa-status`
-- `POST /v1/management-platform/identity/users/{userReference}/mfa-requirements`
+- `POST /v1/management-platform/identity/users/{userReference}/mfa-authenticators/setup`
 - `POST /v1/management-platform/identity/users/{userReference}/mfa-authenticators/reset`
 - `POST /v1/management-platform/identity/users/{userReference}/mfa-authenticators/remove`
 
-The administration surface exposes safe MFA status/readiness and governs requirement/reset/removal. TOTP provisioning and confirmation occur through the authenticated user's bounded I-020 enrollment ceremony. No administration response returns TOTP secret, provisioning URI/QR payload, submitted code, protected ciphertext, or credential reference.
+The status endpoint exposes only safe MFA lifecycle data. Successful Add User bootstrap and administrator TOTP setup/reset are one-time provisioning responses and may return the new shared secret and `otpauth` provisioning URI with `displayOnce=true`. Setup replaces an absent or legacy unusable authenticator with a new ACTIVE authenticator. Reset invalidates the old authenticator, creates a new ACTIVE authenticator, and revokes affected active sessions in one transaction. Remove creates no replacement and returns safe status only. No ordinary read, status, remove, user-detail, or session response returns a TOTP secret, provisioning URI, submitted code, protected ciphertext, or key material.
 
 ### 8.2 Role, permission, and scope
 
@@ -179,7 +179,7 @@ The administration surface exposes safe MFA status/readiness and governs require
 - `POST /v1/management-platform/identity/users/{userReference}/sessions/revoke-all`
 - `GET /v1/management-platform/identity/users/{userReference}/audit-events`
 
-Mutation requests carry operation/idempotency key, expected row version, controlled reason, effectivity, target references, and correlation reference. Responses contain safe opaque references and current state, never secrets.
+Mutation requests carry the applicable operation/idempotency key, expected row version, controlled reason, effectivity, target references, and correlation reference. Responses contain safe opaque references and current state except for the explicitly one-time Add User bootstrap and administrator TOTP setup/reset provisioning payloads.
 
 ## 9. Decision gates
 

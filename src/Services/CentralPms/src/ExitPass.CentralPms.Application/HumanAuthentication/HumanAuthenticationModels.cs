@@ -147,6 +147,17 @@ public sealed record PasswordHashMaterial(
 
 public sealed record TotpVerificationResult(bool Succeeded, long? MatchedTimeStep);
 
+public sealed record AdminTotpPersistenceMaterial(
+    Guid AuthenticatorId,
+    byte[] ProtectedSecretEnvelope,
+    string ProtectionKeyReference,
+    string ProtectionKeyVersion,
+    short EnvelopeFormatVersion);
+
+public sealed record AdminTotpProvisioningMaterial(
+    string SharedSecret,
+    string ProvisioningUri);
+
 public sealed record CredentialChallengeDeliveryRequest(
     Guid UserId,
     string RecipientEmail,

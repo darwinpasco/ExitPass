@@ -210,12 +210,12 @@ ExitPass uses the standard time-based one-time password semantics defined by RFC
 - Codes are short-lived, accepted only inside the configured bounded clock window, rate limited, and never treated as reusable credentials. A successfully accepted code cannot be replayed in the same time step.
 - Algorithm, digits, time step, accepted clock skew, issuer label, key protection, and throttling limits are security-owned interoperable configuration validated at startup. Defaults must conform to RFC 6238 and supported authenticator applications.
 - Enrollment, successful/failed verification, throttling, reset/removal, and recovery actions produce privacy-safe audit/security events without the code, secret, QR payload, or raw authenticator response.
-- Disabling or removing MFA from a privileged administrator is itself a privileged, fresh-authenticated, independently authorized action.
+- Disabling or removing MFA requires authenticated identity administration authority, the approved MFA remove permission, optimistic concurrency, session invalidation, and audit evidence.
 
 ### 9.2 TOTP recovery
 
-- An administrator can see safe MFA status/readiness but can never retrieve another user's TOTP secret or generate codes for that user.
-- TOTP reset invalidates the old authenticator and starts a new governed enrollment. It requires explicit privileged identity-administration authority, adequate identity verification, a controlled reason, and audit evidence.
+- An authorized administrator can see safe MFA status/readiness and can generate a new TOTP secret through the governed setup/reset operation. The new secret and provisioning URI are returned only in that successful one-time response; existing secrets remain unreadable and the platform never generates TOTP codes for a user.
+- TOTP reset invalidates the old authenticator and immediately provisions a new ACTIVE authenticator in one transaction. It requires authentication, the approved MFA reset permission, optimistic concurrency, a controlled reason, session invalidation, and audit evidence.
 - Self-reset cannot silently bypass MFA. A user who cannot satisfy existing MFA follows the approved identity-recovery channel and independent administration checks.
 - Reset/removal revokes or re-evaluates existing privileged sessions according to session policy; the default is to revoke sessions whose assurance depended on the removed authenticator.
 - Recovery codes are deferred for v1.3 because no demonstrated operational need requires them. If later approved, only one-way verifiers may be stored and each code is single use.
@@ -234,7 +234,7 @@ Events contain controlled result/reason, actor user and service IDs where applic
 
 Staff-facing applications may display username, display name, masked contact details, effective roles, effective scopes, account/session status, effectivity, last successful login, and safe audit/support references when the viewer is authorized.
 
-They must never display password, password verifier/hash/salt/pepper, reset/activation token, TOTP secret/code/QR payload, optional future recovery-code verifier, session or refresh secret, raw security token/assertion, credential reference, private key, connection string, or unrestricted internal diagnostic. Audit/support responses use opaque correlation and event references.
+They must never display password verifier/hash/salt/pepper, reset/activation token, submitted TOTP codes, optional future recovery-code verifier, session or refresh secret, raw security token/assertion, credential reference, private key, connection string, or unrestricted internal diagnostic. Plaintext temporary credentials and TOTP provisioning material may appear only in the approved one-time Add User bootstrap or administrator setup/reset response and are destroyed from browser state when the provisioning panel closes. Audit/support responses use opaque correlation and event references.
 
 ## 12. Security references
 

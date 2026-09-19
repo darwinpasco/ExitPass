@@ -623,35 +623,11 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
         return await ExecuteCountAsync(sql, cancellationToken, ("id", authenticatorId), ("row_version", expectedRowVersion), ("time_step", matchedTimeStep), ("now", now), ("actor_user_id", actorUserId)) == 1;
     }
 
-    public async Task ResetTotpAuthenticatorAsync(Guid userId, Guid actorUserId, string reasonCode, DateTimeOffset now, CancellationToken cancellationToken)
-    {
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        const string sql = """
-            UPDATE identity.user_mfa_authenticators
-            SET authenticator_status='RESET_REQUIRED', reset_at=@now,
-                reset_or_revoked_by_user_id=@actor_user_id, status_reason_code=@reason_code,
-                updated_at=@now, updated_by_user_id=@actor_user_id, row_version=row_version+1
-            WHERE user_id=@user_id AND authenticator_type='TOTP' AND authenticator_status='ACTIVE';
-
-            UPDATE identity.human_sessions hs SET session_status='REVOKED', revoked_at=@now,
-                revoked_by_user_id=@actor_user_id, revocation_reason_code='MFA_RESET',
-                updated_at=@now, updated_by_user_id=@actor_user_id, row_version=hs.row_version+1
-            WHERE hs.user_id=@user_id AND hs.session_status='ACTIVE' AND hs.mfa_requirement_satisfied;
-            """;
-        await using var command = new NpgsqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("user_id", userId);
-        command.Parameters.AddWithValue("actor_user_id", actorUserId);
-        command.Parameters.AddWithValue("reason_code", reasonCode);
-        command.Parameters.AddWithValue("now", now);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-    }
-
-    public async Task<bool> ChangeTotpAuthenticatorAsync(
+    public async Task<bool> ReplaceTotpAuthenticatorAsync(
         Guid userId,
-        long expectedRowVersion,
+        long? expectedRowVersion,
         string action,
+        AdminTotpPersistenceMaterial replacement,
         Guid actorUserId,
         string reasonCode,
         Guid correlationId,
@@ -659,58 +635,196 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        const string sql = """
-            WITH changed AS (
-                UPDATE identity.user_mfa_authenticators
-                SET authenticator_status = CASE WHEN @action = 'RESET' THEN 'RESET_REQUIRED' ELSE 'REVOKED' END::identity.mfa_authenticator_status_enum,
-                    reset_at = CASE WHEN @action = 'RESET' THEN @now ELSE NULL END,
-                    revoked_at = CASE WHEN @action = 'REMOVE' THEN @now ELSE NULL END,
-                    reset_or_revoked_by_user_id = @actor_user_id,
-                    status_reason_code = @reason_code,
-                    updated_at = @now,
-                    updated_by_user_id = @actor_user_id,
-                    row_version = row_version + 1
-                WHERE user_id = @user_id
-                  AND authenticator_type = 'TOTP'
-                  AND row_version = @row_version
-                  AND ((@action = 'RESET' AND authenticator_status = 'ACTIVE')
-                    OR (@action = 'REMOVE' AND authenticator_status IN ('PENDING_ENROLLMENT','ACTIVE','SUSPENDED','RESET_REQUIRED')))
-                RETURNING user_mfa_authenticator_id
-            ), revoked_sessions AS (
-                UPDATE identity.human_sessions
-                SET session_status = 'REVOKED',
-                    revoked_at = @now,
-                    revoked_by_user_id = @actor_user_id,
-                    revocation_reason_code = CASE WHEN @action = 'RESET' THEN 'MFA_RESET' ELSE 'MFA_REMOVED' END,
-                    updated_at = @now,
-                    updated_by_user_id = @actor_user_id,
-                    row_version = row_version + 1
-                WHERE user_id = @user_id
-                  AND session_status = 'ACTIVE'
-                  AND mfa_requirement_satisfied
-                  AND EXISTS (SELECT 1 FROM changed)
-                RETURNING human_session_id
-            )
-            SELECT EXISTS (SELECT 1 FROM changed);
-            """;
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await using (var advisory = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(hashtext('exitpass.identity.totp-admin:' || @user_id::text));",
+            connection, transaction))
+        {
+            advisory.Parameters.AddWithValue("user_id", userId);
+            await advisory.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var current = await ReadLatestTotpForUpdateAsync(connection, transaction, userId, cancellationToken);
+        var valid = action switch
+        {
+            "SETUP" => current is null
+                ? expectedRowVersion is null
+                : current.Value.Status != "ACTIVE" && expectedRowVersion == current.Value.RowVersion,
+            "RESET" => current is not null && (current.Value.Status is "ACTIVE" or "RESET_REQUIRED") &&
+                expectedRowVersion == current.Value.RowVersion,
+            _ => false
+        };
+        if (!valid)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return false;
+        }
+
+        if (current is not null && current.Value.Status != "REVOKED")
+        {
+            const string revokeCurrentSql = """
+                UPDATE identity.user_mfa_authenticators
+                SET authenticator_status='REVOKED', activated_at=COALESCE(activated_at,@now),
+                    reset_at=NULL, revoked_at=@now,
+                    reset_or_revoked_by_user_id=@actor_user_id,
+                    reset_or_revoked_by_service_identity_id=NULL,
+                    status_reason_code=@reason_code,
+                    updated_at=@now, updated_by_user_id=@actor_user_id,
+                    updated_by_service_identity_id=NULL, row_version=row_version+1
+                WHERE user_mfa_authenticator_id=@authenticator_id AND row_version=@row_version;
+                """;
+            await using var revokeCurrent = new NpgsqlCommand(revokeCurrentSql, connection, transaction);
+            revokeCurrent.Parameters.AddWithValue("authenticator_id", current.Value.AuthenticatorId);
+            revokeCurrent.Parameters.AddWithValue("row_version", current.Value.RowVersion);
+            revokeCurrent.Parameters.AddWithValue("actor_user_id", actorUserId);
+            revokeCurrent.Parameters.AddWithValue("reason_code", reasonCode);
+            revokeCurrent.Parameters.AddWithValue("now", now);
+            if (await revokeCurrent.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return false;
+            }
+        }
+
+        const string insertSql = """
+            INSERT INTO identity.user_mfa_authenticators (
+                user_mfa_authenticator_id, user_id, authenticator_type, authenticator_status,
+                protected_secret_envelope, protection_key_reference, protection_key_version,
+                envelope_format_version, enrollment_started_at, activated_at,
+                created_at, created_by_user_id, updated_at, updated_by_user_id, row_version)
+            VALUES (@authenticator_id,@user_id,'TOTP','ACTIVE',@envelope,@key_reference,@key_version,
+                @format_version,@now,@now,@now,@actor_user_id,@now,@actor_user_id,@replacement_row_version);
+            """;
+        await using (var insert = new NpgsqlCommand(insertSql, connection, transaction))
+        {
+            insert.Parameters.AddWithValue("authenticator_id", replacement.AuthenticatorId);
+            insert.Parameters.AddWithValue("user_id", userId);
+            insert.Parameters.AddWithValue("envelope", replacement.ProtectedSecretEnvelope);
+            insert.Parameters.AddWithValue("key_reference", replacement.ProtectionKeyReference);
+            insert.Parameters.AddWithValue("key_version", replacement.ProtectionKeyVersion);
+            insert.Parameters.AddWithValue("format_version", replacement.EnvelopeFormatVersion);
+            insert.Parameters.AddWithValue("now", now);
+            insert.Parameters.AddWithValue("actor_user_id", actorUserId);
+            insert.Parameters.AddWithValue("replacement_row_version", current?.RowVersion + 1 ?? 1);
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (action == "RESET")
+        {
+            await RevokeMfaSessionsAsync(connection, transaction, userId, actorUserId,
+                "MFA_RESET", now, cancellationToken);
+        }
+        await InsertSecurityEventAsync(connection, transaction,
+            action == "SETUP" ? "TOTP_ADMIN_SETUP" : "TOTP_RESET", "ALLOWED", reasonCode,
+            userId, actorUserId, null, null, correlationId, serviceIdentityId, now, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
+    public async Task<bool> RemoveTotpAuthenticatorAsync(
+        Guid userId,
+        long expectedRowVersion,
+        Guid actorUserId,
+        string reasonCode,
+        Guid correlationId,
+        Guid serviceIdentityId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using (var advisory = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(hashtext('exitpass.identity.totp-admin:' || @user_id::text));",
+            connection, transaction))
+        {
+            advisory.Parameters.AddWithValue("user_id", userId);
+            await advisory.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var current = await ReadLatestTotpForUpdateAsync(connection, transaction, userId, cancellationToken);
+        if (current is null || current.Value.Status == "REVOKED" || current.Value.RowVersion != expectedRowVersion)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return false;
+        }
+
+        const string sql = """
+            UPDATE identity.user_mfa_authenticators
+            SET authenticator_status='REVOKED', activated_at=COALESCE(activated_at,@now),
+                reset_at=NULL, revoked_at=@now,
+                reset_or_revoked_by_user_id=@actor_user_id,
+                reset_or_revoked_by_service_identity_id=NULL,
+                status_reason_code=@reason_code,
+                updated_at=@now, updated_by_user_id=@actor_user_id,
+                updated_by_service_identity_id=NULL, row_version=row_version+1
+            WHERE user_mfa_authenticator_id=@authenticator_id AND row_version=@row_version;
+            """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("user_id", userId);
-        command.Parameters.AddWithValue("row_version", expectedRowVersion);
-        command.Parameters.AddWithValue("action", action);
+        command.Parameters.AddWithValue("authenticator_id", current.Value.AuthenticatorId);
+        command.Parameters.AddWithValue("row_version", current.Value.RowVersion);
         command.Parameters.AddWithValue("actor_user_id", actorUserId);
         command.Parameters.AddWithValue("reason_code", reasonCode);
         command.Parameters.AddWithValue("now", now);
-        var changed = (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
-        if (changed)
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
         {
-            await InsertSecurityEventAsync(connection, transaction,
-                action == "RESET" ? "TOTP_RESET" : "TOTP_REMOVED", "ALLOWED", reasonCode,
-                userId, actorUserId, null, null, correlationId, serviceIdentityId, now, cancellationToken);
+            await transaction.RollbackAsync(cancellationToken);
+            return false;
         }
+
+        await RevokeMfaSessionsAsync(connection, transaction, userId, actorUserId,
+            "MFA_REMOVED", now, cancellationToken);
+        await InsertSecurityEventAsync(connection, transaction, "TOTP_REMOVED", "ALLOWED", reasonCode,
+            userId, actorUserId, null, null, correlationId, serviceIdentityId, now, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return changed;
+        return true;
+    }
+
+    private static async Task<(Guid AuthenticatorId, string Status, long RowVersion)?> ReadLatestTotpForUpdateAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT user_mfa_authenticator_id, authenticator_status::text, row_version
+            FROM identity.user_mfa_authenticators
+            WHERE user_id=@user_id AND authenticator_type='TOTP'
+            ORDER BY (authenticator_status IN ('PENDING_ENROLLMENT','ACTIVE','SUSPENDED','RESET_REQUIRED')) DESC,
+                     created_at DESC, user_mfa_authenticator_id DESC
+            LIMIT 1 FOR UPDATE;
+            """;
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("user_id", userId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? (reader.GetGuid(0), reader.GetString(1), reader.GetInt64(2))
+            : null;
+    }
+
+    private static async Task RevokeMfaSessionsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid userId,
+        Guid actorUserId,
+        string reasonCode,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE identity.human_sessions
+            SET session_status='REVOKED', revoked_at=@now, revoked_by_user_id=@actor_user_id,
+                revocation_reason_code=@reason_code, updated_at=@now,
+                updated_by_user_id=@actor_user_id, row_version=row_version+1
+            WHERE user_id=@user_id AND session_status='ACTIVE' AND mfa_requirement_satisfied;
+            """;
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("user_id", userId);
+        command.Parameters.AddWithValue("actor_user_id", actorUserId);
+        command.Parameters.AddWithValue("reason_code", reasonCode);
+        command.Parameters.AddWithValue("now", now);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public Task ChangePasswordAsync(Guid userId, Guid localCredentialId, long expectedCredentialRowVersion, PasswordHashMaterial material, DateTimeOffset now, Guid actorUserId, CancellationToken cancellationToken) =>

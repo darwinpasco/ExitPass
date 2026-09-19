@@ -198,13 +198,48 @@ public sealed class HumanAuthenticationAdministrationGateway : IHumanAuthenticat
         return IdentityAdministrationResult<bool>.Succeeded(true, command.CorrelationId);
     }
 
-    public async Task<IdentityAdministrationResult<IdentityMfaStatus>> ChangeMfaAsync(
+    public async Task<IdentityAdministrationResult<IdentityMfaProvisioningResult>> ProvisionMfaAsync(
         IdentityAdministrationActor actor,
-        ChangeIdentityMfaCommand command,
+        ProvisionIdentityMfaCommand command,
         CancellationToken cancellationToken)
     {
-        var changed = await _mfaAdministration.ChangeTotpAsync(command.UserReference, command.ExpectedRowVersion,
-            command.Action, actor.UserId, command.ReasonCode, command.CorrelationId, cancellationToken);
+        var user = await _identityAdministration.GetUserAsync(
+            actor, command.UserReference, command.CorrelationId, cancellationToken);
+        if (user.Outcome != IdentityAdministrationOutcome.Success || user.Value is null)
+        {
+            return IdentityAdministrationResult<IdentityMfaProvisioningResult>.Failed(
+                user.Outcome, user.Classification, user.Message, user.CorrelationId);
+        }
+
+        var provisioning = await _mfaAdministration.ProvisionTotpAsync(
+            command.UserReference, user.Value.User.Username, command.ExpectedRowVersion, command.Action,
+            actor.UserId, command.ReasonCode, command.CorrelationId, cancellationToken);
+        if (provisioning is null)
+        {
+            return Failed<IdentityMfaProvisioningResult>(IdentityAdministrationOutcome.Conflict,
+                "STALE_MFA_AUTHENTICATOR", command.CorrelationId);
+        }
+
+        var status = await _identityAdministration.GetMfaStatusAsync(
+            actor, command.UserReference, command.CorrelationId, cancellationToken);
+        if (status.Outcome != IdentityAdministrationOutcome.Success || status.Value is null)
+        {
+            return IdentityAdministrationResult<IdentityMfaProvisioningResult>.Failed(
+                status.Outcome, status.Classification, status.Message, status.CorrelationId);
+        }
+
+        return IdentityAdministrationResult<IdentityMfaProvisioningResult>.Succeeded(
+            new(status.Value, new(provisioning.SharedSecret, provisioning.ProvisioningUri)),
+            command.CorrelationId);
+    }
+
+    public async Task<IdentityAdministrationResult<IdentityMfaStatus>> RemoveMfaAsync(
+        IdentityAdministrationActor actor,
+        RemoveIdentityMfaCommand command,
+        CancellationToken cancellationToken)
+    {
+        var changed = await _mfaAdministration.RemoveTotpAsync(command.UserReference, command.ExpectedRowVersion,
+            actor.UserId, command.ReasonCode, command.CorrelationId, cancellationToken);
         if (!changed)
         {
             return Failed<IdentityMfaStatus>(IdentityAdministrationOutcome.Conflict,

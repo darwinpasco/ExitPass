@@ -133,7 +133,7 @@ Central PMS also has no TOTP enrollment, confirmation, verification, status, res
 | `POST /v1/human-authentication/totp/enrollments` | fresh privileged session plus CSRF | One-time governed provisioning response; secret/QR never returned again or logged |
 | `POST /v1/human-authentication/totp/enrollments/{enrollmentReference}/confirm` | short-lived TOTP code plus CSRF | Activates authenticator and rotates session assurance; no code echo |
 | privileged login TOTP verification | pending login reference plus short-lived code | Creates session only after password and required TOTP succeed |
-| governed TOTP reset/removal | fresh authorized administrator action, target reference, reason, expected version | Invalidates old authenticator, applies session policy, emits safe events; no secret readback |
+| governed TOTP setup/reset/removal | authenticated authorized administrator action, target reference, reason, expected version | Setup/reset generate and protect a new ACTIVE authenticator and return its provisioning material once; reset/remove invalidate the old authenticator, apply session policy, and emit safe events; no existing-secret readback |
 | APT human-session routes | device-authenticated request plus credentials/session | Device-bound opaque session handled by desktop host |
 
 ## 8. Required user administration APIs

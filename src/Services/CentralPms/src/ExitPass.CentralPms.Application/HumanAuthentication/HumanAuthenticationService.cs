@@ -555,17 +555,10 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
             "FAILED", "PASSWORD_POLICY_FAILED", challengeReference, null, context, now, cancellationToken);
     }
 
-    public async Task ResetTotpAsync(Guid targetUserId, Guid actorUserId, string reasonCode, Guid correlationId, CancellationToken cancellationToken)
-    {
-        var now = _timeProvider.GetUtcNow();
-        await _repository.ResetTotpAuthenticatorAsync(targetUserId, actorUserId, reasonCode, now, cancellationToken);
-        var context = new HumanAuthenticationContext(correlationId, _options.CentralPmsServiceIdentityId, null, null, null, null);
-        await RecordSecurityAsync("TOTP_RESET", "ALLOWED", reasonCode, targetUserId, actorUserId, context, now, cancellationToken);
-    }
-
-    public async Task<bool> ChangeTotpAsync(
+    public async Task<AdminTotpProvisioningMaterial?> ProvisionTotpAsync(
         Guid targetUserId,
-        long expectedRowVersion,
+        string accountName,
+        long? expectedRowVersion,
         string action,
         Guid actorUserId,
         string reasonCode,
@@ -573,17 +566,49 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         CancellationToken cancellationToken)
     {
         var normalizedAction = action.Trim().ToUpperInvariant();
-        if (normalizedAction is not ("RESET" or "REMOVE"))
+        if (normalizedAction is not ("SETUP" or "RESET"))
         {
             throw new ArgumentException("The TOTP administration action is invalid.", nameof(action));
         }
+        if (!_totpProtector.IsConfigured)
+        {
+            throw new InvalidOperationException("TOTP protection is unavailable.");
+        }
 
         var now = _timeProvider.GetUtcNow();
-        var changed = await _repository.ChangeTotpAuthenticatorAsync(
-            targetUserId, expectedRowVersion, normalizedAction, actorUserId, reasonCode, correlationId,
-            _options.CentralPmsServiceIdentityId, now, cancellationToken);
-        return changed;
+        var authenticatorId = Guid.NewGuid();
+        var secret = _totp.GenerateSecret();
+        try
+        {
+            var protectedSecret = _totpProtector.Protect(targetUserId, authenticatorId, secret);
+            var replacement = new AdminTotpPersistenceMaterial(authenticatorId, protectedSecret,
+                _totpProtector.KeyReference, _totpProtector.KeyVersion, _totpProtector.EnvelopeFormatVersion);
+            var changed = await _repository.ReplaceTotpAuthenticatorAsync(
+                targetUserId, expectedRowVersion, normalizedAction, replacement, actorUserId, reasonCode,
+                correlationId, _options.CentralPmsServiceIdentityId, now, cancellationToken);
+            if (!changed)
+            {
+                return null;
+            }
+
+            return new AdminTotpProvisioningMaterial(
+                _totp.EncodeSecret(secret), _totp.BuildProvisioningUri(accountName, secret));
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(secret);
+        }
     }
+
+    public Task<bool> RemoveTotpAsync(
+        Guid targetUserId,
+        long expectedRowVersion,
+        Guid actorUserId,
+        string reasonCode,
+        Guid correlationId,
+        CancellationToken cancellationToken) =>
+        _repository.RemoveTotpAuthenticatorAsync(targetUserId, expectedRowVersion, actorUserId, reasonCode,
+            correlationId, _options.CentralPmsServiceIdentityId, _timeProvider.GetUtcNow(), cancellationToken);
 
     private async Task<HumanAuthenticationResult> IssueSessionAsync(HumanLoginRecord login, LocalCredentialRecord credential, string audience, HumanAuthenticationContext context, DateTimeOffset now, bool passwordChangeRequired, bool mfaRequired, bool mfaSatisfied, Guid? mfaAuthenticatorId, DateTimeOffset? mfaVerifiedAt, string outcome, CancellationToken cancellationToken)
     {

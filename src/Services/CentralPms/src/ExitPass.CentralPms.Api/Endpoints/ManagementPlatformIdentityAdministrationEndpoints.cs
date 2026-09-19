@@ -69,6 +69,12 @@ public static class ManagementPlatformIdentityAdministrationEndpoints
 
         group.MapGet("/users/{userReference:guid}/mfa-status", async (HttpRequest request, Guid userReference, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.GetMfaStatusAsync(actor, userReference, correlation, ct)));
+        group.MapPost("/users/{userReference:guid}/mfa-authenticators/setup", async (HttpRequest request, Guid userReference, ProvisionIdentityMfaRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
+            await ExecuteAsync(request, actors, (actor, correlation) => service.ProvisionMfaAsync(actor, new(userReference, "SETUP", body.ExpectedRowVersion, body.ReasonCode, correlation), ct)));
+        group.MapPost("/users/{userReference:guid}/mfa-authenticators/reset", async (HttpRequest request, Guid userReference, ProvisionIdentityMfaRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
+            await ExecuteAsync(request, actors, (actor, correlation) => service.ProvisionMfaAsync(actor, new(userReference, "RESET", body.ExpectedRowVersion, body.ReasonCode, correlation), ct)));
+        group.MapPost("/users/{userReference:guid}/mfa-authenticators/remove", async (HttpRequest request, Guid userReference, RemoveIdentityMfaRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
+            await ExecuteAsync(request, actors, (actor, correlation) => service.RemoveMfaAsync(actor, new(userReference, body.ExpectedRowVersion, body.ReasonCode, correlation), ct)));
 
         group.MapGet("/users/{userReference:guid}/audit-events", async (HttpRequest request, Guid userReference, int? limit, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.ListAuditEventsAsync(actor, userReference, limit ?? 100, correlation, ct)));
