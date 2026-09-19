@@ -50,6 +50,92 @@ describe("Operator Console authentication shell", () => {
     expect(screen.queryByLabelText(/totp|one-time/i)).not.toBeInTheDocument();
   });
 
+  it("changes the temporary password from the restricted session and returns to sign in", async () => {
+    const restricted = restrictedSession();
+    const client = authenticationClient({
+      currentError: new HumanAuthenticationError("unauthenticated", "Sign in to continue."),
+      loginSession: restricted
+    });
+    render(
+      <OperatorConsoleAuthenticationShell
+        authenticationClient={client}
+        createWorkspaceClient={() => createMockOperatorConsoleApiClient()}
+      />
+    );
+
+    await screen.findByRole("heading", { name: "Staff sign in" });
+    await userEvent.type(screen.getByLabelText("Username"), "JuanDC03");
+    await userEvent.type(screen.getByLabelText("Password"), "JuanDC03");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(await screen.findByRole("heading", { name: "Change temporary password" })).toBeInTheDocument();
+    expect(screen.queryByText("Ordinary Operator")).not.toBeInTheDocument();
+    const currentPassword = screen.getByLabelText("Current temporary password");
+    const authenticatorCode = screen.getByLabelText("Authenticator code");
+    const replacement = screen.getByLabelText("New password");
+    await userEvent.type(currentPassword, "JuanDC03");
+    await userEvent.type(authenticatorCode, "123456");
+    await userEvent.type(replacement, "seven77");
+    await userEvent.click(screen.getByRole("button", { name: "Change password" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Password must be at least 8 characters.");
+    expect(client.changePassword).not.toHaveBeenCalled();
+
+    await userEvent.clear(replacement);
+    await userEvent.type(replacement, "newpass8");
+    await userEvent.click(screen.getByRole("button", { name: "Change password" }));
+
+    await waitFor(() => expect(client.changePassword).toHaveBeenCalledWith({
+      currentPassword: "JuanDC03",
+      totpCode: "123456",
+      newPassword: "newpass8"
+    }));
+    expect(await screen.findByRole("heading", { name: "Staff sign in" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Password changed. Sign in with your new password.");
+    expect(screen.queryByLabelText("Current temporary password")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Authenticator code")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("New password")).not.toBeInTheDocument();
+    expect(client.clearRuntimeState).toHaveBeenCalled();
+  });
+
+  it("keeps the restricted form available after an invalid authenticator code", async () => {
+    const client = authenticationClient({
+      currentSession: restrictedSession(),
+      changePasswordError: new HumanAuthenticationError(
+        "totp-invalid",
+        "The authenticator code was not accepted."
+      )
+    });
+    render(<OperatorConsoleAuthenticationShell authenticationClient={client} />);
+
+    await screen.findByRole("heading", { name: "Change temporary password" });
+    await userEvent.type(screen.getByLabelText("Current temporary password"), "JuanDC03");
+    await userEvent.type(screen.getByLabelText("Authenticator code"), "000000");
+    await userEvent.type(screen.getByLabelText("New password"), "newpass8");
+    await userEvent.click(screen.getByRole("button", { name: "Change password" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The authenticator code was not accepted.");
+    expect(screen.getByLabelText("Authenticator code")).toHaveValue("");
+    expect(screen.getByRole("heading", { name: "Change temporary password" })).toBeInTheDocument();
+  });
+
+  it("shows the governed expiry action without weakening invalid-credential messaging", async () => {
+    const client = authenticationClient({
+      currentError: new HumanAuthenticationError("unauthenticated", "Sign in to continue."),
+      loginError: new HumanAuthenticationError(
+        "temporary-password-expired",
+        "Your temporary password has expired. Use the approved account recovery process or contact an administrator."
+      )
+    });
+    render(<OperatorConsoleAuthenticationShell authenticationClient={client} />);
+    await screen.findByRole("heading", { name: "Staff sign in" });
+    await userEvent.type(screen.getByLabelText("Username"), "JuanDC03");
+    await userEvent.type(screen.getByLabelText("Password"), "JuanDC03");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your temporary password has expired.");
+  });
+
   it("keeps invalid credentials anti-enumerating and handles unexpected MFA without adding an input", async () => {
     const client = authenticationClient({
       currentError: new HumanAuthenticationError("unauthenticated", "Sign in to continue."),
@@ -150,6 +236,7 @@ function authenticationClient(options: {
   currentError?: Error;
   loginSession?: OperatorConsoleHumanSession;
   loginError?: Error;
+  changePasswordError?: Error;
   logoutError?: Error;
 }): HumanAuthenticationClient {
   return {
@@ -160,6 +247,9 @@ function authenticationClient(options: {
     login: vi.fn(async () => {
       if (options.loginError) throw options.loginError;
       return options.loginSession ?? session();
+    }),
+    changePassword: vi.fn(async () => {
+      if (options.changePasswordError) throw options.changePasswordError;
     }),
     logout: vi.fn(async () => {
       if (options.logoutError) throw options.logoutError;
@@ -194,5 +284,19 @@ function session(): OperatorConsoleHumanSession {
     siteGroupReferences: ["14000000-0000-0000-0000-000000000001"],
     hasGlobalScope: false,
     correlationId: "15000000-0000-0000-0000-000000000001"
+  };
+}
+
+function restrictedSession(): OperatorConsoleHumanSession {
+  return {
+    ...session(),
+    username: "JuanDC03",
+    displayName: "Juan Dela Cruz",
+    assurance: "PASSWORD_CHANGE_REQUIRED",
+    passwordChangeRequired: true,
+    permissions: [],
+    siteReferences: [],
+    siteGroupReferences: [],
+    hasGlobalScope: false
   };
 }

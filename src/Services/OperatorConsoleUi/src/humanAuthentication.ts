@@ -3,8 +3,15 @@ export const operatorConsoleAudience = "OPERATOR_CONSOLE";
 export const humanAuthenticationRoutes = {
   login: "/v1/human-authentication/login",
   session: "/v1/human-authentication/session",
-  logout: "/v1/human-authentication/logout"
+  logout: "/v1/human-authentication/logout",
+  passwordChange: "/v1/human-authentication/password/change"
 } as const;
+
+export interface ChangePasswordCommand {
+  currentPassword: string;
+  totpCode: string;
+  newPassword: string;
+}
 
 export interface OperatorConsoleHumanSession {
   sessionReference: string;
@@ -35,6 +42,11 @@ export type AuthenticationErrorKind =
   | "session-expired"
   | "session-revoked"
   | "account-action-required"
+  | "temporary-password-expired"
+  | "current-password-invalid"
+  | "totp-required"
+  | "totp-invalid"
+  | "password-policy"
   | "unexpected-mfa"
   | "unavailable"
   | "malformed";
@@ -54,6 +66,7 @@ export class HumanAuthenticationError extends Error {
 export interface HumanAuthenticationClient {
   login(username: string, password: string): Promise<OperatorConsoleHumanSession>;
   getCurrentSession(): Promise<OperatorConsoleHumanSession>;
+  changePassword(command: ChangePasswordCommand): Promise<void>;
   logout(): Promise<void>;
   clearRuntimeState(): void;
   getCsrfToken(): string | null;
@@ -79,7 +92,11 @@ export function createHumanAuthenticationClient(
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   let csrfToken: string | null = null;
 
-  async function request(route: string, init: RequestInit): Promise<AuthenticationResponseDto> {
+  async function request(
+    route: string,
+    init: RequestInit,
+    operation: "authentication" | "password-change" = "authentication"
+  ): Promise<AuthenticationResponseDto> {
     let response: Response;
     try {
       response = await fetchImpl(route, {
@@ -106,7 +123,7 @@ export function createHumanAuthenticationClient(
 
     const dto = await parseAuthenticationResponse(response);
     if (!response.ok) {
-      throw mapAuthenticationFailure(response.status, dto);
+      throw mapAuthenticationFailure(response.status, dto, operation);
     }
     return dto;
   }
@@ -128,6 +145,28 @@ export function createHumanAuthenticationClient(
     async getCurrentSession() {
       const dto = await request(humanAuthenticationRoutes.session, { method: "GET" });
       return requireAuthenticatedSession(dto);
+    },
+
+    async changePassword(command) {
+      if (!csrfToken) {
+        throw new HumanAuthenticationError(
+          "malformed",
+          "The secure password-change request could not be prepared. Return to sign in and try again."
+        );
+      }
+
+      const dto = await request(humanAuthenticationRoutes.passwordChange, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken
+        },
+        body: JSON.stringify(command)
+      }, "password-change");
+      if (dto.outcome !== "PASSWORD_CHANGED" || dto.authenticated !== false || dto.session != null) {
+        throw malformedSession();
+      }
+      csrfToken = null;
     },
 
     async logout() {
@@ -238,7 +277,11 @@ function requireAuthenticatedSession(dto: AuthenticationResponseDto): OperatorCo
   };
 }
 
-function mapAuthenticationFailure(status: number, dto: AuthenticationResponseDto) {
+function mapAuthenticationFailure(
+  status: number,
+  dto: AuthenticationResponseDto,
+  operation: "authentication" | "password-change" = "authentication"
+) {
   const errorCode = isString(dto.errorCode) ? dto.errorCode.toUpperCase() : "";
   const retryable = dto.retryable === true;
   const supportReference = isString(dto.correlationId) ? dto.correlationId : undefined;
@@ -256,6 +299,46 @@ function mapAuthenticationFailure(status: number, dto: AuthenticationResponseDto
   }
   if (errorCode === "SESSION_REVOKED") {
     return new HumanAuthenticationError("session-revoked", "Your session ended. Sign in again.", false, supportReference);
+  }
+  if (errorCode === "TEMPORARY_PASSWORD_EXPIRED") {
+    return new HumanAuthenticationError(
+      "temporary-password-expired",
+      "Your temporary password has expired. Use the approved account recovery process or contact an administrator.",
+      false,
+      supportReference
+    );
+  }
+  if (operation === "password-change" && errorCode === "CURRENT_PASSWORD_INVALID") {
+    return new HumanAuthenticationError(
+      "current-password-invalid",
+      "The current temporary password was not accepted.",
+      false,
+      supportReference
+    );
+  }
+  if (operation === "password-change" && errorCode === "TOTP_REQUIRED") {
+    return new HumanAuthenticationError(
+      "totp-required",
+      "Enter the current authenticator code.",
+      false,
+      supportReference
+    );
+  }
+  if (operation === "password-change" && errorCode === "TOTP_INVALID") {
+    return new HumanAuthenticationError(
+      "totp-invalid",
+      "The authenticator code was not accepted.",
+      false,
+      supportReference
+    );
+  }
+  if (operation === "password-change" && errorCode === "PASSWORD_POLICY_FAILED") {
+    return new HumanAuthenticationError(
+      "password-policy",
+      "The password does not meet the password policy.",
+      false,
+      supportReference
+    );
   }
   if (errorCode === "TOTP_REQUIRED" || errorCode === "TOTP_INVALID") {
     return new HumanAuthenticationError(

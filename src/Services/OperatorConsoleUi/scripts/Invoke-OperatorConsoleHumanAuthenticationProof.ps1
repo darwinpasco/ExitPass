@@ -26,8 +26,8 @@ try {
         'localStorage\.(setItem|\w+\s*=)|sessionStorage\.(setItem|\w+\s*=)|indexedDB\.open'
     Assert-NoMatch "Production Operator Console source contains a browser bearer or refresh-token authority." `
         'Authorization\s*:|Bearer\s+|bearerToken|accessToken|authenticationRefreshToken'
-    Assert-NoMatch "Operator Console production UI contains a TOTP entry flow." `
-        'totpCode|oneTimeCode|provisioningUri|TOTP seed'
+    Assert-NoMatch "Operator Console production UI contains TOTP provisioning material." `
+        'provisioningUri|totpSharedSecret|TOTP seed'
     Assert-NoMatch "Operator Console production source revived a legacy payable-application route." `
         '/v1/ops/operator-console/statutory-discounts/.+/(apply|payable-basis)'
 

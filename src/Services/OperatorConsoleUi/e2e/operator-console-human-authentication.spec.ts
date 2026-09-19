@@ -51,6 +51,58 @@ test.describe("Operator Console I-020 human authentication", () => {
     await expectNoAuthenticationAuthorityInStorage(page);
   });
 
+  test("CHANGE_REQUIRED site operator completes TOTP password change and signs in with the permanent password", async ({ page }) => {
+    const requests: Request[] = [];
+    page.on("request", (request) => requests.push(request));
+    await page.goto(`${workspacePath}?auth=logged-out`);
+
+    await signIn(page, "JuanDC03", "JuanDC03");
+    await expect(page.getByRole("heading", { name: "Change temporary password" })).toBeVisible();
+    await expect(page.getByText("Your temporary password must be changed before Operator Console access is available.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Person with Disability" })).toHaveCount(0);
+
+    await page.getByLabel("Current temporary password").fill("JuanDC03");
+    await page.getByLabel("Authenticator code").fill("123456");
+    await page.getByLabel("New password").fill("newpass8");
+    await page.getByRole("button", { name: "Change password" }).click();
+
+    await expect(page.getByRole("heading", { name: "Staff sign in" })).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveText("Password changed. Sign in with your new password.");
+    await expect(page.getByLabel("Current temporary password")).toHaveCount(0);
+    await expect(page.getByLabel("Authenticator code")).toHaveCount(0);
+    await expect(page.getByLabel("New password")).toHaveCount(0);
+
+    const changeRequest = requests.find((request) => request.url().endsWith("/v1/human-authentication/password/change"));
+    expect(changeRequest?.headers()["x-csrf-token"]).toBe("operator-console-fixture-csrf");
+    expect(changeRequest?.postDataJSON()).toEqual({
+      currentPassword: "JuanDC03",
+      totpCode: "123456",
+      newPassword: "newpass8"
+    });
+    const temporaryLoginRequest = requests.find((request) =>
+      request.url().endsWith("/v1/human-authentication/login") && request.postDataJSON().password === "JuanDC03"
+    );
+    expect(temporaryLoginRequest?.postDataJSON()).toEqual({
+      username: "JuanDC03",
+      password: "JuanDC03",
+      audience: "OPERATOR_CONSOLE"
+    });
+
+    await signIn(page, "JuanDC03", "newpass8");
+    await expect(page.getByRole("heading", { name: "Person with Disability" })).toBeVisible();
+    await expect(page.getByLabel("Operator identity")).toContainText("Juan Dela Cruz");
+    await expectNoAuthenticationAuthorityInStorage(page);
+  });
+
+  test("site operator with an additional parking attendant role remains eligible", async ({ page }) => {
+    await page.goto(`${workspacePath}?auth=logged-out`);
+    await signIn(page, "multi.operator", "multi-password");
+
+    await expect(page.getByRole("heading", { name: "Person with Disability" })).toBeVisible();
+    await expect(page.getByLabel("Operator identity")).toContainText("Multi Role Operator");
+    await expect(page.getByLabel(/TOTP|one-time|verification code/i)).toHaveCount(0);
+  });
+
   test("invalid credentials and throttling remain anti-enumerating", async ({ page }) => {
     await page.goto("/operator-console?auth=logged-out");
     await signIn(page, "unknown.operator", "wrong-password");

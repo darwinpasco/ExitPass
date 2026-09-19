@@ -14,7 +14,7 @@ type ShellState =
   | { status: "unauthenticated"; message?: string; supportReference?: string }
   | { status: "authenticating" }
   | { status: "authenticated"; session: OperatorConsoleHumanSession }
-  | { status: "restricted"; message: string; supportReference?: string };
+  | { status: "restricted"; session: OperatorConsoleHumanSession };
 
 interface OperatorConsoleAuthenticationShellProps {
   authenticationClient?: HumanAuthenticationClient;
@@ -37,6 +37,11 @@ export function OperatorConsoleAuthenticationShell({
   const [state, setState] = useState<ShellState>({ status: "bootstrapping" });
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [currentTemporaryPassword, setCurrentTemporaryPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordChangePending, setPasswordChangePending] = useState(false);
+  const [passwordChangeError, setPasswordChangeError] = useState<string | undefined>();
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutMessage, setLogoutMessage] = useState<string | undefined>();
   const activeRef = useRef(true);
@@ -44,6 +49,11 @@ export function OperatorConsoleAuthenticationShell({
   const requireAuthentication = useCallback((message = "Your session ended. Sign in again.") => {
     authClient.clearRuntimeState();
     setPassword("");
+    setCurrentTemporaryPassword("");
+    setTotpCode("");
+    setNewPassword("");
+    setPasswordChangePending(false);
+    setPasswordChangeError(undefined);
     setLogoutPending(false);
     setLogoutMessage(undefined);
     setState({ status: "unauthenticated", message });
@@ -56,11 +66,7 @@ export function OperatorConsoleAuthenticationShell({
       .then((session) => {
         if (!activeRef.current) return;
         if (session.passwordChangeRequired) {
-          setState({
-            status: "restricted",
-            message: "Your password must be changed through the governed account workflow before Operator Console access is available.",
-            supportReference: session.correlationId
-          });
+          setState({ status: "restricted", session });
           return;
         }
         setState({ status: "authenticated", session });
@@ -106,11 +112,7 @@ export function OperatorConsoleAuthenticationShell({
       const session = await authClient.login(submittedUsername, password);
       setPassword("");
       if (session.passwordChangeRequired) {
-        setState({
-          status: "restricted",
-          message: "Your password must be changed through the governed account workflow before Operator Console access is available.",
-          supportReference: session.correlationId
-        });
+        setState({ status: "restricted", session });
         return;
       }
       setState({ status: "authenticated", session });
@@ -123,6 +125,44 @@ export function OperatorConsoleAuthenticationShell({
         message: mapped.message,
         supportReference: mapped.supportReference
       });
+    }
+  }
+
+  async function submitPasswordChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (state.status !== "restricted" || passwordChangePending) return;
+    if (newPassword.length < 8) {
+      setPasswordChangeError("Password must be at least 8 characters.");
+      return;
+    }
+    if (!currentTemporaryPassword || !totpCode.trim()) return;
+
+    setPasswordChangePending(true);
+    setPasswordChangeError(undefined);
+    try {
+      await authClient.changePassword({
+        currentPassword: currentTemporaryPassword,
+        totpCode: totpCode.trim(),
+        newPassword
+      });
+      authClient.clearRuntimeState();
+      setPassword("");
+      setCurrentTemporaryPassword("");
+      setTotpCode("");
+      setNewPassword("");
+      setPasswordChangePending(false);
+      setState({
+        status: "unauthenticated",
+        message: "Password changed. Sign in with your new password."
+      });
+    } catch (error) {
+      const mapped = authenticationMessage(error);
+      setTotpCode("");
+      setPasswordChangePending(false);
+      setPasswordChangeError(mapped.message);
+      if (mapped.sessionInvalid) {
+        requireAuthentication(mapped.message);
+      }
     }
   }
 
@@ -192,10 +232,56 @@ export function OperatorConsoleAuthenticationShell({
       <main className="authenticationShell">
         <section className="authenticationPanel" aria-labelledby="operator-console-account-action-title">
           <p className="eyebrow">Operator Console</p>
-          <h1 id="operator-console-account-action-title">Account action required</h1>
-          <p className="authenticationError" role="alert">{state.message}</p>
-          {state.supportReference && <p className="supportReference">Support reference: {state.supportReference}</p>}
-          <button type="button" onClick={() => requireAuthentication()}>Return to sign in</button>
+          <h1 id="operator-console-account-action-title">Change temporary password</h1>
+          <p>Your temporary password must be changed before Operator Console access is available.</p>
+          {passwordChangeError && <p className="authenticationError" role="alert">{passwordChangeError}</p>}
+          <form className="authenticationForm" onSubmit={submitPasswordChange} aria-busy={passwordChangePending}>
+            <label>
+              Current temporary password
+              <input
+                type="password"
+                autoComplete="current-password"
+                autoFocus
+                value={currentTemporaryPassword}
+                onChange={(event) => setCurrentTemporaryPassword(event.target.value)}
+                disabled={passwordChangePending}
+                required
+              />
+            </label>
+            <label>
+              Authenticator code
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="one-time-code"
+                value={totpCode}
+                onChange={(event) => setTotpCode(event.target.value)}
+                disabled={passwordChangePending}
+                required
+              />
+            </label>
+            <label>
+              New password
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+                disabled={passwordChangePending}
+                required
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={passwordChangePending || !currentTemporaryPassword || !totpCode.trim() || !newPassword}
+            >
+              {passwordChangePending ? "Changing password" : "Change password"}
+            </button>
+          </form>
+          <button type="button" disabled={passwordChangePending} onClick={() => requireAuthentication()}>
+            Back to sign in
+          </button>
         </section>
       </main>
     );

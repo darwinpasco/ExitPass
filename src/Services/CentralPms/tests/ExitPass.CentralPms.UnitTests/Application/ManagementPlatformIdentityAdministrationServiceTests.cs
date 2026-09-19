@@ -12,7 +12,7 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
     private static readonly IdentityAdministrationActor Actor = new(Guid.NewGuid(), Guid.NewGuid());
 
     [Fact]
-    public async Task CreateUser_GeneratesTemporaryPasswordAndTotpForEveryHuman()
+    public async Task CreateUser_UsesExactStoredUsernameAsTemporaryPasswordAndGeneratesTotp()
     {
         var issuedAt = new DateTimeOffset(2026, 9, 17, 12, 0, 0, TimeSpan.Zero);
         var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
@@ -24,7 +24,7 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
             new PasswordHashMaterial(new byte[32], new byte[16], "ARGON2ID", 19, 3, 65536, 1));
         totp.GenerateSecret().Returns(new byte[20]);
         totp.EncodeSecret(Arg.Any<byte[]>()).Returns("TOTP-SHARED-SECRET");
-        totp.BuildProvisioningUri("operator01", Arg.Any<byte[]>()).Returns("otpauth://totp/ExitPass:operator01");
+        totp.BuildProvisioningUri("JuanDC03", Arg.Any<byte[]>()).Returns("otpauth://totp/ExitPass:JuanDC03");
         protector.IsConfigured.Returns(true);
         protector.KeyReference.Returns("test-key");
         protector.KeyVersion.Returns("1");
@@ -35,7 +35,7 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
             .Returns(call =>
             {
                 var persisted = call.ArgAt<CreateIdentityUserCommand>(1);
-                var user = new IdentityUserSummary(persisted.Bootstrap!.UserReference, "operator01", "Operator One",
+                var user = new IdentityUserSummary(persisted.Bootstrap!.UserReference, persisted.Username, "Operator One",
                     null, null, "SITE_OPERATOR", "ACTIVE", DateTimeOffset.UtcNow, null, null, 1);
                 return IdentityAdministrationResult<IdentityUserSummary>.Succeeded(user, command.CorrelationId);
             });
@@ -46,14 +46,40 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
 
         result.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
         result.Value!.Invitation.InvitationState.Should().Be("PASSWORD_CHANGE_REQUIRED");
-        result.Value.OneTimeBootstrap!.TemporaryPassword.Should().StartWith("Ep1!");
+        result.Value.User.Username.Should().Be("JuanDC03");
+        result.Value.OneTimeBootstrap!.TemporaryPassword.Should().Be(result.Value.User.Username);
         result.Value.OneTimeBootstrap.TotpSharedSecret.Should().Be("TOTP-SHARED-SECRET");
         result.Value.OneTimeBootstrap.TemporaryPasswordExpiresAt.Should().Be(issuedAt.AddHours(72));
         result.Value.OneTimeBootstrap.PasswordChangeRequired.Should().BeTrue();
+        await passwords.Received(1).HashAsync("JuanDC03", Arg.Any<CancellationToken>());
         await repository.Received(1).CreateUserAsync(Actor,
             Arg.Is<CreateIdentityUserCommand>(value => value.Bootstrap != null &&
                 value.Bootstrap.TemporaryPasswordExpiresAt == issuedAt.AddHours(72)),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task CreateUser_RejectsSevenCharacterUsernameBeforeHashingOrPersistence()
+    {
+        var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
+        var passwords = Substitute.For<IHumanPasswordHasher>();
+        var service = new ManagementPlatformIdentityAdministrationService(
+            repository,
+            Substitute.For<IHumanAuthenticationAdministrationGateway>(),
+            Options.Create(new HumanAuthenticationOptions()),
+            TimeProvider.System,
+            passwords,
+            Substitute.For<ITotpProvider>(),
+            Substitute.For<ITotpSecretProtector>());
+
+        var result = await service.CreateInvitedUserAsync(
+            Actor, CreateInvitation(null, "Seven77"), CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Invalid);
+        result.Classification.Should().Be("USERNAME_TEMPORARY_PASSWORD_TOO_SHORT");
+        result.Message.Should().Be("Username must be at least 8 characters because it is used as the temporary password.");
+        await passwords.DidNotReceiveWithAnyArgs().HashAsync(default!, default);
+        await repository.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default);
     }
 
     [Fact]
@@ -293,8 +319,8 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
         await gateway.DidNotReceiveWithAnyArgs().RemoveMfaAsync(default!, default!, default);
     }
 
-    private static CreateIdentityUserCommand CreateInvitation(string? email) =>
-        new("operator01", "Operator One", email, null, "SITE_OPERATOR", Guid.NewGuid(), "SITE",
+    private static CreateIdentityUserCommand CreateInvitation(string? email, string username = "JuanDC03") =>
+        new(username, "Operator One", email, null, "SITE_OPERATOR", Guid.NewGuid(), "SITE",
             Guid.NewGuid(), null, DateTimeOffset.UtcNow, null, "ONBOARDING", "invite-1", Guid.NewGuid());
 
     private static IdentityRoleDefinition RoleDefinition(string code) =>

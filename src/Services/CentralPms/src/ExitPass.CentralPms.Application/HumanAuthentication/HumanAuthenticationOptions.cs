@@ -3,11 +3,12 @@ namespace ExitPass.CentralPms.Application.HumanAuthentication;
 public sealed record HumanAuthenticationOptions
 {
     public const string SectionName = "HumanAuthentication";
+    public const int RequiredPasswordMinimumLength = 8;
     public const int RequiredTemporaryPasswordHours = 72;
 
     public bool Enabled { get; init; } = true;
     public Guid CentralPmsServiceIdentityId { get; init; } = Guid.Parse("8063c159-dae6-57af-9f1f-e0a07d519fb2");
-    public int PasswordMinimumLength { get; init; } = 8;
+    public int PasswordMinimumLength { get; init; } = RequiredPasswordMinimumLength;
     public int PasswordMaximumUtf8Bytes { get; init; } = 1024;
     public int Argon2Iterations { get; init; } = 3;
     public int Argon2MemoryKiB { get; init; } = 65536;

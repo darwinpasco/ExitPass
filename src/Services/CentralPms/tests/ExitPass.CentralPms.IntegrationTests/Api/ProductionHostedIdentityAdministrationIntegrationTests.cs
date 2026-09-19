@@ -241,7 +241,7 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
     }
 
     [Fact]
-    public async Task ProductionHost_UserTypeDoesNotDetermineRoleOrScope()
+    public async Task ProductionHost_CreateUserUsesExactUsernameAsHashedTemporaryPasswordAndRejectsShortUsername()
     {
         var password = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
         var seed = await SeedOrdinaryAdministratorAsync(password);
@@ -262,7 +262,7 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         var loginResponse = await client.SendAsync(login);
         loginResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var csrf = loginResponse.Headers.GetValues("X-CSRF-Token").Single();
-        var username = $"incompatible.{Guid.NewGuid():N}";
+        const string username = "JuanDC03";
 
         var response = await SendMutationAsync(client, HttpMethod.Post,
             "/v1/management-platform/identity/users",
@@ -276,9 +276,10 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
         var created = await response.Content.ReadFromJsonAsync<CreateIdentityUserResult>();
         created!.User.Status.Should().Be("ACTIVE");
+        created.User.Username.Should().Be(username);
         created.OneTimeBootstrap.Should().NotBeNull();
         created.OneTimeBootstrap!.PasswordChangeRequired.Should().BeTrue();
-        created.OneTimeBootstrap.TemporaryPassword.Should().NotBeNullOrWhiteSpace();
+        created.OneTimeBootstrap.TemporaryPassword.Should().Be(created.User.Username);
         created.OneTimeBootstrap.TotpSharedSecret.Should().NotBeNullOrWhiteSpace();
         created.OneTimeBootstrap.TotpProvisioningUri.Should().Contain(created.OneTimeBootstrap.TotpSharedSecret);
         var storedExpiry = await ReadTemporaryPasswordExpiryAsync(created.User.UserReference);
@@ -287,9 +288,30 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         var userRead = await client.GetAsync($"/v1/management-platform/identity/users/{created.User.UserReference:D}");
         userRead.StatusCode.Should().Be(HttpStatusCode.OK);
         var userBody = await userRead.Content.ReadAsStringAsync();
-        userBody.Should().NotContain(created.OneTimeBootstrap.TemporaryPassword);
+        userBody.Should().NotContain("temporaryPassword")
+            .And.NotContain("passwordVerifier")
+            .And.NotContain("verifierSalt");
         userBody.Should().NotContain(created.OneTimeBootstrap.TotpSharedSecret);
         (await ReadUserCountByUsernameAsync(username)).Should().Be(1);
+
+        var credential = await ReadLocalCredentialProofAsync(created.User.UserReference);
+        credential.Status.Should().Be("CHANGE_REQUIRED");
+        credential.PasswordVerifier.Should().NotEqual(System.Text.Encoding.UTF8.GetBytes(username));
+
+        const string shortUsername = "Seven77";
+        var rejected = await SendMutationAsync(client, HttpMethod.Post,
+            "/v1/management-platform/identity/users",
+            new CreateIdentityUserRequest(
+                shortUsername, "Short Username", null, null,
+                seed.DelegableRoleId, "SITE", seed.SiteId, null,
+                DateTimeOffset.UtcNow, null, "I021_SHORT_USERNAME", $"short-{Guid.NewGuid():N}",
+                "SITE_OPERATOR"),
+            csrf);
+        rejected.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var rejectedError = await rejected.Content.ReadFromJsonAsync<IdentityAdministrationErrorResponse>();
+        rejectedError!.Classification.Should().Be("USERNAME_TEMPORARY_PASSWORD_TOO_SHORT");
+        rejectedError.Message.Should().Be("Username must be at least 8 characters because it is used as the temporary password.");
+        (await ReadUserCountByUsernameAsync(shortUsername)).Should().Be(0);
     }
 
     private CustomWebApplicationFactory CreateProductionFactory() =>
@@ -508,6 +530,19 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
             DateTime timestamp => new DateTimeOffset(DateTime.SpecifyKind(timestamp, DateTimeKind.Utc)),
             _ => throw new InvalidOperationException("Temporary-password expiry was not persisted.")
         };
+    }
+
+    private async Task<(string Status, byte[] PasswordVerifier)> ReadLocalCredentialProofAsync(Guid userId)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT credential_status::text,password_verifier FROM identity.local_credentials WHERE user_id=@user_id;",
+            connection);
+        command.Parameters.AddWithValue("user_id", userId);
+        await using var reader = await command.ExecuteReaderAsync();
+        (await reader.ReadAsync()).Should().BeTrue();
+        return (reader.GetString(0), reader.GetFieldValue<byte[]>(1));
     }
 
     private sealed record HostedAdminSeed(Guid UserId, string Username, string DisplayName, Guid DelegableRoleId, Guid SiteId);

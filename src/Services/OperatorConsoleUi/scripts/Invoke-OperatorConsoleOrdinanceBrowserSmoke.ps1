@@ -1,7 +1,9 @@
 param(
     [switch] $Headed,
     [switch] $ServerOnly,
-    [switch] $Ui
+    [switch] $Ui,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]] $PlaywrightArguments = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -96,6 +98,7 @@ try {
     elseif ($Headed) {
         $arguments += "--headed"
     }
+    $arguments += $PlaywrightArguments
 
     & npx.cmd @arguments
     if ($LASTEXITCODE -ne 0) {
