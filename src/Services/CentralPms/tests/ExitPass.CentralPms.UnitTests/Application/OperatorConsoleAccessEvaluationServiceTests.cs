@@ -78,6 +78,62 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
         result.PersistenceContext.RequestedAction.Should().Be(OperatorConsoleActionCodes.ViewFiscalIssuanceStatus);
     }
 
+    [Theory]
+    [InlineData(OperatorConsoleActionCodes.SessionLookup)]
+    [InlineData(OperatorConsoleActionCodes.ViewStatutoryDiscountDraft)]
+    [InlineData(OperatorConsoleActionCodes.ViewEvidence)]
+    [InlineData(OperatorConsoleActionCodes.ViewPolicyResolution)]
+    [InlineData(OperatorConsoleActionCodes.ViewFiscalIssuanceStatus)]
+    public async Task EvaluateAsync_WhenDirectSiteReadHasNoDeviceOrShift_AllowsRead(string actionCode)
+    {
+        var sut = CreateSut(ReadOnlyContext);
+
+        var result = await sut.EvaluateAsync(Command(actionCode: actionCode), CancellationToken.None);
+
+        result.Allowed.Should().BeTrue();
+        result.SiteContext.Assigned.Should().BeTrue();
+        result.DeviceTrust.Trusted.Should().BeFalse();
+        result.ShiftContext.Active.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenDirectSiteReadHasNoDirectSiteGrant_Denies()
+    {
+        var sut = CreateSut(request => ReadOnlyContext(request) with { HasEffectiveDirectSiteScope = false });
+
+        var result = await sut.EvaluateAsync(Command(), CancellationToken.None);
+
+        result.Allowed.Should().BeFalse();
+        result.DenialReasons.Should().Contain("DIRECT_SITE_SCOPE_REQUIRED");
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenDirectSiteReadTargetsAnotherSite_Denies()
+    {
+        var sut = CreateSut(ReadOnlyContext);
+
+        var result = await sut.EvaluateAsync(
+            Command() with { TargetSiteId = Guid.Parse("44000000-0000-0000-0000-000000000099") },
+            CancellationToken.None);
+
+        result.Allowed.Should().BeFalse();
+        result.DenialReasons.Should().Contain("SITE_SCOPE_MISMATCH");
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenControlledWriteHasNoDeviceOrShift_RemainsDenied()
+    {
+        var sut = CreateSut(ReadOnlyContext);
+
+        var result = await sut.EvaluateAsync(
+            Command(actionCode: OperatorConsoleActionCodes.CreateStatutoryDiscountDraft),
+            CancellationToken.None);
+
+        result.Allowed.Should().BeFalse();
+        result.DenialReasons.Should().Contain("DEVICE_BINDING_NOT_FOUND");
+        result.DenialReasons.Should().Contain("NO_ACTIVE_SHIFT");
+    }
+
     /// <summary>
     /// Verifies supported rule failures produce stable denial reason codes.
     /// </summary>
@@ -105,14 +161,15 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
     {
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)MissingHrMapping, Command(), "HR_IDENTITY_MAPPING_NOT_FOUND"];
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)InactiveHrMapping, Command(), "HR_IDENTITY_MAPPING_INACTIVE"];
-        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)MissingDeviceBinding, Command(), "DEVICE_BINDING_NOT_FOUND"];
-        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)InactiveDeviceBinding, Command(), "DEVICE_BINDING_INACTIVE"];
-        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)UntrustedDevice, Command(), "DEVICE_NOT_TRUSTED"];
-        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)MissingDeviceAssignment, Command(), "DEVICE_SITE_ASSIGNMENT_NOT_FOUND"];
-        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)InvalidDeviceAssignment, Command(), "DEVICE_SITE_ASSIGNMENT_INVALID"];
-        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)MissingShift, Command(), "NO_ACTIVE_SHIFT"];
-        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)RevokedShift, Command(), "SHIFT_REVOKED"];
-        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)ActiveConflictingTakeover, Command(), "SHIFT_TAKEOVER_ACTIVE"];
+        var controlledWrite = Command(actionCode: OperatorConsoleActionCodes.CreateStatutoryDiscountDraft);
+        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)MissingDeviceBinding, controlledWrite, "DEVICE_BINDING_NOT_FOUND"];
+        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)InactiveDeviceBinding, controlledWrite, "DEVICE_BINDING_INACTIVE"];
+        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)UntrustedDevice, controlledWrite, "DEVICE_NOT_TRUSTED"];
+        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)MissingDeviceAssignment, controlledWrite, "DEVICE_SITE_ASSIGNMENT_NOT_FOUND"];
+        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)InvalidDeviceAssignment, controlledWrite, "DEVICE_SITE_ASSIGNMENT_INVALID"];
+        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)MissingShift, controlledWrite, "NO_ACTIVE_SHIFT"];
+        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)RevokedShift, controlledWrite, "SHIFT_REVOKED"];
+        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)ActiveConflictingTakeover, controlledWrite, "SHIFT_TAKEOVER_ACTIVE"];
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)ValidContext, Command(workflowCode: "UNKNOWN_WORKFLOW"), "WORKFLOW_NOT_SUPPORTED"];
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)ValidContext, Command(actionCode: "UNKNOWN_ACTION"), "ACTION_NOT_SUPPORTED"];
     }
@@ -199,7 +256,17 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
             LatestShiftVersion: null,
             LatestShiftRevocation: null,
             ActiveShiftTakeover: null,
-            StatutoryEntitlementFingerprint: null);
+            StatutoryEntitlementFingerprint: null,
+            HasEffectiveDirectSiteScope: true);
+
+    private static OperatorConsoleAccessEvaluationReadContext ReadOnlyContext(OperatorConsoleAccessEvaluationReadRequest request) =>
+        ValidContext(request) with
+        {
+            DeviceBinding = null,
+            DeviceAssignment = null,
+            ActiveShift = null,
+            HasEffectiveDirectSiteScope = true
+        };
 
     private static OperatorConsoleAccessEvaluationReadContext MissingHrMapping(OperatorConsoleAccessEvaluationReadRequest request) =>
         ValidContext(request) with { HrIdentityMapping = null };

@@ -76,7 +76,9 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
                 validation.statutory_discount_validation_id AS validation_id,
                 validation.parking_session_id AS validation_parking_session_id,
                 validation.tariff_snapshot_id AS validation_tariff_id,
-                validation.applied_policy_reference_id AS validation_policy_id,
+                COALESCE(
+                    validation.statutory_discount_policy_version_id,
+                    validation.applied_policy_reference_id) AS validation_policy_id,
                 validation.statutory_discount_policy_version_id AS validation_policy_version_id,
                 validation.validation_status::text AS validation_status,
                 validation.entitlement_type::text AS validation_entitlement_type,

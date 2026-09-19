@@ -42,6 +42,15 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
         "BROWSER_KEY_AND_MTLS"
     };
 
+    private static readonly HashSet<string> SiteScopedReadOnlyActions = new(StringComparer.Ordinal)
+    {
+        OperatorConsoleActionCodes.SessionLookup,
+        OperatorConsoleActionCodes.ViewStatutoryDiscountDraft,
+        OperatorConsoleActionCodes.ViewEvidence,
+        OperatorConsoleActionCodes.ViewPolicyResolution,
+        OperatorConsoleActionCodes.ViewFiscalIssuanceStatus
+    };
+
     private readonly IOperatorConsoleAccessEvaluationReadRepository _repository;
     private readonly ISystemClock _clock;
 
@@ -102,10 +111,18 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
         }
 
         EvaluateHrIdentityMapping(context, evaluatedAt, reasons);
-        EvaluateDeviceBinding(context, evaluatedAt, reasons);
-        EvaluateDeviceAssignment(context, evaluatedAt, reasons);
-        EvaluateShift(context, command.UserId, evaluatedAt, reasons);
-        EvaluateShiftTakeover(context, command.UserId, reasons);
+        var siteScopedReadOnly = SiteScopedReadOnlyActions.Contains(actionCode);
+        if (siteScopedReadOnly)
+        {
+            EvaluateDirectSiteScope(command, context, reasons);
+        }
+        else
+        {
+            EvaluateDeviceBinding(context, evaluatedAt, reasons);
+            EvaluateDeviceAssignment(context, evaluatedAt, reasons);
+            EvaluateShift(context, command.UserId, evaluatedAt, reasons);
+            EvaluateShiftTakeover(context, command.UserId, reasons);
+        }
 
         var allowed = reasons.Count == 0;
         return new OperatorConsoleAccessEvaluationResult(
@@ -116,11 +133,29 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
             EffectiveRole: allowed ? "OPERATOR" : null,
             DeviceTrust: ToDeviceTrust(context),
             ShiftContext: ToShiftContext(context, command.UserId, evaluatedAt),
-            SiteContext: ToSiteContext(context),
+            SiteContext: ToSiteContext(context, siteScopedReadOnly),
             EvaluatedAt: evaluatedAt,
             Persisted: false,
             CorrelationId: command.CorrelationId,
             PersistenceContext: ToPersistenceContext(command, context, workflowCode, actionCode));
+    }
+
+    private static void EvaluateDirectSiteScope(
+        OperatorConsoleAccessEvaluationCommand command,
+        OperatorConsoleAccessEvaluationReadContext context,
+        List<string> reasons)
+    {
+        if (!command.SiteId.HasValue ||
+            command.SiteId.Value == Guid.Empty ||
+            !context.HasEffectiveDirectSiteScope)
+        {
+            AddReason(reasons, "DIRECT_SITE_SCOPE_REQUIRED");
+        }
+
+        if (command.TargetSiteId.HasValue && command.TargetSiteId != command.SiteId)
+        {
+            AddReason(reasons, "SITE_SCOPE_MISMATCH");
+        }
     }
 
     private static void EvaluateHrIdentityMapping(
@@ -296,15 +331,19 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
                 (!shift.ActiveTo.HasValue || shift.ActiveTo.Value > evaluatedAt));
     }
 
-    private static OperatorConsoleSiteContextResult ToSiteContext(OperatorConsoleAccessEvaluationReadContext context)
+    private static OperatorConsoleSiteContextResult ToSiteContext(
+        OperatorConsoleAccessEvaluationReadContext context,
+        bool siteScopedReadOnly)
     {
         var assignment = context.DeviceAssignment;
         return new OperatorConsoleSiteContextResult(
             assignment?.SiteId ?? context.Request.SiteId,
             assignment?.SiteGroupId ?? context.Request.SiteGroupId,
-            assignment is not null &&
-                IsActive(assignment.AssignmentStatusCode) &&
-                !assignment.EndedAt.HasValue);
+            siteScopedReadOnly
+                ? context.HasEffectiveDirectSiteScope
+                : assignment is not null &&
+                    IsActive(assignment.AssignmentStatusCode) &&
+                    !assignment.EndedAt.HasValue);
     }
 
     private static OperatorConsoleAccessEvaluationPersistenceContext ToPersistenceContext(

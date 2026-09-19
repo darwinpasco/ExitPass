@@ -24,7 +24,7 @@ namespace ExitPass.CentralPms.Application.Payments;
 /// - 14.4 Structured Logging
 ///
 /// Invariants Enforced:
-/// - ExitAuthorization may only be issued after confirmed payment finality
+/// - ExitAuthorization requires explicit PAYMENT_FINALITY or ZERO_PAYABLE_STATUTORY_FINALITY authority
 /// - Authorization issuance remains DB-backed and deterministic
 /// - Issuance requests are fully traceable through correlation metadata
 /// </summary>
@@ -98,6 +98,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         activity?.SetTag("operation", "issue_exit_authorization");
         activity?.SetTag("parking_session_id", command.ParkingSessionId);
         activity?.SetTag("payment_attempt_id", command.PaymentAttemptId);
+        activity?.SetTag("completion_basis", command.CompletionBasis);
         activity?.SetTag("requested_by_user_id", command.RequestedByUserId);
         activity?.SetTag("correlation_id", command.CorrelationId);
 
@@ -123,7 +124,22 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
                 new IssueExitAuthorizationDbRequest
                 {
                     ParkingSessionId = command.ParkingSessionId,
+                    TariffSnapshotId = command.CompletionAuthority?.TariffSnapshotId,
+                    CompletionBasis = command.CompletionBasis,
+                    CompletionAuthorityReferenceId =
+                        command.CompletionAuthority?.DurableSourceReferenceId,
                     PaymentAttemptId = command.PaymentAttemptId,
+                    PaymentConfirmationId =
+                        command.CompletionAuthority?.PaymentConfirmationId,
+                    StatutoryDiscountDecisionCommandId =
+                        command.CompletionAuthority?.StatutoryDiscountDecisionCommandId,
+                    StatutoryDiscountPayableBasisApplicationCommandId =
+                        command.CompletionAuthority?.StatutoryDiscountPayableBasisApplicationCommandId,
+                    StatutoryDiscountValidationId =
+                        command.CompletionAuthority?.StatutoryDiscountValidationId,
+                    AppliedPolicyReferenceId = null,
+                    StatutoryDiscountPolicyVersionId =
+                        command.CompletionAuthority?.StatutoryDiscountPolicyVersionId,
                     RequestedByUserId = command.RequestedByUserId,
                     CorrelationId = command.CorrelationId,
                     RequestedAt = _systemClock.UtcNow
@@ -153,12 +169,15 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             return new IssueExitAuthorizationResult(
                 ExitAuthorizationId: dbResult.ExitAuthorizationId,
                 ParkingSessionId: dbResult.ParkingSessionId,
+                TariffSnapshotId: dbResult.TariffSnapshotId,
+                CompletionBasis: dbResult.CompletionBasis,
+                CompletionAuthorityReferenceId: dbResult.CompletionAuthorityReferenceId,
                 PaymentAttemptId: dbResult.PaymentAttemptId,
+                PaymentConfirmationId: dbResult.PaymentConfirmationId,
                 AuthorizationToken: dbResult.AuthorizationToken,
                 AuthorizationStatus: dbResult.AuthorizationStatus,
                 IssuedAt: dbResult.IssuedAt,
-                ExpirationTimestamp: dbResult.ExpirationTimestamp,
-                CompletionBasis: CompletionBasisCodes.PaymentFinality);
+                ExpirationTimestamp: dbResult.ExpirationTimestamp);
         }
         catch (ArgumentException ex)
         {
@@ -212,6 +231,26 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         Activity? activity,
         CancellationToken cancellationToken)
     {
+        if (string.Equals(
+                command.CompletionBasis,
+                CompletionBasisCodes.ZeroPayableStatutoryFinality,
+                StringComparison.Ordinal))
+        {
+            if (!command.FiscalPrerequisiteSatisfied)
+            {
+                throw new ExitAuthorizationIssuanceConflictException(
+                    ExitAuthorizationEligibilityBlockedReasons.ZeroPayableFiscalPrerequisiteUnresolved,
+                    "Zero-payable ExitAuthorization requires recorded fiscal completion.");
+            }
+
+            activity?.SetTag("completion_authority.established", true);
+            activity?.SetTag("completion_authority.basis", command.CompletionBasis);
+            activity?.SetTag(
+                "completion_authority.source_reference_id",
+                command.CompletionAuthority?.DurableSourceReferenceId);
+            return;
+        }
+
         FiscalGatingShadowEvaluation evaluation;
 
         try
@@ -236,7 +275,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
                 evaluation = await _fiscalGatingShadowEvaluator.EvaluateAsync(
                     new ExitAuthorizationFiscalGatingShadowContext(
                         ParkingSessionId: command.ParkingSessionId,
-                        PaymentAttemptId: command.PaymentAttemptId,
+                        PaymentAttemptId: command.PaymentAttemptId!.Value,
                         CorrelationId: command.CorrelationId,
                         IsPaymentFinalityVerified: true),
                     cancellationToken);
@@ -306,12 +345,12 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         {
             return await _paymentFinalityReadRepository.IsPaymentFinalityVerifiedAsync(
                 command.ParkingSessionId,
-                command.PaymentAttemptId,
+                command.PaymentAttemptId!.Value,
                 cancellationToken);
         }
 
         var candidate = await _completionAuthorityReader.ReadAsync(
-            command.PaymentAttemptId,
+            command.PaymentAttemptId!.Value,
             cancellationToken);
         if (candidate is null)
         {
@@ -321,7 +360,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         var resolution = CompletionAuthorityResolver.ResolvePaymentFinality(
             candidate,
             command.ParkingSessionId,
-            command.PaymentAttemptId);
+            command.PaymentAttemptId.Value);
 
         activity?.SetTag("completion_authority.established", resolution.IsEstablished);
         activity?.SetTag(
@@ -347,9 +386,44 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             throw new ArgumentException("ParkingSessionId is required.", nameof(command));
         }
 
-        if (command.PaymentAttemptId == Guid.Empty)
+        if (!string.Equals(command.CompletionBasis, CompletionBasisCodes.PaymentFinality, StringComparison.Ordinal) &&
+            !string.Equals(command.CompletionBasis, CompletionBasisCodes.ZeroPayableStatutoryFinality, StringComparison.Ordinal))
         {
-            throw new ArgumentException("PaymentAttemptId is required.", nameof(command));
+            throw new ArgumentException("A supported CompletionBasis is required.", nameof(command));
+        }
+
+        if (string.Equals(command.CompletionBasis, CompletionBasisCodes.PaymentFinality, StringComparison.Ordinal) &&
+            (!command.PaymentAttemptId.HasValue || command.PaymentAttemptId == Guid.Empty))
+        {
+            throw new ArgumentException("PAYMENT_FINALITY requires PaymentAttemptId.", nameof(command));
+        }
+
+        if (string.Equals(command.CompletionBasis, CompletionBasisCodes.ZeroPayableStatutoryFinality, StringComparison.Ordinal))
+        {
+            var authority = command.CompletionAuthority ??
+                throw new ArgumentException(
+                    "ZERO_PAYABLE_STATUTORY_FINALITY requires CompletionAuthority.",
+                    nameof(command));
+
+            if (command.PaymentAttemptId.HasValue ||
+                authority.PaymentAttemptId.HasValue ||
+                authority.PaymentConfirmationId.HasValue ||
+                authority.ParkingSessionId != command.ParkingSessionId ||
+                authority.FinalPayableAmountMinorUnits != 0 ||
+                !string.Equals(
+                    authority.CompletionBasis,
+                    CompletionBasisCodes.ZeroPayableStatutoryFinality,
+                    StringComparison.Ordinal) ||
+                authority.DurableSourceReferenceId == Guid.Empty ||
+                !authority.StatutoryDiscountDecisionCommandId.HasValue ||
+                !authority.StatutoryDiscountPayableBasisApplicationCommandId.HasValue ||
+                !authority.StatutoryDiscountValidationId.HasValue ||
+                !authority.StatutoryDiscountPolicyVersionId.HasValue)
+            {
+                throw new ArgumentException(
+                    "ZERO_PAYABLE_STATUTORY_FINALITY completion authority is incomplete or inconsistent.",
+                    nameof(command));
+            }
         }
 
         if (command.RequestedByUserId == Guid.Empty)
@@ -378,7 +452,11 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             {
                 ExitAuthorizationId = dbResult.ExitAuthorizationId,
                 ParkingSessionId = dbResult.ParkingSessionId,
+                TariffSnapshotId = dbResult.TariffSnapshotId,
+                CompletionBasis = dbResult.CompletionBasis,
+                CompletionAuthorityReferenceId = dbResult.CompletionAuthorityReferenceId,
                 PaymentAttemptId = dbResult.PaymentAttemptId,
+                PaymentConfirmationId = dbResult.PaymentConfirmationId,
                 AuthorizationStatus = dbResult.AuthorizationStatus,
                 IssuedAtUtc = dbResult.IssuedAt,
                 ExpirationTimestampUtc = dbResult.ExpirationTimestamp
@@ -403,7 +481,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             Payload = new ExitAuthorizationFiscalGatingShadowObservedPayload
             {
                 ParkingSessionId = command.ParkingSessionId,
-                PaymentAttemptId = command.PaymentAttemptId,
+                PaymentAttemptId = command.PaymentAttemptId!.Value,
                 PaymentConfirmationId = reference?.PaymentConfirmationId,
                 FiscalIssuanceReferenceId = reference?.FiscalIssuanceReferenceId,
                 PosServerFiscalDocumentId = reference?.PosServerFiscalDocumentId,

@@ -251,10 +251,20 @@ export type WebPayStatutoryDiscountAvailabilityResponse = {
   parkingSessionId: string;
   siteId?: string | null;
   siteGroupId?: string | null;
+  jurisdictionId?: string | null;
+  jurisdictionCode?: string | null;
+  jurisdictionDisplayName?: string | null;
   availabilityStatus: string;
   statutoryParkingBenefitAvailable: boolean;
   coveredEntitlementTypes: StatutoryDiscountEntitlementType[];
   requestedEntitlementType?: string | null;
+  policyVersionId?: string | null;
+  policyCode?: string | null;
+  policyVersion?: string | null;
+  policyDisplayName?: string | null;
+  verificationStatus?: string | null;
+  publicationStatus?: string | null;
+  residencyRequirement?: string | null;
   safeReasonCode?: string | null;
   retryable: boolean;
   remediationAction: string;
@@ -327,6 +337,44 @@ export type WebPayStatutoryDiscountDecisionRequest = {
   requesterAttestation: boolean;
   attestationNotes?: string | null;
   originalTariffSnapshotId?: string | null;
+  beneficiaryResidencySatisfied?: boolean | null;
+};
+
+export type WebPayZeroPayableStatutoryFinalityResponse = {
+  parkingSessionId: string;
+  statutoryDiscountDecisionCommandId: string;
+  statutoryDiscountPayableBasisApplicationCommandId: string;
+  statutoryDiscountValidationId: string;
+  appliedPolicyReferenceId: string;
+  originalTariffSnapshotId: string;
+  appliedTariffSnapshotId: string;
+  siteId: string;
+  siteGroupId: string;
+  entitlementType: string;
+  benefitType: string;
+  originalAmountMinorUnits: number;
+  statutoryWaiverAmountMinorUnits: number;
+  vatAmountMinorUnits: number;
+  finalPayableAmountMinorUnits: number;
+  currency: string;
+  sourceChannel: string;
+  decidedAt: string;
+  appliedAt: string;
+  correlationId: string;
+  finalityState: string;
+};
+
+export type WebPayZeroPayableFiscalCompletionResponse = {
+  fiscalIssuanceReferenceId: string;
+  fiscalPrerequisiteSatisfied: boolean;
+  posServerCallAttempted: boolean;
+  fiscalIssuanceState: string;
+  posServerFiscalDocumentId?: string | null;
+  fiscalDocumentNumber?: string | null;
+  electronicJournalEventReference?: string | null;
+  completionBasis: string;
+  completionAuthorityReferenceId?: string | null;
+  safeErrorCode?: string | null;
 };
 
 export type WebPayStatutoryDiscountDecisionResponse = {
@@ -364,6 +412,8 @@ export type WebPayStatutoryDiscountDecisionResponse = {
   createdAt: string;
   decidedAt?: string | null;
   appliedAt?: string | null;
+  zeroPayableStatutoryFinality?: WebPayZeroPayableStatutoryFinalityResponse | null;
+  zeroPayableFiscalCompletion?: WebPayZeroPayableFiscalCompletionResponse | null;
 };
 
 export type WebPayStatutoryEvidenceLifecycleState =

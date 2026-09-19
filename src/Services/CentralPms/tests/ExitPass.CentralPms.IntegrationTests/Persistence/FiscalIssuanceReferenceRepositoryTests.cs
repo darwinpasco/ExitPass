@@ -45,7 +45,11 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
         {
             var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
             var repository = CreateRepository();
-            var request = CreateRecordedRequest(context, attempt, confirmation);
+            var request = CreateRecordedRequest(context, attempt, confirmation) with
+            {
+                FiscalDocumentNumber = "SI-00000024",
+                FiscalSequenceValue = 24
+            };
 
             var created = await repository.CreateAsync(request, CancellationToken.None);
             var byReferenceId = await repository.FindByFiscalIssuanceReferenceIdAsync(

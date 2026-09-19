@@ -74,6 +74,25 @@ public sealed class OperatorConsoleFiscalIssuanceStatusService : IOperatorConsol
                 query.FiscalIssuanceReferenceId,
                 cancellationToken);
 
+            if (status is not null && status.SiteId != query.SiteId)
+            {
+                var deniedEvaluation = DenyForSiteScope(evaluation);
+                var persistedDeniedEvaluation = await _accessEvaluationWriter.PersistAsync(
+                    WithViewAuditContext(
+                        deniedEvaluation,
+                        query.FiscalIssuanceReferenceId,
+                        "DENIED",
+                        SafeErrorCode: "OPERATOR_CONSOLE_FISCAL_STATUS_SITE_SCOPE_DENIED",
+                        SafeErrorPosture: "Fiscal status is outside the authenticated Site scope."),
+                    cancellationToken);
+
+                return ToResult(
+                    persistedDeniedEvaluation,
+                    status: null,
+                    safeErrorCode: "OPERATOR_CONSOLE_FISCAL_STATUS_SITE_SCOPE_DENIED",
+                    safeErrorPosture: "Fiscal status is outside the authenticated Site scope.");
+            }
+
             var persistedEvaluation = await _accessEvaluationWriter.PersistAsync(
                 WithViewAuditContext(
                     evaluation,
@@ -154,6 +173,24 @@ public sealed class OperatorConsoleFiscalIssuanceStatusService : IOperatorConsol
             var lookup = await _statusReadService.LookupAsync(query.Query, cancellationToken)
                 .ConfigureAwait(false);
             var status = lookup.Status;
+            if (status is not null && status.SiteId != query.SiteId)
+            {
+                var deniedEvaluation = DenyForSiteScope(evaluation);
+                var persistedDeniedEvaluation = await _accessEvaluationWriter.PersistAsync(
+                    WithViewAuditContext(
+                        deniedEvaluation,
+                        status.FiscalIssuanceReferenceId,
+                        "DENIED",
+                        SafeErrorCode: "OPERATOR_CONSOLE_FISCAL_STATUS_SITE_SCOPE_DENIED",
+                        SafeErrorPosture: "Fiscal status is outside the authenticated Site scope."),
+                    cancellationToken);
+
+                return ToResult(
+                    persistedDeniedEvaluation,
+                    status: null,
+                    safeErrorCode: "OPERATOR_CONSOLE_FISCAL_STATUS_SITE_SCOPE_DENIED",
+                    safeErrorPosture: "Fiscal status is outside the authenticated Site scope.");
+            }
             var targetReferenceId = status?.FiscalIssuanceReferenceId ?? parsedReferenceId;
             var resultClass = lookup.Outcome switch
             {
@@ -211,6 +248,16 @@ public sealed class OperatorConsoleFiscalIssuanceStatusService : IOperatorConsol
             throw;
         }
     }
+
+    private static OperatorConsoleAccessEvaluationResult DenyForSiteScope(
+        OperatorConsoleAccessEvaluationResult evaluation) =>
+        evaluation with
+        {
+            Allowed = false,
+            Decision = "DENIED",
+            DenialReasons = ["SITE_SCOPE_MISMATCH"],
+            EffectiveRole = null
+        };
 
     private static OperatorConsoleAccessEvaluationResult WithViewAuditContext(
         OperatorConsoleAccessEvaluationResult evaluation,

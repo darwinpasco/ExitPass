@@ -639,8 +639,17 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
                 var request = call.Arg<IssueExitAuthorizationCommand>();
                 var now = DateTimeOffset.UtcNow;
                 return new IssueExitAuthorizationResult(
-                    Guid.NewGuid(), request.ParkingSessionId, request.PaymentAttemptId,
-                    "token", "ISSUED", now, now.AddMinutes(15));
+                    ExitAuthorizationId: Guid.NewGuid(),
+                    ParkingSessionId: request.ParkingSessionId,
+                    TariffSnapshotId: TariffId,
+                    CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                    CompletionAuthorityReferenceId: ConfirmationId,
+                    PaymentAttemptId: request.PaymentAttemptId,
+                    PaymentConfirmationId: ConfirmationId,
+                    AuthorizationToken: "token",
+                    AuthorizationStatus: "ISSUED",
+                    IssuedAt: now,
+                    ExpirationTimestamp: now.AddMinutes(15));
             });
         var hashCalculator = Substitute.For<IFiscalSemanticRequestHashCalculator>();
         hashCalculator.Calculate(Arg.Any<PosServerFiscalDocumentCreateRequest>())

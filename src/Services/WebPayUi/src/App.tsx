@@ -96,6 +96,7 @@ type StatutoryDiscountFormState = {
   expiryDate: string;
   maskedIdReference: string;
   requesterAttestation: boolean;
+  beneficiaryResidencySatisfied: boolean;
   attestationNotes: string;
 };
 
@@ -143,6 +144,7 @@ const defaultStatutoryDiscountForm: StatutoryDiscountFormState = {
   expiryDate: "",
   maskedIdReference: "",
   requesterAttestation: false,
+  beneficiaryResidencySatisfied: false,
   attestationNotes: ""
 };
 
@@ -536,6 +538,10 @@ export function App() {
 
     try {
       const appliedStatutoryBasis = options?.forceRegularAmount ? null : getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision);
+      if (appliedStatutoryBasis?.amountMinorUnits === 0) {
+        setError("");
+        return;
+      }
       const includeStatutoryId = hasApprovedStatutoryBenefit(paymentSession, statutoryDiscountState.decision);
       const customerInformationError = validateInvoiceCustomerInformation(invoiceCustomerInformation, includeStatutoryId);
       if (customerInformationError) {
@@ -787,7 +793,8 @@ export function App() {
       evidenceCaptureRequested: statutoryAvailabilityRequiresEvidence(statutoryAvailabilityState.availability),
       requesterAttestation: statutoryDiscountForm.requesterAttestation,
       attestationNotes: statutoryDiscountForm.attestationNotes || null,
-      originalTariffSnapshotId: resolvedSession.tariffSnapshotId
+      originalTariffSnapshotId: resolvedSession.tariffSnapshotId,
+      beneficiaryResidencySatisfied: statutoryDiscountForm.beneficiaryResidencySatisfied
     };
   }
 
@@ -1187,6 +1194,7 @@ export function App() {
   const isPayablePending = isStatutoryValidationPending(summary);
   const isActiveStatutoryWorkflow = Boolean(statutoryDiscountState.decision);
   const appliedStatutoryBasis = getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision);
+  const zeroPayableStatutoryCompletion = Boolean(appliedStatutoryBasis?.amountMinorUnits === 0);
   const statutoryRecoveryMutationInFlight = hasKnownInFlightStatutoryRecoveryStage(statutoryRecoveryRecord);
   const canPayRegularWhilePending =
     stage === "SESSION_RESOLVED" &&
@@ -1357,7 +1365,7 @@ export function App() {
           />
         )}
 
-        {summary && stage === "SESSION_RESOLVED" && !isPaymentComplete && (
+        {summary && stage === "SESSION_RESOLVED" && !isPaymentComplete && !zeroPayableStatutoryCompletion && (
           <InvoiceCustomerInformationPanel
             value={invoiceCustomerInformation}
             showStatutoryId={showStatutoryInvoiceId}
@@ -1365,7 +1373,7 @@ export function App() {
           />
         )}
 
-        {summary && stage === "SESSION_RESOLVED" && !isPaymentComplete && (
+        {summary && stage === "SESSION_RESOLVED" && !isPaymentComplete && !zeroPayableStatutoryCompletion && (
         <section className="method-section" aria-labelledby="payment-method-heading">
           <h2 id="payment-method-heading">Payment method</h2>
           <div className="method-grid">
@@ -1456,7 +1464,7 @@ export function App() {
           </section>
         )}
 
-        <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || statutoryDiscountPaymentBlocked || statutoryRecoveryPaymentBlocked}>
+        {!zeroPayableStatutoryCompletion && <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || statutoryDiscountPaymentBlocked || statutoryRecoveryPaymentBlocked}>
           <img src="/assets/icons/payment.svg" alt="" aria-hidden="true" />
           {isResolving
             ? "Resolving..."
@@ -1473,7 +1481,7 @@ export function App() {
                 : summary
                   ? "Continue to Payment"
                   : "Continue"}
-        </button>
+        </button>}
       </form>
 
       {regularPaymentConfirmation.isOpen && resolvedSession && (
@@ -1570,6 +1578,8 @@ function StatutoryDiscountRequestPanel({
   const showApplyAction = Boolean(decision && canSubmitApplicationIntent(decision));
   const showApplicationRetryAction = Boolean(decision && canRetryApplicationIntent(decision));
   const availabilityCopy = getStatutoryAvailabilityCopy(availabilityState);
+  const requiresResidencyConfirmation = availabilityState.availability?.residencyRequirement?.toUpperCase() === "RESIDENT_ONLY";
+  const zeroPayableCompletion = Boolean(decision && isZeroPayableStatutoryDecision(decision));
 
   return (
     <section className="statutory-discount-panel" aria-labelledby="statutory-discount-heading">
@@ -1672,6 +1682,18 @@ function StatutoryDiscountRequestPanel({
               <span>I confirm these entitlement details are correct and require review.</span>
             </label>
 
+            {requiresResidencyConfirmation && (
+              <label className="checkbox-field">
+                <input
+                  name="beneficiaryResidencySatisfied"
+                  type="checkbox"
+                  checked={form.beneficiaryResidencySatisfied}
+                  onChange={(event) => onFormChange({ ...form, beneficiaryResidencySatisfied: event.target.checked })}
+                />
+                <span>I confirm the beneficiary is a resident of the policy jurisdiction and that residency evidence will be reviewed.</span>
+              </label>
+            )}
+
             <label className="field">
               <span>Optional note for review</span>
               <textarea
@@ -1694,7 +1716,12 @@ function StatutoryDiscountRequestPanel({
           {state.error && <div className="form-error" role="alert">{state.error}</div>}
 
           <div className="statutory-actions">
-            <button type="button" className="primary-button" onClick={onSubmit} disabled={state.isSubmitting}>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={onSubmit}
+              disabled={state.isSubmitting || (requiresResidencyConfirmation && !form.beneficiaryResidencySatisfied)}
+            >
               Submit for review
             </button>
             <button type="button" className="ghost-button" onClick={onCancel} disabled={state.isSubmitting || state.isApplying}>
@@ -1727,14 +1754,24 @@ function StatutoryDiscountRequestPanel({
                 <dd>{formatCurrencyAmount(decision.vatAmountMinorUnits, decision.currency)}</dd>
               </div>
               <div>
-                <dt>Statutory Discount</dt>
-                <dd>{formatAdjustment(decision.statutoryDiscountAmountMinorUnits, decision.currency)}</dd>
+                <dt>Statutory benefit</dt>
+                <dd>{formatCurrencyAmount(decision.statutoryDiscountAmountMinorUnits, decision.currency)}</dd>
               </div>
               <div>
                 <dt>Amount due</dt>
                 <dd>{formatCurrencyAmount(decision.finalPayableAmountMinorUnits, decision.currency)}</dd>
               </div>
             </dl>
+          )}
+
+          {zeroPayableCompletion && (
+            <div className="statutory-completion" aria-label="Statutory completion">
+              <strong>Free parking privilege applied</strong>
+              <p>No payment is required. Proceed to exit after the required transaction completion checks.</p>
+              {decision.zeroPayableFiscalCompletion?.fiscalDocumentNumber && (
+                <p>Digital Sales Invoice: <strong>{decision.zeroPayableFiscalCompletion.fiscalDocumentNumber}</strong></p>
+              )}
+            </div>
           )}
 
           {state.isPolling && <p role="status">Refreshing statutory discount status...</p>}
@@ -3101,6 +3138,12 @@ function getAppliedStatutoryPaymentBasis(
   };
 }
 
+function isZeroPayableStatutoryDecision(
+  decision?: WebPayStatutoryDiscountDecisionResponse | null
+): boolean {
+  return getAppliedStatutoryPaymentBasis(decision)?.amountMinorUnits === 0;
+}
+
 function isPendingReviewStatutoryDecision(decision: WebPayStatutoryDiscountDecisionResponse): boolean {
   const readinessStatus = decision.payableBasisReadinessStatus.toUpperCase();
   const decisionCommandStatus = decision.decisionCommandStatus.toUpperCase();
@@ -3125,6 +3168,10 @@ function isRejectedStatutoryDecision(decision: WebPayStatutoryDiscountDecisionRe
 }
 
 function getStatutoryDiscountPaymentAvailabilityCopy(decision: WebPayStatutoryDiscountDecisionResponse): string {
+  if (isZeroPayableStatutoryDecision(decision)) {
+    return "The approved parking privilege reduced the amount due to PHP 0.00. No payment is required.";
+  }
+
   if (getAppliedStatutoryPaymentBasis(decision)) {
     return "Your approved statutory discount is included in the amount due.";
   }
@@ -3296,6 +3343,10 @@ function getCrossTabRecoveryMessage(record: WebPayStatutoryRecoveryRecord): stri
 
 function getStatutoryDiscountPaymentBlockMessage(decision: WebPayStatutoryDiscountDecisionResponse): string {
   if (decision.payableBasisReady) {
+    if (isZeroPayableStatutoryDecision(decision)) {
+      return "No payment is required for this approved parking privilege.";
+    }
+
     return getAppliedStatutoryPaymentBasis(decision)
       ? "Payment is available with the approved statutory discount."
       : "The approved amount is temporarily incomplete. Refresh the status before payment.";
@@ -3309,6 +3360,17 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
   const readinessAction = decision.payableBasisReadinessAction?.toUpperCase() ?? "";
   const decisionStatus = decision.decisionResultStatus?.toUpperCase() ?? "";
   const applicationStatus = decision.applicationCommandStatus.toUpperCase();
+
+  if (isZeroPayableStatutoryDecision(decision)) {
+    const fiscalDocumentNumber = decision.zeroPayableFiscalCompletion?.fiscalDocumentNumber?.trim();
+    return {
+      heading: "Free parking privilege applied",
+      body: fiscalDocumentNumber
+        ? "The amount due is PHP 0.00. No payment is required, and the Digital Sales Invoice is available."
+        : "The amount due is PHP 0.00. No payment is required; required transaction completion is in progress.",
+      tone: "success"
+    };
+  }
 
   if (decision.payableBasisReady && decision.appliedTariffSnapshotId && decision.finalPayableAmountMinorUnits !== null && decision.finalPayableAmountMinorUnits !== undefined && decision.currency) {
     return {

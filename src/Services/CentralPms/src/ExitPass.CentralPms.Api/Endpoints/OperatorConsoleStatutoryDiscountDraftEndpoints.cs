@@ -222,7 +222,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 new OperatorConsoleStatutoryDiscountDraftQueueQuery(
                     status,
                     entitlementType,
-                    siteId ?? access.SiteContext.SiteId,
+                    access.SiteContext.SiteId ?? siteId,
                     createdFrom,
                     createdTo,
                     page.GetValueOrDefault(1),
@@ -290,17 +290,14 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             }
 
             var access = await EvaluateAndPersistAccessAsync(
-                identity with
-                {
-                    SiteId = result.SiteId,
-                    SiteGroupId = result.SiteGroupId
-                },
+                identity,
                 OperatorConsoleActionCodes.ViewStatutoryDiscountDraft,
                 result.ParkingSessionId,
                 $"operator-console-read-detail-{draftId}-{effectiveCorrelationId}",
                 accessEvaluationService,
                 accessEvaluationWriter,
-                httpRequest);
+                httpRequest,
+                result.SiteId);
 
             if (!access.Allowed)
             {
@@ -1428,7 +1425,8 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         string IdempotencyKey,
         IOperatorConsoleAccessEvaluationService accessEvaluationService,
         IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
-        HttpRequest httpRequest)
+        HttpRequest httpRequest,
+        Guid? targetSiteId = null)
     {
         var evaluation = await accessEvaluationService.EvaluateAsync(
             new OperatorConsoleAccessEvaluationCommand(
@@ -1442,7 +1440,8 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 ParkingSessionId,
                 EvidenceAccessIntent: null,
                 IdempotencyKey,
-                identity.CorrelationId),
+                identity.CorrelationId,
+                TargetSiteId: targetSiteId),
             httpRequest.HttpContext.RequestAborted);
 
         return await accessEvaluationWriter.PersistAsync(evaluation, httpRequest.HttpContext.RequestAborted);

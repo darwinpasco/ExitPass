@@ -453,6 +453,7 @@ interface OperatorTicketLookupResponseDto {
   plateLicense?: string | null;
   plateNumber?: string | null;
   siteId?: string | null;
+  siteName?: string | null;
   siteGroupId?: string | null;
   sessionStatus?: string | null;
   entryTime?: string | null;
@@ -2036,6 +2037,7 @@ function toTicketLookupResult(body: OperatorTicketLookupResponseDto): OperatorTi
     sessionEligible: body.sessionEligible ?? undefined,
     parkingSessionId: body.parkingSessionId ?? undefined,
     siteId: body.siteId ?? undefined,
+    siteName: body.siteName ?? undefined,
     siteGroupId: body.siteGroupId ?? undefined,
     ticketNumber: body.ticketReference ?? body.ticketNumber ?? undefined,
     cardNum: body.cardNum ?? body.ticketReference ?? body.ticketNumber ?? undefined,

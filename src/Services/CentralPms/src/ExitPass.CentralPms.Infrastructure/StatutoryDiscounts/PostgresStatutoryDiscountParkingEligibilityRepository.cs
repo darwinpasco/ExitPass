@@ -103,8 +103,10 @@ public sealed class PostgresStatutoryDiscountParkingEligibilityRepository
             .Where(candidate => IsTransactionActive(candidate, session.TransactionAt))
             .Where(candidate => request.RequestedEntitlementType is null ||
                 string.Equals(candidate.EntitlementType, request.RequestedEntitlementType, StringComparison.Ordinal))
-            .Where(candidate => request.BeneficiaryResidencySatisfied == true ||
-                !string.Equals(candidate.BeneficiaryResidencyScope, "RESIDENT_ONLY", StringComparison.Ordinal))
+            .Where(candidate => StatutoryDiscountParkingPolicyResolutionRules.SatisfiesResidencyForResolution(
+                request.RequestedEntitlementType,
+                request.BeneficiaryResidencySatisfied,
+                candidate.BeneficiaryResidencyScope))
             .Where(candidate => string.Equals(candidate.PolicyEffectSupportStatus, "SUPPORTED_BY_CURRENT_CALCULATION", StringComparison.Ordinal))
             .ToArray();
 
@@ -142,8 +144,13 @@ public sealed class PostgresStatutoryDiscountParkingEligibilityRepository
             .ToArray();
         var selected = ordered[0];
         var samePrecedence = ordered
-            .Where(candidate => PolicyScopeWeight(candidate) == PolicyScopeWeight(selected) &&
-                candidate.PrecedenceRank == selected.PrecedenceRank)
+            .Where(candidate => StatutoryDiscountParkingPolicyResolutionRules.CompetesAtSamePrecedence(
+                candidate.EntitlementType,
+                selected.EntitlementType,
+                PolicyScopeWeight(candidate),
+                PolicyScopeWeight(selected),
+                candidate.PrecedenceRank,
+                selected.PrecedenceRank))
             .ToArray();
         if (samePrecedence.Length > 1)
         {
@@ -521,8 +528,10 @@ public sealed class PostgresStatutoryDiscountParkingEligibilityRepository
         DateTimeOffset transactionAt) =>
         candidates
             .Where(candidate => IsTransactionActive(candidate, transactionAt))
-            .Where(candidate => request.BeneficiaryResidencySatisfied == true ||
-                !string.Equals(candidate.BeneficiaryResidencyScope, "RESIDENT_ONLY", StringComparison.Ordinal))
+            .Where(candidate => StatutoryDiscountParkingPolicyResolutionRules.SatisfiesResidencyForResolution(
+                request.RequestedEntitlementType,
+                request.BeneficiaryResidencySatisfied,
+                candidate.BeneficiaryResidencyScope))
             .Where(candidate => string.Equals(candidate.PolicyEffectSupportStatus, "SUPPORTED_BY_CURRENT_CALCULATION", StringComparison.Ordinal))
             .Select(candidate => candidate.EntitlementType)
             .Distinct(StringComparer.Ordinal)
@@ -605,7 +614,8 @@ public sealed class PostgresStatutoryDiscountParkingEligibilityRepository
                 StatutoryDiscountParkingAvailabilityRemediationActions.PublishApplicablePolicy);
         }
 
-        if (requested.Any(candidate => string.Equals(candidate.BeneficiaryResidencyScope, "RESIDENT_ONLY", StringComparison.Ordinal)) &&
+        if (request.RequestedEntitlementType is not null &&
+            requested.Any(candidate => string.Equals(candidate.BeneficiaryResidencyScope, "RESIDENT_ONLY", StringComparison.Ordinal)) &&
             request.BeneficiaryResidencySatisfied != true)
         {
             return BlockingReason(

@@ -215,7 +215,14 @@ function session(): OperatorConsoleHumanSession {
     lastSeenAt: "2026-08-24T08:00:00+08:00",
     idleExpiresAt: "2099-08-24T09:00:00+08:00",
     absoluteExpiresAt: "2099-08-24T16:00:00+08:00",
-    permissions: ["statutory-discounts.review.read", "statutory-discounts.evidence.review.view", "statutory-discounts.decision.approve", "statutory-discounts.decision.reject"],
+    permissions: [
+      "statutory-discounts.review.queue.read",
+      "statutory-discounts.review.detail.read",
+      "statutory-discounts.decision.review",
+      "statutory-discounts.evidence.review.view",
+      "statutory-discounts.decision.approve",
+      "statutory-discounts.decision.reject"
+    ],
     siteReferences: ["77000000-0000-0000-0000-000000000002"],
     siteGroupReferences: ["88000000-0000-0000-0000-000000000003"],
     hasGlobalScope: false,

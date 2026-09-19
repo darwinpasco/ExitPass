@@ -293,6 +293,7 @@ export interface OperatorTicketLookupResult {
   sessionEligible?: boolean;
   parkingSessionId?: string;
   siteId?: string;
+  siteName?: string;
   siteGroupId?: string;
   ticketNumber?: string;
   cardNum?: string;

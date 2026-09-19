@@ -18,18 +18,34 @@ BEGIN
         RAISE EXCEPTION 'Fiscal issuance Electronic Journal readback column is missing';
     END IF;
 
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'core'
+          AND table_name = 'fiscal_issuance_references'
+          AND column_name = 'statutory_discount_policy_version_id'
+    ) THEN
+        RAISE EXCEPTION 'Fiscal issuance canonical statutory policy-version column is missing';
+    END IF;
+
     IF EXISTS (
         SELECT 1 FROM core.fiscal_issuance_references
         WHERE NOT (
             (completion_basis = 'PAYMENT_FINALITY'
              AND payment_attempt_id IS NOT NULL
              AND payment_confirmation_id IS NOT NULL
-             AND completion_authority_reference_id = payment_confirmation_id)
+             AND completion_authority_reference_id = payment_confirmation_id
+             AND statutory_discount_policy_version_id IS NULL)
             OR
             (completion_basis = 'ZERO_PAYABLE_STATUTORY_FINALITY'
              AND payment_attempt_id IS NULL
              AND payment_confirmation_id IS NULL
-             AND completion_authority_reference_id = statutory_discount_payable_basis_application_command_id)
+             AND completion_authority_reference_id = statutory_discount_payable_basis_application_command_id
+             AND ((applied_policy_reference_id IS NOT NULL
+                   AND statutory_discount_policy_version_id IS NULL)
+                  OR
+                  (applied_policy_reference_id IS NULL
+                   AND statutory_discount_policy_version_id IS NOT NULL)))
         )
     ) THEN
         RAISE EXCEPTION 'Fiscal issuance completion ancestry contains invalid rows';

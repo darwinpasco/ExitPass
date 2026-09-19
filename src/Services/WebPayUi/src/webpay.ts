@@ -629,6 +629,10 @@ export function buildStatutoryDiscountDecisionBody(
     body.originalTariffSnapshotId = request.originalTariffSnapshotId.trim();
   }
 
+  if (request.beneficiaryResidencySatisfied !== undefined && request.beneficiaryResidencySatisfied !== null) {
+    body.beneficiaryResidencySatisfied = request.beneficiaryResidencySatisfied;
+  }
+
   return body;
 }
 

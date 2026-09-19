@@ -40,9 +40,30 @@ public sealed record IssueExitAuthorizationDbRequest
     public Guid ParkingSessionId { get; init; }
 
     /// <summary>
-    /// Confirmed payment attempt identifier backing the authorization.
+    /// Immutable payable-basis snapshot covered by the completion authority.
     /// </summary>
-    public Guid PaymentAttemptId { get; init; }
+    public Guid? TariffSnapshotId { get; init; }
+
+    public string CompletionBasis { get; init; } = string.Empty;
+
+    public Guid? CompletionAuthorityReferenceId { get; init; }
+
+    /// <summary>
+    /// Confirmed payment attempt identifier for PAYMENT_FINALITY only.
+    /// </summary>
+    public Guid? PaymentAttemptId { get; init; }
+
+    public Guid? PaymentConfirmationId { get; init; }
+
+    public Guid? StatutoryDiscountDecisionCommandId { get; init; }
+
+    public Guid? StatutoryDiscountPayableBasisApplicationCommandId { get; init; }
+
+    public Guid? StatutoryDiscountValidationId { get; init; }
+
+    public Guid? AppliedPolicyReferenceId { get; init; }
+
+    public Guid? StatutoryDiscountPolicyVersionId { get; init; }
 
     /// <summary>
     /// User or actor identifier requesting issuance.
@@ -73,7 +94,11 @@ public sealed record IssueExitAuthorizationDbRequest
 public sealed record IssueExitAuthorizationDbResult(
     Guid ExitAuthorizationId,
     Guid ParkingSessionId,
-    Guid PaymentAttemptId,
+    Guid TariffSnapshotId,
+    string CompletionBasis,
+    Guid CompletionAuthorityReferenceId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
     string AuthorizationToken,
     string AuthorizationStatus,
     DateTimeOffset IssuedAt,

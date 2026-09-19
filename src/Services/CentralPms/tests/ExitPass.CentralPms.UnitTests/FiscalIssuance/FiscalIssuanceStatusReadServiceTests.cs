@@ -139,19 +139,19 @@ public sealed class FiscalIssuanceStatusReadServiceTests
         var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
         {
             FiscalIssuanceReferenceId = Guid.Parse("64000000-0000-0000-0000-000000000002"),
-            FiscalDocumentNumber = "SI-OCVOID-0001-UAT"
+            FiscalDocumentNumber = "SI-00000024"
         };
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
-        repository.FindByFiscalDocumentNumberAsync("SI-OCVOID-0001-UAT", Arg.Any<CancellationToken>())
+        repository.FindByFiscalDocumentNumberAsync("SI-00000024", Arg.Any<CancellationToken>())
             .Returns([reference]);
         var sut = new FiscalIssuanceStatusReadService(repository);
 
-        var result = await sut.LookupAsync(" SI-OCVOID-0001-UAT ", CancellationToken.None);
+        var result = await sut.LookupAsync(" SI-00000024 ", CancellationToken.None);
 
         result.Outcome.Should().Be(FiscalIssuanceStatusLookupOutcome.Found);
         result.Status.Should().NotBeNull();
         result.Status!.FiscalIssuanceReferenceId.Should().Be(reference.FiscalIssuanceReferenceId);
-        result.Status.FiscalDocumentNumber.Should().Be("SI-OCVOID-0001-UAT");
+        result.Status.FiscalDocumentNumber.Should().Be("SI-00000024");
     }
 
     [Fact]

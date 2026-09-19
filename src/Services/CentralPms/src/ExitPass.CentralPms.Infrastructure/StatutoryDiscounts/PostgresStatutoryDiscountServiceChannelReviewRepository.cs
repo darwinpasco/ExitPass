@@ -714,42 +714,25 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
     {
         const string sql = """
             SELECT
-                discount_policy_reference_id,
-                fallback_policy_reference_id,
-                policy_code,
-                policy_name,
-                national_law_reference,
-                local_ordinance_reference,
-                requires_evidence_capture,
-                CASE
-                    WHEN local_ordinance_reference IS NOT NULL THEN 'LOCAL_ORDINANCE_APPLIED'
-                    ELSE 'NATIONAL_LAW_FALLBACK'
-                END AS policy_resolution_basis,
-                local_ordinance_reference IS NOT NULL AS local_ordinance_applied
-            FROM discounts.discount_policy_references
-            WHERE entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
-              AND policy_status = 'ACTIVE'::discounts.discount_policy_status_enum
-              AND (
-                    site_id = @site_id
-                 OR site_group_id = @site_group_id
-                 OR (site_id IS NULL AND site_group_id IS NULL)
-              )
-            ORDER BY
-                CASE
-                    WHEN site_id = @site_id THEN 0
-                    WHEN site_group_id = @site_group_id THEN 1
-                    ELSE 2
-                END,
-                precedence_rank ASC,
-                effective_from DESC,
-                discount_policy_reference_id ASC
+                authority.statutory_discount_policy_version_id AS policy_reference_id,
+                EXISTS (
+                    SELECT 1
+                    FROM discounts.statutory_discount_policy_version_evidence_requirements AS requirement
+                    WHERE requirement.statutory_discount_policy_version_id = authority.statutory_discount_policy_version_id
+                      AND requirement.requirement_status = 'REQUIRED'
+                ) AS requires_evidence_capture
+            FROM discounts.statutory_discount_decision_policy_authorities AS authority
+            WHERE authority.statutory_discount_decision_command_id = @statutory_discount_decision_command_id
+              AND authority.entitlement_type = @entitlement_type
+              AND authority.transaction_publication_status = 'ACTIVE_FOR_TRANSACTION_USE'
+              AND authority.parking_service_applicability = 'COVERED'
             LIMIT 1;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction) { CommandTimeout = 30 };
+        command.Parameters.Add("statutory_discount_decision_command_id", NpgsqlDbType.Uuid).Value =
+            source.StatutoryDiscountDecisionCommandId;
         command.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = NormalizeRequired(source.EntitlementType);
-        AddNullable(command, "site_id", NpgsqlDbType.Uuid, source.SiteId);
-        AddNullable(command, "site_group_id", NpgsqlDbType.Uuid, source.SiteGroupId);
 
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken)
             .ConfigureAwait(false);
@@ -759,15 +742,9 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         }
 
         return new PolicyReferenceRow(
-            reader.GetGuid(reader.GetOrdinal("discount_policy_reference_id")),
-            GetNullableGuid(reader, "fallback_policy_reference_id"),
-            reader.GetString(reader.GetOrdinal("policy_code")),
-            GetNullableString(reader, "policy_name"),
-            GetNullableString(reader, "national_law_reference"),
-            GetNullableString(reader, "local_ordinance_reference"),
+            reader.GetGuid(reader.GetOrdinal("policy_reference_id")),
             reader.GetBoolean(reader.GetOrdinal("requires_evidence_capture")),
-            reader.GetString(reader.GetOrdinal("policy_resolution_basis")),
-            reader.GetBoolean(reader.GetOrdinal("local_ordinance_applied")));
+            "LOCAL_ORDINANCE_APPLIED");
     }
 
     private static async Task<Guid> InsertApprovedValidationAsync(
@@ -803,6 +780,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 evaluated_policy_reference_id,
                 applied_policy_reference_id,
                 fallback_policy_reference_id,
+                statutory_discount_policy_version_id,
                 requested_at,
                 validated_at,
                 requested_by_user_id,
@@ -830,9 +808,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 @decision_reason_code,
                 @requester_attestation,
                 @attestation_notes,
+                NULL,
+                NULL,
+                NULL,
                 @policy_reference_id,
-                @policy_reference_id,
-                @fallback_policy_reference_id,
                 @requested_at,
                 now(),
                 NULL,
@@ -862,7 +841,6 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         command.Parameters.Add("requester_attestation", NpgsqlDbType.Boolean).Value = source.RequesterAttestation;
         AddNullable(command, "attestation_notes", NpgsqlDbType.Varchar, source.AttestationNotes);
         command.Parameters.Add("policy_reference_id", NpgsqlDbType.Uuid).Value = policy.PolicyReferenceId;
-        AddNullable(command, "fallback_policy_reference_id", NpgsqlDbType.Uuid, policy.FallbackPolicyReferenceId);
         command.Parameters.Add("requested_at", NpgsqlDbType.TimestampTz).Value = source.SubmittedAt;
         command.Parameters.Add("validated_by_user_id", NpgsqlDbType.Uuid).Value = reviewerUserId;
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = correlationId;
@@ -966,17 +944,26 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 sdv.parking_session_id,
                 sdv.entitlement_type::text,
                 sdv.tariff_snapshot_id AS original_tariff_snapshot_id,
-                COALESCE(sdv.applied_policy_reference_id, sdv.evaluated_policy_reference_id) AS applied_policy_reference_id,
+                COALESCE(
+                    sdv.statutory_discount_policy_version_id,
+                    sdv.applied_policy_reference_id,
+                    sdv.evaluated_policy_reference_id) AS applied_policy_reference_id,
                 sdv.fallback_policy_reference_id,
                 sdv.policy_resolution_basis::text,
                 sdv.local_ordinance_applied,
                 NULL::bigint AS gross_amount_minor_units,
                 NULL::text AS currency_code,
-                'STATUTORY_DISCOUNT_VAT_EXEMPT' AS benefit_type,
-                'VAT_EXCLUSIVE' AS discount_base_scope
+                authority.benefit_type::text AS benefit_type,
+                CASE
+                    WHEN authority.benefit_type = 'FULL_FEE_EXEMPTION' THEN 'FULL_GROSS_AMOUNT'
+                    ELSE 'VAT_EXCLUSIVE'
+                END AS discount_base_scope
             FROM operator_console.statutory_discount_service_channel_reviews AS r
             JOIN discounts.statutory_discount_validations AS sdv
               ON sdv.statutory_discount_validation_id = @statutory_discount_validation_id
+            JOIN discounts.statutory_discount_decision_policy_authorities AS authority
+              ON authority.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
+             AND authority.statutory_discount_policy_version_id = sdv.statutory_discount_policy_version_id
             WHERE r.statutory_discount_decision_command_id = @statutory_discount_decision_command_id
               AND r.statutory_discount_validation_id = sdv.statutory_discount_validation_id
             LIMIT 1;
@@ -1127,13 +1114,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
 
     private sealed record PolicyReferenceRow(
         Guid PolicyReferenceId,
-        Guid? FallbackPolicyReferenceId,
-        string PolicyCode,
-        string? PolicyName,
-        string? NationalLawReference,
-        string? LocalOrdinanceReference,
         bool RequiresEvidence,
-        string PolicyResolutionBasis,
-        bool LocalOrdinanceApplied);
+        string PolicyResolutionBasis)
+    {
+        public bool LocalOrdinanceApplied => true;
+    }
 
 }

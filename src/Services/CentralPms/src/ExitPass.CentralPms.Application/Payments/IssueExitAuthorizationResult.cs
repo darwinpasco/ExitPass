@@ -18,9 +18,12 @@ namespace ExitPass.CentralPms.Application.Payments;
 public sealed record IssueExitAuthorizationResult(
     Guid ExitAuthorizationId,
     Guid ParkingSessionId,
-    Guid PaymentAttemptId,
+    Guid TariffSnapshotId,
+    string CompletionBasis,
+    Guid CompletionAuthorityReferenceId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
     string AuthorizationToken,
     string AuthorizationStatus,
     DateTimeOffset IssuedAt,
-    DateTimeOffset ExpirationTimestamp,
-    string CompletionBasis = CompletionBasisCodes.PaymentFinality);
+    DateTimeOffset ExpirationTimestamp);

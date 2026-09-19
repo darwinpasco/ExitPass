@@ -16,9 +16,20 @@ public sealed class ExitAuthorizationIssuedPayload
     public Guid ParkingSessionId { get; init; }
 
     /// <summary>
-    /// Gets the payment attempt identifier that authorized exit.
+    /// Gets the immutable payable-basis snapshot authorized for exit.
     /// </summary>
-    public Guid PaymentAttemptId { get; init; }
+    public Guid TariffSnapshotId { get; init; }
+
+    public string CompletionBasis { get; init; } = string.Empty;
+
+    public Guid CompletionAuthorityReferenceId { get; init; }
+
+    /// <summary>
+    /// Gets the payment attempt identifier for PAYMENT_FINALITY, otherwise null.
+    /// </summary>
+    public Guid? PaymentAttemptId { get; init; }
+
+    public Guid? PaymentConfirmationId { get; init; }
 
     /// <summary>
     /// Gets the authorization status.

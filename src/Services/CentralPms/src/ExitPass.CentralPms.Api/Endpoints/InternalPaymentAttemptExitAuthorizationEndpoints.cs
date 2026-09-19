@@ -118,7 +118,7 @@ public static class InternalPaymentAttemptExitAuthorizationEndpoints
             return Results.Ok(new IssueExitAuthorizationResponse(
                 result.ExitAuthorizationId,
                 result.ParkingSessionId,
-                result.PaymentAttemptId,
+                result.PaymentAttemptId!.Value,
                 result.AuthorizationToken,
                 result.AuthorizationStatus,
                 result.IssuedAt,

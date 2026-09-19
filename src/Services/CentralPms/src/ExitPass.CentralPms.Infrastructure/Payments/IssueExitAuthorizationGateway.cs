@@ -2,6 +2,7 @@ using System.Diagnostics;
 using ExitPass.CentralPms.Application.Payments;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using NpgsqlTypes;
 using OpenTelemetry.Trace;
 
 namespace ExitPass.CentralPms.Infrastructure.Payments;
@@ -62,14 +63,27 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
             SELECT
                 exit_authorization_id,
                 parking_session_id,
+                tariff_snapshot_id,
+                completion_basis,
+                completion_authority_reference_id,
                 payment_attempt_id,
+                payment_confirmation_id,
                 authorization_token,
                 authorization_status,
                 issued_at,
                 expiration_timestamp
             FROM core.issue_exit_authorization(
                 @p_parking_session_id,
+                @p_tariff_snapshot_id,
+                @p_completion_basis,
+                @p_completion_authority_reference_id,
                 @p_payment_attempt_id,
+                @p_payment_confirmation_id,
+                @p_statutory_discount_decision_command_id,
+                @p_statutory_discount_payable_basis_application_command_id,
+                @p_statutory_discount_validation_id,
+                @p_applied_policy_reference_id,
+                @p_statutory_discount_policy_version_id,
                 @p_requested_by_user_id,
                 @p_correlation_id,
                 @p_now
@@ -103,7 +117,16 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
 
-            await ValidateConfirmedPaymentAttemptPayableBasisAsync(connection, request, cancellationToken);
+            if (string.Equals(
+                    request.CompletionBasis,
+                    CompletionBasisCodes.PaymentFinality,
+                    StringComparison.Ordinal))
+            {
+                await ValidateConfirmedPaymentAttemptPayableBasisAsync(
+                    connection,
+                    request,
+                    cancellationToken);
+            }
 
             await using var dbCommand = new NpgsqlCommand(sql, connection)
             {
@@ -111,7 +134,34 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
             };
 
             dbCommand.Parameters.AddWithValue("p_parking_session_id", request.ParkingSessionId);
-            dbCommand.Parameters.AddWithValue("p_payment_attempt_id", request.PaymentAttemptId);
+            AddNullableUuid(dbCommand, "p_tariff_snapshot_id", request.TariffSnapshotId);
+            dbCommand.Parameters.AddWithValue("p_completion_basis", request.CompletionBasis);
+            AddNullableUuid(
+                dbCommand,
+                "p_completion_authority_reference_id",
+                request.CompletionAuthorityReferenceId);
+            AddNullableUuid(dbCommand, "p_payment_attempt_id", request.PaymentAttemptId);
+            AddNullableUuid(dbCommand, "p_payment_confirmation_id", request.PaymentConfirmationId);
+            AddNullableUuid(
+                dbCommand,
+                "p_statutory_discount_decision_command_id",
+                request.StatutoryDiscountDecisionCommandId);
+            AddNullableUuid(
+                dbCommand,
+                "p_statutory_discount_payable_basis_application_command_id",
+                request.StatutoryDiscountPayableBasisApplicationCommandId);
+            AddNullableUuid(
+                dbCommand,
+                "p_statutory_discount_validation_id",
+                request.StatutoryDiscountValidationId);
+            AddNullableUuid(
+                dbCommand,
+                "p_applied_policy_reference_id",
+                request.AppliedPolicyReferenceId);
+            AddNullableUuid(
+                dbCommand,
+                "p_statutory_discount_policy_version_id",
+                request.StatutoryDiscountPolicyVersionId);
             dbCommand.Parameters.AddWithValue("p_requested_by_user_id", request.RequestedByUserId);
             dbCommand.Parameters.AddWithValue("p_correlation_id", request.CorrelationId);
             dbCommand.Parameters.AddWithValue("p_now", request.RequestedAt);
@@ -126,7 +176,12 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
             var result = new IssueExitAuthorizationDbResult(
                 ExitAuthorizationId: reader.GetGuid(reader.GetOrdinal("exit_authorization_id")),
                 ParkingSessionId: reader.GetGuid(reader.GetOrdinal("parking_session_id")),
-                PaymentAttemptId: reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
+                TariffSnapshotId: reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
+                CompletionBasis: reader.GetString(reader.GetOrdinal("completion_basis")),
+                CompletionAuthorityReferenceId:
+                    reader.GetGuid(reader.GetOrdinal("completion_authority_reference_id")),
+                PaymentAttemptId: ReadGuidNullable(reader, "payment_attempt_id"),
+                PaymentConfirmationId: ReadGuidNullable(reader, "payment_confirmation_id"),
                 AuthorizationToken: reader.GetString(reader.GetOrdinal("authorization_token")),
                 AuthorizationStatus: reader.GetString(reader.GetOrdinal("authorization_status")),
                 IssuedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("issued_at")),
@@ -224,7 +279,14 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
             CommandTimeout = 30
         };
 
-        command.Parameters.AddWithValue("payment_attempt_id", request.PaymentAttemptId);
+        if (!request.PaymentAttemptId.HasValue)
+        {
+            throw new ExitAuthorizationIssuanceConflictException(
+                "PAYMENT_ATTEMPT_REQUIRED",
+                "PAYMENT_FINALITY requires a payment attempt.");
+        }
+
+        command.Parameters.AddWithValue("payment_attempt_id", request.PaymentAttemptId.Value);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -319,5 +381,18 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
                 "PAYMENT_CURRENCY_MISMATCH",
                 "Payment confirmation currency does not match the payment attempt currency.");
         }
+    }
+
+    private static void AddNullableUuid(
+        NpgsqlCommand command,
+        string name,
+        Guid? value) =>
+        command.Parameters.Add(name, NpgsqlDbType.Uuid).Value =
+            (object?)value ?? DBNull.Value;
+
+    private static Guid? ReadGuidNullable(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal) ? null : reader.GetGuid(ordinal);
     }
 }

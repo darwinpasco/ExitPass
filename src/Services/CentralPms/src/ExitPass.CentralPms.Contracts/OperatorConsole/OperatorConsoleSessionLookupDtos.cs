@@ -41,4 +41,5 @@ public sealed record OperatorConsoleSessionLookupResponse(
     string? DiscountStatus,
     string? ExitAuthorizationStatus,
     IReadOnlyList<string> Alerts,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string? SiteName = null);

@@ -144,6 +144,7 @@ public sealed record CompletionAuthorityResponse(
     Guid? StatutoryDiscountPayableBasisApplicationCommandId,
     Guid? StatutoryDiscountValidationId,
     Guid? AppliedPolicyReferenceId,
+    Guid? StatutoryDiscountPolicyVersionId,
     string AuthorityState);
 
 public sealed record ExitAuthorizationEligibilityResponse(
@@ -164,6 +165,18 @@ public sealed record ZeroPayableStatutoryFiscalCompletionResponse(
     string CompletionBasis,
     Guid? CompletionAuthorityReferenceId,
     string? SafeErrorCode);
+
+public sealed record StatutoryExitAuthorizationResponse(
+    Guid ExitAuthorizationId,
+    Guid ParkingSessionId,
+    Guid TariffSnapshotId,
+    string CompletionBasis,
+    Guid CompletionAuthorityReferenceId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
+    string AuthorizationStatus,
+    DateTimeOffset IssuedAt,
+    DateTimeOffset ExpirationTimestamp);
 
 /// <summary>
 /// Canonical Central PMS statutory-discount result and readback response.
@@ -236,4 +249,5 @@ public sealed record StatutoryDiscountDecisionResponse(
     StatutoryDiscountZeroPayableFinalityResponse? ZeroPayableStatutoryFinality = null,
     CompletionAuthorityResponse? CompletionAuthority = null,
     ExitAuthorizationEligibilityResponse? ExitAuthorizationEligibility = null,
-    ZeroPayableStatutoryFiscalCompletionResponse? ZeroPayableFiscalCompletion = null);
+    ZeroPayableStatutoryFiscalCompletionResponse? ZeroPayableFiscalCompletion = null,
+    StatutoryExitAuthorizationResponse? ExitAuthorization = null);

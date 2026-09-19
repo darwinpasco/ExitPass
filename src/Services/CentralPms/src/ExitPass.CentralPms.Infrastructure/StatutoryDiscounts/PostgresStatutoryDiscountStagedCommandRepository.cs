@@ -638,6 +638,8 @@ public sealed class PostgresStatutoryDiscountStagedCommandRepository : IStatutor
                 target_tariff_snapshot_id,
                 applied_tariff_snapshot_id,
                 applied_policy_reference_id,
+                statutory_discount_policy_version_id,
+                statutory_discount_decision_policy_authority_id,
                 policy_resolution_basis,
                 approved_discount_amount_minor_units,
                 approved_vat_exclusive_amount_minor_units,
@@ -669,6 +671,16 @@ public sealed class PostgresStatutoryDiscountStagedCommandRepository : IStatutor
                 @target_tariff_snapshot_id,
                 @applied_tariff_snapshot_id,
                 @applied_policy_reference_id,
+                (
+                    SELECT authority.statutory_discount_policy_version_id
+                    FROM discounts.statutory_discount_decision_policy_authorities AS authority
+                    WHERE authority.statutory_discount_decision_command_id = @statutory_discount_decision_command_id
+                ),
+                (
+                    SELECT authority.statutory_discount_decision_command_id
+                    FROM discounts.statutory_discount_decision_policy_authorities AS authority
+                    WHERE authority.statutory_discount_decision_command_id = @statutory_discount_decision_command_id
+                ),
                 @policy_resolution_basis,
                 @approved_discount_amount_minor_units,
                 @approved_vat_exclusive_amount_minor_units,

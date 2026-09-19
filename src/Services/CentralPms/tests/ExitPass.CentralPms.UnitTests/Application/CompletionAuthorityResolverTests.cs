@@ -151,7 +151,7 @@ public sealed class CompletionAuthorityResolverTests
     }
 
     [Fact]
-    public void EvaluateZeroPayableExitAuthorizationEligibility_WhenFiscalEvidenceExists_ReportsSatisfiedButDoesNotBypassIssuancePath()
+    public void EvaluateZeroPayableExitAuthorizationEligibility_WhenFiscalEvidenceExists_AllowsIssuance()
     {
         var authority = ResolveZero().Authority!;
 
@@ -160,10 +160,9 @@ public sealed class CompletionAuthorityResolverTests
             fiscalPrerequisiteSatisfied: true);
 
         eligibility.CompletionAuthorityEligible.Should().BeTrue();
-        eligibility.ExitAuthorizationIssuanceAllowed.Should().BeFalse();
-        eligibility.Status.Should().Be(ExitAuthorizationEligibilityStatuses.ZeroPayableFiscalPrerequisiteSatisfied);
-        eligibility.BlockedReason.Should().Be(
-            ExitAuthorizationEligibilityBlockedReasons.ZeroPayableExitAuthorizationIssuancePathUnavailable);
+        eligibility.ExitAuthorizationIssuanceAllowed.Should().BeTrue();
+        eligibility.Status.Should().Be(ExitAuthorizationEligibilityStatuses.ZeroPayableExitAuthorizationReady);
+        eligibility.BlockedReason.Should().BeNull();
         eligibility.CompletionBasis.Should().Be(CompletionBasisCodes.ZeroPayableStatutoryFinality);
     }
 

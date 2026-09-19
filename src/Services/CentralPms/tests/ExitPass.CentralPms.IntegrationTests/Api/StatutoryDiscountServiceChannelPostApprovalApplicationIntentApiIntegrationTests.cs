@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.Common;
@@ -64,7 +65,13 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             (await StatutoryDiscountReviewIntegrationTestSupport.OriginalPayableBasisRowCountAsync(context)).Should().Be(0);
 
             var approved = await CompleteReviewAsync(operatorClient, context, intake.StatutoryDiscountDecisionCommandId, "APPROVE");
-            approved.CurrentValidationStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.Approved);
+            approved.CurrentValidationStatus.Should().Be(
+                StatutoryDiscountDecisionV2ResultStates.Approved,
+                "review result error={0}, ineligibility={1}, access={2}, denials={3}",
+                approved.ErrorCode,
+                approved.IneligibilityReason,
+                approved.AccessAllowed,
+                string.Join(',', approved.AccessDenialReasons));
             approved.StatutoryDiscountDecisionCommandId.Should().Be(intake.StatutoryDiscountDecisionCommandId);
 
             var reviewDetail = await GetReviewDetailAsync(operatorClient, intake.StatutoryDiscountDecisionCommandId);
@@ -246,11 +253,14 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         }
     }
 
-    [Fact]
-    public async Task WebPayFullFeeExemption_AfterApproval_AppliesZeroPayableBasisWithoutDownstreamSideEffects()
+    [Theory]
+    [InlineData(StatutoryDiscountSourceChannels.WebPay)]
+    [InlineData(StatutoryDiscountSourceChannels.AssistedPaymentTerminal)]
+    public async Task ServiceChannelFullFeeExemption_AfterApproval_CompletesWithoutPaymentSideEffects(
+        string sourceChannel)
     {
         var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
-            nameof(WebPayFullFeeExemption_AfterApproval_AppliesZeroPayableBasisWithoutDownstreamSideEffects),
+            nameof(ServiceChannelFullFeeExemption_AfterApproval_CompletesWithoutPaymentSideEffects) + sourceChannel,
             benefitType: OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionBenefitType,
             discountBaseScope: OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionDiscountBaseScope,
             fullFeeExempt: true);
@@ -262,19 +272,19 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             using var factory = CreateFactory(context, zeroPayablePosEvidence);
             using var serviceClient = factory.CreateClient();
             using var operatorClient = factory.CreateClient();
-            AddServiceHeaders(serviceClient, StatutoryDiscountSourceChannels.WebPay);
+            AddServiceHeaders(serviceClient, sourceChannel);
             AddOperatorHeaders(operatorClient, context);
 
             var intake = await PostSharedDecisionAsync(
                 serviceClient,
-                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: false),
+                Request(context, sourceChannel, applyPayableBasis: false),
                 $"full-fee-intake-{context.ParkingSessionId:N}",
                 context.CorrelationId,
                 HttpStatusCode.Created);
 
             var beforeApprovalApply = await PostSharedDecisionAsync(
                 serviceClient,
-                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
+                Request(context, sourceChannel, applyPayableBasis: true),
                 $"full-fee-before-approval-{context.ParkingSessionId:N}",
                 Guid.NewGuid(),
                 HttpStatusCode.Created);
@@ -291,7 +301,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
 
             var application = await PostSharedDecisionAsync(
                 serviceClient,
-                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
+                Request(context, sourceChannel, applyPayableBasis: true),
                 $"full-fee-apply-{context.ParkingSessionId:N}",
                 Guid.NewGuid(),
                 HttpStatusCode.OK);
@@ -308,6 +318,16 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             (application.StatutoryDiscountAmountMinorUnits + application.VatAmountMinorUnits)
                 .Should().Be(application.GrossAmountMinorUnits);
             application.PayableBasisReady.Should().BeTrue();
+            application.ExitAuthorization.Should().NotBeNull();
+            var exitAuthorization = application.ExitAuthorization!;
+            exitAuthorization.ParkingSessionId.Should().Be(context.ParkingSessionId);
+            exitAuthorization.TariffSnapshotId.Should().Be(application.AppliedTariffSnapshotId!.Value);
+            exitAuthorization.CompletionBasis.Should().Be("ZERO_PAYABLE_STATUTORY_FINALITY");
+            exitAuthorization.CompletionAuthorityReferenceId.Should()
+                .Be(application.StatutoryDiscountPayableBasisApplicationCommandId!.Value);
+            exitAuthorization.PaymentAttemptId.Should().BeNull();
+            exitAuthorization.PaymentConfirmationId.Should().BeNull();
+            exitAuthorization.AuthorizationStatus.Should().Be("ISSUED");
 
             var beforeReadback = await StatutoryDiscountReviewIntegrationTestSupport.WorkflowBoundaryRowCountsAsync(
                 context.ParkingSessionId,
@@ -340,7 +360,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             finality.VatAmountMinorUnits.Should().Be(application.VatAmountMinorUnits);
             finality.FinalPayableAmountMinorUnits.Should().Be(0);
             finality.Currency.Should().Be("PHP");
-            finality.SourceChannel.Should().Be(StatutoryDiscountSourceChannels.WebPay);
+            finality.SourceChannel.Should().Be(sourceChannel);
             repeatedReadback.ZeroPayableStatutoryFinality.Should().BeEquivalentTo(finality);
 
             finalityReadback.CompletionAuthority.Should().NotBeNull();
@@ -358,11 +378,10 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
 
             finalityReadback.ExitAuthorizationEligibility.Should().NotBeNull();
             finalityReadback.ExitAuthorizationEligibility!.CompletionAuthorityEligible.Should().BeTrue();
-            finalityReadback.ExitAuthorizationEligibility.ExitAuthorizationIssuanceAllowed.Should().BeFalse();
+            finalityReadback.ExitAuthorizationEligibility.ExitAuthorizationIssuanceAllowed.Should().BeTrue();
             finalityReadback.ExitAuthorizationEligibility.Status.Should()
-                .Be("ZERO_PAYABLE_FISCAL_PREREQUISITE_SATISFIED");
-            finalityReadback.ExitAuthorizationEligibility.BlockedReason.Should()
-                .Be("ZERO_PAYABLE_EXIT_AUTHORIZATION_ISSUANCE_PATH_UNAVAILABLE");
+                .Be("ZERO_PAYABLE_EXIT_AUTHORIZATION_READY");
+            finalityReadback.ExitAuthorizationEligibility.BlockedReason.Should().BeNull();
             repeatedReadback.ExitAuthorizationEligibility.Should()
                 .BeEquivalentTo(finalityReadback.ExitAuthorizationEligibility);
             finalityReadback.ZeroPayableFiscalCompletion.Should().NotBeNull();
@@ -387,7 +406,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
 
             var replay = await PostSharedDecisionAsync(
                 serviceClient,
-                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
+                Request(context, sourceChannel, applyPayableBasis: true),
                 $"full-fee-apply-{context.ParkingSessionId:N}",
                 Guid.NewGuid(),
                 HttpStatusCode.OK);
@@ -408,7 +427,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             counts.TerminalCashCommandCount.Should().Be(0);
             counts.TerminalCashCommandAuditCount.Should().Be(0);
             counts.FiscalIssuanceReferenceCount.Should().Be(1);
-            counts.ExitAuthorizationCount.Should().Be(0);
+            counts.ExitAuthorizationCount.Should().Be(1);
             counts.VendorPaymentAcknowledgmentCount.Should().Be(0);
 
             await AssertFiscalCompletionAncestryConstraintsAsync(context.ParkingSessionId);
@@ -416,7 +435,12 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             await AssertExitAuthorizationStatutoryAncestryConstraintsAsync(
                 context,
                 intake.StatutoryDiscountDecisionCommandId,
-                application);
+                application,
+                exitAuthorization.ExitAuthorizationId);
+            await AssertZeroPayableExitAuthorizationConsumesOnceAsync(
+                context,
+                exitAuthorization.ExitAuthorizationId,
+                application.StatutoryDiscountPayableBasisApplicationCommandId!.Value);
             await AssertEveryPaymentAttemptStatusBlocksFinalityAsync(
                 serviceClient,
                 context,
@@ -1101,126 +1125,105 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     private static async Task AssertExitAuthorizationStatutoryAncestryConstraintsAsync(
         PaymentTestContext context,
         Guid statutoryDiscountDecisionCommandId,
-        StatutoryDiscountDecisionResponse application)
+        StatutoryDiscountDecisionResponse application,
+        Guid exitAuthorizationId)
     {
-        await AssertInsertAsync(
-            completionBasis: "ZERO_PAYABLE_STATUTORY_FINALITY",
-            paymentAttemptId: null,
-            paymentConfirmationId: null,
-            statutoryDiscountDecisionCommandId,
-            application.StatutoryDiscountPayableBasisApplicationCommandId,
-            application.StatutoryDiscountValidationId,
-            application.AppliedPolicyReferenceId,
-            shouldSucceed: true);
+        await using (var connection = new Npgsql.NpgsqlConnection(
+                         StatutoryDiscountReviewIntegrationTestSupport.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new Npgsql.NpgsqlCommand(
+                """
+                SELECT
+                    parking_session_id,
+                    tariff_snapshot_id,
+                    completion_basis,
+                    completion_authority_reference_id,
+                    payment_attempt_id,
+                    payment_confirmation_id,
+                    statutory_discount_decision_command_id,
+                    statutory_discount_payable_basis_application_command_id,
+                    statutory_discount_validation_id,
+                    statutory_discount_policy_version_id
+                FROM core.exit_authorizations
+                WHERE exit_authorization_id = @exit_authorization_id;
+                """,
+                connection);
+            command.Parameters.AddWithValue("exit_authorization_id", exitAuthorizationId);
+            await using var reader = await command.ExecuteReaderAsync();
+            (await reader.ReadAsync()).Should().BeTrue();
+            reader.GetGuid(0).Should().Be(context.ParkingSessionId);
+            reader.GetGuid(1).Should().Be(application.AppliedTariffSnapshotId!.Value);
+            reader.GetString(2).Should().Be("ZERO_PAYABLE_STATUTORY_FINALITY");
+            reader.GetGuid(3).Should().Be(application.StatutoryDiscountPayableBasisApplicationCommandId!.Value);
+            reader.IsDBNull(4).Should().BeTrue();
+            reader.IsDBNull(5).Should().BeTrue();
+            reader.GetGuid(6).Should().Be(statutoryDiscountDecisionCommandId);
+            reader.GetGuid(7).Should().Be(application.StatutoryDiscountPayableBasisApplicationCommandId!.Value);
+            reader.GetGuid(8).Should().Be(application.StatutoryDiscountValidationId!.Value);
+            reader.GetGuid(9).Should().Be(application.AppliedPolicyReferenceId!.Value);
+        }
 
-        await AssertInsertAsync(
-            completionBasis: null,
-            paymentAttemptId: null,
-            paymentConfirmationId: null,
-            statutoryDiscountDecisionCommandId: null,
-            statutoryDiscountPayableBasisApplicationCommandId: null,
-            statutoryDiscountValidationId: null,
-            appliedPolicyReferenceId: null,
-            shouldSucceed: false);
+        await AssertUpdateRejectedAsync("completion_basis = 'PAYMENT_FINALITY'");
+        await AssertUpdateRejectedAsync("payment_attempt_id = gen_random_uuid()");
+        await AssertUpdateRejectedAsync("completion_authority_reference_id = gen_random_uuid()");
 
-        await AssertInsertAsync(
-            completionBasis: "ZERO_PAYABLE_STATUTORY_FINALITY",
-            paymentAttemptId: Guid.NewGuid(),
-            paymentConfirmationId: Guid.NewGuid(),
-            statutoryDiscountDecisionCommandId,
-            application.StatutoryDiscountPayableBasisApplicationCommandId,
-            application.StatutoryDiscountValidationId,
-            application.AppliedPolicyReferenceId,
-            shouldSucceed: false);
-
-        async Task AssertInsertAsync(
-            string? completionBasis,
-            Guid? paymentAttemptId,
-            Guid? paymentConfirmationId,
-            Guid? statutoryDiscountDecisionCommandId,
-            Guid? statutoryDiscountPayableBasisApplicationCommandId,
-            Guid? statutoryDiscountValidationId,
-            Guid? appliedPolicyReferenceId,
-            bool shouldSucceed)
+        async Task AssertUpdateRejectedAsync(string assignment)
         {
             await using var connection = new Npgsql.NpgsqlConnection(
                 StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
             await connection.OpenAsync();
             await using var transaction = await connection.BeginTransactionAsync();
             await using var command = new Npgsql.NpgsqlCommand(
-                """
-                INSERT INTO core.exit_authorizations (
-                    exit_authorization_id,
-                    parking_session_id,
-                    payment_attempt_id,
-                    payment_confirmation_id,
-                    authorization_token_hash,
-                    authorization_status,
-                    issued_at,
-                    expires_at,
-                    correlation_id,
-                    created_at,
-                    created_by_service_identity_id,
-                    updated_at,
-                    updated_by_service_identity_id,
-                    tariff_snapshot_id,
-                    completion_basis,
-                    statutory_discount_decision_command_id,
-                    statutory_discount_payable_basis_application_command_id,
-                    statutory_discount_validation_id,
-                    applied_policy_reference_id)
-                VALUES (
-                    @exit_authorization_id,
-                    @parking_session_id,
-                    @payment_attempt_id,
-                    @payment_confirmation_id,
-                    repeat('a', 64),
-                    'ISSUED',
-                    now(),
-                    now() + interval '15 minutes',
-                    @correlation_id,
-                    now(),
-                    @service_identity_id,
-                    now(),
-                    @service_identity_id,
-                    @tariff_snapshot_id,
-                    @completion_basis,
-                    @decision_command_id,
-                    @application_command_id,
-                    @validation_id,
-                    @policy_reference_id);
+                $"""
+                UPDATE core.exit_authorizations
+                SET {assignment}
+                WHERE exit_authorization_id = @exit_authorization_id;
                 """,
                 connection,
                 transaction);
-            command.Parameters.AddWithValue("exit_authorization_id", Guid.NewGuid());
-            command.Parameters.AddWithValue("parking_session_id", context.ParkingSessionId);
-            command.Parameters.Add("payment_attempt_id", NpgsqlTypes.NpgsqlDbType.Uuid).Value =
-                (object?)paymentAttemptId ?? DBNull.Value;
-            command.Parameters.Add("payment_confirmation_id", NpgsqlTypes.NpgsqlDbType.Uuid).Value =
-                (object?)paymentConfirmationId ?? DBNull.Value;
-            command.Parameters.AddWithValue("correlation_id", Guid.NewGuid());
-            command.Parameters.AddWithValue("service_identity_id", WebPayServiceIdentityId);
-            command.Parameters.AddWithValue("tariff_snapshot_id", application.AppliedTariffSnapshotId!.Value);
-            command.Parameters.Add("completion_basis", NpgsqlTypes.NpgsqlDbType.Varchar).Value =
-                (object?)completionBasis ?? DBNull.Value;
-            command.Parameters.Add("decision_command_id", NpgsqlTypes.NpgsqlDbType.Uuid).Value =
-                (object?)statutoryDiscountDecisionCommandId ?? DBNull.Value;
-            command.Parameters.Add("application_command_id", NpgsqlTypes.NpgsqlDbType.Uuid).Value =
-                (object?)statutoryDiscountPayableBasisApplicationCommandId ?? DBNull.Value;
-            command.Parameters.Add("validation_id", NpgsqlTypes.NpgsqlDbType.Uuid).Value =
-                (object?)statutoryDiscountValidationId ?? DBNull.Value;
-            command.Parameters.Add("policy_reference_id", NpgsqlTypes.NpgsqlDbType.Uuid).Value =
-                (object?)appliedPolicyReferenceId ?? DBNull.Value;
-
-            if (shouldSucceed)
-            {
-                (await command.ExecuteNonQueryAsync()).Should().Be(1);
-                return;
-            }
-
+            command.Parameters.AddWithValue("exit_authorization_id", exitAuthorizationId);
             var action = async () => await command.ExecuteNonQueryAsync();
             await action.Should().ThrowAsync<Npgsql.PostgresException>();
+            await transaction.RollbackAsync();
         }
+    }
+
+    private static async Task AssertZeroPayableExitAuthorizationConsumesOnceAsync(
+        PaymentTestContext context,
+        Guid exitAuthorizationId,
+        Guid completionAuthorityReferenceId)
+    {
+        var gateway = new ConsumeExitAuthorizationGateway(
+            StatutoryDiscountReviewIntegrationTestSupport.ConnectionString,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ConsumeExitAuthorizationGateway>.Instance);
+        var request = new ConsumeExitAuthorizationDbRequest
+        {
+            ExitAuthorizationId = exitAuthorizationId,
+            RequestedByUserId = WebPayServiceIdentityId,
+            CorrelationId = Guid.NewGuid(),
+            RequestedAt = DateTimeOffset.UtcNow,
+            SiteId = context.SiteId
+        };
+
+        var consumed = await gateway.ConsumeAsync(request, CancellationToken.None);
+        consumed.AuthorizationStatus.Should().Be("CONSUMED");
+        consumed.ParkingSessionId.Should().Be(context.ParkingSessionId);
+        consumed.CompletionBasis.Should().Be("ZERO_PAYABLE_STATUTORY_FINALITY");
+        consumed.CompletionAuthorityReferenceId.Should().Be(completionAuthorityReferenceId);
+        consumed.PaymentAttemptId.Should().BeNull();
+        consumed.PaymentConfirmationId.Should().BeNull();
+        consumed.GateAuthorizationConsumptionId.Should().BeNull(
+            "zero-payable completion must not route through the retired gate-command handoff");
+
+        var duplicate = async () => await gateway.ConsumeAsync(
+            request with
+            {
+                CorrelationId = Guid.NewGuid(),
+                RequestedAt = DateTimeOffset.UtcNow
+            },
+            CancellationToken.None);
+        await duplicate.Should().ThrowAsync<Npgsql.PostgresException>();
     }
 
     private static async Task CorruptDecisionGrossAmountAsync(Guid statutoryDiscountDecisionCommandId)
@@ -1302,7 +1305,8 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             ReviewerUserId: null,
             ReviewerAttestation: false,
             applyPayableBasis,
-            includePayableBasis ? context.TariffSnapshotId : null);
+            includePayableBasis ? context.TariffSnapshotId : null,
+            BeneficiaryResidencySatisfied: true);
 
     private static async Task SeedServiceAuthorizationAsync(PaymentTestContext context)
     {

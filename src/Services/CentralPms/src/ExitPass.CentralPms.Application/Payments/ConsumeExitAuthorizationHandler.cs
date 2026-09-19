@@ -131,6 +131,13 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
 
             return new ConsumeExitAuthorizationResult(
                 ExitAuthorizationId: dbResult.ExitAuthorizationId,
+                CompletionBasis: dbResult.CompletionBasis ??
+                    throw new InvalidOperationException("Consume result did not include CompletionBasis."),
+                CompletionAuthorityReferenceId: dbResult.CompletionAuthorityReferenceId ??
+                    throw new InvalidOperationException(
+                        "Consume result did not include CompletionAuthorityReferenceId."),
+                PaymentAttemptId: dbResult.PaymentAttemptId,
+                PaymentConfirmationId: dbResult.PaymentConfirmationId,
                 AuthorizationStatus: dbResult.AuthorizationStatus,
                 ConsumedAt: dbResult.ConsumedAt);
         }
@@ -284,7 +291,10 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
                 ExitAuthorizationId = dbResult.ExitAuthorizationId,
                 GateAuthorizationConsumptionId = dbResult.GateAuthorizationConsumptionId,
                 ParkingSessionId = dbResult.ParkingSessionId,
+                CompletionBasis = dbResult.CompletionBasis ?? string.Empty,
+                CompletionAuthorityReferenceId = dbResult.CompletionAuthorityReferenceId,
                 PaymentAttemptId = dbResult.PaymentAttemptId,
+                PaymentConfirmationId = dbResult.PaymentConfirmationId,
                 TariffSnapshotId = dbResult.TariffSnapshotId,
                 GateDeviceId = dbResult.GateDeviceId,
                 GateDeviceIdentifier = dbResult.GateDeviceIdentifier ?? command.GateDeviceIdentifier,

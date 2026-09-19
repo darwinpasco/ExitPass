@@ -33,6 +33,7 @@ public sealed class PaymentToExitOperationalEvidenceTests
     private static readonly Guid CorrelationId = Guid.Parse("10000000-0000-0000-0000-000000000004");
     private static readonly Guid RequestedByUserId = Guid.Parse("10000000-0000-0000-0000-000000000005");
     private static readonly Guid ExitAuthorizationId = Guid.Parse("10000000-0000-0000-0000-000000000006");
+    private static readonly Guid PaymentConfirmationId = Guid.Parse("10000000-0000-0000-0000-000000000007");
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-05-14T08:00:00Z");
 
     [Fact]
@@ -143,13 +144,17 @@ public sealed class PaymentToExitOperationalEvidenceTests
             .Returns(new FinalizePaymentAttemptResult(PaymentAttemptId, "CONFIRMED"));
         issueUseCase.ExecuteAsync(Arg.Any<IssueExitAuthorizationCommand>(), Arg.Any<CancellationToken>())
             .Returns(new IssueExitAuthorizationResult(
-                ExitAuthorizationId,
-                ParkingSessionId,
-                PaymentAttemptId,
-                "AUTH-001",
-                "ISSUED",
-                Now,
-                Now.AddMinutes(15)));
+                ExitAuthorizationId: ExitAuthorizationId,
+                ParkingSessionId: ParkingSessionId,
+                TariffSnapshotId: TariffSnapshotId,
+                CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                CompletionAuthorityReferenceId: PaymentConfirmationId,
+                PaymentAttemptId: PaymentAttemptId,
+                PaymentConfirmationId: PaymentConfirmationId,
+                AuthorizationToken: "AUTH-001",
+                AuthorizationStatus: "ISSUED",
+                IssuedAt: Now,
+                ExpirationTimestamp: Now.AddMinutes(15)));
 
         var sut = new ReportVerifiedPaymentOutcomeHandler(
             recordGateway,
@@ -213,13 +218,17 @@ public sealed class PaymentToExitOperationalEvidenceTests
             .Returns(new FinalizePaymentAttemptResult(PaymentAttemptId, "CONFIRMED"));
         issueUseCase.ExecuteAsync(Arg.Any<IssueExitAuthorizationCommand>(), Arg.Any<CancellationToken>())
             .Returns(new IssueExitAuthorizationResult(
-                ExitAuthorizationId,
-                ParkingSessionId,
-                PaymentAttemptId,
-                "AUTH-001",
-                "ISSUED",
-                Now,
-                Now.AddMinutes(15)));
+                ExitAuthorizationId: ExitAuthorizationId,
+                ParkingSessionId: ParkingSessionId,
+                TariffSnapshotId: TariffSnapshotId,
+                CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                CompletionAuthorityReferenceId: PaymentConfirmationId,
+                PaymentAttemptId: PaymentAttemptId,
+                PaymentConfirmationId: PaymentConfirmationId,
+                AuthorizationToken: "AUTH-001",
+                AuthorizationStatus: "ISSUED",
+                IssuedAt: Now,
+                ExpirationTimestamp: Now.AddMinutes(15)));
         eventPublisher
             .PublishAsync(Arg.Any<IntegrationEventEnvelope>(), Arg.Any<CancellationToken>())
             .Returns<Task>(_ => throw new InvalidOperationException("RabbitMQ unavailable"));
@@ -332,13 +341,17 @@ public sealed class PaymentToExitOperationalEvidenceTests
             {
                 callOrder.Add("IssueExitAuthorization");
                 return new IssueExitAuthorizationResult(
-                    ExitAuthorizationId,
-                    ParkingSessionId,
-                    PaymentAttemptId,
-                    "AUTH-001",
-                    "ISSUED",
-                    Now,
-                    Now.AddMinutes(15));
+                    ExitAuthorizationId: ExitAuthorizationId,
+                    ParkingSessionId: ParkingSessionId,
+                    TariffSnapshotId: TariffSnapshotId,
+                    CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                    CompletionAuthorityReferenceId: paymentConfirmationId,
+                    PaymentAttemptId: PaymentAttemptId,
+                    PaymentConfirmationId: paymentConfirmationId,
+                    AuthorizationToken: "AUTH-001",
+                    AuthorizationStatus: "ISSUED",
+                    IssuedAt: Now,
+                    ExpirationTimestamp: Now.AddMinutes(15));
             });
         eventPublisher
             .PublishAsync(Arg.Any<IntegrationEventEnvelope>(), Arg.Any<CancellationToken>())
@@ -426,13 +439,17 @@ public sealed class PaymentToExitOperationalEvidenceTests
             {
                 callOrder.Add("IssueExitAuthorization");
                 return new IssueExitAuthorizationResult(
-                    ExitAuthorizationId,
-                    ParkingSessionId,
-                    PaymentAttemptId,
-                    "AUTH-001",
-                    "ISSUED",
-                    Now,
-                    Now.AddMinutes(15));
+                    ExitAuthorizationId: ExitAuthorizationId,
+                    ParkingSessionId: ParkingSessionId,
+                    TariffSnapshotId: TariffSnapshotId,
+                    CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                    CompletionAuthorityReferenceId: paymentConfirmationId,
+                    PaymentAttemptId: PaymentAttemptId,
+                    PaymentConfirmationId: paymentConfirmationId,
+                    AuthorizationToken: "AUTH-001",
+                    AuthorizationStatus: "ISSUED",
+                    IssuedAt: Now,
+                    ExpirationTimestamp: Now.AddMinutes(15));
             });
         vendorAcknowledgmentWorkflow
             .ProcessAsync(Arg.Any<VendorPaymentAcknowledgmentWorkflowCommand>(), Arg.Any<CancellationToken>())
@@ -481,13 +498,17 @@ public sealed class PaymentToExitOperationalEvidenceTests
         clock.UtcNow.Returns(Now);
         gateway.IssueAsync(Arg.Any<IssueExitAuthorizationDbRequest>(), Arg.Any<CancellationToken>())
             .Returns(new IssueExitAuthorizationDbResult(
-                ExitAuthorizationId,
-                ParkingSessionId,
-                PaymentAttemptId,
-                "AUTH-001",
-                "ISSUED",
-                Now,
-                Now.AddMinutes(15)));
+                ExitAuthorizationId: ExitAuthorizationId,
+                ParkingSessionId: ParkingSessionId,
+                TariffSnapshotId: TariffSnapshotId,
+                CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                CompletionAuthorityReferenceId: PaymentConfirmationId,
+                PaymentAttemptId: PaymentAttemptId,
+                PaymentConfirmationId: PaymentConfirmationId,
+                AuthorizationToken: "AUTH-001",
+                AuthorizationStatus: "ISSUED",
+                IssuedAt: Now,
+                ExpirationTimestamp: Now.AddMinutes(15)));
 
         var sut = new IssueExitAuthorizationHandler(
             gateway,

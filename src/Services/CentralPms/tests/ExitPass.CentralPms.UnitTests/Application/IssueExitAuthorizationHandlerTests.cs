@@ -63,7 +63,11 @@ public sealed class IssueExitAuthorizationHandlerTests
             .Returns(new IssueExitAuthorizationDbResult(
                 ExitAuthorizationId: exitAuthorizationId,
                 ParkingSessionId: parkingSessionId,
+                TariffSnapshotId: Guid.Parse("10000000-0000-0000-0000-000000000005"),
+                CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                CompletionAuthorityReferenceId: Guid.Parse("10000000-0000-0000-0000-000000000008"),
                 PaymentAttemptId: paymentAttemptId,
+                PaymentConfirmationId: Guid.Parse("10000000-0000-0000-0000-000000000008"),
                 AuthorizationToken: "AUTH-TOKEN-001",
                 AuthorizationStatus: "ISSUED",
                 IssuedAt: now,
@@ -115,7 +119,11 @@ public sealed class IssueExitAuthorizationHandlerTests
             .Returns(new IssueExitAuthorizationDbResult(
                 ExitAuthorizationId: exitAuthorizationId,
                 ParkingSessionId: parkingSessionId,
+                TariffSnapshotId: Guid.Parse("10000000-0000-0000-0000-000000000005"),
+                CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                CompletionAuthorityReferenceId: Guid.Parse("10000000-0000-0000-0000-000000000008"),
                 PaymentAttemptId: paymentAttemptId,
+                PaymentConfirmationId: Guid.Parse("10000000-0000-0000-0000-000000000008"),
                 AuthorizationToken: "AUTH-TOKEN-001",
                 AuthorizationStatus: "ISSUED",
                 IssuedAt: now,
@@ -146,7 +154,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         ConfigureGatewaySuccess(now);
         var command = ValidCommand();
         var reader = Substitute.For<IPaymentFinalityCompletionAuthorityReader>();
-        reader.ReadAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+        reader.ReadAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(PaymentCompletionCandidate(command, now));
 
         var result = await CreateSut(completionAuthorityReader: reader)
@@ -166,7 +174,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         ConfigureGatewaySuccess(now);
         var command = ValidCommand();
         var reader = Substitute.For<IPaymentFinalityCompletionAuthorityReader>();
-        reader.ReadAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+        reader.ReadAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns((PaymentFinalityCompletionCandidate?)null);
 
         await Assert.ThrowsAsync<KeyNotFoundException>(() =>
@@ -188,7 +196,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         ConfigureGatewaySuccess(now);
         var command = ValidCommand();
         var reader = Substitute.For<IPaymentFinalityCompletionAuthorityReader>();
-        reader.ReadAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+        reader.ReadAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(PaymentCompletionCandidate(command, now) with { AttemptStatus = attemptStatus });
 
         var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
@@ -363,7 +371,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
         var fiscalReference = CompleteFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
         repository
-            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(fiscalReference);
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
@@ -380,7 +388,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         AssertTag(activity, "fiscal_gating_shadow.would_allow_normal_exit_authorization", true);
         AssertTag(activity, "fiscal_gating_shadow.enforcement_wired_for_blocking", true);
         await repository.Received(1).FindLatestByPaymentAttemptIdAsync(
-            command.PaymentAttemptId,
+            command.PaymentAttemptId!.Value,
             Arg.Any<CancellationToken>());
         await _eventPublisher.Received(1).PublishAsync(
             Arg.Is<IntegrationEventEnvelope>(x => IsReadyShadowObservation(x, command, fiscalReference)),
@@ -397,7 +405,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         var command = ValidCommand();
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
         repository
-            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(MinimalFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceUnknown));
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
@@ -428,7 +436,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         var command = ValidCommand();
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
         repository
-            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns<Task<FiscalIssuanceReferenceRecord?>>(_ => throw new InvalidOperationException("lookup failed"));
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
@@ -457,7 +465,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         };
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
         repository
-            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(fiscalReference);
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
@@ -633,7 +641,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         var fiscalReference = CompleteFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
         repository
-            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId!.Value, Arg.Any<CancellationToken>())
             .Returns(fiscalReference);
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
@@ -734,6 +742,104 @@ public sealed class IssueExitAuthorizationHandlerTests
         Assert.Contains("CorrelationId", ex.Message);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenZeroPayableFiscalCompletionIsRecorded_IssuesWithoutPaymentIdentifiers()
+    {
+        var now = new DateTimeOffset(2026, 9, 19, 8, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        var authority = ZeroPayableAuthority(now);
+        var authorizationId = Guid.NewGuid();
+
+        _gateway.IssueAsync(
+                Arg.Is<IssueExitAuthorizationDbRequest>(request =>
+                    request.ParkingSessionId == authority.ParkingSessionId &&
+                    request.TariffSnapshotId == authority.TariffSnapshotId &&
+                    request.CompletionBasis == CompletionBasisCodes.ZeroPayableStatutoryFinality &&
+                    request.CompletionAuthorityReferenceId == authority.DurableSourceReferenceId &&
+                    request.PaymentAttemptId == null &&
+                    request.PaymentConfirmationId == null &&
+                    request.StatutoryDiscountDecisionCommandId == authority.StatutoryDiscountDecisionCommandId &&
+                    request.StatutoryDiscountPayableBasisApplicationCommandId ==
+                        authority.StatutoryDiscountPayableBasisApplicationCommandId &&
+                    request.StatutoryDiscountValidationId == authority.StatutoryDiscountValidationId &&
+                    request.StatutoryDiscountPolicyVersionId == authority.StatutoryDiscountPolicyVersionId),
+                Arg.Any<CancellationToken>())
+            .Returns(new IssueExitAuthorizationDbResult(
+                ExitAuthorizationId: authorizationId,
+                ParkingSessionId: authority.ParkingSessionId,
+                TariffSnapshotId: authority.TariffSnapshotId,
+                CompletionBasis: authority.CompletionBasis,
+                CompletionAuthorityReferenceId: authority.DurableSourceReferenceId,
+                PaymentAttemptId: null,
+                PaymentConfirmationId: null,
+                AuthorizationToken: "ZERO-AUTH-TOKEN",
+                AuthorizationStatus: "ISSUED",
+                IssuedAt: now,
+                ExpirationTimestamp: now.AddMinutes(15)));
+        var fiscalEvaluator = Substitute.For<IExitAuthorizationFiscalGatingShadowEvaluator>();
+
+        var result = await CreateSut(fiscalEvaluator)
+            .ExecuteAsync(
+                new IssueExitAuthorizationCommand(
+                    ParkingSessionId: authority.ParkingSessionId,
+                    PaymentAttemptId: null,
+                    RequestedByUserId: Guid.NewGuid(),
+                    CorrelationId: authority.CorrelationId,
+                    CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality,
+                    CompletionAuthority: authority,
+                    FiscalPrerequisiteSatisfied: true),
+                CancellationToken.None);
+
+        Assert.Equal(authorizationId, result.ExitAuthorizationId);
+        Assert.Equal(CompletionBasisCodes.ZeroPayableStatutoryFinality, result.CompletionBasis);
+        Assert.Null(result.PaymentAttemptId);
+        Assert.Null(result.PaymentConfirmationId);
+        await fiscalEvaluator.DidNotReceiveWithAnyArgs().EvaluateAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenZeroPayableFiscalCompletionIsMissing_BlocksBeforeIssuance()
+    {
+        var authority = ZeroPayableAuthority(DateTimeOffset.UtcNow);
+
+        var exception = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            CreateSut().ExecuteAsync(
+                new IssueExitAuthorizationCommand(
+                    ParkingSessionId: authority.ParkingSessionId,
+                    PaymentAttemptId: null,
+                    RequestedByUserId: Guid.NewGuid(),
+                    CorrelationId: authority.CorrelationId,
+                    CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality,
+                    CompletionAuthority: authority,
+                    FiscalPrerequisiteSatisfied: false),
+                CancellationToken.None));
+
+        Assert.Equal(
+            ExitAuthorizationEligibilityBlockedReasons.ZeroPayableFiscalPrerequisiteUnresolved,
+            exception.ErrorCode);
+        await _gateway.DidNotReceiveWithAnyArgs().IssueAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenZeroPayableIncludesPaymentAttempt_RejectsMixedAuthority()
+    {
+        var authority = ZeroPayableAuthority(DateTimeOffset.UtcNow);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            CreateSut().ExecuteAsync(
+                new IssueExitAuthorizationCommand(
+                    ParkingSessionId: authority.ParkingSessionId,
+                    PaymentAttemptId: Guid.NewGuid(),
+                    RequestedByUserId: Guid.NewGuid(),
+                    CorrelationId: authority.CorrelationId,
+                    CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality,
+                    CompletionAuthority: authority,
+                    FiscalPrerequisiteSatisfied: true),
+                CancellationToken.None));
+
+        await _gateway.DidNotReceiveWithAnyArgs().IssueAsync(default!, default);
+    }
+
     /// <summary>
     /// Creates the system under test with no-op logging and shared metrics dependencies.
     /// </summary>
@@ -796,7 +902,11 @@ public sealed class IssueExitAuthorizationHandlerTests
             .Returns(new IssueExitAuthorizationDbResult(
                 ExitAuthorizationId: Guid.NewGuid(),
                 ParkingSessionId: ValidCommand().ParkingSessionId,
+                TariffSnapshotId: Guid.Parse("10000000-0000-0000-0000-000000000005"),
+                CompletionBasis: CompletionBasisCodes.PaymentFinality,
+                CompletionAuthorityReferenceId: Guid.Parse("10000000-0000-0000-0000-000000000008"),
                 PaymentAttemptId: ValidCommand().PaymentAttemptId,
+                PaymentConfirmationId: Guid.Parse("10000000-0000-0000-0000-000000000008"),
                 AuthorizationToken: "AUTH-TOKEN-001",
                 AuthorizationStatus: "ISSUED",
                 IssuedAt: now,
@@ -810,11 +920,30 @@ public sealed class IssueExitAuthorizationHandlerTests
             RequestedByUserId: Guid.Parse("10000000-0000-0000-0000-000000000003"),
             CorrelationId: Guid.Parse("10000000-0000-0000-0000-000000000004"));
 
+    private static CompletionAuthority ZeroPayableAuthority(DateTimeOffset establishedAt) =>
+        new(
+            ParkingSessionId: Guid.Parse("20000000-0000-0000-0000-000000000001"),
+            TariffSnapshotId: Guid.Parse("20000000-0000-0000-0000-000000000002"),
+            SiteId: Guid.Parse("20000000-0000-0000-0000-000000000003"),
+            SiteGroupId: Guid.Parse("20000000-0000-0000-0000-000000000004"),
+            CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality,
+            DurableSourceReferenceId: Guid.Parse("20000000-0000-0000-0000-000000000005"),
+            EstablishedAt: establishedAt,
+            CorrelationId: Guid.Parse("20000000-0000-0000-0000-000000000006"),
+            FinalPayableAmountMinorUnits: 0,
+            Currency: "PHP",
+            StatutoryDiscountDecisionCommandId: Guid.Parse("20000000-0000-0000-0000-000000000007"),
+            StatutoryDiscountPayableBasisApplicationCommandId:
+                Guid.Parse("20000000-0000-0000-0000-000000000005"),
+            StatutoryDiscountValidationId: Guid.Parse("20000000-0000-0000-0000-000000000008"),
+            AppliedPolicyReferenceId: Guid.Parse("20000000-0000-0000-0000-000000000009"),
+            StatutoryDiscountPolicyVersionId: Guid.Parse("20000000-0000-0000-0000-000000000009"));
+
     private static PaymentFinalityCompletionCandidate PaymentCompletionCandidate(
         IssueExitAuthorizationCommand command,
         DateTimeOffset establishedAt) =>
         new(
-            command.PaymentAttemptId,
+            command.PaymentAttemptId!.Value,
             command.ParkingSessionId,
             Guid.Parse("10000000-0000-0000-0000-000000000005"),
             Guid.Parse("10000000-0000-0000-0000-000000000006"),

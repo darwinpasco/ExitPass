@@ -775,14 +775,20 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             CallCount++;
             LastCommand = command;
             var issuedAt = DateTimeOffset.UtcNow;
+            var authority = command.CompletionAuthority;
             return Task.FromResult(new IssueExitAuthorizationResult(
-                Guid.Parse("21000000-0000-4000-8000-000000000023"),
-                command.ParkingSessionId,
-                command.PaymentAttemptId,
-                "test-authorization-token",
-                "ISSUED",
-                issuedAt,
-                issuedAt.AddMinutes(15)));
+                ExitAuthorizationId: Guid.Parse("21000000-0000-4000-8000-000000000023"),
+                ParkingSessionId: command.ParkingSessionId,
+                TariffSnapshotId: authority?.TariffSnapshotId ?? Guid.NewGuid(),
+                CompletionBasis: command.CompletionBasis,
+                CompletionAuthorityReferenceId: authority?.DurableSourceReferenceId ??
+                    command.PaymentAttemptId ?? Guid.NewGuid(),
+                PaymentAttemptId: command.PaymentAttemptId,
+                PaymentConfirmationId: authority?.PaymentConfirmationId,
+                AuthorizationToken: "test-authorization-token",
+                AuthorizationStatus: "ISSUED",
+                IssuedAt: issuedAt,
+                ExpirationTimestamp: issuedAt.AddMinutes(15)));
         }
     }
 

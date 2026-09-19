@@ -483,12 +483,72 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
                SET lgu_code = @lgu_code,
                    updated_at = now()
              WHERE site_id = @site_id;
+
+            INSERT INTO identity.user_roles (
+                user_role_id,
+                user_id,
+                role_id,
+                assignment_status,
+                assignment_reason_code,
+                assigned_by_service_identity_id,
+                effective_from,
+                created_by_service_identity_id,
+                updated_by_service_identity_id)
+            SELECT
+                '77000000-0000-0000-0000-000000000060',
+                @user_id,
+                role_id,
+                'ACTIVE',
+                'OPERATOR_CONSOLE_DIRECT_SITE_TEST',
+                '77000000-0000-0000-0000-000000000003',
+                now() - interval '1 minute',
+                '77000000-0000-0000-0000-000000000003',
+                '77000000-0000-0000-0000-000000000003'
+            FROM identity.roles
+            WHERE role_code = 'SITE_OPERATOR'
+            ON CONFLICT (user_role_id) DO UPDATE
+            SET assignment_status = 'ACTIVE',
+                revoked_at = NULL,
+                effective_to = NULL,
+                updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+                updated_at = now();
+
+            INSERT INTO identity.user_role_scope_grants (
+                user_role_scope_grant_id,
+                user_role_id,
+                scope_type,
+                site_id,
+                grant_status,
+                grant_reason_code,
+                effective_from,
+                granted_by_service_identity_id,
+                created_by_service_identity_id,
+                updated_by_service_identity_id)
+            VALUES (
+                '77000000-0000-0000-0000-000000000061',
+                '77000000-0000-0000-0000-000000000060',
+                'SITE',
+                @site_id,
+                'ACTIVE',
+                'OPERATOR_CONSOLE_DIRECT_SITE_TEST',
+                now() - interval '1 minute',
+                '77000000-0000-0000-0000-000000000003',
+                '77000000-0000-0000-0000-000000000003',
+                '77000000-0000-0000-0000-000000000003')
+            ON CONFLICT (user_role_scope_grant_id) DO UPDATE
+            SET site_id = EXCLUDED.site_id,
+                grant_status = 'ACTIVE',
+                revoked_at = NULL,
+                effective_to = NULL,
+                updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+                updated_at = now();
             """;
 
         await using var connection = await OpenConnectionAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("lgu_code", NpgsqlDbType.Varchar).Value = FixtureLguCode;
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = FixtureSiteId;
+        command.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = FixtureUserId;
         await command.ExecuteNonQueryAsync();
     }
 

@@ -41,7 +41,8 @@ public sealed record OperatorConsoleAccessEvaluationReadContext(
     OperatorShiftVersionReadModel? LatestShiftVersion,
     OperatorShiftRevocationReadModel? LatestShiftRevocation,
     OperatorShiftTakeoverReadModel? ActiveShiftTakeover,
-    OperatorStatutoryEntitlementFingerprintReadModel? StatutoryEntitlementFingerprint)
+    OperatorStatutoryEntitlementFingerprintReadModel? StatutoryEntitlementFingerprint,
+    bool HasEffectiveDirectSiteScope = false)
 {
     /// <summary>
     /// Creates an empty context for missing/not-yet-imported read model rows.
@@ -56,7 +57,8 @@ public sealed record OperatorConsoleAccessEvaluationReadContext(
             LatestShiftVersion: null,
             LatestShiftRevocation: null,
             ActiveShiftTakeover: null,
-            StatutoryEntitlementFingerprint: null);
+            StatutoryEntitlementFingerprint: null,
+            HasEffectiveDirectSiteScope: false);
 }
 
 /// <summary>

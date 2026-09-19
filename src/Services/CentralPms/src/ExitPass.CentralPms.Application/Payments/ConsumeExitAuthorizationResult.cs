@@ -17,5 +17,9 @@ namespace ExitPass.CentralPms.Application.Payments;
 /// </summary>
 public sealed record ConsumeExitAuthorizationResult(
     Guid ExitAuthorizationId,
+    string CompletionBasis,
+    Guid CompletionAuthorityReferenceId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
     string AuthorizationStatus,
     DateTimeOffset ConsumedAt);

@@ -122,6 +122,9 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(
             """
+            DELETE FROM core.exit_authorizations
+            WHERE parking_session_id = @parking_session_id;
+
             DELETE FROM operator_console.statutory_discount_service_channel_reviews
             WHERE parking_session_id = @parking_session_id;
 
@@ -343,6 +346,9 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(
             """
+            DELETE FROM core.exit_authorizations
+            WHERE parking_session_id = @parking_session_id;
+
             DELETE FROM operator_console.statutory_discount_service_channel_reviews
             WHERE parking_session_id = @parking_session_id;
 
