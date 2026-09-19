@@ -62,13 +62,22 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
         _repository.GetUserAsync(actor, RequireReference(userReference), correlationId, cancellationToken);
 
     public Task<IdentityAdministrationResult<IdentityUserSummary>> CreateUserAsync(
-        IdentityAdministrationActor actor, CreateIdentityUserCommand command, CancellationToken cancellationToken) =>
-        _repository.CreateUserAsync(actor, NormalizeCreateCommand(command), cancellationToken);
+        IdentityAdministrationActor actor, CreateIdentityUserCommand command, CancellationToken cancellationToken)
+    {
+        var normalized = NormalizeCreateCommand(command);
+        var invalidUsername = ValidateBootstrapUsername<IdentityUserSummary>(normalized.Username, normalized.CorrelationId);
+        return invalidUsername is null
+            ? _repository.CreateUserAsync(actor, normalized, cancellationToken)
+            : Task.FromResult(invalidUsername);
+    }
 
     public async Task<IdentityAdministrationResult<CreateIdentityUserResult>> CreateInvitedUserAsync(
         IdentityAdministrationActor actor, CreateIdentityUserCommand command, CancellationToken cancellationToken)
     {
         var normalized = NormalizeCreateCommand(command);
+        var invalidUsername = ValidateBootstrapUsername<CreateIdentityUserResult>(normalized.Username, normalized.CorrelationId);
+        if (invalidUsername is not null) return invalidUsername;
+
         if (_passwordHasher is null || _totpProvider is null || _totpProtector is null || !_totpProtector.IsConfigured)
         {
             return IdentityAdministrationResult<CreateIdentityUserResult>.Failed(
@@ -79,7 +88,7 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
         var now = _timeProvider.GetUtcNow();
         var userReference = Guid.NewGuid();
         var authenticatorReference = Guid.NewGuid();
-        var temporaryPassword = GenerateTemporaryPassword();
+        var temporaryPassword = normalized.Username;
         var passwordHash = await _passwordHasher.HashAsync(temporaryPassword, cancellationToken);
         var totpSecret = _totpProvider.GenerateSecret();
         var totpSharedSecret = _totpProvider.EncodeSecret(totpSecret);
@@ -441,8 +450,14 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
     private static string? NormalizeOptionalEmail(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
 
-    private static string GenerateTemporaryPassword() =>
-        $"Ep1!{Convert.ToHexString(RandomNumberGenerator.GetBytes(14))}";
+    private static IdentityAdministrationResult<T>? ValidateBootstrapUsername<T>(string username, Guid correlationId) =>
+        username.Length < HumanAuthenticationOptions.RequiredPasswordMinimumLength
+            ? IdentityAdministrationResult<T>.Failed(
+                IdentityAdministrationOutcome.Invalid,
+                "USERNAME_TEMPORARY_PASSWORD_TOO_SHORT",
+                "Username must be at least 8 characters because it is used as the temporary password.",
+                correlationId)
+            : null;
 
     private static bool IsUsableEmail(string? value)
     {

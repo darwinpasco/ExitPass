@@ -121,28 +121,29 @@ function fixtureAuthMode(request) {
   return cookies[fixtureSessionCookie] ?? "authenticated";
 }
 
-function sessionResponse() {
+function sessionResponse(overrides = {}) {
+  const restricted = overrides.passwordChangeRequired === true;
   return {
-    outcome: "AUTHENTICATED",
+    outcome: restricted ? "PASSWORD_CHANGE_REQUIRED" : "AUTHENTICATED",
     authenticated: true,
     session: {
       sessionReference: "71000000-0000-0000-0000-000000000001",
       userReference: "72000000-0000-0000-0000-000000000001",
-      username: "review.operator",
-      displayName: "Review Operator",
+      username: overrides.username ?? "review.operator",
+      displayName: overrides.displayName ?? "Review Operator",
       audience: "OPERATOR_CONSOLE",
-      assurance: "PASSWORD",
+      assurance: restricted ? "PASSWORD_CHANGE_REQUIRED" : "PASSWORD",
       privilegedAccount: false,
-      passwordChangeRequired: false,
+      passwordChangeRequired: restricted,
       mfaRequired: false,
       mfaSatisfied: false,
       authenticatedAt: "2026-08-08T08:00:00+08:00",
       lastSeenAt: "2026-08-08T08:05:00+08:00",
       idleExpiresAt: "2099-08-08T08:35:00+08:00",
       absoluteExpiresAt: "2099-08-08T16:00:00+08:00",
-      permissions: fixturePermissions,
-      siteReferences: ["73000000-0000-0000-0000-000000000001"],
-      siteGroupReferences: ["74000000-0000-0000-0000-000000000001"],
+      permissions: restricted ? [] : fixturePermissions,
+      siteReferences: restricted ? [] : ["73000000-0000-0000-0000-000000000001"],
+      siteGroupReferences: restricted ? [] : ["74000000-0000-0000-0000-000000000001"],
       hasGlobalScope: false,
       deviceServiceIdentityReference: null,
       correlationId: "75000000-0000-0000-0000-000000000001"
@@ -152,6 +153,27 @@ function sessionResponse() {
     retryable: false,
     correlationId: "75000000-0000-0000-0000-000000000001"
   };
+}
+
+function fixtureSessionResponse(mode) {
+  if (mode === "change-required") {
+    return sessionResponse({ username: "JuanDC03", displayName: "Juan Dela Cruz", passwordChangeRequired: true });
+  }
+  if (mode === "first-user") {
+    return sessionResponse({ username: "JuanDC03", displayName: "Juan Dela Cruz" });
+  }
+  if (mode === "multi-role") {
+    return sessionResponse({ username: "multi.operator", displayName: "Multi Role Operator" });
+  }
+  return sessionResponse();
+}
+
+function isAuthenticatedFixtureMode(mode) {
+  return ["authenticated", "change-required", "first-user", "multi-role"].includes(mode);
+}
+
+function isBusinessAuthenticatedFixtureMode(mode) {
+  return ["authenticated", "first-user", "multi-role"].includes(mode);
 }
 
 function sessionFailure(mode) {
@@ -762,6 +784,7 @@ async function serveStatic(pathname, response) {
 }
 
 const previewAttempts = new Map();
+let firstPasswordChanged = false;
 
 const server = createServer(async (request, response) => {
   try {
@@ -789,8 +812,8 @@ const server = createServer(async (request, response) => {
       const mode = fixtureAuthMode(request);
       writeJson(
         response,
-        mode === "authenticated" ? 200 : 401,
-        mode === "authenticated" ? sessionResponse() : sessionFailure(mode),
+        isAuthenticatedFixtureMode(mode) ? 200 : 401,
+        isAuthenticatedFixtureMode(mode) ? fixtureSessionResponse(mode) : sessionFailure(mode),
         { "X-CSRF-Token": fixtureCsrfToken }
       );
       return;
@@ -806,12 +829,56 @@ const server = createServer(async (request, response) => {
         writeJson(response, 429, { ...sessionFailure("logged-out"), errorCode: "AUTHENTICATION_THROTTLED", retryable: true });
         return;
       }
+      if (body.username === "JuanDC03" && body.password === "JuanDC03" && !firstPasswordChanged) {
+        setFixtureSession(response, "change-required");
+        writeJson(response, 200, fixtureSessionResponse("change-required"), { "X-CSRF-Token": fixtureCsrfToken });
+        return;
+      }
+      if (body.username === "JuanDC03" && body.password === "newpass8" && firstPasswordChanged) {
+        setFixtureSession(response, "first-user");
+        writeJson(response, 200, fixtureSessionResponse("first-user"), { "X-CSRF-Token": fixtureCsrfToken });
+        return;
+      }
+      if (body.username === "multi.operator" && body.password === "multi-password") {
+        setFixtureSession(response, "multi-role");
+        writeJson(response, 200, fixtureSessionResponse("multi-role"), { "X-CSRF-Token": fixtureCsrfToken });
+        return;
+      }
       if (body.username !== "review.operator" || body.password !== "operator-password") {
         writeJson(response, 401, { ...sessionFailure("logged-out"), errorCode: "INVALID_CREDENTIALS" });
         return;
       }
       setFixtureSession(response, "authenticated");
       writeJson(response, 200, sessionResponse(), { "X-CSRF-Token": fixtureCsrfToken });
+      return;
+    }
+
+    if (url.pathname === "/v1/human-authentication/password/change" && request.method === "POST") {
+      const mode = fixtureAuthMode(request);
+      const body = await readJson(request);
+      if (mode !== "change-required") {
+        writeJson(response, 401, sessionFailure("revoked"));
+        return;
+      }
+      if (request.headers["x-csrf-token"] !== fixtureCsrfToken) {
+        writeJson(response, 400, { ...sessionFailure("logged-out"), errorCode: "CSRF_VALIDATION_FAILED" });
+        return;
+      }
+      if (body.currentPassword !== "JuanDC03" || body.totpCode !== "123456") {
+        writeJson(response, 401, { ...sessionFailure("logged-out"), errorCode: "TOTP_INVALID" });
+        return;
+      }
+      if (typeof body.newPassword !== "string" || body.newPassword.length < 8) {
+        writeJson(response, 400, { ...sessionFailure("logged-out"), errorCode: "PASSWORD_POLICY_FAILED" });
+        return;
+      }
+      firstPasswordChanged = true;
+      setFixtureSession(response, "logged-out");
+      writeJson(response, 200, {
+        ...sessionFailure("logged-out"),
+        outcome: "PASSWORD_CHANGED",
+        errorCode: null
+      });
       return;
     }
 
@@ -829,7 +896,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (url.pathname.startsWith("/v1/ops/operator-console/") && fixtureAuthMode(request) !== "authenticated") {
+    if (url.pathname.startsWith("/v1/ops/operator-console/") && !isBusinessAuthenticatedFixtureMode(fixtureAuthMode(request))) {
       writeJson(response, 401, sessionFailure(fixtureAuthMode(request)));
       return;
     }

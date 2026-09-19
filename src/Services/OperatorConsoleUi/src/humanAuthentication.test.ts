@@ -52,6 +52,54 @@ describe("Operator Console I-020 authentication client", () => {
     expect(window.sessionStorage).toHaveLength(0);
   });
 
+  it("changes a restricted-session password with CSRF and the governed TOTP request", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(authenticationResponse({ ...sessionDto(), passwordChangeRequired: true }, { csrf: "csrf-change" }))
+      .mockResolvedValueOnce(passwordChangedResponse());
+    const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
+
+    await client.getCurrentSession();
+    await client.changePassword({
+      currentPassword: "JuanDC03",
+      totpCode: "123456",
+      newPassword: "newpass8"
+    });
+
+    expect(fetchMock.mock.calls[1][0]).toBe(humanAuthenticationRoutes.passwordChange);
+    const init = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual(expect.objectContaining({ "X-CSRF-Token": "csrf-change" }));
+    expect(JSON.parse(init.body as string)).toEqual({
+      currentPassword: "JuanDC03",
+      totpCode: "123456",
+      newPassword: "newpass8"
+    });
+    expect(client.getCsrfToken()).toBeNull();
+    expect(window.localStorage).toHaveLength(0);
+    expect(window.sessionStorage).toHaveLength(0);
+  });
+
+  it.each([
+    ["CURRENT_PASSWORD_INVALID", "current-password-invalid", "The current temporary password was not accepted."],
+    ["TOTP_REQUIRED", "totp-required", "Enter the current authenticator code."],
+    ["TOTP_INVALID", "totp-invalid", "The authenticator code was not accepted."],
+    ["PASSWORD_POLICY_FAILED", "password-policy", "The password does not meet the password policy."]
+  ])("maps password-change outcome %s accurately", async (errorCode, kind, message) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(authenticationResponse({ ...sessionDto(), passwordChangeRequired: true }, { csrf: "csrf-change" }))
+      .mockResolvedValueOnce(failureResponse(errorCode === "PASSWORD_POLICY_FAILED" ? 400 : 401, errorCode));
+    const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
+    await client.getCurrentSession();
+
+    await expect(client.changePassword({
+      currentPassword: "JuanDC03",
+      totpCode: "123456",
+      newPassword: "newpass8"
+    })).rejects.toEqual(expect.objectContaining({ kind, message }));
+  });
+
   it("fails closed when logout has no bounded runtime CSRF token", async () => {
     const fetchMock = vi.fn();
     const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
@@ -66,7 +114,8 @@ describe("Operator Console I-020 authentication client", () => {
     [401, "INVALID_CREDENTIALS", "invalid-credentials", "The username or password could not be verified."],
     [429, "AUTHENTICATION_THROTTLED", "throttled", "Sign-in attempts are temporarily limited. Wait and try again."],
     [401, "SESSION_EXPIRED", "session-expired", "Your session expired. Sign in again."],
-    [401, "SESSION_REVOKED", "session-revoked", "Your session ended. Sign in again."]
+    [401, "SESSION_REVOKED", "session-revoked", "Your session ended. Sign in again."],
+    [401, "TEMPORARY_PASSWORD_EXPIRED", "temporary-password-expired", "Your temporary password has expired. Use the approved account recovery process or contact an administrator."]
   ])("maps %s %s to a controlled state", async (status, errorCode, kind, message) => {
     const fetchMock = vi.fn(async () => failureResponse(status, errorCode));
     const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
@@ -167,4 +216,16 @@ function failureResponse(status: number, errorCode: string) {
     retryable: status >= 500 || status === 429,
     correlationId: "15000000-0000-0000-0000-000000000001"
   }), { status, headers: { "Content-Type": "application/json" } });
+}
+
+function passwordChangedResponse() {
+  return new Response(JSON.stringify({
+    outcome: "PASSWORD_CHANGED",
+    authenticated: false,
+    session: null,
+    aptSessionToken: null,
+    errorCode: null,
+    retryable: false,
+    correlationId: "15000000-0000-0000-0000-000000000001"
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
 }

@@ -132,6 +132,33 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
     }
 
     [Fact]
+    public async Task Site_operator_with_parking_attendant_role_remains_eligible_for_operator_console()
+    {
+        var runtime = CreateRuntime(TestOptions());
+        var seed = await SeedCurrentUserAsync(runtime, "I020MultiRole", ApprovedIdentityRoleCatalog.SiteOperator);
+        await AssignAdditionalSiteRoleAsync(seed, ApprovedIdentityRoleCatalog.ParkingAttendant);
+
+        var login = await runtime.Service.LoginAsync(seed.Username, Password,
+            HumanSessionAudiences.OperatorConsole, null, Context(), CancellationToken.None);
+
+        login.Response.Authenticated.Should().BeTrue();
+        login.Response.Session!.SiteReferences.Should().Contain(seed.SiteId);
+    }
+
+    [Fact]
+    public async Task Parking_attendant_alone_remains_ineligible_for_operator_console()
+    {
+        var runtime = CreateRuntime(TestOptions());
+        var seed = await SeedCurrentUserAsync(runtime, "I020ParkingOnly", ApprovedIdentityRoleCatalog.ParkingAttendant);
+
+        var login = await runtime.Service.LoginAsync(seed.Username, Password,
+            HumanSessionAudiences.OperatorConsole, null, Context(), CancellationToken.None);
+
+        login.Response.Authenticated.Should().BeFalse();
+        login.Response.ErrorCode.Should().Be("APPLICATION_AUDIENCE_DENIED");
+    }
+
+    [Fact]
     public async Task First_login_returns_restricted_password_change_required_session_and_change_revokes_it()
     {
         var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
@@ -140,29 +167,66 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
         var seed = await SeedBootstrapUserAsync(runtime, "I020FirstLogin", ApprovedIdentityRoleCatalog.SiteOperator,
             clock.GetUtcNow());
 
-        var login = await runtime.Service.LoginAsync(seed.Username, Password,
+        var login = await runtime.Service.LoginAsync(seed.Username, seed.Username,
             HumanSessionAudiences.OperatorConsole, null, Context(), CancellationToken.None);
         login.Response.Outcome.Should().Be(HumanAuthenticationOutcomes.PasswordChangeRequired);
         login.Response.Authenticated.Should().BeTrue();
         login.Response.Session!.PasswordChangeRequired.Should().BeTrue();
         login.Response.Session.Permissions.Should().BeEmpty();
         login.Response.Session.SiteReferences.Should().BeEmpty();
+        login.Response.Session.SiteGroupReferences.Should().BeEmpty();
+        login.Response.Session.HasGlobalScope.Should().BeFalse();
 
-        var changed = await runtime.Service.ChangePasswordAsync(login.Credential!.SerializedToken, Password,
+        var credentialVersionBefore = await ScalarAsync<long>(
+            "SELECT credential_version FROM identity.local_credentials WHERE user_id=@id;", seed.UserId);
+        var missingTotp = await runtime.Service.ChangePasswordAsync(login.Credential!.SerializedToken, seed.Username,
+            ReplacementPassword, null, Context(), CancellationToken.None);
+        missingTotp.Response.ErrorCode.Should().Be("TOTP_REQUIRED");
+        var incorrectTotp = await runtime.Service.ChangePasswordAsync(login.Credential.SerializedToken, seed.Username,
+            ReplacementPassword, "000000", Context(), CancellationToken.None);
+        incorrectTotp.Response.ErrorCode.Should().Be("TOTP_INVALID");
+
+        var firstCode = TotpCode(seed.TotpSecret, options, clock.GetUtcNow());
+        var tooShort = await runtime.Service.ChangePasswordAsync(login.Credential.SerializedToken, seed.Username,
+            "seven77", firstCode, Context(), CancellationToken.None);
+        tooShort.Response.ErrorCode.Should().Be("PASSWORD_POLICY_FAILED");
+        var replayed = await runtime.Service.ChangePasswordAsync(login.Credential.SerializedToken, seed.Username,
+            ReplacementPassword, firstCode, Context(), CancellationToken.None);
+        replayed.Response.ErrorCode.Should().Be("TOTP_INVALID");
+
+        clock.Advance(TimeSpan.FromSeconds(options.TotpStepSeconds * 2));
+
+        var changed = await runtime.Service.ChangePasswordAsync(login.Credential.SerializedToken, seed.Username,
             ReplacementPassword, TotpCode(seed.TotpSecret, options, clock.GetUtcNow()), Context(), CancellationToken.None);
         changed.HttpStatusCode.Should().Be(200);
         changed.Response.Outcome.Should().Be("PASSWORD_CHANGED");
         changed.Response.Authenticated.Should().BeFalse();
         changed.Credential.Should().BeNull();
+        (await ScalarAsync<string>(
+            "SELECT credential_status::text FROM identity.local_credentials WHERE user_id=@id;", seed.UserId))
+            .Should().Be("ACTIVE");
+        (await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM identity.local_credentials WHERE user_id=@id AND temporary_password_expires_at IS NULL;",
+            seed.UserId)).Should().Be(1);
+        (await ScalarAsync<long>(
+            "SELECT credential_version FROM identity.local_credentials WHERE user_id=@id;", seed.UserId))
+            .Should().Be(credentialVersionBefore + 1);
 
         var revoked = await runtime.Service.ResolveSessionAsync(login.Credential.SerializedToken,
             HumanSessionAudiences.OperatorConsole, null, Context(), false, CancellationToken.None);
         revoked.Response.Authenticated.Should().BeFalse();
 
+        var oldTemporaryPassword = await runtime.Service.LoginAsync(seed.Username, seed.Username,
+            HumanSessionAudiences.OperatorConsole, null, Context(), CancellationToken.None);
+        oldTemporaryPassword.Response.Authenticated.Should().BeFalse();
+        oldTemporaryPassword.Response.ErrorCode.Should().Be("INVALID_CREDENTIALS");
+
         var newLogin = await runtime.Service.LoginAsync(seed.Username, ReplacementPassword,
             HumanSessionAudiences.OperatorConsole, null, Context(), CancellationToken.None);
         newLogin.Response.Authenticated.Should().BeTrue();
         newLogin.Response.Session!.PasswordChangeRequired.Should().BeFalse();
+        newLogin.Response.Session.SiteReferences.Should().Contain(seed.SiteId);
+        newLogin.Response.Session.Permissions.Should().NotBeEmpty();
     }
 
     [Fact]
@@ -178,7 +242,7 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
             seed.UserId)).Should().Be(HumanAuthenticationOptions.RequiredTemporaryPasswordHours * 60 * 60);
 
         clock.Advance(TimeSpan.FromHours(HumanAuthenticationOptions.RequiredTemporaryPasswordHours));
-        var expired = await runtime.Service.LoginAsync(seed.Username, Password,
+        var expired = await runtime.Service.LoginAsync(seed.Username, seed.Username,
             HumanSessionAudiences.OperatorConsole, null, Context(), CancellationToken.None);
         expired.Response.Authenticated.Should().BeFalse();
         expired.Response.ErrorCode.Should().Be("TEMPORARY_PASSWORD_EXPIRED");
@@ -232,16 +296,16 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
         var wrongPassword = await runtime.Service.ResetPasswordWithTotpAsync(seed.Username, "wrong temporary password", code,
             ReplacementPassword, Context(), CancellationToken.None);
         wrongPassword.Response.ErrorCode.Should().Be("EXPIRED_TEMPORARY_PASSWORD_REQUIRED");
-        var wrongTotp = await runtime.Service.ResetPasswordWithTotpAsync(seed.Username, Password, "000000",
+        var wrongTotp = await runtime.Service.ResetPasswordWithTotpAsync(seed.Username, seed.Username, "000000",
             ReplacementPassword, Context(), CancellationToken.None);
         wrongTotp.Response.ErrorCode.Should().Be("TOTP_INVALID");
 
-        var reset = await runtime.Service.ResetPasswordWithTotpAsync(seed.Username, Password, code,
+        var reset = await runtime.Service.ResetPasswordWithTotpAsync(seed.Username, seed.Username, code,
             ReplacementPassword, Context(), CancellationToken.None);
         reset.HttpStatusCode.Should().Be(200);
         reset.Response.Outcome.Should().Be("PASSWORD_RESET_COMPLETED");
 
-        (await runtime.Service.LoginAsync(seed.Username, Password, HumanSessionAudiences.OperatorConsole,
+        (await runtime.Service.LoginAsync(seed.Username, seed.Username, HumanSessionAudiences.OperatorConsole,
             null, Context(), CancellationToken.None)).Response.Authenticated.Should().BeFalse();
         (await runtime.Service.LoginAsync(seed.Username, ReplacementPassword, HumanSessionAudiences.OperatorConsole,
             null, Context(), CancellationToken.None)).Response.Authenticated.Should().BeTrue();
@@ -306,7 +370,7 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
             "SELECT count(*)::integer FROM identity.user_mfa_authenticators WHERE user_id=@id AND authenticator_status='PENDING_ENROLLMENT';",
             seed.UserId)).Should().Be(0);
 
-        var missing = await runtime.Service.LoginAsync(seed.Username, Password,
+        var missing = await runtime.Service.LoginAsync(seed.Username, seed.Username,
             HumanSessionAudiences.ManagementPlatform, null, Context(), CancellationToken.None);
         missing.Response.ErrorCode.Should().Be("TOTP_REQUIRED");
     }
@@ -550,7 +614,8 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
         var credentialId = Guid.NewGuid();
         var authenticatorId = Guid.NewGuid();
         var userRoleId = Guid.NewGuid();
-        var material = await runtime.Passwords.HashAsync(Password, CancellationToken.None);
+        var password = credentialStatus == "CHANGE_REQUIRED" ? username : Password;
+        var material = await runtime.Passwords.HashAsync(password, CancellationToken.None);
         var secret = RandomNumberGenerator.GetBytes(20);
         var envelope = runtime.Protector.Protect(userId, authenticatorId, secret);
         var (siteId, siteGroupId) = await ActivateCanonicalPitxLevel3Async();
@@ -629,6 +694,25 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
             UPDATE sites.sites SET site_status='ACTIVE' WHERE site_id=@site_id AND site_group_id=@site_group_id;
             """, ("site_group_id", siteGroupId), ("site_id", siteId));
         return (siteId, siteGroupId);
+    }
+
+    private async Task AssignAdditionalSiteRoleAsync(UserSeed seed, string roleCode)
+    {
+        var userRoleId = Guid.NewGuid();
+        await ExecuteAsync("""
+            INSERT INTO identity.user_roles (user_role_id,user_id,role_id,assignment_status,assignment_reason_code,
+                assigned_by_service_identity_id,effective_from,created_by_service_identity_id,updated_by_service_identity_id)
+            SELECT @user_role_id,@user_id,role_id,'ACTIVE','I020_MULTI_ROLE',@service_id,
+                now()-interval '1 day',@service_id,@service_id
+            FROM identity.roles WHERE role_code=@role_code AND role_status='ACTIVE';
+
+            INSERT INTO identity.user_role_scope_grants (user_role_scope_grant_id,user_role_id,scope_type,site_id,
+                grant_status,grant_reason_code,effective_from,granted_by_service_identity_id,
+                created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (gen_random_uuid(),@user_role_id,'SITE',@site_id,'ACTIVE','I020_MULTI_ROLE',
+                now()-interval '1 day',@service_id,@service_id,@service_id);
+            """, ("user_role_id", userRoleId), ("user_id", seed.UserId), ("site_id", seed.SiteId),
+            ("role_code", roleCode), ("service_id", CentralPmsServiceIdentityId));
     }
 
     private async Task<Guid> SeedAptDeviceAsync(Guid siteId)

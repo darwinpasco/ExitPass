@@ -19,7 +19,7 @@
 - Reset and activation paths did not authenticate with TOTP.
 - The email reset route and bearer reset contract conflicted with the approved recovery policy.
 - Temporary passwords did not expire after 72 hours.
-- Account creation did not atomically generate a temporary password and TOTP authenticator for every human.
+- Account creation did not atomically use the exact stored username as the temporary password and generate a TOTP authenticator for every human.
 - Native Parking App was missing from the audience vocabulary.
 
 ## Required H1 contract
@@ -39,6 +39,14 @@ When H1 supplies its abstraction, H2 will invoke it from `HumanAuthenticationSer
 - fresh reauthentication, before `RotateSessionAsync` creates a replacement normal session.
 
 An `ALLOWED` decision permits session issuance to continue. `DENIED`, unavailable, error, or unknown results deny issuance. Password-change-required bootstrap sessions do not become normal sessions at this seam: they retain empty permissions and scopes, remain blocked from business routes, and password replacement revokes them without issuing a replacement session. H2 will not derive application eligibility from role names.
+
+## New human bootstrap and Operator Console onboarding
+
+- The stored, case-sensitive username is the temporary password for each newly created human user. Usernames shorter than eight characters are rejected before persistence. Only one-way verifier material is stored.
+- The temporary credential remains `CHANGE_REQUIRED` and expires exactly 72 hours after creation. It can create a restricted session but cannot grant normal application permissions or scopes.
+- Operator Console login remains username plus password. A valid temporary password returns an authenticated `OPERATOR_CONSOLE` session with `passwordChangeRequired=true`, empty permissions, and empty scopes; login itself does not request TOTP.
+- Operator Console presents current temporary password, authenticator code, and new password fields and calls the shared `POST /v1/human-authentication/password/change` route with the restricted session cookie and CSRF token.
+- Every password mutation requires TOTP. Successful first-password replacement activates the credential, clears temporary expiry, increments credential authority, revokes the restricted session, and returns the user to sign in with the permanent password.
 
 ## Native Parking App password lifecycle
 

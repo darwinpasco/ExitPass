@@ -95,7 +95,9 @@ Lockout never changes roles or scopes. An administrator with explicit unlock aut
 - Self-service reset is available only through a verified recovery channel. Otherwise an authorized administrator issues a single-use, short-lived reset challenge; administrators never choose or see the replacement password.
 - Reset challenges are stored only as hashes, are audience/user/purpose bound, expire, and are consumed once.
 - Reset, compromise response, and administrative credential revocation invalidate existing sessions.
-- Invited/local users must change the bootstrap credential on first successful activation. Prefer a reset-style activation challenge over a temporary password.
+- Every newly created local human user receives the exact stored, case-sensitive username as the temporary password. The username must contain at least eight characters. Central PMS hashes this bootstrap value with the normal password hasher, persists no plaintext password, marks the credential `CHANGE_REQUIRED`, and expires it exactly 72 hours after creation.
+- A `CHANGE_REQUIRED` login creates only a restricted session with no business permissions or scopes. The temporary password cannot authorize normal application work.
+- Operator Console accepts username plus temporary password without TOTP for the restricted login. The user then calls `POST /v1/human-authentication/password/change` with the current temporary password, an active-authenticator TOTP code, and a conforming new password. Success activates the credential, clears temporary expiry, increments credential authority, revokes sessions, and requires a fresh login with the permanent password.
 
 ## 6. Human-session model
 
