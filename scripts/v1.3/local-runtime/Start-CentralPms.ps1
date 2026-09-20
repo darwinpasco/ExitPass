@@ -27,6 +27,8 @@ $environmentFile = Join-Path $privateRoot 'runtime\restart-41-business\central.e
 $posApiKeyFile = Join-Path $privateRoot 'runtime\restart-41-business\pos-api-key'
 $adapterApiKeyFile = Join-Path $privateRoot 'site-adapters\pitx-level-3\central-pms-api-key'
 $dataProtectionKeyDirectory = Join-Path $privateRoot 'data-protection\central-pms'
+$evidenceServicesLauncherPath = Join-Path $PSScriptRoot 'Start-StatutoryEvidenceServices.ps1'
+$evidenceGovernanceInitializerPath = Join-Path $PSScriptRoot 'Initialize-StatutoryEvidenceRuntime.ps1'
 $mtlsProvisionerPath = Join-Path $PSScriptRoot 'Initialize-WebPayStatutoryMtls.ps1'
 $containerStarted = $false
 
@@ -93,7 +95,9 @@ if (-not (Get-Command docker.exe -ErrorAction SilentlyContinue)) {
     throw 'Docker Desktop is required for the persistent PITX runtime network.'
 }
 if (-not (Test-Path -LiteralPath $dockerfilePath) -or
-    -not (Test-Path -LiteralPath $mtlsProvisionerPath -PathType Leaf)) {
+    -not (Test-Path -LiteralPath $mtlsProvisionerPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $evidenceGovernanceInitializerPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $evidenceServicesLauncherPath -PathType Leaf)) {
     throw 'Run this launcher from a complete ExitPass source checkout.'
 }
 foreach ($requiredFile in @($environmentFile, $posApiKeyFile, $adapterApiKeyFile)) {
@@ -170,6 +174,16 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceSha)) {
 }
 $imageName = "exitpass-central-pms-local:$sourceSha"
 $mtls = & $mtlsProvisionerPath -PrivateRoot $privateRoot -PassThru
+$evidenceRuntime = & $evidenceServicesLauncherPath -PassThru
+if ($null -eq $evidenceRuntime -or
+    -not (Test-Path -LiteralPath $evidenceRuntime.CentralPmsEnvironmentFile -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $evidenceRuntime.MinioRootCertificatePath -PathType Leaf)) {
+    throw 'Persistent PITX statutory evidence services did not provide the required private Central PMS configuration.'
+}
+& $evidenceGovernanceInitializerPath `
+    -DatabaseContainer $databaseContainer `
+    -DatabaseName $databaseName `
+    -DatabaseUser $databaseUser
 
 try {
     Invoke-CheckedCommand docker.exe @(
@@ -181,6 +195,7 @@ try {
         --network $networkName `
         --network-alias 'exitpass-central-pms-pitx-local' `
         --env-file $environmentFile `
+        --env-file $evidenceRuntime.CentralPmsEnvironmentFile `
         --env 'ASPNETCORE_URLS=http://+:8080;https://+:8443' `
         --env 'ASPNETCORE_Kestrel__Certificates__Default__Path=/run/exitpass/statutory-mtls/central-pms-server.pfx' `
         --env "ASPNETCORE_Kestrel__Certificates__Default__Password=$($mtls.ServerPassword)" `
@@ -202,6 +217,7 @@ try {
         --publish '127.0.0.1:56064:8443' `
         --mount "type=bind,source=$($mtls.ServerCertificatePath),target=/run/exitpass/statutory-mtls/central-pms-server.pfx,readonly" `
         --mount "type=bind,source=$($mtls.RootCertificatePemPath),target=/usr/local/share/ca-certificates/exitpass-local-statutory-root-ca.crt,readonly" `
+        --mount "type=bind,source=$($evidenceRuntime.MinioRootCertificatePath),target=/usr/local/share/ca-certificates/exitpass-local-statutory-evidence-root-ca.crt,readonly" `
         --mount "type=bind,source=$posApiKeyFile,target=/run/exitpass/pos-api-key,readonly" `
         --mount "type=bind,source=$adapterApiKeyFile,target=/run/exitpass/site-adapter-secrets/pitx-level-3/central-pms-api-key,readonly" `
         --mount "type=bind,source=$dataProtectionKeyDirectory,target=/root/.aspnet/DataProtection-Keys" `
@@ -221,6 +237,8 @@ try {
     Write-Host "HTTP:  $httpUrl"
     Write-Host "Database: $databaseContainer/$databaseName (volume $databaseVolume)"
     Write-Host "Data Protection keys: $dataProtectionKeyDirectory"
+    Write-Host "Statutory evidence storage: $($evidenceRuntime.MinioContainerName)/$($evidenceRuntime.BucketName) (private)"
+    Write-Host "Statutory evidence scanner: $($evidenceRuntime.ClamAvContainerName) (CLAMAV_COMPATIBLE)"
     Write-Host 'Projection scheduler: enabled and required for this environment'
     Write-Host 'WebPay statutory service principal: HTTPS/mTLS enabled'
 
