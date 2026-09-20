@@ -15,6 +15,14 @@ backend launchers read private runtime settings from
 `EXITPASS_PERSISTENT_IST_ROOT` only when that approved private root is elsewhere.
 Secrets remain outside Git.
 
+The persistent PITX statutory-evidence runtime uses private MinIO object
+storage and a ClamAV-compatible scanner on the `exitpass-ist-persistent` Docker
+network. Its credentials, policy, and persistent object data are stored under
+`D:\SourceCodes\ExitPass.local\persistent-ist\statutory-evidence`; the browser
+never receives that directory, a MinIO address, bucket name, object key, or
+storage credential. Central PMS starts these dependencies idempotently and
+fails closed if either dependency is not ready.
+
 The Central PMS launcher persists its ASP.NET Core Data Protection key ring at
 `D:\SourceCodes\ExitPass.local\persistent-ist\data-protection\central-pms` and
 mounts it at the container's default private key-ring location. Recreating the
@@ -72,6 +80,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\v1.3\local-runtime\Start-Oper
 
 Start the components in the order shown: Central PMS, Payment Orchestrator, POS Server, Management Platform, WebPay, APT, and Operator Console. Central PMS and Payment Orchestrator build from the current checkout and run in dedicated local-runtime containers attached to `exitpass-ist-persistent`; their canonical ports remain available on the host. This preserves the authoritative persistent database and Docker-network-only PITX routes without changing them. Management Platform and Operator Console proxy same-origin `/v1` requests to Central PMS. WebPay proxies same-origin `/v1` requests to Payment Orchestrator. The APT native host targets Central PMS over HTTPS. Central PMS keeps Site-specific fiscal routing; PITX Level 3 resolves to POS Server ID `3a138565-1b88-55f8-c83d-5380db6edccc`. Environment-specific proxy variables still override the browser UI defaults.
 
+`Start-CentralPms.ps1` invokes `Start-StatutoryEvidenceServices.ps1` before
+building Central PMS. The dependency launcher creates or restarts only its two
+labelled containers, verifies MinIO and ClamAV readiness, creates the private
+bucket idempotently, denies anonymous bucket access, and verifies the dedicated
+Central PMS storage identity. MinIO and ClamAV publish no host ports. Evidence
+uploads continue through WebPay and Payment Orchestrator's opaque same-origin
+relay; do not connect a browser directly to MinIO.
+
+The launcher also runs a database-target-guarded, idempotent local governance
+initializer. It establishes one approved `LOCAL_TEST` retention policy and
+verifies or creates the Payment Orchestrator PITX Level 3 WebPay capture scope.
+It does not change statutory request, evidence, review, payment, or fiscal
+lifecycle rows.
+
 After startup, the POS Server health endpoints are `http://127.0.0.1:56067/health/live` and `http://127.0.0.1:56067/health/ready`.
 
 After first adopting the persistent key ring, clear the existing Central PMS
@@ -85,5 +107,17 @@ lifetime or revocation policy remains authoritative.
 ## Stop
 
 Press `Ctrl+C` in each launcher window. The Central PMS, Payment Orchestrator, and POS launchers stop only their own local API containers and remove their temporary HTTPS certificates. They do not stop either persistent database, its volume, or the persistent network. The APT launcher stops its Vite child process and restores the tracked `apt-config.json` before exiting.
+
+The evidence containers use `unless-stopped` and remain available across
+Central PMS recreation. To stop only those owned containers while preserving
+credentials and uploaded evidence, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\v1.3\local-runtime\Stop-StatutoryEvidenceServices.ps1
+```
+
+The next Central PMS launch restarts and revalidates them. Do not delete the
+private statutory-evidence directory to restart services; it contains the
+review evidence and credentials needed to resume canonical requests.
 
 Docker Compose ports in the 808x range remain valid for container topology. The persistent PITX Central PMS route remains Site-specific at `http://exitpass-r41-pos-server:8080/`; the POS launcher supplies that internal network alias while exposing `56066/56067` to the host. Container addresses are distinct from the 5606x local/manual ports. Disposable review runtimes must use explicitly selected temporary ports.
