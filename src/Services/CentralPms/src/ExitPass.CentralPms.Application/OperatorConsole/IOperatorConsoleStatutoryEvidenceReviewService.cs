@@ -15,11 +15,29 @@ public interface IOperatorConsoleStatutoryEvidenceReviewService
         OperatorConsoleReviewAccessContext accessContext,
         CancellationToken cancellationToken);
 
+    Task<OperatorConsoleStatutoryEvidenceReviewResult?> ReadAuthorizedAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        StatutoryEvidenceAuthorizedReviewContext context,
+        CancellationToken cancellationToken);
+
+    Task<OperatorConsoleStatutoryEvidencePreviewResult> OpenAuthorizedPreviewAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid evidenceItemReference,
+        StatutoryEvidenceAuthorizedReviewContext context,
+        CancellationToken cancellationToken);
+
     Task RecordPreviewStreamOutcomeAsync(
         OperatorConsoleStatutoryEvidencePreviewAuditContext context,
         string outcome,
         CancellationToken cancellationToken);
 }
+
+public sealed record StatutoryEvidenceAuthorizedReviewContext(
+    Guid SiteId,
+    Guid? SiteGroupId,
+    string? ExpectedDecisionSourceChannel,
+    Guid CorrelationId,
+    StatutoryEvidenceActor Actor);
 
 public interface IOperatorConsoleStatutoryEvidenceReviewRepository
 {
@@ -157,7 +175,7 @@ public sealed record OperatorConsoleStatutoryEvidencePreviewTarget(
     string ChecksumSha256,
     string? ProviderObjectVersion,
     Guid CorrelationId,
-    Guid ReviewerUserId);
+    Guid? ReviewerUserId);
 
 public sealed record OperatorConsoleStatutoryEvidencePreviewResult(
     string Classification,

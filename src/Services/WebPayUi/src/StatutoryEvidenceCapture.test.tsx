@@ -10,7 +10,8 @@ const mocks = vi.hoisted(() => ({
   checksum: vi.fn(),
   session: vi.fn(),
   upload: vi.fn(),
-  finalize: vi.fn()
+  finalize: vi.fn(),
+  preview: vi.fn()
 }));
 
 vi.mock("./statutoryEvidence", async () => {
@@ -22,7 +23,8 @@ vi.mock("./statutoryEvidence", async () => {
     computeSha256: mocks.checksum,
     requestStatutoryEvidenceUploadSession: mocks.session,
     uploadStatutoryEvidence: mocks.upload,
-    finalizeStatutoryEvidenceUpload: mocks.finalize
+    finalizeStatutoryEvidenceUpload: mocks.finalize,
+    retrieveStatutoryEvidencePreview: mocks.preview
   };
 });
 
@@ -59,8 +61,11 @@ describe("StatutoryEvidenceCapture", () => {
       onProgress({ loaded: file.size, total: file.size, percent: 100 });
     });
     mocks.finalize.mockResolvedValue(evidence({ lifecycleClassification: "VALIDATION_PENDING", replacementPosture: "REPLACEMENT_NOT_ALLOWED" }));
+    mocks.preview.mockResolvedValue(new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: "image/jpeg" }));
     localStorage.clear();
     sessionStorage.clear();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:statutory-evidence") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
   });
 
   it("bootstraps authoritative rules and exposes a mobile-capable single file input", async () => {
@@ -121,7 +126,7 @@ describe("StatutoryEvidenceCapture", () => {
 
   it.each([
     ["REVIEWABLE", "Ready for review", /does not mean.*approved/i],
-    ["APPROVED", "Approved", /applied only.*payment-time flow/i],
+    ["APPROVED", "Approved", /applying.*automatically/i],
     ["APPLIED", "Applied", /included in the amount due/i],
     ["MALWARE_DETECTED", "Unsafe file detected", /cannot be used/i],
     ["UNKNOWN_FAIL_CLOSED", "Status unavailable", /could not be confirmed safely/i]
@@ -130,6 +135,24 @@ describe("StatutoryEvidenceCapture", () => {
     render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
     expect(await screen.findByText(label)).toBeInTheDocument();
     expect(screen.getByText(message)).toBeInTheDocument();
+  });
+
+  it("rediscovers the protected submitted photo without browser-persisted image bytes", async () => {
+    mocks.bootstrap.mockResolvedValue(evidence({
+      lifecycleClassification: "REVIEWABLE",
+      replacementPosture: "REPLACEMENT_ALLOWED"
+    }));
+    render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
+
+    expect(await screen.findByAltText("Submitted statutory entitlement evidence")).toHaveAttribute("src", "blob:statutory-evidence");
+    expect(mocks.preview).toHaveBeenCalledWith(
+      decisionId,
+      "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      expect.any(Function),
+      expect.any(AbortSignal)
+    );
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
   });
 
   it("reconciles authoritative evidence state after an upload is cancelled", async () => {

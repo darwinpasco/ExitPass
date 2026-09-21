@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 
 namespace ExitPass.CentralPms.Application.StatutoryEvidence;
@@ -11,6 +12,7 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
     private readonly IStatutoryEvidenceUploadService _uploadService;
     private readonly IStatutoryEvidenceProtectedObjectStorageAdapter _storageAdapter;
     private readonly IStatutoryDiscountDecisionFacadeService _decisionService;
+    private readonly IOperatorConsoleStatutoryEvidenceReviewService _reviewService;
     private readonly StatutoryEvidenceChannelOptions _channelOptions;
     private readonly StatutoryEvidenceUploadOptions _uploadOptions;
     private readonly StatutoryEvidenceScanWorkerOptions _scanOptions;
@@ -22,6 +24,7 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
         IStatutoryEvidenceUploadService uploadService,
         IStatutoryEvidenceProtectedObjectStorageAdapter storageAdapter,
         IStatutoryDiscountDecisionFacadeService decisionService,
+        IOperatorConsoleStatutoryEvidenceReviewService reviewService,
         StatutoryEvidenceChannelOptions channelOptions,
         StatutoryEvidenceUploadOptions uploadOptions,
         StatutoryEvidenceScanWorkerOptions scanOptions)
@@ -32,10 +35,67 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
         _uploadService = uploadService;
         _storageAdapter = storageAdapter;
         _decisionService = decisionService;
+        _reviewService = reviewService;
         _channelOptions = channelOptions;
         _uploadOptions = uploadOptions;
         _scanOptions = scanOptions;
     }
+
+    public async Task<OperatorConsoleStatutoryEvidencePreviewResult> OpenPreviewAsync(
+        StatutoryEvidenceChannelPreviewCommand command,
+        CancellationToken cancellationToken)
+    {
+        if (!IsSupportedChannel(command.SourceChannel) ||
+            command.StatutoryDiscountDecisionCommandId == Guid.Empty ||
+            command.EvidenceItemReference == Guid.Empty)
+        {
+            return new OperatorConsoleStatutoryEvidencePreviewResult(
+                "REJECTED", "INVALID_REQUEST", false, command.CorrelationId, null, null);
+        }
+
+        var binding = await _metadataRepository.ResolveRequestBindingAsync(
+            command.StatutoryDiscountDecisionCommandId,
+            cancellationToken).ConfigureAwait(false);
+        if (binding is null ||
+            !SourceMatches(command.SourceChannel, command.Actor, binding) ||
+            !await _metadataRepository.ActorHasScopeAsync(
+                command.Actor,
+                StatutoryEvidenceScopeOperations.Capture,
+                binding.SiteId,
+                binding.SiteGroupId,
+                cancellationToken).ConfigureAwait(false))
+        {
+            await _metadataRepository.RecordAccessDeniedAsync(
+                null,
+                binding?.SiteId,
+                binding?.SiteGroupId,
+                binding?.ParkingSessionId,
+                command.CorrelationId,
+                command.Actor,
+                "PREVIEW_SCOPE_DENIED",
+                cancellationToken).ConfigureAwait(false);
+            return new OperatorConsoleStatutoryEvidencePreviewResult(
+                "REJECTED", "NOT_FOUND", false, command.CorrelationId, null, null);
+        }
+
+        return await _reviewService.OpenAuthorizedPreviewAsync(
+                command.StatutoryDiscountDecisionCommandId,
+                command.EvidenceItemReference,
+                new StatutoryEvidenceAuthorizedReviewContext(
+                    binding.SiteId,
+                    binding.SiteGroupId,
+                    command.SourceChannel,
+                    command.CorrelationId,
+                    command.Actor),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public Task RecordPreviewStreamOutcomeAsync(
+        OperatorConsoleStatutoryEvidencePreviewAuditContext context,
+        string outcome,
+        CancellationToken cancellationToken) =>
+        _reviewService.RecordPreviewStreamOutcomeAsync(context, outcome, cancellationToken);
 
     public async Task<StatutoryEvidenceChannelResponse> BootstrapAsync(
         StatutoryEvidenceChannelBootstrapCommand command,

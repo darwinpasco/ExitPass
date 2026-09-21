@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 
 namespace ExitPass.CentralPms.Application.ManagementPlatform;
 
@@ -74,6 +75,7 @@ public sealed record ManagementStatutoryBenefitReviewDetail(
     DateOnly? ExpiryDate,
     string? MaskedIdReference,
     bool RequesterAttestation,
+    bool? BeneficiaryResidencySatisfied,
     string? SubmissionReason,
     DateTimeOffset SubmittedAt,
     ManagementStatutoryBenefitMoney? Money,
@@ -105,7 +107,23 @@ public sealed record ManagementStatutoryBenefitEvidenceItem(
     string EvidenceType,
     string CaptureMethod,
     string? MaskedReference,
-    string? VerificationStatus);
+    string? VerificationStatus)
+{
+    public Guid? EvidenceItemReference { get; init; }
+    public string? DocumentType { get; init; }
+    public string? ItemRole { get; init; }
+    public string? ContentType { get; init; }
+    public string? UploadStatus { get; init; }
+    public string? ValidationStatus { get; init; }
+    public string? MalwareScanStatus { get; init; }
+    public string? ReviewabilityStatus { get; init; }
+    public DateTimeOffset? UploadedAt { get; init; }
+    public DateTimeOffset? FinalizedAt { get; init; }
+    public DateTimeOffset? ValidatedAt { get; init; }
+    public DateTimeOffset? ScannedAt { get; init; }
+    public DateTimeOffset? ReviewableAt { get; init; }
+    public bool PreviewPermitted { get; init; }
+}
 
 public sealed record ManagementStatutoryBenefitDecisionCommand(
     Guid DecisionCommandReference,
@@ -125,7 +143,17 @@ public sealed record ManagementStatutoryBenefitDecisionResult(
     DateTimeOffset DecidedAt,
     bool AlreadyDecided,
     long Version,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string ApplicationCommandStatus = StatutoryDiscountApplicationStageStatuses.NotRequested,
+    bool PayableBasisReady = false,
+    bool ApplicationRetryable = false,
+    string? ApplicationRecoveryAction = null);
+
+public sealed record ManagementStatutoryBenefitAutomaticApplicationCaller(
+    Guid ServiceIdentityId,
+    string SourceChannel,
+    string ApplicationAudience,
+    string PermissionCode);
 
 public enum ManagementStatutoryBenefitReviewOutcome
 {
@@ -181,6 +209,11 @@ public interface IManagementStatutoryBenefitReviewRepository
         Guid decisionCommandReference,
         CancellationToken cancellationToken);
 
+    Task<ManagementStatutoryBenefitAutomaticApplicationCaller?> ResolveAutomaticApplicationCallerAsync(
+        string sourceChannel,
+        Guid siteReference,
+        CancellationToken cancellationToken);
+
 }
 
 public interface IManagementStatutoryBenefitReviewService
@@ -200,6 +233,18 @@ public interface IManagementStatutoryBenefitReviewService
         IdentityAdministrationActor actor,
         Guid decisionCommandReference,
         Guid correlationId,
+        CancellationToken cancellationToken);
+
+    Task<OperatorConsoleStatutoryEvidencePreviewResult> OpenEvidencePreviewAsync(
+        IdentityAdministrationActor actor,
+        Guid decisionCommandReference,
+        Guid evidenceItemReference,
+        Guid correlationId,
+        CancellationToken cancellationToken);
+
+    Task RecordEvidencePreviewStreamOutcomeAsync(
+        OperatorConsoleStatutoryEvidencePreviewAuditContext context,
+        string outcome,
         CancellationToken cancellationToken);
 
     Task<ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitDecisionResult>> DecideAsync(

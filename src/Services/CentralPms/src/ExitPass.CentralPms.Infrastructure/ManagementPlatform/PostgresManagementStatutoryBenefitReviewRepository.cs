@@ -225,6 +225,68 @@ public sealed class PostgresManagementStatutoryBenefitReviewRepository : IManage
             : null;
     }
 
+    public async Task<ManagementStatutoryBenefitAutomaticApplicationCaller?> ResolveAutomaticApplicationCallerAsync(
+        string sourceChannel,
+        Guid siteReference,
+        CancellationToken cancellationToken)
+    {
+        var normalizedSource = sourceChannel?.Trim().ToUpperInvariant();
+        var (identityCode, permissionCode) = normalizedSource switch
+        {
+            "WEBPAY" => ("payment-orchestrator", "statutory-discounts.decision.submit.webpay"),
+            "ASSISTED_PAYMENT_TERMINAL" => ("assisted-payment-terminal", "statutory-discounts.decision.submit.assisted-payment-terminal"),
+            _ => (string.Empty, string.Empty)
+        };
+        if (siteReference == Guid.Empty || string.IsNullOrEmpty(identityCode))
+        {
+            return null;
+        }
+
+        const string sql = """
+            SELECT si.service_identity_id
+            FROM identity.service_identities si
+            JOIN sites.device_assignments da
+              ON da.service_identity_id = si.service_identity_id
+             AND da.site_id = @site_id
+             AND da.assignment_type = 'SERVICE_PRINCIPAL'
+             AND da.assignment_status = 'ACTIVE'
+             AND da.assigned_at <= now()
+             AND da.unassigned_at IS NULL
+            WHERE si.service_identity_code = @identity_code
+              AND si.identity_type = 'INTERNAL_SERVICE'
+              AND si.identity_status = 'ACTIVE'
+              AND si.effective_from <= now()
+              AND (si.effective_to IS NULL OR si.effective_to > now())
+              AND si.revoked_at IS NULL
+              AND (si.credential_expires_at IS NULL OR si.credential_expires_at > now())
+            ORDER BY si.service_identity_id
+            LIMIT 2;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("site_id", siteReference);
+        command.Parameters.AddWithValue("identity_code", identityCode);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var serviceIdentityId = reader.GetGuid(0);
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new ManagementStatutoryBenefitAutomaticApplicationCaller(
+            serviceIdentityId,
+            normalizedSource!,
+            normalizedSource!,
+            permissionCode);
+    }
+
     private static void AddNullable(NpgsqlCommand command, string name, NpgsqlDbType type, object? value) =>
         command.Parameters.Add(name, type).Value = value ?? DBNull.Value;
 

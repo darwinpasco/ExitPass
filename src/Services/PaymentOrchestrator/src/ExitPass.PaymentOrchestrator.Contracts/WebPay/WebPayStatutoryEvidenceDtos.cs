@@ -21,6 +21,12 @@ public sealed class WebPayStatutoryEvidenceFinalizeRequest
     public string? ClientOperationKey { get; set; }
 }
 
+public sealed class WebPayStatutoryEvidencePreviewRequest
+{
+    public Guid StatutoryDiscountDecisionCommandId { get; set; }
+    public Guid EvidenceItemReference { get; set; }
+}
+
 public sealed class WebPayStatutoryEvidenceChannelResponse
 {
     public string Classification { get; set; } = string.Empty;

@@ -1,6 +1,8 @@
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.Security;
+using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.StatutoryEvidence;
 using Microsoft.AspNetCore.Antiforgery;
 
 namespace ExitPass.CentralPms.Api.Endpoints;
@@ -24,6 +26,9 @@ public static class ManagementStatutoryBenefitReviewEndpoints
             .WithMetadata(new ReconciliationPolicyMetadata(ManagementStatutoryBenefitReviewValues.DetailPolicy));
         group.MapGet("/{decisionCommandReference:guid}/evidence", GetEvidenceAsync)
             .WithName("GetManagementStatutoryBenefitRequestEvidence")
+            .WithMetadata(new ReconciliationPolicyMetadata(ManagementStatutoryBenefitReviewValues.EvidencePolicy));
+        group.MapPost("/{decisionCommandReference:guid}/evidence/preview", PreviewEvidenceAsync)
+            .WithName("PreviewManagementStatutoryBenefitRequestEvidence")
             .WithMetadata(new ReconciliationPolicyMetadata(ManagementStatutoryBenefitReviewValues.EvidencePolicy));
         group.MapPost("/{decisionCommandReference:guid}/decision", DecideAsync)
             .WithName("DecideManagementStatutoryBenefitRequest")
@@ -134,6 +139,49 @@ public static class ManagementStatutoryBenefitReviewEndpoints
         }
     }
 
+    private static async Task<IResult> PreviewEvidenceAsync(
+        Guid decisionCommandReference,
+        ManagementStatutoryBenefitEvidencePreviewRequest body,
+        HttpRequest request,
+        IIdentityAdministrationActorAccessor actors,
+        IManagementStatutoryBenefitReviewService service,
+        CancellationToken cancellationToken)
+    {
+        var correlationId = ResolveCorrelationId(request);
+        var actor = actors.Current;
+        if (actor is null) return Error(401, "HUMAN_SESSION_REQUIRED", "An authenticated Management Platform session is required.", correlationId);
+        try
+        {
+            var result = await service.OpenEvidencePreviewAsync(
+                actor,
+                decisionCommandReference,
+                body.EvidenceItemReference,
+                correlationId,
+                cancellationToken);
+            if (result.Content is not null && result.AuditContext is not null)
+            {
+                return new PreviewStreamResult(
+                    result.Content,
+                    result.AuditContext,
+                    service,
+                    request.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+                        .CreateLogger("ExitPass.CentralPms.Api.ManagementStatutoryBenefitEvidencePreview"));
+            }
+
+            return Error(
+                result.ErrorCode == "NOT_FOUND" ? 404 : result.Retryable ? 503 : 409,
+                result.ErrorCode ?? "STATUTORY_BENEFIT_EVIDENCE_PREVIEW_UNAVAILABLE",
+                "The statutory-benefit evidence preview is unavailable.",
+                result.CorrelationId,
+                result.Retryable);
+        }
+        catch (Exception exception)
+        {
+            LogUnexpected(request, exception, correlationId);
+            return Error(503, "STATUTORY_BENEFIT_EVIDENCE_PREVIEW_UNAVAILABLE", "The statutory-benefit evidence preview is unavailable.", correlationId, true);
+        }
+    }
+
     private static IResult ToResult<T>(ManagementStatutoryBenefitReviewResult<T> result) => result.Outcome switch
     {
         ManagementStatutoryBenefitReviewOutcome.Success => Results.Ok(result.Value),
@@ -183,6 +231,55 @@ public static class ManagementStatutoryBenefitReviewEndpoints
         request.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
             .CreateLogger("ExitPass.CentralPms.Api.ManagementStatutoryBenefitReviewEndpoints")
             .LogError(exception, "Management statutory-benefit review failed. CorrelationId: {CorrelationId}", correlationId);
+
+    private sealed class PreviewStreamResult(
+        StatutoryEvidenceObjectContent content,
+        OperatorConsoleStatutoryEvidencePreviewAuditContext auditContext,
+        IManagementStatutoryBenefitReviewService service,
+        ILogger logger) : IResult
+    {
+        public async Task ExecuteAsync(HttpContext httpContext)
+        {
+            var response = httpContext.Response;
+            response.StatusCode = StatusCodes.Status200OK;
+            response.ContentType = content.ContentType;
+            response.ContentLength = content.ContentLength;
+            response.Headers.CacheControl = "no-store, private, max-age=0";
+            response.Headers.Pragma = "no-cache";
+            response.Headers.ContentDisposition = "inline";
+            response.Headers.XContentTypeOptions = "nosniff";
+            response.Headers["Referrer-Policy"] = "no-referrer";
+            response.Headers.XFrameOptions = "SAMEORIGIN";
+            response.Headers.ContentSecurityPolicy = "default-src 'none'; frame-ancestors 'self'; sandbox";
+
+            var outcome = "COMPLETED";
+            try
+            {
+                await content.Content.CopyToAsync(response.Body, 81920, httpContext.RequestAborted).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
+            {
+                outcome = "CANCELLED";
+            }
+            catch (Exception exception)
+            {
+                outcome = "FAILED";
+                logger.LogError(exception, "Management statutory-benefit evidence preview stream failed. CorrelationId: {CorrelationId}", auditContext.Target.CorrelationId);
+            }
+            finally
+            {
+                await content.DisposeAsync().ConfigureAwait(false);
+                try
+                {
+                    await service.RecordEvidencePreviewStreamOutcomeAsync(auditContext, outcome, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    logger.LogError(exception, "Management statutory-benefit evidence preview audit failed. CorrelationId: {CorrelationId}", auditContext.Target.CorrelationId);
+                }
+            }
+        }
+    }
 }
 
 public sealed record ManagementStatutoryBenefitDecisionRequest(
@@ -190,3 +287,5 @@ public sealed record ManagementStatutoryBenefitDecisionRequest(
     string? RejectionReason,
     long ExpectedVersion,
     string IdempotencyKey);
+
+public sealed record ManagementStatutoryBenefitEvidencePreviewRequest(Guid EvidenceItemReference);

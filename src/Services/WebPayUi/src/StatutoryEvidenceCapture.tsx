@@ -5,6 +5,7 @@ import {
   finalizeStatutoryEvidenceUpload,
   formatBytes,
   requestStatutoryEvidenceUploadSession,
+  retrieveStatutoryEvidencePreview,
   retrieveStatutoryEvidenceStatus,
   uploadStatutoryEvidence,
   validateStatutoryEvidenceFile
@@ -23,6 +24,7 @@ const captureLifecycleStates = new Set([
   "SCAN_FAILED",
   "NOT_REVIEWABLE"
 ]);
+const previewLifecycleStates = new Set(["REVIEWABLE", "REVIEW_PENDING", "APPROVED", "APPLIED"]);
 
 export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }: { statutoryDiscountDecisionCommandId: string }) {
   const [channel, setChannel] = useState<WebPayStatutoryEvidenceChannelResponse | null>(null);
@@ -32,6 +34,8 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
   const [operationError, setOperationError] = useState("");
   const [uploadPercent, setUploadPercent] = useState<number | null>(null);
   const [pollAttempt, setPollAttempt] = useState(0);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [previewError, setPreviewError] = useState("");
   const abortController = useRef<AbortController | null>(null);
   const errorRef = useRef<HTMLDivElement | null>(null);
 
@@ -46,6 +50,8 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
     setOperationError("");
     setUploadPercent(null);
     setPollAttempt(0);
+    setPreviewUrl("");
+    setPreviewError("");
 
     void bootstrapStatutoryEvidence(statutoryDiscountDecisionCommandId, fetch, controller.signal)
       .then((response) => {
@@ -62,6 +68,38 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
 
     return () => controller.abort();
   }, [statutoryDiscountDecisionCommandId]);
+
+  useEffect(() => {
+    if (!channel?.evidenceItemReference || !previewLifecycleStates.has(channel.lifecycleClassification)) {
+      setPreviewUrl("");
+      setPreviewError("");
+      return;
+    }
+
+    const controller = new AbortController();
+    let objectUrl = "";
+    setPreviewError("");
+    void retrieveStatutoryEvidencePreview(
+      statutoryDiscountDecisionCommandId,
+      channel.evidenceItemReference,
+      fetch,
+      controller.signal
+    ).then((blob) => {
+      if (!controller.signal.aborted) {
+        objectUrl = URL.createObjectURL(blob);
+        setPreviewUrl(objectUrl);
+      }
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        setPreviewError(error instanceof Error ? error.message : "The submitted photo could not be displayed safely.");
+      }
+    });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [channel?.evidenceItemReference, channel?.lifecycleClassification, statutoryDiscountDecisionCommandId]);
 
   useEffect(() => {
     if (!channel || !pollableLifecycleStates.has(channel.lifecycleClassification) || pollAttempt >= 6) {
@@ -223,6 +261,13 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
       {channel && (
         <>
           <p className="statutory-copy" aria-live="polite">{lifecycleCopy.message}</p>
+          {(previewUrl || previewError) && (
+            <div className="evidence-preview" aria-label="Submitted evidence">
+              <h4>Submitted evidence</h4>
+              {previewUrl && <img src={previewUrl} alt="Submitted statutory entitlement evidence" />}
+              {previewError && <p className="form-error" role="alert">{previewError}</p>}
+            </div>
+          )}
           {channel.evidenceRequired && (
             <dl className="evidence-rules">
               <div>
@@ -339,7 +384,7 @@ function getLifecycleCopy(channel: WebPayStatutoryEvidenceChannelResponse | null
     case "REVIEW_PENDING":
       return { label: "Awaiting review", message: "The photo was received and the statutory privilege request is awaiting review.", tone: "pending" };
     case "APPROVED":
-      return { label: "Approved", message: "The request was approved. The privilege is applied only through the governed payment-time flow.", tone: "success" };
+      return { label: "Approved", message: "The request was approved. Central PMS is applying the governed parking privilege automatically.", tone: "success" };
     case "REJECTED":
       return { label: "Not approved", message: "The request was not approved. Regular parking payment remains available.", tone: "warning" };
     case "APPLIED":

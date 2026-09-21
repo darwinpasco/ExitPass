@@ -93,6 +93,39 @@ export async function retrieveStatutoryEvidenceStatus(
   return ensureChannelResponse(await readJson<unknown>(response));
 }
 
+export async function retrieveStatutoryEvidencePreview(
+  statutoryDiscountDecisionCommandId: string,
+  evidenceItemReference: string,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal
+): Promise<Blob> {
+  const correlationId = createCorrelationId();
+  const response = await fetchImpl(`${getApiBaseUrl()}${evidenceBasePath}/preview`, {
+    method: "POST",
+    headers: jsonHeaders(correlationId),
+    body: JSON.stringify({
+      statutoryDiscountDecisionCommandId: statutoryDiscountDecisionCommandId.trim(),
+      evidenceItemReference: evidenceItemReference.trim()
+    }),
+    signal
+  });
+  if (!response.ok) {
+    await readJson<unknown>(response);
+  }
+
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+  if (!contentType || !supportedImageTypes.has(contentType)) {
+    throw new StatutoryEvidenceError(
+      "WEBPAY_STATUTORY_EVIDENCE_PREVIEW_INVALID",
+      "The submitted photo could not be displayed safely.",
+      false,
+      response.headers.get("x-correlation-id") ?? undefined
+    );
+  }
+
+  return response.blob();
+}
+
 export async function computeSha256(file: File): Promise<string> {
   const digest = await globalThis.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
   return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");

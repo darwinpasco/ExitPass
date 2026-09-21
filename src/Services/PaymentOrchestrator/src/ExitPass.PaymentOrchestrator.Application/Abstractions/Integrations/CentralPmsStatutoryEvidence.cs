@@ -45,3 +45,26 @@ public sealed record CentralPmsStatutoryEvidenceUploadSession(
     DateTimeOffset? ExpiresAt,
     string AcceptedContentType,
     long MaximumContentLengthBytes);
+
+public sealed class CentralPmsStatutoryEvidencePreview : IAsyncDisposable
+{
+    private readonly HttpResponseMessage _response;
+
+    public CentralPmsStatutoryEvidencePreview(HttpResponseMessage response, Stream content, string contentType, long contentLength)
+    {
+        _response = response;
+        Content = content;
+        ContentType = contentType;
+        ContentLength = contentLength;
+    }
+
+    public Stream Content { get; }
+    public string ContentType { get; }
+    public long ContentLength { get; }
+
+    public async ValueTask DisposeAsync()
+    {
+        await Content.DisposeAsync().ConfigureAwait(false);
+        _response.Dispose();
+    }
+}

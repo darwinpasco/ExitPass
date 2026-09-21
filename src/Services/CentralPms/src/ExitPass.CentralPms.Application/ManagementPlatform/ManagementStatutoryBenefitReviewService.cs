@@ -1,5 +1,7 @@
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.StatutoryEvidence;
 
 namespace ExitPass.CentralPms.Application.ManagementPlatform;
 
@@ -8,17 +10,23 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
     private readonly IManagementStatutoryBenefitReviewRepository _repository;
     private readonly IStatutoryDiscountServiceChannelReviewRepository _canonicalReviews;
     private readonly IAuthorizedStatutoryBenefitDecisionService _decisions;
+    private readonly IStatutoryDiscountDecisionFacadeService _decisionFacade;
+    private readonly IOperatorConsoleStatutoryEvidenceReviewService _evidenceReview;
     private readonly ICentralPmsRbacRepository _audit;
 
     public ManagementStatutoryBenefitReviewService(
         IManagementStatutoryBenefitReviewRepository repository,
         IStatutoryDiscountServiceChannelReviewRepository canonicalReviews,
         IAuthorizedStatutoryBenefitDecisionService decisions,
+        IStatutoryDiscountDecisionFacadeService decisionFacade,
+        IOperatorConsoleStatutoryEvidenceReviewService evidenceReview,
         ICentralPmsRbacRepository audit)
     {
         _repository = repository;
         _canonicalReviews = canonicalReviews;
         _decisions = decisions;
+        _decisionFacade = decisionFacade;
+        _evidenceReview = evidenceReview;
         _audit = audit;
     }
 
@@ -126,21 +134,90 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
 
         var canonical = await _canonicalReviews.GetAsync(decisionCommandReference, correlationId, cancellationToken);
         if (canonical is null) return NotFound<ManagementStatutoryBenefitEvidence>(correlationId);
+        var authoritative = await _evidenceReview.ReadAuthorizedAsync(
+            decisionCommandReference,
+            new StatutoryEvidenceAuthorizedReviewContext(
+                metadata.SiteReference,
+                canonical.SiteGroupId,
+                canonical.SourceChannel,
+                correlationId,
+                new StatutoryEvidenceActor(actor.UserId, null, "MANAGEMENT_PLATFORM")),
+            cancellationToken).ConfigureAwait(false);
+        if (authoritative is null)
+        {
+            return NotFound<ManagementStatutoryBenefitEvidence>(correlationId);
+        }
 
         var value = new ManagementStatutoryBenefitEvidence(
             ManagementStatutoryBenefitReviewValues.ContractVersion,
             decisionCommandReference,
             canonical.EvidenceRequired,
-            canonical.EvidenceRecorded,
-            canonical.EvidenceReferences.Select(item => new ManagementStatutoryBenefitEvidenceItem(
-                item.EvidenceType,
-                item.CaptureMethod,
-                item.ReferenceNumberMasked,
-                item.VerificationStatus)).ToArray(),
+            authoritative.EvidenceRecorded,
+            authoritative.Items.Select(item => new ManagementStatutoryBenefitEvidenceItem(
+                item.DocumentType,
+                "PROTECTED_UPLOAD",
+                canonical.MaskedIdReference,
+                item.ReviewabilityStatus)
+            {
+                EvidenceItemReference = item.EvidenceItemReference,
+                DocumentType = item.DocumentType,
+                ItemRole = item.ItemRole,
+                ContentType = item.AuthoritativeContentType,
+                UploadStatus = item.UploadStatus,
+                ValidationStatus = item.ValidationStatus,
+                MalwareScanStatus = item.ScanStatus,
+                ReviewabilityStatus = item.ReviewabilityStatus,
+                UploadedAt = item.UploadedAt,
+                FinalizedAt = item.FinalizedAt,
+                ValidatedAt = item.ValidatedAt,
+                ScannedAt = item.ScannedAt,
+                ReviewableAt = item.ReviewableAt,
+                PreviewPermitted = item.PreviewPermitted
+            }).ToArray(),
             correlationId);
         await AuditAsync("STATUTORY_BENEFIT_EVIDENCE_VIEW", "SUCCESS", "SAFE_EVIDENCE_METADATA_RETURNED", actor, metadata.SiteReference, correlationId, cancellationToken);
         return ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitEvidence>.Succeeded(value, correlationId);
     }
+
+    public async Task<OperatorConsoleStatutoryEvidencePreviewResult> OpenEvidencePreviewAsync(
+        IdentityAdministrationActor actor,
+        Guid decisionCommandReference,
+        Guid evidenceItemReference,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        var scope = await _repository.ResolveAuthorizedSitesAsync(
+            actor, ManagementStatutoryBenefitReviewValues.EvidencePermission, cancellationToken);
+        var metadata = await _repository.GetMetadataAsync(decisionCommandReference, cancellationToken);
+        if (scope is null || metadata is null || !scope.SiteReferences.Contains(metadata.SiteReference))
+        {
+            await AuditAsync("STATUTORY_BENEFIT_EVIDENCE_PREVIEW", "DENIED", "EVIDENCE_PREVIEW_CONCEALED", actor, metadata?.SiteReference, correlationId, cancellationToken);
+            return new OperatorConsoleStatutoryEvidencePreviewResult("REJECTED", "NOT_FOUND", false, correlationId, null, null);
+        }
+
+        var canonical = await _canonicalReviews.GetAsync(decisionCommandReference, correlationId, cancellationToken);
+        if (canonical is null)
+        {
+            return new OperatorConsoleStatutoryEvidencePreviewResult("REJECTED", "NOT_FOUND", false, correlationId, null, null);
+        }
+
+        return await _evidenceReview.OpenAuthorizedPreviewAsync(
+            decisionCommandReference,
+            evidenceItemReference,
+            new StatutoryEvidenceAuthorizedReviewContext(
+                metadata.SiteReference,
+                canonical.SiteGroupId,
+                canonical.SourceChannel,
+                correlationId,
+                new StatutoryEvidenceActor(actor.UserId, null, "MANAGEMENT_PLATFORM")),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task RecordEvidencePreviewStreamOutcomeAsync(
+        OperatorConsoleStatutoryEvidencePreviewAuditContext context,
+        string outcome,
+        CancellationToken cancellationToken) =>
+        _evidenceReview.RecordPreviewStreamOutcomeAsync(context, outcome, cancellationToken);
 
     public async Task<ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitDecisionResult>> DecideAsync(
         IdentityAdministrationActor actor,
@@ -212,6 +289,53 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                     command.CorrelationId);
         }
 
+        StatutoryDiscountDecisionResult? application = null;
+        if (decision == "APPROVE")
+        {
+            var canonical = await _canonicalReviews.GetAsync(
+                command.DecisionCommandReference,
+                command.CorrelationId,
+                cancellationToken);
+            var caller = canonical is null
+                ? null
+                : await _repository.ResolveAutomaticApplicationCallerAsync(
+                    canonical.SourceChannel,
+                    metadata.SiteReference,
+                    cancellationToken);
+            if (canonical is not null && caller is not null)
+            {
+                try
+                {
+                    application = await _decisionFacade.SubmitAsync(
+                        ToAutomaticApplicationCommand(canonical, caller, command.CorrelationId),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (StatutoryDiscountDecisionRejectedException)
+                {
+                    application = await _decisionFacade.GetAsync(
+                        command.DecisionCommandReference,
+                        command.CorrelationId,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // The approval is durable. Recover its canonical application state instead of
+                    // turning a retryable downstream application failure into a second reviewer action.
+                    application = await _decisionFacade.GetAsync(
+                        command.DecisionCommandReference,
+                        command.CorrelationId,
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                application = await _decisionFacade.GetAsync(
+                    command.DecisionCommandReference,
+                    command.CorrelationId,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         var current = await _repository.GetMetadataAsync(command.DecisionCommandReference, cancellationToken)
             ?? throw new InvalidOperationException("The decided statutory-benefit review could not be read back.");
         if (!result.DecidedAt.HasValue)
@@ -234,7 +358,14 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             result.DecidedAt.Value,
             result.AlreadyDecided,
             current.Version,
-            command.CorrelationId);
+            command.CorrelationId,
+            application?.ApplicationCommandStatus ?? StatutoryDiscountApplicationStageStatuses.NotRequested,
+            application?.PayableBasisReady ?? false,
+            application?.ApplicationRetryable ?? (decision == "APPROVE"),
+            application?.ApplicationRecoveryAction ??
+                (decision == "APPROVE" && application?.PayableBasisReady != true
+                    ? StatutoryDiscountDecisionRecoveryActions.RetrySameRequestWithOriginalKey
+                    : null));
         await AuditAsync("STATUTORY_BENEFIT_REVIEW_DECISION", result.AlreadyDecided ? "DUPLICATE" : "SUCCESS", "TERMINAL_DECISION_RECORDED", actor, metadata.SiteReference, command.CorrelationId, cancellationToken);
         return ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitDecisionResult>.Succeeded(value, command.CorrelationId);
     }
@@ -298,13 +429,70 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             source.ExpiryDate,
             source.MaskedIdReference,
             source.RequesterAttestation,
-            source.ReasonCode,
+            RequiredResidencyWasSatisfied(source),
+            source.AttestationNotes ?? source.ReasonCode,
             source.SubmittedAt,
             money,
             decision,
             metadata.Version,
             correlationId);
     }
+
+    private static StatutoryDiscountDecisionCommand ToAutomaticApplicationCommand(
+        StatutoryDiscountServiceChannelReviewDetail source,
+        ManagementStatutoryBenefitAutomaticApplicationCaller caller,
+        Guid correlationId) =>
+        new(
+            source.RequestReference,
+            source.SourceChannel,
+            source.ParkingSessionId,
+            source.SiteId,
+            source.SiteGroupId,
+            source.TicketReference,
+            source.PlateNumber,
+            source.EntitlementType,
+            source.IdDocumentType ?? string.Empty,
+            source.IssuingAuthority ?? string.Empty,
+            source.ExpiryDate,
+            source.MaskedIdReference ?? throw new InvalidOperationException("The approved statutory-benefit request lacks a masked ID reference."),
+            source.EvidenceRequired,
+            source.EvidenceReferences.Select(evidence => new StatutoryDiscountEvidenceReference(
+                evidence.EvidenceType,
+                evidence.CaptureMethod,
+                FileName: null,
+                ContentType: null,
+                SizeBytes: null,
+                evidence.StorageReference,
+                evidence.ReferenceNumberMasked,
+                evidence.VerificationStatus)).ToArray(),
+            caller.ServiceIdentityId,
+            OperatorDeviceBindingId: null,
+            OperatorShiftId: null,
+            source.RequesterAttestation,
+            source.AttestationNotes,
+            source.ReasonCode,
+            Decision: null,
+            DecisionReasonCode: null,
+            ReviewerUserId: null,
+            ReviewerAttestation: false,
+            ApplyPayableBasis: true,
+            source.OriginalTariffSnapshotId,
+            BeneficiaryResidencySatisfied: RequiredResidencyWasSatisfied(source),
+            $"management-review-auto-apply:{source.StatutoryDiscountDecisionCommandId:N}",
+            correlationId,
+            new StatutoryDiscountServiceChannelCallerContext(
+                caller.ServiceIdentityId,
+                caller.SourceChannel,
+                caller.ApplicationAudience,
+                caller.PermissionCode));
+
+    private static bool? RequiredResidencyWasSatisfied(StatutoryDiscountServiceChannelReviewDetail source) =>
+        string.Equals(
+            source.GoverningPolicy?.BeneficiaryResidencyScope,
+            "RESIDENT_ONLY",
+            StringComparison.Ordinal)
+            ? true
+            : null;
 
     private static ManagementStatutoryBenefitReviewResult<T> Invalid<T>(string code, Guid correlationId) =>
         ManagementStatutoryBenefitReviewResult<T>.Failed(ManagementStatutoryBenefitReviewOutcome.Invalid, code, "The statutory-benefit review request is invalid.", correlationId);

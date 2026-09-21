@@ -31,4 +31,10 @@ public interface ICentralPmsWebPayStatutoryEvidenceClient
         string? clientOperationKey,
         Guid correlationId,
         CancellationToken cancellationToken);
+
+    Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidencePreview>> OpenPreviewAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid evidenceItemReference,
+        Guid correlationId,
+        CancellationToken cancellationToken);
 }

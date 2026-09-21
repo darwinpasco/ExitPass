@@ -43,24 +43,19 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
             throw new UnauthorizedAccessException("Operator Console statutory evidence review access was denied.");
         }
 
-        var record = await _repository.ReadAsync(statutoryDiscountDecisionCommandId, cancellationToken).ConfigureAwait(false);
-        if (record is null || !ScopeMatches(record, access))
-        {
-            await RecordDeniedAsync(accessContext, "OPERATOR_CONSOLE_EVIDENCE_REVIEW_NOT_FOUND", cancellationToken).ConfigureAwait(false);
-            return null;
-        }
-
-        await _repository.RecordAccessEventAsync(
-            AccessEvent(
-                "ACCESS_ALLOWED",
-                "ALLOWED",
-                "OPERATOR_CONSOLE_EVIDENCE_METADATA_READ",
-                record,
-                item: null,
-                accessContext),
-            cancellationToken).ConfigureAwait(false);
-
-        return ToResult(record, accessContext.CorrelationId);
+        return await ReadAuthorizedAsync(
+                statutoryDiscountDecisionCommandId,
+                new StatutoryEvidenceAuthorizedReviewContext(
+                    access.SiteContext.SiteId!.Value,
+                    access.SiteContext.SiteGroupId,
+                    ExpectedDecisionSourceChannel: null,
+                    accessContext.CorrelationId,
+                    new StatutoryEvidenceActor(
+                        accessContext.UserId,
+                        null,
+                        OperatorConsoleStatutoryEvidenceReviewConstants.SourceChannel)),
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public async Task<OperatorConsoleStatutoryEvidencePreviewResult> OpenPreviewAsync(
@@ -80,41 +75,95 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
             throw new UnauthorizedAccessException("Operator Console statutory evidence preview access was denied.");
         }
 
+        return await OpenAuthorizedPreviewAsync(
+                statutoryDiscountDecisionCommandId,
+                evidenceItemReference,
+                new StatutoryEvidenceAuthorizedReviewContext(
+                    access.SiteContext.SiteId!.Value,
+                    access.SiteContext.SiteGroupId,
+                    ExpectedDecisionSourceChannel: null,
+                    accessContext.CorrelationId,
+                    new StatutoryEvidenceActor(
+                        accessContext.UserId,
+                        null,
+                        OperatorConsoleStatutoryEvidenceReviewConstants.SourceChannel)),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<OperatorConsoleStatutoryEvidenceReviewResult?> ReadAuthorizedAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        StatutoryEvidenceAuthorizedReviewContext context,
+        CancellationToken cancellationToken)
+    {
+        ValidateGuid(statutoryDiscountDecisionCommandId, nameof(statutoryDiscountDecisionCommandId));
+        ArgumentNullException.ThrowIfNull(context);
+
         var record = await _repository.ReadAsync(statutoryDiscountDecisionCommandId, cancellationToken).ConfigureAwait(false);
-        if (record is null || !ScopeMatches(record, access))
+        if (record is null || !ScopeMatches(record, context))
         {
-            await RecordDeniedAsync(accessContext, "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_NOT_FOUND", cancellationToken).ConfigureAwait(false);
-            return Rejected("NOT_FOUND", accessContext.CorrelationId);
+            await RecordDeniedAsync(context, "STATUTORY_EVIDENCE_REVIEW_NOT_FOUND", cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+
+        var reasonCode = string.Equals(
+            context.Actor.SourceChannel,
+            OperatorConsoleStatutoryEvidenceReviewConstants.SourceChannel,
+            StringComparison.Ordinal)
+            ? "OPERATOR_CONSOLE_EVIDENCE_METADATA_READ"
+            : "STATUTORY_EVIDENCE_METADATA_READ";
+        await _repository.RecordAccessEventAsync(
+            AccessEvent("ACCESS_ALLOWED", "ALLOWED", reasonCode, record, null, context),
+            cancellationToken).ConfigureAwait(false);
+
+        return ToResult(record, context.CorrelationId);
+    }
+
+    public async Task<OperatorConsoleStatutoryEvidencePreviewResult> OpenAuthorizedPreviewAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid evidenceItemReference,
+        StatutoryEvidenceAuthorizedReviewContext context,
+        CancellationToken cancellationToken)
+    {
+        ValidateGuid(statutoryDiscountDecisionCommandId, nameof(statutoryDiscountDecisionCommandId));
+        ValidateGuid(evidenceItemReference, nameof(evidenceItemReference));
+        ArgumentNullException.ThrowIfNull(context);
+
+        var record = await _repository.ReadAsync(statutoryDiscountDecisionCommandId, cancellationToken).ConfigureAwait(false);
+        if (record is null || !ScopeMatches(record, context))
+        {
+            await RecordDeniedAsync(context, "STATUTORY_EVIDENCE_PREVIEW_NOT_FOUND", cancellationToken).ConfigureAwait(false);
+            return Rejected("NOT_FOUND", context.CorrelationId);
         }
 
         var item = record.Items.SingleOrDefault(value => value.EvidenceItemReference == evidenceItemReference);
         if (item is null)
         {
             await _repository.RecordAccessEventAsync(
-                AccessEvent("ACCESS_DENIED", "DENIED", "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_NOT_FOUND", record, null, accessContext),
+                AccessEvent("ACCESS_DENIED", "DENIED", "STATUTORY_EVIDENCE_PREVIEW_NOT_FOUND", record, null, context),
                 cancellationToken).ConfigureAwait(false);
-            return Rejected("NOT_FOUND", accessContext.CorrelationId);
+            return Rejected("NOT_FOUND", context.CorrelationId);
         }
 
         var denialReason = PreviewDenialReason(record, item);
         if (denialReason is not null)
         {
             await _repository.RecordAccessEventAsync(
-                AccessEvent("ACCESS_DENIED", "DENIED", denialReason, record, item, accessContext),
+                AccessEvent("ACCESS_DENIED", "DENIED", denialReason, record, item, context),
                 cancellationToken).ConfigureAwait(false);
-            return Rejected(denialReason, accessContext.CorrelationId);
+            return Rejected(denialReason, context.CorrelationId);
         }
 
         if (_uploadOptions.MaxContentLengthBytes <= 0 || string.IsNullOrWhiteSpace(_uploadOptions.BucketName))
         {
             const string reason = "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STORAGE_NOT_CONFIGURED";
             await _repository.RecordAccessEventAsync(
-                AccessEvent("ACCESS_DENIED", "FAILED", reason, record, item, accessContext),
+                AccessEvent("ACCESS_DENIED", "FAILED", reason, record, item, context),
                 cancellationToken).ConfigureAwait(false);
-            return Rejected(reason, accessContext.CorrelationId, retryable: false);
+            return Rejected(reason, context.CorrelationId, retryable: false);
         }
 
-        var target = BuildTarget(record, item, accessContext);
+        var target = BuildTarget(record, item, context);
         StatutoryEvidenceObjectContent content;
         try
         {
@@ -130,9 +179,9 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
         {
             const string reason = "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STORAGE_UNAVAILABLE";
             await _repository.RecordAccessEventAsync(
-                AccessEvent("ACCESS_ALLOWED", "FAILED", reason, record, item, accessContext),
+                AccessEvent("ACCESS_ALLOWED", "FAILED", reason, record, item, context),
                 cancellationToken).ConfigureAwait(false);
-            return Rejected(reason, accessContext.CorrelationId, retryable: true);
+            return Rejected(reason, context.CorrelationId, retryable: true);
         }
 
         if (!ObjectMetadataMatches(target, content) ||
@@ -141,24 +190,30 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
             await content.DisposeAsync().ConfigureAwait(false);
             const string reason = "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STALE";
             await _repository.RecordAccessEventAsync(
-                AccessEvent("ACCESS_DENIED", "DENIED", reason, record, item, accessContext),
+                AccessEvent("ACCESS_DENIED", "DENIED", reason, record, item, context),
                 cancellationToken).ConfigureAwait(false);
-            return Rejected(reason, accessContext.CorrelationId);
+            return Rejected(reason, context.CorrelationId);
         }
 
+        var previewReasonCode = string.Equals(
+            context.Actor.SourceChannel,
+            OperatorConsoleStatutoryEvidenceReviewConstants.SourceChannel,
+            StringComparison.Ordinal)
+            ? "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STARTED"
+            : "STATUTORY_EVIDENCE_PREVIEW_STARTED";
         await _repository.RecordAccessEventAsync(
-            AccessEvent("ACCESS_ALLOWED", "ALLOWED", "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STARTED", record, item, accessContext),
+            AccessEvent("ACCESS_ALLOWED", "ALLOWED", previewReasonCode, record, item, context),
             cancellationToken).ConfigureAwait(false);
 
         return new OperatorConsoleStatutoryEvidencePreviewResult(
             "ACCEPTED",
             null,
             false,
-            accessContext.CorrelationId,
+            context.CorrelationId,
             content,
             new OperatorConsoleStatutoryEvidencePreviewAuditContext(
                 target,
-                new StatutoryEvidenceActor(accessContext.UserId, null, OperatorConsoleStatutoryEvidenceReviewConstants.SourceChannel)));
+                context.Actor));
     }
 
     public Task RecordPreviewStreamOutcomeAsync(
@@ -242,6 +297,14 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
         OperatorConsoleAccessEvaluationResult access) =>
         access.SiteContext.SiteId == record.SiteId &&
         access.SiteContext.SiteGroupId == record.SiteGroupId;
+
+    private static bool ScopeMatches(
+        OperatorConsoleStatutoryEvidenceReviewRecord record,
+        StatutoryEvidenceAuthorizedReviewContext context) =>
+        context.SiteId == record.SiteId &&
+        context.SiteGroupId == record.SiteGroupId &&
+        (string.IsNullOrWhiteSpace(context.ExpectedDecisionSourceChannel) ||
+         string.Equals(context.ExpectedDecisionSourceChannel, record.SourceChannel, StringComparison.Ordinal));
 
     private static OperatorConsoleStatutoryEvidenceReviewResult ToResult(
         OperatorConsoleStatutoryEvidenceReviewRecord record,
@@ -399,7 +462,7 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
     private static OperatorConsoleStatutoryEvidencePreviewTarget BuildTarget(
         OperatorConsoleStatutoryEvidenceReviewRecord record,
         OperatorConsoleStatutoryEvidenceReviewItemRecord item,
-        OperatorConsoleReviewAccessContext accessContext) =>
+        StatutoryEvidenceAuthorizedReviewContext context) =>
         new(
             record.StatutoryDiscountDecisionCommandId,
             record.ParkingSessionId,
@@ -419,8 +482,8 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
             item.VerifiedContentLength!.Value,
             item.VerifiedChecksumSha256!,
             item.ProviderObjectVersion,
-            accessContext.CorrelationId,
-            accessContext.UserId);
+            context.CorrelationId,
+            context.Actor.UserId);
 
     private static bool ObjectMetadataMatches(
         OperatorConsoleStatutoryEvidencePreviewTarget target,
@@ -449,6 +512,43 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
             record.ParkingSessionId,
             accessContext.CorrelationId,
             new StatutoryEvidenceActor(accessContext.UserId, null, OperatorConsoleStatutoryEvidenceReviewConstants.SourceChannel));
+
+    private static OperatorConsoleStatutoryEvidenceAccessEvent AccessEvent(
+        string eventType,
+        string eventResult,
+        string reasonCode,
+        OperatorConsoleStatutoryEvidenceReviewRecord record,
+        OperatorConsoleStatutoryEvidenceReviewItemRecord? item,
+        StatutoryEvidenceAuthorizedReviewContext context) =>
+        new(
+            eventType,
+            eventResult,
+            reasonCode,
+            record.EvidenceSetId,
+            item?.EvidenceItemId,
+            record.SiteId,
+            record.SiteGroupId,
+            record.ParkingSessionId,
+            context.CorrelationId,
+            context.Actor);
+
+    private Task RecordDeniedAsync(
+        StatutoryEvidenceAuthorizedReviewContext context,
+        string reasonCode,
+        CancellationToken cancellationToken) =>
+        _repository.RecordAccessEventAsync(
+            new OperatorConsoleStatutoryEvidenceAccessEvent(
+                "ACCESS_DENIED",
+                "DENIED",
+                reasonCode,
+                null,
+                null,
+                context.SiteId,
+                context.SiteGroupId,
+                null,
+                context.CorrelationId,
+                context.Actor),
+            cancellationToken);
 
     private static OperatorConsoleStatutoryEvidencePreviewResult Rejected(
         string errorCode,
