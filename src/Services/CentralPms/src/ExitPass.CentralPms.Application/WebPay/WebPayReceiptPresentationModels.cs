@@ -15,14 +15,21 @@ public interface IWebPayReceiptPresentationService
         Guid paymentAttemptId,
         Guid correlationId,
         CancellationToken cancellationToken);
+
+    Task<WebPayReceiptPresentationResult> GetByStatutoryApplicationAsync(
+        Guid statutoryDiscountPayableBasisApplicationCommandId,
+        Guid statutoryDiscountDecisionCommandId,
+        Guid parkingSessionId,
+        Guid correlationId,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
 /// Safe Central PMS wrapper for POS Server-owned WebPay receipt presentation.
 /// </summary>
 public sealed record WebPayReceiptPresentationResult(
-    Guid PaymentAttemptId,
-    Guid PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
     Guid FiscalIssuanceReferenceId,
     FiscalIssuanceIntegrationState FiscalIssuanceState,
     Guid PosFiscalDocumentId,

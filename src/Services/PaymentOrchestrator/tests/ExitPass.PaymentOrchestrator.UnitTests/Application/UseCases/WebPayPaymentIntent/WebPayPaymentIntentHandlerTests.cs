@@ -1470,6 +1470,16 @@ public sealed class WebPayPaymentIntentHandlerTests
             throw new NotSupportedException();
         }
 
+        public Task<CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>> GetStatutoryReceiptPresentationAsync(
+            Guid applicationCommandId,
+            Guid decisionCommandId,
+            Guid parkingSessionId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<CentralPmsWebPayResult<CentralPmsWebPayPaymentAttemptStatus>> GetPaymentAttemptStatusAsync(
             Guid paymentAttemptId,
             Guid correlationId,

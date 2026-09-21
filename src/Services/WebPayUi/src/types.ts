@@ -195,8 +195,8 @@ export type SalesInvoiceAuthoritativePresentation = {
 };
 
 export type WebPayReceiptPresentationResponse = {
-  paymentAttemptId: string;
-  paymentConfirmationId: string;
+  paymentAttemptId?: string | null;
+  paymentConfirmationId?: string | null;
   fiscalIssuanceReferenceId: string;
   fiscalIssuanceState: string;
   posFiscalDocumentId: string;
@@ -377,6 +377,32 @@ export type WebPayZeroPayableFiscalCompletionResponse = {
   safeErrorCode?: string | null;
 };
 
+export type WebPayCompletionAuthorityResponse = {
+  completionBasis: string;
+  authorityState: string;
+  durableSourceReferenceId: string;
+  parkingSessionId: string;
+  tariffSnapshotId: string;
+};
+
+export type WebPayExitAuthorizationEligibilityResponse = {
+  completionAuthorityEligible: boolean;
+  exitAuthorizationIssuanceAllowed: boolean;
+  status: string;
+  blockedReason?: string | null;
+  completionBasis: string;
+};
+
+export type WebPayStatutoryExitAuthorizationResponse = {
+  exitAuthorizationId: string;
+  parkingSessionId: string;
+  tariffSnapshotId: string;
+  completionBasis: string;
+  authorizationStatus: string;
+  issuedAt: string;
+  expirationTimestamp: string;
+};
+
 export type WebPayStatutoryDiscountDecisionResponse = {
   statutoryDiscountDecisionCommandId: string;
   requestReference: string;
@@ -413,7 +439,10 @@ export type WebPayStatutoryDiscountDecisionResponse = {
   decidedAt?: string | null;
   appliedAt?: string | null;
   zeroPayableStatutoryFinality?: WebPayZeroPayableStatutoryFinalityResponse | null;
+  completionAuthority?: WebPayCompletionAuthorityResponse | null;
+  exitAuthorizationEligibility?: WebPayExitAuthorizationEligibilityResponse | null;
   zeroPayableFiscalCompletion?: WebPayZeroPayableFiscalCompletionResponse | null;
+  exitAuthorization?: WebPayStatutoryExitAuthorizationResponse | null;
 };
 
 export type WebPayStatutoryEvidenceLifecycleState =

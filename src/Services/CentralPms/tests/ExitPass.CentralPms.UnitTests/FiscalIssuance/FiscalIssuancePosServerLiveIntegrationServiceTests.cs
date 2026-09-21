@@ -325,6 +325,8 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         result.MappedRequest.FiscalDocumentStatusCodeId.Should().Be(SitePosServerTestOptions.FiscalDocumentStatusCodeId);
         result.MappedRequest.DocumentLines.Should().OnlyContain(line => line.LineTypeCodeId == SitePosServerTestOptions.FiscalLineTypeCodeId);
         result.MappedRequest.Tenders.Should().OnlyContain(tender => tender.TenderTypeCodeId == SitePosServerTestOptions.FiscalTenderTypeCodeId);
+        result.MappedRequest.DiscountPrivilegeDetails.Should().ContainSingle()
+            .Which.DiscountPrivilegeTypeCodeId.Should().Be(SitePosServerTestOptions.FiscalDiscountPrivilegeTypeCodeId);
         result.MappedRequest.Totals.Should().OnlyContain(total => total.TotalTypeCodeId == SitePosServerTestOptions.FiscalTotalTypeCodeId);
     }
 

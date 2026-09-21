@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 
 /// <summary>
@@ -95,4 +97,9 @@ public sealed record CentralPmsStatutoryDiscountDecision(
     Guid? SiteGroupId,
     bool PayableBasisReady,
     string PayableBasisReadinessStatus,
-    string? PayableBasisReadinessAction);
+    string? PayableBasisReadinessAction,
+    JsonElement? ZeroPayableStatutoryFinality = null,
+    JsonElement? CompletionAuthority = null,
+    JsonElement? ExitAuthorizationEligibility = null,
+    JsonElement? ZeroPayableFiscalCompletion = null,
+    JsonElement? ExitAuthorization = null);

@@ -6,8 +6,8 @@ namespace ExitPass.PaymentOrchestrator.Contracts.WebPay;
 /// WebPay receipt-presentation readback for the authoritative POS Server-owned Sales Invoice.
 /// </summary>
 public sealed record WebPayReceiptPresentationResponse(
-    Guid PaymentAttemptId,
-    Guid PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
     Guid FiscalIssuanceReferenceId,
     string FiscalIssuanceState,
     Guid PosFiscalDocumentId,

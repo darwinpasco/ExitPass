@@ -251,6 +251,15 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             return enriched;
         }
 
+        // An approved service-channel review supplies the durable human actor for
+        // idempotent fiscal/exit recovery after the original application response.
+        var reviewerUserId = string.Equals(review?.SourceChannel, "WEBPAY", StringComparison.Ordinal) &&
+            review?.ReviewerUserId is Guid reviewer && reviewer != Guid.Empty
+            ? reviewer
+            : (Guid?)null;
+        var progressCompletion = requestFiscalIssuance || reviewerUserId.HasValue;
+        var completionActorId = reviewerUserId ?? issuingUserId;
+
         var candidate = await _zeroPayableFinalityReader.ReadAsync(
                 enriched.StatutoryDiscountDecisionCommandId,
                 cancellationToken)
@@ -297,7 +306,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                     "Zero-payable fiscal issuance requires canonical VAT and policy facts.");
             }
 
-            fiscalCompletion = requestFiscalIssuance
+            fiscalCompletion = progressCompletion
                 ? await _zeroPayableFiscalIssuanceService.IssueOrReadAsync(
                     new ZeroPayableStatutoryFiscalIssuanceCommand(
                         resolution.Finality!,
@@ -317,11 +326,11 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             fiscalCompletion?.FiscalPrerequisiteSatisfied == true);
 
         IssueExitAuthorizationResult? exitAuthorization = null;
-        if (requestFiscalIssuance &&
+        if (progressCompletion &&
             eligibility.ExitAuthorizationIssuanceAllowed &&
             _issueExitAuthorizationUseCase is not null)
         {
-            if (!issuingUserId.HasValue || issuingUserId == Guid.Empty)
+            if (!completionActorId.HasValue || completionActorId == Guid.Empty)
             {
                 throw new StatutoryDiscountDecisionRejectedException(
                     "ZERO_PAYABLE_EXIT_AUTHORIZATION_ACTOR_REQUIRED",
@@ -332,7 +341,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                     new IssueExitAuthorizationCommand(
                         ParkingSessionId: authorityResolution.Authority.ParkingSessionId,
                         PaymentAttemptId: null,
-                        RequestedByUserId: issuingUserId.Value,
+                        RequestedByUserId: completionActorId.Value,
                         CorrelationId: authorityResolution.Authority.CorrelationId,
                         CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality,
                         CompletionAuthority: authorityResolution.Authority,

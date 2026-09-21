@@ -29,7 +29,6 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
     private static readonly Guid FiscalTenderTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000301");
     private static readonly Guid FiscalTaxTypeCodeId = Guid.Parse("328dcb64-584a-5f59-a304-2e5189a2aa83");
     private static readonly Guid FiscalTaxClassificationCodeId = Guid.Parse("ab180f41-e181-5579-b9f1-5ae7a840a946");
-    private static readonly Guid FiscalDiscountPrivilegeTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000501");
     private static readonly Guid FiscalTotalTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000601");
     private readonly IDigitalPaymentFiscalContextReader _contextReader;
     private readonly IFiscalIssuanceReferenceRepository _references;
@@ -351,7 +350,7 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             :
             [
                 new CentralPmsFiscalDiscountPrivilegeDetailContext(
-                    FiscalDiscountPrivilegeTypeCodeId,
+                    null,
                     statutory.VatExclusiveBasisAmountMinorUnits,
                     statutory.StatutoryDiscountAmountMinorUnits,
                     statutory.VatAmountMinorUnits,

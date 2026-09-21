@@ -76,6 +76,13 @@ public interface ICentralPmsWebPayClient
         Guid correlationId,
         CancellationToken cancellationToken);
 
+    Task<CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>> GetStatutoryReceiptPresentationAsync(
+        Guid applicationCommandId,
+        Guid decisionCommandId,
+        Guid parkingSessionId,
+        Guid correlationId,
+        CancellationToken cancellationToken);
+
     /// <summary>
     /// Reads canonical payment and parking context by durable payment-attempt identity.
     /// </summary>

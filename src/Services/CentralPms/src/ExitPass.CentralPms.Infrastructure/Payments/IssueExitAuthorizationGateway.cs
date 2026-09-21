@@ -35,6 +35,7 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
 
     private readonly string _connectionString;
     private readonly ILogger<IssueExitAuthorizationGateway> _logger;
+    private readonly Guid? _centralPmsServiceIdentityId;
 
     /// <summary>
     /// Creates a gateway for issuing exit authorizations against the primary database.
@@ -43,10 +44,12 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
     /// <param name="logger">Application logger.</param>
     public IssueExitAuthorizationGateway(
         string connectionString,
-        ILogger<IssueExitAuthorizationGateway> logger)
+        ILogger<IssueExitAuthorizationGateway> logger,
+        Guid? centralPmsServiceIdentityId = null)
     {
         _connectionString = connectionString;
         _logger = logger;
+        _centralPmsServiceIdentityId = centralPmsServiceIdentityId;
     }
 
     /// <summary>
@@ -162,7 +165,12 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
                 dbCommand,
                 "p_statutory_discount_policy_version_id",
                 request.StatutoryDiscountPolicyVersionId);
-            dbCommand.Parameters.AddWithValue("p_requested_by_user_id", request.RequestedByUserId);
+            var requestedBy = request.CompletionBasis == CompletionBasisCodes.ZeroPayableStatutoryFinality
+                ? _centralPmsServiceIdentityId is { } serviceIdentityId && serviceIdentityId != Guid.Empty
+                    ? serviceIdentityId
+                    : throw new InvalidOperationException("ZERO_PAYABLE_EXIT_SERVICE_IDENTITY_REQUIRED")
+                : request.RequestedByUserId;
+            dbCommand.Parameters.AddWithValue("p_requested_by_user_id", requestedBy);
             dbCommand.Parameters.AddWithValue("p_correlation_id", request.CorrelationId);
             dbCommand.Parameters.AddWithValue("p_now", request.RequestedAt);
 

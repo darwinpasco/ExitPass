@@ -457,6 +457,48 @@ public static class WebPayPaymentIntentEndpoints
         .Produces(StatusCodes.Status502BadGateway)
         .Produces(StatusCodes.Status503ServiceUnavailable);
 
+        app.MapGet("/v1/webpay/statutory-applications/{applicationCommandId:guid}/receipt-presentation", async (
+            Guid applicationCommandId,
+            Guid decisionCommandId,
+            Guid parkingSessionId,
+            ICentralPmsWebPayClient centralPmsClient,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            var correlationId = ReadOrCreateCorrelationId(httpContext);
+            var decision = await centralPmsClient.GetStatutoryDiscountDecisionAsync(
+                decisionCommandId, correlationId, cancellationToken).ConfigureAwait(false);
+            if (!decision.Succeeded || decision.Value is null ||
+                decision.Value.ParkingSessionId != parkingSessionId ||
+                decision.Value.StatutoryDiscountPayableBasisApplicationCommandId != applicationCommandId ||
+                !decision.Value.PayableBasisReady || decision.Value.NetPayableAmountMinorUnits != 0)
+            {
+                return Results.NotFound(new { errorCode = "STATUTORY_RECEIPT_NOT_FOUND", correlationId });
+            }
+
+            var result = await centralPmsClient.GetStatutoryReceiptPresentationAsync(
+                applicationCommandId, decisionCommandId, parkingSessionId, correlationId, cancellationToken)
+                .ConfigureAwait(false);
+            if (result.Succeeded && result.Value is not null)
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = result.Value.CorrelationId.ToString();
+                return Results.Ok(ToReceiptPresentationResponse(result.Value));
+            }
+
+            var error = result.Error ?? new CentralPmsWebPayError(
+                StatusCodes.Status502BadGateway,
+                "WEBPAY_RECEIPT_PRESENTATION_READ_FAILED",
+                "Sales Invoice presentation could not be retrieved.",
+                true,
+                correlationId);
+            return Results.Json(BuildErrorResponse(error, correlationId), statusCode: error.StatusCode);
+        })
+        .WithName("GetWebPayStatutoryReceiptPresentation")
+        .Produces<WebPayReceiptPresentationResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status503ServiceUnavailable);
+
         return app;
     }
 
@@ -990,7 +1032,12 @@ public static class WebPayPaymentIntentEndpoints
             CorrelationId = decision.CorrelationId,
             CreatedAt = decision.CreatedAt,
             DecidedAt = decision.DecidedAt,
-            AppliedAt = decision.AppliedAt
+            AppliedAt = decision.AppliedAt,
+            ZeroPayableStatutoryFinality = decision.ZeroPayableStatutoryFinality,
+            CompletionAuthority = decision.CompletionAuthority,
+            ExitAuthorizationEligibility = decision.ExitAuthorizationEligibility,
+            ZeroPayableFiscalCompletion = decision.ZeroPayableFiscalCompletion,
+            ExitAuthorization = decision.ExitAuthorization
         };
 
     private static WebPayStatutoryDiscountAvailabilityResponse ToStatutoryAvailabilityResponse(

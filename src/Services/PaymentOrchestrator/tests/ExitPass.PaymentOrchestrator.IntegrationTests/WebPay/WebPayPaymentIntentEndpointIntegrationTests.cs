@@ -447,6 +447,75 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.True(state.CapturedStatutoryAvailabilityRequest!.BeneficiaryResidencySatisfied);
     }
 
+    [Fact]
+    public async Task WebPayStatutoryReadback_PreservesCanonicalZeroPayableCompletionFacts()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null)
+        {
+            StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(
+                StatutoryDecision() with
+                {
+                    ZeroPayableStatutoryFinality = JsonDocument.Parse("{\"finalityState\":\"ZERO_PAYABLE_STATUTORY_FINALITY\"}").RootElement,
+                    CompletionAuthority = JsonDocument.Parse("{\"completionBasis\":\"ZERO_PAYABLE_STATUTORY_FINALITY\"}").RootElement,
+                    ExitAuthorizationEligibility = JsonDocument.Parse("{\"exitAuthorizationIssuanceAllowed\":true}").RootElement,
+                    ZeroPayableFiscalCompletion = JsonDocument.Parse("{\"fiscalPrerequisiteSatisfied\":true,\"fiscalDocumentNumber\":\"SI-001\"}").RootElement,
+                    ExitAuthorization = JsonDocument.Parse("{\"authorizationStatus\":\"ISSUED\"}").RootElement
+                })
+        };
+        using var client = CreateClient(state);
+        using var response = await client.GetAsync($"{StatutoryDecisionRoute}/{StatutoryDecisionCommandId:D}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<WebPayStatutoryDiscountDecisionResponse>();
+        Assert.Equal("ZERO_PAYABLE_STATUTORY_FINALITY", body!.ZeroPayableStatutoryFinality!.Value.GetProperty("finalityState").GetString());
+        Assert.True(body.ZeroPayableFiscalCompletion!.Value.GetProperty("fiscalPrerequisiteSatisfied").GetBoolean());
+        Assert.Equal("ISSUED", body.ExitAuthorization!.Value.GetProperty("authorizationStatus").GetString());
+        Assert.NotNull(body.CompletionAuthority);
+        Assert.NotNull(body.ExitAuthorizationEligibility);
+    }
+
+    [Fact]
+    public async Task WebPayStatutoryReceipt_WhenDecisionAndSessionMatch_ReturnsPosPresentationWithoutPayment()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null)
+        {
+            StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(
+                StatutoryDecision() with { NetPayableAmountMinorUnits = 0 }),
+            StatutoryReceiptResult = CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>.Success(
+                new CentralPmsWebPayReceiptPresentation(
+                    null, null, Guid.NewGuid(), "FISCAL_ISSUANCE_RECORDED", Guid.NewGuid(), "SI-ZERO-001",
+                    "RECORDED", "AVAILABLE", "v1", "v1", "application/json",
+                    JsonDocument.Parse("{\"presentation\":{\"documentTitle\":\"Sales Invoice\"}}").RootElement,
+                    null, null, null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, Guid.NewGuid()))
+        };
+        using var client = CreateClient(state);
+        using var response = await client.GetAsync(
+            $"/v1/webpay/statutory-applications/{StatutoryApplicationCommandId:D}/receipt-presentation?decisionCommandId={StatutoryDecisionCommandId:D}&parkingSessionId=44444444-4444-4444-4444-444444444444");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var receipt = await response.Content.ReadFromJsonAsync<WebPayReceiptPresentationResponse>();
+        Assert.Null(receipt!.PaymentAttemptId);
+        Assert.Null(receipt.PaymentConfirmationId);
+        Assert.Equal("SI-ZERO-001", receipt.FiscalDocumentNumber);
+        Assert.Equal(1, state.StatutoryReceiptReadCount);
+    }
+
+    [Fact]
+    public async Task WebPayStatutoryReceipt_WhenParkingSessionDiffers_DoesNotReadPos()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null)
+        {
+            StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(
+                StatutoryDecision() with { NetPayableAmountMinorUnits = 0 })
+        };
+        using var client = CreateClient(state);
+        using var response = await client.GetAsync(
+            $"/v1/webpay/statutory-applications/{StatutoryApplicationCommandId:D}/receipt-presentation?decisionCommandId={StatutoryDecisionCommandId:D}&parkingSessionId=99999999-9999-4999-8999-999999999999");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(0, state.StatutoryReceiptReadCount);
+    }
+
     /// <summary>
     /// Verifies WebPay exposes only browser-safe authoritative ordinance availability through Payment Orchestrator.
     /// </summary>
@@ -1109,6 +1178,10 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         public CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision> StatutoryDecisionResult { get; set; } =
             CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(StatutoryDecision());
 
+        public CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>? StatutoryReceiptResult { get; set; }
+
+        public int StatutoryReceiptReadCount { get; private set; }
+
         public CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability> StatutoryAvailabilityResult { get; set; } =
             CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability>.Success(StatutoryAvailability());
 
@@ -1233,6 +1306,17 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             CancellationToken cancellationToken)
         {
             throw new NotSupportedException();
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>> GetStatutoryReceiptPresentationAsync(
+            Guid applicationCommandId,
+            Guid decisionCommandId,
+            Guid parkingSessionId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            StatutoryReceiptReadCount++;
+            return Task.FromResult(StatutoryReceiptResult ?? throw new NotSupportedException());
         }
 
         public Task<CentralPmsWebPayResult<CentralPmsWebPayPaymentAttemptStatus>> GetPaymentAttemptStatusAsync(

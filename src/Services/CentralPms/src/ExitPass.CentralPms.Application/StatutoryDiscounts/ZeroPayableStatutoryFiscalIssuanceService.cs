@@ -22,17 +22,25 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
     private readonly IFiscalIssuanceOrchestrationService _orchestration;
     private readonly IFiscalIssuancePosServerLiveIntegrationService _posServer;
     private readonly FiscalIssuancePosServerIntegrationOptions _options;
+    private readonly Guid _centralPmsServiceIdentityId;
 
     public ZeroPayableStatutoryFiscalIssuanceService(
         IFiscalIssuanceReferenceRepository references,
         IFiscalIssuanceOrchestrationService orchestration,
         IFiscalIssuancePosServerLiveIntegrationService posServer,
-        FiscalIssuancePosServerIntegrationOptions options)
+        FiscalIssuancePosServerIntegrationOptions options,
+        Guid centralPmsServiceIdentityId)
     {
+        if (centralPmsServiceIdentityId == Guid.Empty)
+        {
+            throw new ArgumentException("Central PMS service identity is required.", nameof(centralPmsServiceIdentityId));
+        }
+
         _references = references;
         _orchestration = orchestration;
         _posServer = posServer;
         _options = options;
+        _centralPmsServiceIdentityId = centralPmsServiceIdentityId;
     }
 
     public async Task<ZeroPayableStatutoryFiscalIssuanceResult?> ReadAsync(
@@ -86,7 +94,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 PayableBasisRef: finality.AppliedTariffSnapshotId.ToString("D"),
                 UpstreamFinalityReference: upstreamReference,
                 CorrelationId: finality.CorrelationId,
-                ServiceIdentityId: null,
+                ServiceIdentityId: _centralPmsServiceIdentityId,
                 CompletionBasis: FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality,
                 CompletionAuthorityReferenceId: authority.DurableSourceReferenceId,
                 StatutoryDiscountDecisionCommandId: finality.StatutoryDiscountDecisionCommandId,
@@ -104,7 +112,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 reference.FiscalDocumentTypeCodeId,
                 finality.CorrelationId,
                 DateTimeOffset.UtcNow,
-                null),
+                _centralPmsServiceIdentityId),
             cancellationToken).ConfigureAwait(false);
 
         var resolved = issue.FiscalIssuanceReference ?? reference;

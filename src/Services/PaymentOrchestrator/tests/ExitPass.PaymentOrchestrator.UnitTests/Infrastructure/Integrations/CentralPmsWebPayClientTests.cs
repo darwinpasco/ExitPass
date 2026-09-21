@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 using ExitPass.PaymentOrchestrator.Infrastructure.Integrations;
 using Microsoft.Extensions.Configuration;
@@ -269,6 +270,42 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal("Sales Invoice", result.Value.AuthoritativePresentation.GetProperty("presentation").GetProperty("documentTitle").GetString());
     }
 
+    [Fact]
+    public async Task GetStatutoryReceiptPresentationAsync_UsesContextBoundPathAndNullablePaymentAncestry()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(new
+            {
+                paymentAttemptId = (Guid?)null,
+                paymentConfirmationId = (Guid?)null,
+                fiscalIssuanceReferenceId = Guid.NewGuid(),
+                fiscalIssuanceState = "FISCAL_ISSUANCE_RECORDED",
+                posFiscalDocumentId = Guid.NewGuid(),
+                fiscalDocumentNumber = "SI-ZERO-001",
+                receiptAvailabilityState = "AVAILABLE",
+                authoritativePresentation = new { presentation = new { documentTitle = "Sales Invoice" } },
+                createdAt = "2026-09-21T00:00:00Z",
+                updatedAt = "2026-09-21T00:01:00Z",
+                correlationId = CorrelationId
+            })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.GetStatutoryReceiptPresentationAsync(
+            StatutoryApplicationCommandId, StatutoryDecisionCommandId, ParkingSessionId,
+            CorrelationId, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Null(result.Value!.PaymentAttemptId);
+        Assert.Null(result.Value.PaymentConfirmationId);
+        Assert.Equal("SI-ZERO-001", result.Value.FiscalDocumentNumber);
+        Assert.Equal($"/v1/webpay/statutory-applications/{StatutoryApplicationCommandId:D}/receipt-presentation",
+            handler.LastRequest!.RequestUri!.AbsolutePath);
+        Assert.Contains($"decisionCommandId={StatutoryDecisionCommandId:D}", handler.LastRequest.RequestUri.Query);
+        Assert.Contains($"parkingSessionId={ParkingSessionId:D}", handler.LastRequest.RequestUri.Query);
+    }
+
     /// <summary>
     /// Verifies Central PMS receipt readback errors remain safe and retryable when applicable.
     /// </summary>
@@ -445,6 +482,29 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal("statutory-discounts.decision.read", handler.LastRequest.Headers.GetValues("X-ExitPass-Permissions").Single());
         Assert.Equal(StatutoryApplicationCommandId, result.Value!.StatutoryDiscountPayableBasisApplicationCommandId);
         Assert.True(result.Value.PayableBasisReady);
+    }
+
+    [Fact]
+    public async Task GetStatutoryDiscountDecisionAsync_PreservesZeroPayableFiscalAndExitFacts()
+    {
+        var payload = JsonNode.Parse(JsonSerializer.Serialize(StatutoryDecisionResponse()))!.AsObject();
+        payload["zeroPayableStatutoryFinality"] = new JsonObject { ["finalityState"] = "ZERO_PAYABLE_STATUTORY_FINALITY" };
+        payload["zeroPayableFiscalCompletion"] = new JsonObject { ["fiscalPrerequisiteSatisfied"] = true };
+        payload["exitAuthorization"] = new JsonObject { ["authorizationStatus"] = "ISSUED" };
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(payload)
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.GetStatutoryDiscountDecisionAsync(
+            StatutoryDecisionCommandId, CorrelationId, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("ZERO_PAYABLE_STATUTORY_FINALITY",
+            result.Value!.ZeroPayableStatutoryFinality!.Value.GetProperty("finalityState").GetString());
+        Assert.True(result.Value.ZeroPayableFiscalCompletion!.Value.GetProperty("fiscalPrerequisiteSatisfied").GetBoolean());
+        Assert.Equal("ISSUED", result.Value.ExitAuthorization!.Value.GetProperty("authorizationStatus").GetString());
     }
 
     /// <summary>

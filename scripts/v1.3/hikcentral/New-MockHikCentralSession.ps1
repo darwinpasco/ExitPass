@@ -1,6 +1,5 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)]
     [string] $Ticket,
 
     [string] $Plate,
@@ -9,7 +8,9 @@ param(
 
     [datetime] $EntryTime,
 
-    [string] $VendorRecordGuid
+    [string] $VendorRecordGuid,
+
+    [switch] $RefreshMappings
 )
 
 Set-StrictMode -Version Latest
@@ -150,13 +151,14 @@ function New-PassagewayMapping($Sessions, [string] $AppKey, [string] $ParkingLot
     }
 }
 
-function New-CalculateMapping($Session, [string] $AppKey) {
+function New-CalculateMapping($Session, [string] $AppKey, [string] $LookupField) {
     $entry = [DateTimeOffset]::Parse($Session.entryTime, $invariant)
     $duration = [Math]::Max(1, [int][Math]::Floor(([DateTimeOffset]::Now - $entry).TotalMinutes))
-    $expectedBody = @{ cardNum = $Session.ticketReference } | ConvertTo-Json -Compress
+    $lookupValue = if ($LookupField -eq 'cardNum') { $Session.ticketReference } else { $Session.plateLicense }
+    $expectedBody = @{ $LookupField = $lookupValue } | ConvertTo-Json -Compress
 
     return @{
-        name = "ExitPass mock calculate $($Session.ticketReference)"
+        name = "ExitPass mock calculate $($Session.ticketReference) by $LookupField"
         priority = 1
         request = @{
             method = 'POST'
@@ -244,7 +246,8 @@ function Set-WireMockMappings($Sessions, [string] $AppKey, $State) {
         (New-PassagewayMapping $Sessions $AppKey $State.parkingLotIndexCode)
     )
     foreach ($session in $Sessions) {
-        $mappings += New-CalculateMapping $session $AppKey
+        $mappings += New-CalculateMapping $session $AppKey 'cardNum'
+        $mappings += New-CalculateMapping $session $AppKey 'plateLicense'
         $mappings += New-ConfirmMapping $session $AppKey
     }
     $mappings += New-AuthenticationFailureMapping
@@ -270,9 +273,11 @@ if (-not (Test-Path -LiteralPath $sessionsPath -PathType Leaf)) {
     throw 'The mock HikCentral session registry is unavailable. Restart the mock wrapper.'
 }
 
-$Ticket = $Ticket.Trim()
-if ([string]::IsNullOrWhiteSpace($Ticket) -or $Ticket.Length -gt 32) {
-    throw 'Ticket must be nonblank and no longer than 32 characters.'
+if (-not $RefreshMappings) {
+    $Ticket = $Ticket.Trim()
+    if ([string]::IsNullOrWhiteSpace($Ticket) -or $Ticket.Length -gt 32) {
+        throw 'Ticket must be nonblank and no longer than 32 characters.'
+    }
 }
 if ($Fee -lt 0) {
     throw 'Fee must be greater than or equal to zero.'
@@ -309,6 +314,11 @@ try {
         $parsedRegistry = ConvertFrom-Json -InputObject $registryJson
         @($parsedRegistry | ForEach-Object { $_ })
     }
+    if ($RefreshMappings) {
+        Set-WireMockMappings $existing $appKey $state
+        Write-Output "Refreshed mock HikCentral mappings for $($existing.Count) existing sessions."
+        return
+    }
     if (@($existing | Where-Object { $_.ticketReference -ieq $Ticket }).Count -gt 0) {
         throw "Mock ticket '$Ticket' already exists. Duplicate tickets are not overwritten."
     }
@@ -323,6 +333,9 @@ try {
     else {
         $Plate = $Plate.Trim()
         if ($Plate.Length -gt 32) { throw 'Plate must be no longer than 32 characters.' }
+        if (@($existing | Where-Object { $_.plateLicense -ieq $Plate }).Count -gt 0) {
+            throw "Mock plate '$Plate' already exists. Duplicate plates are not overwritten."
+        }
     }
 
     if (-not $PSBoundParameters.ContainsKey('EntryTime')) {

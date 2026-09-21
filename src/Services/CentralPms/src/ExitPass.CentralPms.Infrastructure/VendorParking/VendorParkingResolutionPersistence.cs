@@ -92,32 +92,44 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
 
         if (existingTariff is null && parkingSessionWasReused)
         {
-            if (await HasAppliedPayableBasisApplicationAsync(
-                connection,
-                transaction,
-                parkingSession.ParkingSessionId,
-                cancellationToken))
-            {
-                throw new VendorParkingResolutionPersistenceException(
-                    "EFFECTIVE_PAYABLE_BASIS_INVALID",
-                    $"Parking session '{parkingSession.ParkingSessionId}' has an APPLIED statutory discount payable-basis application without a valid active applied tariff snapshot.");
-            }
-
             var latestExistingTariff = await FindLatestExistingTariffAsync(
                 connection,
                 transaction,
                 parkingSession.ParkingSessionId,
                 cancellationToken);
 
-            existingTariff = latestExistingTariff is not null &&
-                latestExistingTariff.ExpiresAt > DateTimeOffset.UtcNow &&
-                !await WasConsumedOnlyByFailedPaymentAttemptAsync(
-                    connection,
-                    transaction,
-                    latestExistingTariff.TariffSnapshotId,
-                    cancellationToken)
-                    ? latestExistingTariff
-                    : null;
+            if (await HasAppliedPayableBasisApplicationAsync(
+                connection,
+                transaction,
+                parkingSession.ParkingSessionId,
+                cancellationToken))
+            {
+                if (latestExistingTariff is null ||
+                    !await HasCurrentCompletedZeroPayableStatutoryExitAsync(
+                        connection,
+                        transaction,
+                        latestExistingTariff.TariffSnapshotId,
+                        cancellationToken))
+                {
+                    throw new VendorParkingResolutionPersistenceException(
+                        "EFFECTIVE_PAYABLE_BASIS_INVALID",
+                        $"Parking session '{parkingSession.ParkingSessionId}' has an APPLIED statutory discount payable-basis application without a valid active applied tariff snapshot.");
+                }
+
+                existingTariff = latestExistingTariff;
+            }
+            else
+            {
+                existingTariff = latestExistingTariff is not null &&
+                    latestExistingTariff.ExpiresAt > DateTimeOffset.UtcNow &&
+                    !await WasConsumedOnlyByFailedPaymentAttemptAsync(
+                        connection,
+                        transaction,
+                        latestExistingTariff.TariffSnapshotId,
+                        cancellationToken)
+                        ? latestExistingTariff
+                        : null;
+            }
         }
 
         var tariffSnapshotWasReused = existingTariff is not null;
@@ -841,6 +853,54 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             reader.IsDBNull(reader.GetOrdinal("site_group_name")) ? null : reader.GetString(reader.GetOrdinal("site_group_name")),
             reader.IsDBNull(reader.GetOrdinal("site_name")) ? null : reader.GetString(reader.GetOrdinal("site_name")),
             MapPaymentStatus(attemptStatus));
+    }
+
+    private static async Task<bool> HasCurrentCompletedZeroPayableStatutoryExitAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid tariffSnapshotId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM core.tariff_snapshots AS tariff
+                JOIN discounts.statutory_discount_payable_basis_application_commands AS application
+                  ON application.applied_tariff_snapshot_id = tariff.tariff_snapshot_id
+                 AND application.parking_session_id = tariff.parking_session_id
+                 AND application.command_status = 'APPLIED'
+                JOIN core.fiscal_issuance_references AS fiscal
+                  ON fiscal.statutory_discount_payable_basis_application_command_id = application.statutory_discount_payable_basis_application_command_id
+                 AND fiscal.parking_session_id = tariff.parking_session_id
+                 AND fiscal.tariff_snapshot_id = tariff.tariff_snapshot_id
+                 AND fiscal.completion_basis = 'ZERO_PAYABLE_STATUTORY_FINALITY'
+                 AND fiscal.pos_server_fiscal_document_id IS NOT NULL
+                 AND fiscal.electronic_journal_event_reference IS NOT NULL
+                 AND fiscal.payment_attempt_id IS NULL
+                 AND fiscal.payment_confirmation_id IS NULL
+                JOIN core.exit_authorizations AS exit_auth
+                  ON exit_auth.statutory_discount_payable_basis_application_command_id = application.statutory_discount_payable_basis_application_command_id
+                 AND exit_auth.parking_session_id = tariff.parking_session_id
+                 AND exit_auth.tariff_snapshot_id = tariff.tariff_snapshot_id
+                 AND exit_auth.completion_basis = 'ZERO_PAYABLE_STATUTORY_FINALITY'
+                 AND exit_auth.authorization_status = 'ISSUED'
+                 AND exit_auth.payment_attempt_id IS NULL
+                 AND exit_auth.payment_confirmation_id IS NULL
+                WHERE tariff.tariff_snapshot_id = @tariff_snapshot_id
+                  AND tariff.snapshot_status = 'ACTIVE'
+                  AND tariff.superseded_by_tariff_snapshot_id IS NULL
+                  AND tariff.net_amount = 0
+                  AND tariff.gross_amount > 0
+                  AND tariff.statutory_discount_validation_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM core.payment_attempts AS attempt
+                      WHERE attempt.tariff_snapshot_id = tariff.tariff_snapshot_id)
+            );
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = tariffSnapshotId;
+        return await command.ExecuteScalarAsync(cancellationToken) is true;
     }
 
     private static async Task<bool> HasAppliedPayableBasisApplicationAsync(
