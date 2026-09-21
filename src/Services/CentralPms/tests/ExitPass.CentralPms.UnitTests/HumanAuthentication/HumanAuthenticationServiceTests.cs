@@ -194,13 +194,24 @@ public sealed class HumanAuthenticationServiceTests
                 Arg.Any<CancellationToken>())
             .Returns(_ => new EffectiveHumanAuthorization(
                 ["statutory-discounts.decision.approve"], [fixture.SiteId], [], false,
-                fixture.EffectiveRoleCodes));
+                fixture.EffectiveRoleCodes,
+                [new EffectiveHumanAuthorizedSite(
+                    fixture.SiteId,
+                    "PITX Level 3",
+                    Guid.Parse("a6dbadf6-68b5-5bed-a7e0-a75faee70841"),
+                    "PITX")]));
 
         var result = await fixture.LoginAsync(HumanSessionAudiences.ManagementPlatform, "123456");
 
         result.Response.Authenticated.Should().BeTrue();
         result.Response.Session!.Permissions.Should().Contain("statutory-discounts.decision.approve");
         result.Response.Session.SiteReferences.Should().Equal(fixture.SiteId);
+        result.Response.Session.AuthorizedSites.Should().ContainSingle().Which.Should().Be(
+            new ExitPass.CentralPms.Contracts.HumanAuthentication.HumanAuthorizedSiteDto(
+                fixture.SiteId,
+                "PITX Level 3",
+                Guid.Parse("a6dbadf6-68b5-5bed-a7e0-a75faee70841"),
+                "PITX"));
         result.Response.Session.HasGlobalScope.Should().BeFalse();
     }
 

@@ -14,6 +14,7 @@ public sealed class StatutoryDiscountServiceChannelAuthorizationServiceTests
 
     [Theory]
     [InlineData("WEBPAY", "PAYMENT_ORCHESTRATOR", "statutory-discounts.decision.submit.webpay")]
+    [InlineData("WEBPAY", "PaymentOrchestrator", "statutory-discounts.decision.submit.webpay")]
     [InlineData("ASSISTED_PAYMENT_TERMINAL", "ASSISTED_PAYMENT_TERMINAL", "statutory-discounts.decision.submit.assisted-payment-terminal")]
     public async Task AuthorizeAsync_ActiveCompatibleSiteScopedService_IsAllowed(
         string sourceChannel,

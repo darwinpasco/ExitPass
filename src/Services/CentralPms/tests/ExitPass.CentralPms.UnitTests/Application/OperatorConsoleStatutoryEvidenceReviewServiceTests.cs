@@ -195,6 +195,37 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewServiceTests
     }
 
     [Fact]
+    public async Task OpenPreviewAsync_CurrentEvidenceRuntimeOverridesStaleDecisionRequirementFlag()
+    {
+        var fixture = CreateFixture(Record() with { EvidenceRequired = false, EvidenceRecorded = false });
+
+        var metadata = await fixture.Sut.ReadAuthorizedAsync(
+            DecisionId,
+            new StatutoryEvidenceAuthorizedReviewContext(
+                SiteId,
+                SiteGroupId,
+                "WEBPAY",
+                CorrelationId,
+                new StatutoryEvidenceActor(UserId, null, "MANAGEMENT_PLATFORM")),
+            CancellationToken.None);
+        var preview = await fixture.Sut.OpenAuthorizedPreviewAsync(
+            DecisionId,
+            ItemReference,
+            new StatutoryEvidenceAuthorizedReviewContext(
+                SiteId,
+                SiteGroupId,
+                "WEBPAY",
+                CorrelationId,
+                new StatutoryEvidenceActor(UserId, null, "MANAGEMENT_PLATFORM")),
+            CancellationToken.None);
+
+        metadata!.EvidenceRequired.Should().BeTrue();
+        metadata.EvidenceRecorded.Should().BeTrue();
+        preview.Classification.Should().Be("ACCEPTED");
+        await preview.Content!.DisposeAsync();
+    }
+
+    [Fact]
     public async Task OpenPreviewAsync_ProviderMetadataChanged_IsStaleAndDisposesStream()
     {
         var stream = Substitute.For<Stream>();
@@ -284,7 +315,6 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewServiceTests
 
     public static IEnumerable<object[]> DeniedLifecycleCases()
     {
-        yield return [Record() with { EvidenceRequired = false }, "STATUTORY_EVIDENCE_NOT_REQUIRED"];
         yield return [Record(Item() with { UploadStatus = "AUTHORIZED" }), "STATUTORY_EVIDENCE_UPLOAD_NOT_FINALIZED"];
         yield return [Record(Item() with { ValidationStatus = "PENDING" }), "STATUTORY_EVIDENCE_VALIDATION_PENDING"];
         yield return [Record(Item() with { ValidationStatus = "FAILED" }), "STATUTORY_EVIDENCE_VALIDATION_FAILED"];

@@ -49,7 +49,8 @@ public sealed class StatutoryDiscountServiceChannelAuthorizationService
             [StatutoryDiscountSourceChannels.WebPay] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
                 "WEBPAY",
-                "PAYMENT_ORCHESTRATOR"
+                "PAYMENT_ORCHESTRATOR",
+                "PaymentOrchestrator"
             },
             [StatutoryDiscountSourceChannels.AssistedPaymentTerminal] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {

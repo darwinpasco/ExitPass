@@ -315,8 +315,8 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
             record.SourceChannel,
             record.DecisionResultStatus,
             record.ReviewStatus,
-            record.EvidenceRequired,
-            record.EvidenceRecorded,
+            EvidenceIsRequired(record),
+            record.EvidenceRecorded || record.Items.Any(item => item.UploadStatus == "UPLOADED"),
             record.SetStatus,
             record.RetentionStatus,
             record.DeletionStatus,
@@ -362,7 +362,7 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
         OperatorConsoleStatutoryEvidenceReviewRecord record,
         OperatorConsoleStatutoryEvidenceReviewItemRecord item)
     {
-        if (!record.EvidenceRequired)
+        if (!EvidenceIsRequired(record))
         {
             return "STATUTORY_EVIDENCE_NOT_REQUIRED";
         }
@@ -458,6 +458,9 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
 
         return null;
     }
+
+    private static bool EvidenceIsRequired(OperatorConsoleStatutoryEvidenceReviewRecord record) =>
+        record.EvidenceRequired || record.EvidenceSetId.HasValue;
 
     private static OperatorConsoleStatutoryEvidencePreviewTarget BuildTarget(
         OperatorConsoleStatutoryEvidenceReviewRecord record,

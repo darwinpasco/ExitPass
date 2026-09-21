@@ -117,7 +117,14 @@ public sealed record EffectiveHumanAuthorization(
     IReadOnlyList<Guid> SiteIds,
     IReadOnlyList<Guid> SiteGroupIds,
     bool HasGlobalScope,
-    IReadOnlyList<string>? EffectiveRoleCodes = null);
+    IReadOnlyList<string>? EffectiveRoleCodes = null,
+    IReadOnlyList<EffectiveHumanAuthorizedSite>? AuthorizedSites = null);
+
+public sealed record EffectiveHumanAuthorizedSite(
+    Guid SiteId,
+    string DisplayName,
+    Guid SiteGroupId,
+    string SiteGroupDisplayName);
 
 public sealed record SessionCredential(Guid SessionReference, string Secret, string SerializedToken);
 

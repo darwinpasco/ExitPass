@@ -83,7 +83,8 @@ public sealed record StatutoryDiscountDecisionV2Command(
     Guid? OriginalTariffSnapshotId,
     StatutoryDiscountDecisionV2TariffFacts? OriginalTariffFacts,
     string IdempotencyKey,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    bool EvidenceCaptureRequested = false);
 
 public sealed record StatutoryDiscountDecisionV2BeneficiaryMetadata(
     string? BeneficiaryReference,

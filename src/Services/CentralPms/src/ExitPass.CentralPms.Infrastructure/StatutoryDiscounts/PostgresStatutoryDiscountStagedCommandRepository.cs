@@ -758,7 +758,8 @@ public sealed class PostgresStatutoryDiscountStagedCommandRepository : IStatutor
         AddNullable(dbCommand, "statutory_discount_amount_minor_units", NpgsqlDbType.Bigint, command.Command.OriginalTariffFacts?.StatutoryDiscountAmountMinorUnits);
         AddNullable(dbCommand, "net_payable_amount_minor_units", NpgsqlDbType.Bigint, command.Command.OriginalTariffFacts?.NetPayableAmountMinorUnits);
         AddNullable(dbCommand, "currency_code", NpgsqlDbType.Char, NormalizeOptional(command.Command.OriginalTariffFacts?.Currency));
-        dbCommand.Parameters.Add("evidence_required", NpgsqlDbType.Boolean).Value = command.Command.EvidenceReferences.Count > 0;
+        dbCommand.Parameters.Add("evidence_required", NpgsqlDbType.Boolean).Value =
+            command.Command.EvidenceCaptureRequested || command.Command.EvidenceReferences.Count > 0;
         dbCommand.Parameters.Add("evidence_recorded", NpgsqlDbType.Boolean).Value = command.Command.EvidenceReferences.Count > 0;
         AddNullable(dbCommand, "reason_code", NpgsqlDbType.Varchar, NormalizeOptional(command.Command.Decision.DecisionReasonCode));
         AddNullable(dbCommand, "safe_error_code", NpgsqlDbType.Varchar, NormalizeOptional(command.Command.Decision.SafeErrorCode));

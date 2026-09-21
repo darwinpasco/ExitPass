@@ -290,6 +290,9 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         }
 
         StatutoryDiscountDecisionResult? application = null;
+        string? automaticApplicationFailureStatus = null;
+        bool? automaticApplicationRetryable = null;
+        string? automaticApplicationRecoveryAction = null;
         if (decision == "APPROVE")
         {
             var canonical = await _canonicalReviews.GetAsync(
@@ -316,6 +319,12 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                         command.DecisionCommandReference,
                         command.CorrelationId,
                         cancellationToken).ConfigureAwait(false);
+                    if (ApplicationWasNotRequested(application))
+                    {
+                        automaticApplicationFailureStatus = StatutoryDiscountApplicationStageStatuses.FailedNonRetryable;
+                        automaticApplicationRetryable = false;
+                        automaticApplicationRecoveryAction = StatutoryDiscountDecisionRecoveryActions.DoNotRetry;
+                    }
                 }
                 catch (Exception) when (!cancellationToken.IsCancellationRequested)
                 {
@@ -325,6 +334,12 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                         command.DecisionCommandReference,
                         command.CorrelationId,
                         cancellationToken).ConfigureAwait(false);
+                    if (ApplicationWasNotRequested(application))
+                    {
+                        automaticApplicationFailureStatus = StatutoryDiscountApplicationStageStatuses.FailedRetryable;
+                        automaticApplicationRetryable = true;
+                        automaticApplicationRecoveryAction = StatutoryDiscountDecisionRecoveryActions.RetrySameRequestWithOriginalKey;
+                    }
                 }
             }
             else
@@ -359,16 +374,22 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             result.AlreadyDecided,
             current.Version,
             command.CorrelationId,
-            application?.ApplicationCommandStatus ?? StatutoryDiscountApplicationStageStatuses.NotRequested,
+            automaticApplicationFailureStatus ?? application?.ApplicationCommandStatus ?? StatutoryDiscountApplicationStageStatuses.NotRequested,
             application?.PayableBasisReady ?? false,
-            application?.ApplicationRetryable ?? (decision == "APPROVE"),
-            application?.ApplicationRecoveryAction ??
+            automaticApplicationRetryable ?? application?.ApplicationRetryable ?? (decision == "APPROVE"),
+            automaticApplicationRecoveryAction ?? application?.ApplicationRecoveryAction ??
                 (decision == "APPROVE" && application?.PayableBasisReady != true
                     ? StatutoryDiscountDecisionRecoveryActions.RetrySameRequestWithOriginalKey
                     : null));
         await AuditAsync("STATUTORY_BENEFIT_REVIEW_DECISION", result.AlreadyDecided ? "DUPLICATE" : "SUCCESS", "TERMINAL_DECISION_RECORDED", actor, metadata.SiteReference, command.CorrelationId, cancellationToken);
         return ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitDecisionResult>.Succeeded(value, command.CorrelationId);
     }
+
+    private static bool ApplicationWasNotRequested(StatutoryDiscountDecisionResult? application) =>
+        application is null || string.Equals(
+            application.ApplicationCommandStatus,
+            StatutoryDiscountApplicationStageStatuses.NotRequested,
+            StringComparison.Ordinal);
 
     private Task AuditAsync(string type, string result, string reason, IdentityAdministrationActor actor, Guid? site, Guid correlationId, CancellationToken cancellationToken) =>
         _audit.RecordAuditEventAsync(type, result, reason, "STATUTORY_BENEFIT_REVIEW", site, actor.UserId, null, correlationId,

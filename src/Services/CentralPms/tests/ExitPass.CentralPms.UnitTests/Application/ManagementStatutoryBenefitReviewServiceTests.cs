@@ -243,6 +243,32 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         result.Value.PayableBasisReady.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task Approve_WhenAutomaticApplicationAuthorizationFails_DoesNotReportNotRequested()
+    {
+        var repository = AllowedRepository();
+        repository.AutomaticApplicationCaller = new ManagementStatutoryBenefitAutomaticApplicationCaller(
+            Guid.Parse("72000000-0000-4000-8000-000000000401"),
+            "WEBPAY",
+            "WEBPAY",
+            "statutory-discounts.decision.submit.webpay");
+        var facade = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
+        facade.SubmitAsync(Arg.Any<StatutoryDiscountDecisionCommand>(), Arg.Any<CancellationToken>())
+            .Returns<Task<StatutoryDiscountDecisionResult>>(_ => throw new StatutoryDiscountDecisionRejectedException(
+                "ACCESS_DENIED",
+                "Service-channel application authorization was denied."));
+        facade.GetAsync(DecisionReference, CorrelationId, Arg.Any<CancellationToken>())
+            .Returns(DecisionResult(StatutoryDiscountApplicationStageStatuses.NotRequested, retryable: false));
+        var service = CreateService(repository, decisionFacade: facade);
+
+        var result = await service.DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        result.Value!.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.FailedNonRetryable);
+        result.Value.ApplicationRetryable.Should().BeFalse();
+        result.Value.ApplicationRecoveryAction.Should().Be(StatutoryDiscountDecisionRecoveryActions.DoNotRetry);
+    }
+
     private static ManagementStatutoryBenefitReviewService CreateService(
         FakeManagementRepository repository,
         FakeCanonicalRepository? canonical = null,

@@ -962,7 +962,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             command.OriginalTariffSnapshotId,
             OriginalTariffFacts: null,
             stageIdempotencyKey,
-            command.CorrelationId);
+            command.CorrelationId,
+            EvidenceCaptureRequested: command.EvidenceCaptureRequested);
     }
 
     private static StatutoryDiscountServiceChannelReviewIntakeCommand ToServiceChannelReviewIntake(
