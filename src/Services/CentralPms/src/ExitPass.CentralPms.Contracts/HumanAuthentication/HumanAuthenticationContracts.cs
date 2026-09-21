@@ -70,7 +70,14 @@ public sealed record HumanSessionDto(
     [property: JsonIgnore] Guid? EffectiveSiteReference = null,
     [property: JsonIgnore] Guid? EffectiveSiteGroupReference = null,
     [property: JsonIgnore] long? AuthorizationEpoch = null,
-    [property: JsonIgnore] long? CredentialVersion = null);
+    [property: JsonIgnore] long? CredentialVersion = null,
+    IReadOnlyList<HumanAuthorizedSiteDto>? AuthorizedSites = null);
+
+public sealed record HumanAuthorizedSiteDto(
+    Guid SiteReference,
+    string DisplayName,
+    Guid SiteGroupReference,
+    string SiteGroupDisplayName);
 
 public sealed record TotpEnrollmentResponse(
     string Outcome,

@@ -1320,7 +1320,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 effective_from, created_at, updated_at, row_version)
             VALUES
                 (@webpay_id, 'IST_WEBPAY_STATUTORY_APPLICATION', 'IST WebPay statutory application',
-                 'INTERNAL_SERVICE', 'ACTIVE', 'PAYMENT_ORCHESTRATOR', now() - interval '1 hour', now(), now(), 1),
+                 'INTERNAL_SERVICE', 'ACTIVE', 'PaymentOrchestrator', now() - interval '1 hour', now(), now(), 1),
                 (@apt_id, 'IST_APT_STATUTORY_APPLICATION', 'IST APT statutory application',
                  'INTERNAL_SERVICE', 'ACTIVE', 'ASSISTED_PAYMENT_TERMINAL', now() - interval '1 hour', now(), now(), 1)
             ON CONFLICT (service_identity_id) DO UPDATE

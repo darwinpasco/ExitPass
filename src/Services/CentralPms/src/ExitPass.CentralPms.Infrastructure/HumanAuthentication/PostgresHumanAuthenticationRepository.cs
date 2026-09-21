@@ -361,8 +361,54 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
         command.Parameters.AddWithValue("now", now);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);
-        return new EffectiveHumanAuthorization(reader.GetFieldValue<string[]>(0), reader.GetFieldValue<Guid[]>(1),
-            reader.GetFieldValue<Guid[]>(2), reader.GetBoolean(3), reader.GetFieldValue<string[]>(4));
+        var permissions = reader.GetFieldValue<string[]>(0);
+        var siteIds = reader.GetFieldValue<Guid[]>(1);
+        var siteGroupIds = reader.GetFieldValue<Guid[]>(2);
+        var hasGlobalScope = reader.GetBoolean(3);
+        var roleCodes = reader.GetFieldValue<string[]>(4);
+        await reader.CloseAsync().ConfigureAwait(false);
+
+        var authorizedSites = new List<EffectiveHumanAuthorizedSite>();
+        if (siteIds.Length > 0)
+        {
+            await using var siteCommand = new NpgsqlCommand(
+                """
+                SELECT site.site_id,
+                       COALESCE(NULLIF(site.site_name, ''), NULLIF(site.site_code, ''), site.site_id::text),
+                       site_group.site_group_id,
+                       COALESCE(NULLIF(site_group.site_group_name, ''), NULLIF(site_group.site_group_code, ''), site_group.site_group_id::text)
+                FROM sites.sites AS site
+                JOIN sites.site_groups AS site_group ON site_group.site_group_id = site.site_group_id
+                WHERE site.site_id = ANY(@site_ids)
+                  AND site.site_status = 'ACTIVE'
+                  AND site.effective_from <= @now
+                  AND (site.effective_to IS NULL OR site.effective_to > @now)
+                  AND site_group.site_group_status = 'ACTIVE'
+                  AND site_group.effective_from <= @now
+                  AND (site_group.effective_to IS NULL OR site_group.effective_to > @now)
+                ORDER BY site.site_name, site.site_code, site.site_id;
+                """,
+                connection);
+            siteCommand.Parameters.AddWithValue("site_ids", siteIds);
+            siteCommand.Parameters.AddWithValue("now", now);
+            await using var siteReader = await siteCommand.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await siteReader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                authorizedSites.Add(new EffectiveHumanAuthorizedSite(
+                    siteReader.GetGuid(0),
+                    siteReader.GetString(1),
+                    siteReader.GetGuid(2),
+                    siteReader.GetString(3)));
+            }
+        }
+
+        return new EffectiveHumanAuthorization(
+            permissions,
+            siteIds,
+            siteGroupIds,
+            hasGlobalScope,
+            roleCodes,
+            authorizedSites);
     }
 
     public async Task<bool> TouchSessionAsync(Guid humanSessionId, long expectedRowVersion, DateTimeOffset now, DateTimeOffset idleExpiresAt, CancellationToken cancellationToken)

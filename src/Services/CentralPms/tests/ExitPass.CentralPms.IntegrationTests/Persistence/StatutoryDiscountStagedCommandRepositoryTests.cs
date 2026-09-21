@@ -215,6 +215,34 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     }
 
     [Fact]
+    public async Task DecisionV2_EvidenceCaptureRequestedBeforeUpload_PersistsEvidenceRequiredWithoutRecordedEvidence()
+    {
+        await EnsureCanonicalSchemaPresentAsync();
+        var context = PaymentTestContext.Create(nameof(DecisionV2_EvidenceCaptureRequestedBeforeUpload_PersistsEvidenceRequiredWithoutRecordedEvidence));
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed staged pre-upload evidence requirement data.");
+
+        try
+        {
+            var service = CreateService();
+            var created = await service.CreateOrResolveDecisionAsync(
+                DecisionCommand(context) with
+                {
+                    EvidenceCaptureRequested = true,
+                    EvidenceReferences = []
+                },
+                CancellationToken.None);
+
+            created.Record!.EvidenceRequired.Should().BeTrue();
+            created.Record.EvidenceRecorded.Should().BeFalse();
+        }
+        finally
+        {
+            await CleanupCommandRowsAsync(context.ParkingSessionId);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
     public async Task ApplicationV1_ForApprovedDecision_ReplaysAndConflictsWithoutDuplicateApplicationCommand()
     {
         await EnsureCanonicalSchemaPresentAsync();

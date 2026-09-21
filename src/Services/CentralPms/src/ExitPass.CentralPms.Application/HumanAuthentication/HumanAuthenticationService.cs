@@ -649,7 +649,16 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
             record.AuthenticatedAt, record.LastSeenAt, record.IdleExpiresAt, record.AbsoluteExpiresAt,
             permissions, restricted ? [] : authorization.SiteIds,
             restricted ? [] : authorization.SiteGroupIds, !restricted && authorization.HasGlobalScope,
-            record.DeviceServiceIdentityId, correlationId);
+            record.DeviceServiceIdentityId, correlationId,
+            AuthorizedSites: restricted
+                ? []
+                : (authorization.AuthorizedSites ?? [])
+                    .Select(site => new HumanAuthorizedSiteDto(
+                        site.SiteId,
+                        site.DisplayName,
+                        site.SiteGroupId,
+                        site.SiteGroupDisplayName))
+                    .ToArray());
         return new HumanAuthenticationResult(200, new HumanAuthenticationResponse(outcome, true, dto,
             record.Audience == HumanSessionAudiences.Apt ? credential.SerializedToken : null, null, false, correlationId), credential, record.HumanSessionId);
     }

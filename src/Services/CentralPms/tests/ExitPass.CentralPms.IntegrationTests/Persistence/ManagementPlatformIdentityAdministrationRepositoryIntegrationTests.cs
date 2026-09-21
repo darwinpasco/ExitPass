@@ -546,7 +546,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
     }
 
     [Fact]
-    public async Task OperationsSupervisor_StatutorySupervisionResolvesAllSitesWithoutGlobalizingItsAssignment()
+    public async Task OperationsSupervisor_StatutorySupervisionResolvesOnlyExplicitSiteGrant()
     {
         var seed = await SeedAdministratorAsync();
         await RevokeAllRoleAssignmentsAsync(seed.Actor.UserId);
@@ -582,13 +582,33 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             seed.Actor, ManagementStatutoryBenefitReviewValues.ApprovePermission, CancellationToken.None);
 
         authorization.Should().NotBeNull();
-        authorization!.HasGlobalGrant.Should().BeTrue();
-        authorization.SiteReferences.Should().Contain(seed.SiteId);
-        authorization.SiteReferences.Should().HaveCountGreaterThan(1);
+        authorization!.HasGlobalGrant.Should().BeFalse();
+        authorization.SiteReferences.Should().Equal(seed.SiteId);
+
+        await using (var connection = new NpgsqlConnection(_database.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand(
+                """
+                DELETE FROM identity.user_role_scope_grants scope_grant
+                USING identity.user_roles assignment, identity.roles role
+                WHERE scope_grant.user_role_id = assignment.user_role_id
+                  AND assignment.role_id = role.role_id
+                  AND assignment.user_id = @user_id
+                  AND role.role_code = 'OPERATIONS_SUPERVISOR';
+                """,
+                connection);
+            command.Parameters.AddWithValue("user_id", seed.Actor.UserId);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var roleWithoutScope = await repository.ResolveAuthorizedSitesAsync(
+            seed.Actor, ManagementStatutoryBenefitReviewValues.ApprovePermission, CancellationToken.None);
+        roleWithoutScope.Should().BeNull("the Operations Supervisor role does not imply access to every Site");
 
         var unrelatedPermission = await repository.ResolveAuthorizedSitesAsync(
             seed.Actor, "operations.manual_gate", CancellationToken.None);
-        unrelatedPermission.Should().BeNull("all-site expansion is restricted to the Management Platform statutory-review surface");
+        unrelatedPermission.Should().BeNull("the repository accepts only Management Platform statutory-review permissions");
     }
 
     [Fact]

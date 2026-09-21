@@ -372,7 +372,8 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionService : IOperatorC
             detail.OriginalTariffSnapshotId,
             ToTariffFacts(detail),
             DeriveLegacyDecisionStageIdempotencyKey(command.IdempotencyKey, detail.ParkingSessionId),
-            command.CorrelationId);
+            command.CorrelationId,
+            EvidenceCaptureRequested: detail.EvidenceRequired);
 
     private static StatutoryDiscountDecisionV2TariffFacts? ToTariffFacts(
         OperatorConsoleStatutoryDiscountDraftDetailResult detail) =>

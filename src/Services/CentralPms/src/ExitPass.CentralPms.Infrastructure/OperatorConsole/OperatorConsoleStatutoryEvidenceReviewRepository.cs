@@ -30,8 +30,13 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewRepository
                    review.source_channel,
                    decision.decision_result_status,
                    review.review_status,
-                   decision.evidence_required,
-                   decision.evidence_recorded,
+                   decision.evidence_required OR evidence_set.statutory_evidence_set_id IS NOT NULL,
+                   decision.evidence_recorded OR EXISTS (
+                       SELECT 1
+                       FROM discounts.statutory_evidence_items AS recorded_item
+                       WHERE recorded_item.statutory_evidence_set_id = evidence_set.statutory_evidence_set_id
+                         AND recorded_item.upload_status = 'UPLOADED'
+                   ),
                    evidence_set.statutory_evidence_set_id,
                    evidence_set.evidence_set_reference,
                    evidence_set.set_status::text,
