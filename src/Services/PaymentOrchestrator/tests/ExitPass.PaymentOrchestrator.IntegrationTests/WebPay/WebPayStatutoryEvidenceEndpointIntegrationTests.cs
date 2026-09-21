@@ -93,6 +93,30 @@ public sealed class WebPayStatutoryEvidenceEndpointIntegrationTests
         Assert.Equal(new byte[] { 1, 2, 3, 4 }, state.UploadBytes);
     }
 
+    [Fact]
+    public async Task Preview_StreamsOnlyProtectedImageContentWithRestrictiveHeaders()
+    {
+        var state = new EvidenceEndpointState();
+        using var client = CreateClient(state);
+
+        using var response = await client.PostAsJsonAsync(
+            "/v1/webpay/statutory-discounts/evidence/preview",
+            new WebPayStatutoryEvidencePreviewRequest
+            {
+                StatutoryDiscountDecisionCommandId = DecisionCommandId,
+                EvidenceItemReference = EvidenceItemReference
+            });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("inline", response.Content.Headers.ContentDisposition?.DispositionType);
+        Assert.Contains("no-store", response.Headers.CacheControl?.ToString());
+        Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal(new byte[] { 0xff, 0xd8, 0xff, 0xd9 }, await response.Content.ReadAsByteArrayAsync());
+        Assert.Equal(DecisionCommandId, state.PreviewDecisionCommandId);
+        Assert.Equal(EvidenceItemReference, state.PreviewEvidenceItemReference);
+    }
+
     [Theory]
     [InlineData(401)]
     [InlineData(403)]
@@ -163,6 +187,8 @@ public sealed class WebPayStatutoryEvidenceEndpointIntegrationTests
         public byte[]? UploadBytes { get; private set; }
         public string? UploadContentType { get; private set; }
         public long UploadContentLength { get; private set; }
+        public Guid? PreviewDecisionCommandId { get; private set; }
+        public Guid? PreviewEvidenceItemReference { get; private set; }
 
         public Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceChannel>> BootstrapAsync(
             CentralPmsStatutoryEvidenceBootstrapRequest request, Guid correlationId, CancellationToken cancellationToken)
@@ -193,6 +219,20 @@ public sealed class WebPayStatutoryEvidenceEndpointIntegrationTests
         public Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceChannel>> FinalizeAsync(
             Guid opaqueUploadSessionReference, string? clientOperationKey, Guid correlationId, CancellationToken cancellationToken) =>
             Task.FromResult(ChannelResult);
+
+        public Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidencePreview>> OpenPreviewAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid evidenceItemReference,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            PreviewDecisionCommandId = statutoryDiscountDecisionCommandId;
+            PreviewEvidenceItemReference = evidenceItemReference;
+            var bytes = new byte[] { 0xff, 0xd8, 0xff, 0xd9 };
+            var response = new HttpResponseMessage(HttpStatusCode.OK);
+            return Task.FromResult(CentralPmsWebPayResult<CentralPmsStatutoryEvidencePreview>.Success(
+                new CentralPmsStatutoryEvidencePreview(response, new MemoryStream(bytes), "image/jpeg", bytes.Length)));
+        }
 
         private static CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession> UploadResult() =>
             CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>.Success(new CentralPmsStatutoryEvidenceUploadSession(

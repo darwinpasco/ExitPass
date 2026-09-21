@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.StatutoryEvidence;
+using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.StatutoryEvidence;
 
@@ -84,6 +85,16 @@ public static class StatutoryEvidenceChannelEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
             .WithSummary($"{namePrefix} statutory evidence upload-session finalization")
             .WithDescription("Finalizes the protected object through the existing I-013 server-side metadata verification path.");
+
+        group.MapPost("/preview", (StatutoryEvidenceChannelPreviewRequest body, HttpRequest request, IStatutoryEvidenceChannelService service, ILoggerFactory loggerFactory) =>
+                PreviewAsync(sourceChannel, body, request, service, loggerFactory))
+            .WithName($"{namePrefix}StatutoryEvidencePreview")
+            .WithMetadata(new ReconciliationPolicyMetadata(policy))
+            .Produces(StatusCodes.Status200OK, contentType: "image/jpeg")
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+            .WithSummary($"{namePrefix} protected statutory evidence preview")
+            .WithDescription("Streams a current, validated, malware-clean JPEG or PNG without exposing object-storage internals.");
 
         if (sourceChannel == StatutoryEvidenceChannelConstants.AssistedPaymentTerminal)
         {
@@ -206,6 +217,53 @@ public static class StatutoryEvidenceChannelEndpoints
         return ToChannelResult(result);
     }
 
+    private static async Task<IResult> PreviewAsync(
+        string sourceChannel,
+        StatutoryEvidenceChannelPreviewRequest body,
+        HttpRequest request,
+        IStatutoryEvidenceChannelService service,
+        ILoggerFactory loggerFactory)
+    {
+        var correlationId = ResolveCorrelation(request);
+        if (!TryResolveActor(request, sourceChannel, correlationId, out var actor, out var denied))
+        {
+            return denied!;
+        }
+
+        var result = await service.OpenPreviewAsync(
+            new StatutoryEvidenceChannelPreviewCommand(
+                sourceChannel,
+                body.StatutoryDiscountDecisionCommandId,
+                body.EvidenceItemReference,
+                correlationId,
+                actor),
+            request.HttpContext.RequestAborted).ConfigureAwait(false);
+
+        if (result.Content is not null && result.AuditContext is not null)
+        {
+            return new PreviewStreamResult(
+                result.Content,
+                result.AuditContext,
+                service,
+                loggerFactory.CreateLogger("ExitPass.CentralPms.Api.StatutoryEvidenceChannelPreview"));
+        }
+
+        var status = result.ErrorCode switch
+        {
+            "NOT_FOUND" => StatusCodes.Status404NotFound,
+            "STATUTORY_EVIDENCE_PREVIEW_UNSUPPORTED_MEDIA" => StatusCodes.Status415UnsupportedMediaType,
+            "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STORAGE_UNAVAILABLE" => StatusCodes.Status503ServiceUnavailable,
+            _ => StatusCodes.Status409Conflict
+        };
+        return Results.Json(
+            BuildError(
+                result.ErrorCode ?? "STATUTORY_EVIDENCE_PREVIEW_NOT_ELIGIBLE",
+                "The statutory evidence preview is unavailable.",
+                result.CorrelationId,
+                result.Retryable),
+            statusCode: status);
+    }
+
     private static IResult ToChannelResult(StatutoryEvidenceChannelResponse result) =>
         result.Classification == "REJECTED"
             ? Results.BadRequest(ToDto(result))
@@ -282,4 +340,57 @@ public static class StatutoryEvidenceChannelEndpoints
             CorrelationId = correlationId,
             Retryable = retryable
         };
+
+    private sealed class PreviewStreamResult(
+        StatutoryEvidenceObjectContent content,
+        OperatorConsoleStatutoryEvidencePreviewAuditContext auditContext,
+        IStatutoryEvidenceChannelService service,
+        ILogger logger) : IResult
+    {
+        public async Task ExecuteAsync(HttpContext httpContext)
+        {
+            var response = httpContext.Response;
+            response.StatusCode = StatusCodes.Status200OK;
+            response.ContentType = content.ContentType;
+            response.ContentLength = content.ContentLength;
+            response.Headers.CacheControl = "no-store, private, max-age=0";
+            response.Headers.Pragma = "no-cache";
+            response.Headers.ContentDisposition = "inline";
+            response.Headers.XContentTypeOptions = "nosniff";
+            response.Headers["Referrer-Policy"] = "no-referrer";
+            response.Headers.XFrameOptions = "SAMEORIGIN";
+            response.Headers.ContentSecurityPolicy = "default-src 'none'; frame-ancestors 'self'; sandbox";
+
+            var outcome = "COMPLETED";
+            try
+            {
+                await content.Content.CopyToAsync(response.Body, 81920, httpContext.RequestAborted).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (httpContext.RequestAborted.IsCancellationRequested)
+            {
+                outcome = "CANCELLED";
+            }
+            catch (Exception exception)
+            {
+                outcome = "FAILED";
+                logger.LogError(exception, "Statutory evidence preview stream failed. CorrelationId: {CorrelationId}", auditContext.Target.CorrelationId);
+            }
+            finally
+            {
+                await content.DisposeAsync().ConfigureAwait(false);
+                try
+                {
+                    await service.RecordPreviewStreamOutcomeAsync(auditContext, outcome, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    logger.LogError(exception, "Statutory evidence preview outcome audit failed. CorrelationId: {CorrelationId}", auditContext.Target.CorrelationId);
+                }
+            }
+        }
+    }
 }
+
+public sealed record StatutoryEvidenceChannelPreviewRequest(
+    Guid StatutoryDiscountDecisionCommandId,
+    Guid EvidenceItemReference);

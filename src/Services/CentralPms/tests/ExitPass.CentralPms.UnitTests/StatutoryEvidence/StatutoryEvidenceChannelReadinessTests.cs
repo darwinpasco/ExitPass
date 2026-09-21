@@ -1,3 +1,4 @@
+using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.StatutoryEvidence;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using FluentAssertions;
@@ -156,6 +157,7 @@ public sealed class StatutoryEvidenceChannelReadinessTests
             Substitute.For<IStatutoryEvidenceUploadService>(),
             Substitute.For<IStatutoryEvidenceProtectedObjectStorageAdapter>(),
             decisionService,
+            Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>(),
             new StatutoryEvidenceChannelOptions(),
             new StatutoryEvidenceUploadOptions { MaxContentLengthBytes = 1_048_576 },
             new StatutoryEvidenceScanWorkerOptions());

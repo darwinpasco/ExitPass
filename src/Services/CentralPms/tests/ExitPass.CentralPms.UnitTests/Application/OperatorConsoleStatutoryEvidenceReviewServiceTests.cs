@@ -93,6 +93,52 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewServiceTests
     }
 
     [Fact]
+    public async Task ReadAuthorizedAsync_ManagementReviewerUsesExactSiteAndSiteGroupScope()
+    {
+        var fixture = CreateFixture(Record());
+        var context = new StatutoryEvidenceAuthorizedReviewContext(
+            SiteId,
+            SiteGroupId,
+            "WEBPAY",
+            CorrelationId,
+            new StatutoryEvidenceActor(UserId, null, "MANAGEMENT_PLATFORM"));
+
+        var result = await fixture.Sut.ReadAuthorizedAsync(DecisionId, context, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Items.Should().ContainSingle(item => item.PreviewPermitted);
+        await fixture.AccessService.DidNotReceiveWithAnyArgs().EvaluateAsync(default!, default);
+    }
+
+    [Theory]
+    [InlineData(true, false, "WEBPAY")]
+    [InlineData(false, true, "WEBPAY")]
+    [InlineData(false, false, "ASSISTED_PAYMENT_TERMINAL")]
+    public async Task ReadAuthorizedAsync_MismatchedScopeOrSource_IsAntiEnumerated(
+        bool wrongSite,
+        bool wrongSiteGroup,
+        string sourceChannel)
+    {
+        var fixture = CreateFixture(Record());
+        var context = new StatutoryEvidenceAuthorizedReviewContext(
+            wrongSite ? Guid.NewGuid() : SiteId,
+            wrongSiteGroup ? Guid.NewGuid() : SiteGroupId,
+            sourceChannel,
+            CorrelationId,
+            new StatutoryEvidenceActor(UserId, null, "MANAGEMENT_PLATFORM"));
+
+        var result = await fixture.Sut.ReadAuthorizedAsync(DecisionId, context, CancellationToken.None);
+
+        result.Should().BeNull();
+        await fixture.Repository.Received(1).RecordAccessEventAsync(
+            Arg.Is<OperatorConsoleStatutoryEvidenceAccessEvent>(accessEvent =>
+                accessEvent.EventType == "ACCESS_DENIED" &&
+                accessEvent.EvidenceSetId == null &&
+                accessEvent.EvidenceItemId == null),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task ReadAsync_MissingDurableScope_IsDenied()
     {
         var fixture = CreateFixture(Record(), access: AccessResult() with

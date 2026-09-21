@@ -131,6 +131,28 @@ public static partial class WebPayStatutoryEvidenceEndpoints
             return ToChannelResult(result, context, correlationId);
         });
 
+        app.MapPost("/v1/webpay/statutory-discounts/evidence/preview", async (
+            WebPayStatutoryEvidencePreviewRequest request,
+            ICentralPmsWebPayStatutoryEvidenceClient client,
+            HttpContext context,
+            CancellationToken cancellationToken) =>
+        {
+            var correlationId = ReadOrCreateCorrelationId(context);
+            if (request.StatutoryDiscountDecisionCommandId == Guid.Empty || request.EvidenceItemReference == Guid.Empty)
+            {
+                return Invalid(context, correlationId, "WEBPAY_STATUTORY_EVIDENCE_PREVIEW_INVALID", "The submitted evidence could not be identified.");
+            }
+
+            var result = await client.OpenPreviewAsync(
+                request.StatutoryDiscountDecisionCommandId,
+                request.EvidenceItemReference,
+                correlationId,
+                cancellationToken);
+            return !result.Succeeded || result.Value is null
+                ? ToSafeFailure(result.Error, context, correlationId)
+                : new PreviewStreamResult(result.Value);
+        });
+
         return app;
     }
 
@@ -258,6 +280,27 @@ public static partial class WebPayStatutoryEvidenceEndpoints
         "REVIEW_LOCKED" => "This evidence is already under review and cannot be replaced.",
         _ => "The evidence request could not be completed. Please try again."
     };
+
+    private sealed class PreviewStreamResult(CentralPmsStatutoryEvidencePreview preview) : IResult
+    {
+        public async Task ExecuteAsync(HttpContext httpContext)
+        {
+            await using (preview.ConfigureAwait(false))
+            {
+                var response = httpContext.Response;
+                response.StatusCode = StatusCodes.Status200OK;
+                response.ContentType = preview.ContentType;
+                response.ContentLength = preview.ContentLength;
+                response.Headers.CacheControl = "no-store, private, max-age=0";
+                response.Headers.Pragma = "no-cache";
+                response.Headers.ContentDisposition = "inline";
+                response.Headers.XContentTypeOptions = "nosniff";
+                response.Headers["Referrer-Policy"] = "no-referrer";
+                response.Headers.XFrameOptions = "SAMEORIGIN";
+                await preview.Content.CopyToAsync(response.Body, 81920, httpContext.RequestAborted).ConfigureAwait(false);
+            }
+        }
+    }
 
     [GeneratedRegex("^[0-9a-fA-F]{64}$", RegexOptions.CultureInvariant)]
     private static partial Regex Sha256Pattern();

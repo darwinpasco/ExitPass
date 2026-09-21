@@ -792,6 +792,17 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
 
         public Task<StatutoryEvidenceChannelResponse> FinalizeUploadSessionAsync(StatutoryEvidenceChannelFinalizeCommand command, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<ExitPass.CentralPms.Application.OperatorConsole.OperatorConsoleStatutoryEvidencePreviewResult> OpenPreviewAsync(
+            StatutoryEvidenceChannelPreviewCommand command,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task RecordPreviewStreamOutcomeAsync(
+            ExitPass.CentralPms.Application.OperatorConsole.OperatorConsoleStatutoryEvidencePreviewAuditContext context,
+            string outcome,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class ReadySalesInvoiceProfileAdministrationService : ISalesInvoiceProfileAdministrationService

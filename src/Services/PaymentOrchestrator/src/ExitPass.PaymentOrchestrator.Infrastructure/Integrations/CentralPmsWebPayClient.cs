@@ -651,6 +651,67 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
             correlationId,
             cancellationToken);
 
+    /// <inheritdoc />
+    public async Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidencePreview>> OpenPreviewAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid evidenceItemReference,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(_statutoryEvidenceBaseUri, "preview"))
+        {
+            Content = JsonContent.Create(
+                new StatutoryEvidencePreviewRequest(statutoryDiscountDecisionCommandId, evidenceItemReference),
+                options: JsonOptions)
+        };
+        if (!TryAddStatutoryDiscountServiceHeaders(request, StatutoryEvidenceCaptureWebPayPermission, correlationId, out var authError))
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryEvidencePreview>.Failure(authError!);
+        }
+
+        request.Headers.Add("X-Correlation-Id", correlationId.ToString("D"));
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryEvidencePreview>.Failure(BuildTransientStatutoryDiscountError(correlationId));
+        }
+        catch (HttpRequestException)
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryEvidencePreview>.Failure(BuildTransientStatutoryDiscountError(correlationId));
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            using (response)
+            {
+                var responseBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                return CentralPmsWebPayResult<CentralPmsStatutoryEvidencePreview>.Failure(
+                    ReadError((int)response.StatusCode, responseBody, "STATUTORY_EVIDENCE_PREVIEW_FAILED"));
+            }
+        }
+
+        var contentType = response.Content.Headers.ContentType?.MediaType;
+        var contentLength = response.Content.Headers.ContentLength;
+        if (contentType is not ("image/jpeg" or "image/png") || contentLength is not > 0)
+        {
+            response.Dispose();
+            return CentralPmsWebPayResult<CentralPmsStatutoryEvidencePreview>.Failure(new CentralPmsWebPayError(
+                502,
+                "MALFORMED_STATUTORY_EVIDENCE_PREVIEW_RESPONSE",
+                "Central PMS evidence preview response was invalid.",
+                false,
+                correlationId));
+        }
+
+        var content = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        return CentralPmsWebPayResult<CentralPmsStatutoryEvidencePreview>.Success(
+            new CentralPmsStatutoryEvidencePreview(response, content, contentType, contentLength.Value));
+    }
+
     private async Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceChannel>> SendEvidenceChannelJsonAsync<TRequest>(
         HttpMethod method,
         Uri uri,
@@ -1457,6 +1518,10 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         string? ClientOperationKey);
 
     private sealed record StatutoryEvidenceFinalizeRequest(string? ClientOperationKey);
+
+    private sealed record StatutoryEvidencePreviewRequest(
+        Guid StatutoryDiscountDecisionCommandId,
+        Guid EvidenceItemReference);
 
     private sealed record StatutoryEvidenceChannelResponse(
         string Classification,

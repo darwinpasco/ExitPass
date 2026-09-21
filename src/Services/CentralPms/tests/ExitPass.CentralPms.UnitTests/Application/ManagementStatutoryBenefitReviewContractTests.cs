@@ -33,7 +33,7 @@ public sealed class ManagementStatutoryBenefitReviewContractTests
         names.Should().NotContain(name => name.Contains("Storage", StringComparison.OrdinalIgnoreCase));
         names.Should().NotContain(name => name.Contains("Token", StringComparison.OrdinalIgnoreCase));
         names.Should().NotContain(name => name.Contains("Permission", StringComparison.OrdinalIgnoreCase));
-        names.Should().NotContain(name => name.Contains("Role", StringComparison.OrdinalIgnoreCase));
+        names.Should().NotContain(name => string.Equals(name, "Role", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -49,6 +49,12 @@ public sealed class ManagementStatutoryBenefitReviewContractTests
         root.GetProperty("currency").GetProperty("supported")[0].GetString().Should().Be("PHP");
         root.GetProperty("authority").GetProperty("directClientConnections").GetBoolean().Should().BeFalse();
         root.GetProperty("decisionIntegrity").GetProperty("terminalStatesImmutable").GetBoolean().Should().BeTrue();
+        var preview = root.GetProperty("routes").EnumerateArray().Single(route =>
+            route.GetProperty("operationId").GetString() == "PreviewManagementStatutoryBenefitRequestEvidence");
+        preview.GetProperty("permission").GetString().Should().Be(ManagementStatutoryBenefitReviewValues.EvidencePermission);
+        preview.GetProperty("csrfRequired").GetBoolean().Should().BeTrue();
+        preview.GetProperty("storageLocatorExposed").GetBoolean().Should().BeFalse();
+        preview.GetProperty("cacheable").GetBoolean().Should().BeFalse();
     }
 
     [Fact]

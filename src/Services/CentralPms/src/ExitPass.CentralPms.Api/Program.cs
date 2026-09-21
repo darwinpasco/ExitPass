@@ -821,6 +821,7 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IStatutoryEvidenceUploadService>(),
             serviceProvider.GetRequiredService<IStatutoryEvidenceProtectedObjectStorageAdapter>(),
             serviceProvider.GetRequiredService<IStatutoryDiscountDecisionFacadeService>(),
+            serviceProvider.GetRequiredService<IOperatorConsoleStatutoryEvidenceReviewService>(),
             serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceChannelOptions>>().Value,
             serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceUploadOptions>>().Value,
             serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceScanWorkerOptions>>().Value));

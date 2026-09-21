@@ -1172,6 +1172,26 @@ summary:focus-visible {
   gap: 10px;
 }
 
+.evidence-preview {
+  display: grid;
+  gap: 8px;
+}
+
+.evidence-preview h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.evidence-preview img {
+  display: block;
+  width: min(100%, 480px);
+  max-height: 420px;
+  object-fit: contain;
+  border: 1px solid #d0d5dd;
+  border-radius: 4px;
+  background: #f9fafb;
+}
+
 .evidence-file-field input[type="file"] {
   max-width: 100%;
   border: 1px solid #98a2b3;

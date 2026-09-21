@@ -31,6 +31,17 @@
       "safeMetadataOnly": true
     },
     {
+      "operationId": "PreviewManagementStatutoryBenefitRequestEvidence",
+      "method": "POST",
+      "path": "/v1/management-platform/statutory-benefit-requests/{decisionCommandReference}/evidence/preview",
+      "permission": "statutory-discounts.evidence.review.view",
+      "csrfRequired": true,
+      "response": "inline-image-stream",
+      "supportedMediaTypes": ["image/jpeg", "image/png"],
+      "storageLocatorExposed": false,
+      "cacheable": false
+    },
+    {
       "operationId": "DecideManagementStatutoryBenefitRequest",
       "method": "POST",
       "path": "/v1/management-platform/statutory-benefit-requests/{decisionCommandReference}/decision",
@@ -61,7 +72,8 @@
   },
   "privacy": {
     "excluded": ["plateNumber", "rawEvidence", "storageLocator", "checksum", "credentials", "tokens", "browserAuthority"],
-    "browserStorageAllowed": false
+    "browserStorageAllowed": false,
+    "controlledEvidencePreview": "authenticated-inline-stream-only"
   },
   "errors": [
     "HUMAN_SESSION_REQUIRED",

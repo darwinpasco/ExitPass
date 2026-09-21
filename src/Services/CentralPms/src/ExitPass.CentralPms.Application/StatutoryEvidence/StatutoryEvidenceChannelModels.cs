@@ -69,6 +69,13 @@ public sealed record StatutoryEvidenceChannelFinalizeCommand(
     Guid CorrelationId,
     StatutoryEvidenceActor Actor);
 
+public sealed record StatutoryEvidenceChannelPreviewCommand(
+    string SourceChannel,
+    Guid StatutoryDiscountDecisionCommandId,
+    Guid EvidenceItemReference,
+    Guid CorrelationId,
+    StatutoryEvidenceActor Actor);
+
 public sealed record StatutoryEvidenceChannelReadiness(
     string Classification,
     bool EvidenceRequired,
@@ -119,4 +126,6 @@ public interface IStatutoryEvidenceChannelService
     Task<StatutoryEvidenceOpaqueUploadSessionResponse> CreateUploadSessionAsync(StatutoryEvidenceChannelUploadSessionCommand command, CancellationToken cancellationToken);
     Task<StatutoryEvidenceOpaqueUploadSessionResponse> UploadAsync(StatutoryEvidenceChannelUploadCommand command, CancellationToken cancellationToken);
     Task<StatutoryEvidenceChannelResponse> FinalizeUploadSessionAsync(StatutoryEvidenceChannelFinalizeCommand command, CancellationToken cancellationToken);
+    Task<OperatorConsole.OperatorConsoleStatutoryEvidencePreviewResult> OpenPreviewAsync(StatutoryEvidenceChannelPreviewCommand command, CancellationToken cancellationToken);
+    Task RecordPreviewStreamOutcomeAsync(OperatorConsole.OperatorConsoleStatutoryEvidencePreviewAuditContext context, string outcome, CancellationToken cancellationToken);
 }

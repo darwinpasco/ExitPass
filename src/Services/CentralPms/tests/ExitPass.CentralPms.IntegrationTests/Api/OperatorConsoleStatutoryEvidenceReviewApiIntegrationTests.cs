@@ -315,6 +315,19 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewApiIntegrationTests
             CancellationToken cancellationToken) =>
             Task.FromResult(PreviewResult ?? AcceptedPreview("image/jpeg", JpegBytes));
 
+        public Task<OperatorConsoleStatutoryEvidenceReviewResult?> ReadAuthorizedAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            StatutoryEvidenceAuthorizedReviewContext context,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<OperatorConsoleStatutoryEvidencePreviewResult> OpenAuthorizedPreviewAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid evidenceItemReference,
+            StatutoryEvidenceAuthorizedReviewContext context,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task RecordPreviewStreamOutcomeAsync(
             OperatorConsoleStatutoryEvidencePreviewAuditContext context,
             string outcome,

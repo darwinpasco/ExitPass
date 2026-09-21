@@ -1,7 +1,10 @@
 using ExitPass.CentralPms.Application.ManagementPlatform;
+using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.Application.StatutoryEvidence;
 using FluentAssertions;
+using NSubstitute;
 using Xunit;
 
 namespace ExitPass.CentralPms.UnitTests.Application;
@@ -14,6 +17,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
     private static readonly Guid SiteB = Guid.Parse("72000000-0000-4000-8000-000000000102");
     private static readonly Guid SiteC = Guid.Parse("72000000-0000-4000-8000-000000000103");
     private static readonly Guid DecisionReference = Guid.Parse("72000000-0000-4000-8000-000000000201");
+    private static readonly Guid ParkingSessionReference = Guid.Parse("72000000-0000-4000-8000-000000000203");
     private static readonly Guid CorrelationId = Guid.Parse("72000000-0000-4000-8000-000000000301");
     private static readonly DateTimeOffset SubmittedAt = DateTimeOffset.Parse("2026-08-24T01:00:00Z");
 
@@ -53,6 +57,21 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
 
         result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.SourceUnavailable);
         result.Classification.Should().Be("STATUTORY_BENEFIT_CURRENCY_UNSUPPORTED");
+    }
+
+    [Fact]
+    public async Task Detail_WhenFrozenPolicyRequiresResidency_ExposesConfirmedResidencyAttestation()
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with { GoverningPolicy = ResidentOnlyPolicy() }
+        };
+        var service = CreateService(AllowedRepository(), canonical);
+
+        var result = await service.GetAsync(Actor(), DecisionReference, CorrelationId, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        result.Value!.BeneficiaryResidencySatisfied.Should().BeTrue();
     }
 
     [Fact]
@@ -115,11 +134,202 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         decisions.Calls.Should().Be(1);
     }
 
+    [Fact]
+    public async Task Approve_AutomaticallyRequestsCanonicalPayableBasisApplicationWithStableServerKey()
+    {
+        var repository = AllowedRepository();
+        repository.AutomaticApplicationCaller = new ManagementStatutoryBenefitAutomaticApplicationCaller(
+            Guid.Parse("72000000-0000-4000-8000-000000000401"),
+            "WEBPAY",
+            "WEBPAY",
+            "statutory-discounts.decision.submit.webpay");
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with { GoverningPolicy = ResidentOnlyPolicy() }
+        };
+        var facade = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
+        var service = CreateService(repository, canonical, decisionFacade: facade);
+
+        var result = await service.DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        await facade.Received(1).SubmitAsync(
+            Arg.Is<StatutoryDiscountDecisionCommand>(application =>
+                application.ApplyPayableBasis &&
+                application.ParkingSessionId == ParkingSessionReference &&
+                application.BeneficiaryResidencySatisfied == true &&
+                application.IdempotencyKey == $"management-review-auto-apply:{DecisionReference:N}" &&
+                application.ServiceChannelCaller!.SourceChannel == "WEBPAY"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Reject_DoesNotRequestPayableBasisApplication()
+    {
+        var repository = AllowedRepository();
+        repository.AutomaticApplicationCaller = new ManagementStatutoryBenefitAutomaticApplicationCaller(
+            Guid.Parse("72000000-0000-4000-8000-000000000401"),
+            "WEBPAY",
+            "CENTRAL_PMS",
+            "statutory-discounts.decision.submit.webpay");
+        var facade = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
+        var service = CreateService(repository, decisionFacade: facade);
+
+        var result = await service.DecideAsync(Actor(), Command("REJECT", "NOT_ELIGIBLE"), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        await facade.DidNotReceiveWithAnyArgs().SubmitAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task Evidence_UsesAuthoritativeCurrentEvidenceRuntimeAndExposesNoStorageLocator()
+    {
+        var evidenceReview = Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>();
+        evidenceReview.ReadAuthorizedAsync(DecisionReference, Arg.Any<StatutoryEvidenceAuthorizedReviewContext>(), Arg.Any<CancellationToken>())
+            .Returns(AuthoritativeEvidence());
+        var service = CreateService(AllowedRepository(), evidenceReview: evidenceReview);
+
+        var result = await service.GetEvidenceAsync(Actor(), DecisionReference, CorrelationId, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        result.Value!.Items.Should().ContainSingle();
+        result.Value.Items[0].EvidenceItemReference.Should().NotBeNull();
+        result.Value.Items[0].ReviewabilityStatus.Should().Be("REVIEWABLE");
+        result.Value.Items[0].PreviewPermitted.Should().BeTrue();
+        result.Value.Items[0].GetType().GetProperties().Select(property => property.Name)
+            .Should().NotContain(name => name.Contains("Storage", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task EvidencePreview_WhenReviewerSiteScopeDoesNotMatch_IsConcealedBeforeEvidenceRead()
+    {
+        var repository = AllowedRepository();
+        repository.AuthorizedSites = new ManagementStatutoryBenefitAuthorizedSites(new HashSet<Guid> { SiteB }, false);
+        var evidenceReview = Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>();
+        var service = CreateService(repository, evidenceReview: evidenceReview);
+
+        var result = await service.OpenEvidencePreviewAsync(
+            Actor(),
+            DecisionReference,
+            Guid.Parse("72000000-0000-4000-8000-000000000502"),
+            CorrelationId,
+            CancellationToken.None);
+
+        result.ErrorCode.Should().Be("NOT_FOUND");
+        await evidenceReview.DidNotReceiveWithAnyArgs().OpenAuthorizedPreviewAsync(default, default, default!, default);
+    }
+
+    [Fact]
+    public async Task Approve_WhenApplicationAttemptFails_ReturnsCanonicalRetryableApplicationState()
+    {
+        var repository = AllowedRepository();
+        repository.AutomaticApplicationCaller = new ManagementStatutoryBenefitAutomaticApplicationCaller(
+            Guid.Parse("72000000-0000-4000-8000-000000000401"),
+            "WEBPAY",
+            "WEBPAY",
+            "statutory-discounts.decision.submit.webpay");
+        var facade = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
+        facade.SubmitAsync(Arg.Any<StatutoryDiscountDecisionCommand>(), Arg.Any<CancellationToken>())
+            .Returns<Task<StatutoryDiscountDecisionResult>>(_ => throw new TimeoutException("transient"));
+        facade.GetAsync(DecisionReference, CorrelationId, Arg.Any<CancellationToken>())
+            .Returns(DecisionResult(StatutoryDiscountApplicationStageStatuses.FailedRetryable, retryable: true));
+        var service = CreateService(repository, decisionFacade: facade);
+
+        var result = await service.DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        result.Value!.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.FailedRetryable);
+        result.Value.ApplicationRetryable.Should().BeTrue();
+        result.Value.PayableBasisReady.Should().BeFalse();
+    }
+
     private static ManagementStatutoryBenefitReviewService CreateService(
         FakeManagementRepository repository,
         FakeCanonicalRepository? canonical = null,
-        FakeDecisionService? decisions = null) =>
-        new(repository, canonical ?? new FakeCanonicalRepository { Detail = Detail() }, decisions ?? new FakeDecisionService(), new FakeAuditRepository());
+        FakeDecisionService? decisions = null,
+        IStatutoryDiscountDecisionFacadeService? decisionFacade = null,
+        IOperatorConsoleStatutoryEvidenceReviewService? evidenceReview = null) =>
+        new(
+            repository,
+            canonical ?? new FakeCanonicalRepository { Detail = Detail() },
+            decisions ?? new FakeDecisionService(),
+            decisionFacade ?? Substitute.For<IStatutoryDiscountDecisionFacadeService>(),
+            evidenceReview ?? Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>(),
+            new FakeAuditRepository());
+
+    private static OperatorConsoleStatutoryEvidenceReviewResult AuthoritativeEvidence()
+    {
+        var now = DateTimeOffset.Parse("2026-08-24T01:01:00Z");
+        return new OperatorConsoleStatutoryEvidenceReviewResult(
+            DecisionReference,
+            Guid.Parse("72000000-0000-4000-8000-000000000501"),
+            "WEBPAY",
+            "PENDING_REVIEW",
+            "PENDING_REVIEW",
+            true,
+            true,
+            "ACTIVE",
+            "ACTIVE",
+            "NOT_REQUESTED",
+            false,
+            "REPLACEMENT_ALLOWED",
+            [new OperatorConsoleStatutoryEvidenceReviewItemResult(
+                Guid.Parse("72000000-0000-4000-8000-000000000502"),
+                "SENIOR_CITIZEN_ID",
+                "ENTITLEMENT_ID_FRONT",
+                "image/jpeg",
+                "image/jpeg",
+                128,
+                "UPLOADED",
+                "PASSED",
+                "CLEAN",
+                "REVIEWABLE",
+                "BOUND",
+                "ACTIVE",
+                "NOT_REQUESTED",
+                false,
+                now,
+                now,
+                now,
+                now,
+                now,
+                true,
+                null)],
+            CorrelationId);
+    }
+
+    private static StatutoryDiscountDecisionResult DecisionResult(string applicationStatus, bool retryable) => new(
+        DecisionReference,
+        Guid.Parse("72000000-0000-4000-8000-000000000202"),
+        null,
+        ParkingSessionReference,
+        "WEBPAY",
+        "PWD",
+        "APPROVED",
+        null,
+        null,
+        null,
+        false,
+        10_000,
+        10_000,
+        0,
+        "PHP",
+        true,
+        true,
+        null,
+        null,
+        CorrelationId,
+        SubmittedAt,
+        SubmittedAt.AddMinutes(5),
+        null,
+        null,
+        null,
+        "APPLICATION_RETRYABLE",
+        "V2",
+        ApplicationRequested: true,
+        ApplicationCommandStatus: applicationStatus,
+        ApplicationRetryable: retryable,
+        ApplicationRecoveryAction: StatutoryDiscountDecisionRecoveryActions.RetrySameRequestWithOriginalKey);
 
     private static FakeManagementRepository AllowedRepository(long version = 7) => new()
     {
@@ -142,7 +352,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             StatutoryDiscountDecisionCommandId: DecisionReference,
             StatutoryDiscountValidationId: null,
             RequestReference: Guid.Parse("72000000-0000-4000-8000-000000000202"),
-            ParkingSessionId: Guid.Parse("72000000-0000-4000-8000-000000000203"),
+            ParkingSessionId: ParkingSessionReference,
             SourceChannel: "WEBPAY",
             SiteId: SiteA,
             SiteGroupId: null,
@@ -179,10 +389,34 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             PayableBasisApplicationStatus: null,
             CorrelationId: CorrelationId);
 
+    private static StatutoryDiscountServiceChannelReviewPolicyAuthority ResidentOnlyPolicy() => new(
+        StatutoryDiscountPolicyVersionId: Guid.Parse("72000000-0000-4000-8000-000000000601"),
+        JurisdictionId: Guid.Parse("72000000-0000-4000-8000-000000000602"),
+        JurisdictionCode: "PARANAQUE",
+        JurisdictionDisplayName: "City of Paranaque",
+        PolicyCode: "PITX-SENIOR",
+        PolicyVersion: "1",
+        OrdinanceNumber: null,
+        OrdinanceTitle: null,
+        SourceVerificationStatus: "VERIFIED",
+        TransactionPublicationStatus: "PUBLISHED",
+        DetailedRuleVerificationStatus: "VERIFIED",
+        ParkingServiceApplicability: "APPLICABLE",
+        BenefitType: "FULL_FEE_EXEMPTION",
+        BeneficiaryResidencyScope: "RESIDENT_ONLY",
+        OfficialSourceAvailable: true,
+        OrdinanceTextAvailable: true,
+        OrdinanceNumberAvailable: false,
+        EffectiveFrom: SubmittedAt.AddDays(-1),
+        EffectiveTo: null,
+        RequiredEvidenceTypes: [],
+        LegalApprovabilityReason: "VERIFIED_POLICY");
+
     private sealed class FakeManagementRepository : IManagementStatutoryBenefitReviewRepository
     {
         public ManagementStatutoryBenefitAuthorizedSites? AuthorizedSites { get; set; }
         public ManagementStatutoryBenefitReviewMetadata? Metadata { get; init; }
+        public ManagementStatutoryBenefitAutomaticApplicationCaller? AutomaticApplicationCaller { get; set; }
         public ManagementStatutoryBenefitReviewQuery? CapturedQuery { get; private set; }
         public IReadOnlySet<Guid>? CapturedSites { get; private set; }
         public int ListCalls { get; private set; }
@@ -194,6 +428,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             return Task.FromResult(new ManagementStatutoryBenefitReviewQueue(ManagementStatutoryBenefitReviewValues.ContractVersion, [], query.Page, query.PageSize, 0, false, query.CorrelationId));
         }
         public Task<ManagementStatutoryBenefitReviewMetadata?> GetMetadataAsync(Guid decisionCommandReference, CancellationToken cancellationToken) => Task.FromResult(Metadata);
+        public Task<ManagementStatutoryBenefitAutomaticApplicationCaller?> ResolveAutomaticApplicationCallerAsync(string sourceChannel, Guid siteReference, CancellationToken cancellationToken) => Task.FromResult(AutomaticApplicationCaller);
     }
 
     private sealed class FakeCanonicalRepository : IStatutoryDiscountServiceChannelReviewRepository
