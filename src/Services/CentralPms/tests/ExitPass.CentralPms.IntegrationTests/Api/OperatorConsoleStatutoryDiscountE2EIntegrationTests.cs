@@ -1814,7 +1814,8 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         return new IssueExitAuthorizationHandler(
             new IssueExitAuthorizationGateway(
                 connectionString,
-                NullLogger<IssueExitAuthorizationGateway>.Instance),
+                NullLogger<IssueExitAuthorizationGateway>.Instance,
+                Guid.Parse("8063c159-dae6-57af-9f1f-e0a07d519fb2")),
             NoopIntegrationEventPublisher.Instance,
             new SystemClock(),
             new CentralPmsMetrics(),

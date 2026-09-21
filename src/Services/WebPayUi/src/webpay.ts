@@ -411,6 +411,38 @@ export async function retrieveReceiptPresentation(
   return payload as WebPayReceiptPresentationResponse;
 }
 
+export async function retrieveStatutoryReceiptPresentation(
+  applicationCommandId: string,
+  decisionCommandId: string,
+  parkingSessionId: string,
+  correlationId?: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<WebPayReceiptPresentationResponse> {
+  const query = new URLSearchParams({ decisionCommandId, parkingSessionId });
+  const response = await fetchImpl(
+    `${getApiBaseUrl()}/v1/webpay/statutory-applications/${encodeURIComponent(applicationCommandId)}/receipt-presentation?${query}`,
+    { headers: { "X-Correlation-Id": correlationId?.trim() || createCorrelationId() } }
+  );
+  const payload = (await response.json().catch(() => ({}))) as WebPayReceiptPresentationResponse | ApiError;
+  if (!response.ok) {
+    const error = payload as ApiError;
+    throw new ReceiptPresentationError(
+      error.errorCode,
+      toReceiptPresentationMessage(error.errorCode, error.message),
+      Boolean(error.retryable),
+      error.correlationId
+    );
+  }
+  if (!(payload as WebPayReceiptPresentationResponse).authoritativePresentation?.presentation) {
+    throw new ReceiptPresentationError(
+      "MALFORMED_WEBPAY_RECEIPT_PRESENTATION_RESPONSE",
+      "Sales Invoice presentation is temporarily unavailable.",
+      true
+    );
+  }
+  return payload as WebPayReceiptPresentationResponse;
+}
+
 export async function createPaymentIntent(
   request: PaymentIntentRequest,
   fetchImpl: typeof fetch = fetch,

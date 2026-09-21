@@ -6,8 +6,8 @@ namespace ExitPass.CentralPms.Contracts.Public;
 /// WebPay-facing readback for a POS Server-owned Digital Sales Invoice presentation.
 /// </summary>
 public sealed record WebPayReceiptPresentationResponse(
-    Guid PaymentAttemptId,
-    Guid PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
     Guid FiscalIssuanceReferenceId,
     string FiscalIssuanceState,
     Guid PosFiscalDocumentId,

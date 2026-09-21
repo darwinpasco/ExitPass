@@ -18,7 +18,7 @@ internal static class SitePosServerTestOptions
     internal static readonly Guid FiscalTenderTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000301");
     internal static readonly Guid FiscalTaxTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000401");
     internal static readonly Guid FiscalTaxClassificationCodeId = Guid.Parse("10000000-0000-0000-0000-000000000402");
-    internal static readonly Guid FiscalDiscountPrivilegeTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000501");
+    internal static readonly Guid FiscalDiscountPrivilegeTypeCodeId = Guid.Parse("3a29922e-e8e6-5adb-a205-f68d09e41762");
     internal static readonly Guid FiscalTotalTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000601");
 
     internal static FiscalIssuancePosServerIntegrationOptions AddEndpoint(

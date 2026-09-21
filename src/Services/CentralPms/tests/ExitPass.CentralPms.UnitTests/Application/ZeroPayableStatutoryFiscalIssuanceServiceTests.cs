@@ -20,6 +20,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
     private static readonly Guid SiteGroupId = Guid.Parse("a1000000-0000-4000-8000-000000000009");
     private static readonly Guid SitePosServerId = Guid.Parse("a1000000-0000-4000-8000-00000000000a");
     private static readonly Guid FiscalReferenceId = Guid.Parse("a1000000-0000-4000-8000-00000000000b");
+    private static readonly Guid CentralPmsServiceIdentityId = Guid.Parse("8063c159-dae6-57af-9f1f-e0a07d519fb2");
     private static readonly DateTimeOffset AppliedAt = DateTimeOffset.Parse("2026-09-09T08:00:00Z");
 
     [Fact]
@@ -30,6 +31,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
         PrepareFiscalIssuanceCommand? prepared = null;
         CentralPmsFiscalDocumentMappingContext? mapped = null;
+        PosServerCreateResultRecordingContext? recording = null;
         references.FindByStatutoryApplicationCommandIdAsync(ApplicationId, Arg.Any<CancellationToken>())
             .Returns((FiscalIssuanceReferenceRecord?)null);
         orchestration.PreparePendingAsync(
@@ -39,7 +41,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         posServer.TryIssueFiscalDocumentViaPosServerAsync(
                 FiscalReferenceId,
                 Arg.Do<CentralPmsFiscalDocumentMappingContext>(value => mapped = value),
-                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Do<PosServerCreateResultRecordingContext>(value => recording = value),
                 Arg.Any<CancellationToken>())
             .Returns(FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(["test_stop_after_mapping"]));
         var sut = CreateService(references, orchestration, posServer);
@@ -49,6 +51,9 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.NotNull(prepared);
         Assert.Null(prepared.PaymentAttemptId);
         Assert.Null(prepared.PaymentConfirmationId);
+        Assert.Equal(CentralPmsServiceIdentityId, prepared.ServiceIdentityId);
+        Assert.NotNull(recording);
+        Assert.Equal(CentralPmsServiceIdentityId, recording.ServiceIdentityId);
         Assert.Equal(FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality, prepared.CompletionBasis);
         Assert.Equal(ApplicationId, prepared.CompletionAuthorityReferenceId);
         Assert.Equal(ApplicationId, prepared.StatutoryDiscountPayableBasisApplicationCommandId);
@@ -132,7 +137,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         IFiscalIssuanceReferenceRepository references,
         IFiscalIssuanceOrchestrationService orchestration,
         IFiscalIssuancePosServerLiveIntegrationService posServer) =>
-        new(references, orchestration, posServer, Options());
+        new(references, orchestration, posServer, Options(), CentralPmsServiceIdentityId);
 
     private static ZeroPayableStatutoryFiscalIssuanceCommand Command() =>
         new(Finality(), Authority(), Guid.Parse("a1000000-0000-4000-8000-00000000000d"), 2679, "VAT_EXCLUSIVE", "LOCAL_ORDINANCE_APPLIED");

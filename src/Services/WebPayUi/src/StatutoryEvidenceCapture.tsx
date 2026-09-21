@@ -7,6 +7,7 @@ import {
   requestStatutoryEvidenceUploadSession,
   retrieveStatutoryEvidencePreview,
   retrieveStatutoryEvidenceStatus,
+  StatutoryEvidenceError,
   uploadStatutoryEvidence,
   validateStatutoryEvidenceFile
 } from "./statutoryEvidence";
@@ -36,16 +37,23 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
   const [pollAttempt, setPollAttempt] = useState(0);
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewError, setPreviewError] = useState("");
-  const abortController = useRef<AbortController | null>(null);
+  const statusAbortController = useRef<AbortController | null>(null);
+  const uploadAbortController = useRef<AbortController | null>(null);
+  const requestGeneration = useRef(0);
+  const evidenceReadSequence = useRef(0);
+  const committedEvidenceSequence = useRef(0);
+  const captureStateRef = useRef<CaptureState>("loading");
   const errorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const controller = new AbortController();
-    abortController.current?.abort();
-    abortController.current = controller;
+    const generation = requestGeneration.current + 1;
+    requestGeneration.current = generation;
+    statusAbortController.current?.abort();
+    uploadAbortController.current?.abort();
+    committedEvidenceSequence.current = 0;
     setChannel(null);
     setSelectedFile(null);
-    setCaptureState("loading");
+    transitionCaptureState("loading");
     setFileError("");
     setOperationError("");
     setUploadPercent(null);
@@ -53,20 +61,12 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
     setPreviewUrl("");
     setPreviewError("");
 
-    void bootstrapStatutoryEvidence(statutoryDiscountDecisionCommandId, fetch, controller.signal)
-      .then((response) => {
-        setChannel(response);
-        setCaptureState("ready");
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        setCaptureState("idle");
-        setOperationError(error instanceof Error ? error.message : "Evidence status is temporarily unavailable.");
-      });
+    void bootstrapEvidence(generation);
 
-    return () => controller.abort();
+    return () => {
+      statusAbortController.current?.abort();
+      uploadAbortController.current?.abort();
+    };
   }, [statutoryDiscountDecisionCommandId]);
 
   useEffect(() => {
@@ -102,7 +102,7 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
   }, [channel?.evidenceItemReference, channel?.lifecycleClassification, statutoryDiscountDecisionCommandId]);
 
   useEffect(() => {
-    if (!channel || !pollableLifecycleStates.has(channel.lifecycleClassification) || pollAttempt >= 6) {
+    if (!channel || !pollableLifecycleStates.has(channel.lifecycleClassification)) {
       return;
     }
 
@@ -119,16 +119,43 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
   }, [operationError]);
 
   async function refreshStatus(fromPoll = false) {
-    if (captureState === "uploading" || captureState === "authorizing" || captureState === "finalizing") {
+    if (isCaptureBusy(captureStateRef.current)) {
       return;
     }
 
-    const controller = new AbortController();
-    abortController.current = controller;
     if (!fromPoll) {
-      setCaptureState("loading");
+      transitionCaptureState("loading");
       setOperationError("");
     }
+
+    await reconcileEvidenceStatus(requestGeneration.current, fromPoll);
+  }
+
+  async function bootstrapEvidence(generation: number) {
+    const sequence = evidenceReadSequence.current + 1;
+    evidenceReadSequence.current = sequence;
+    const controller = replaceStatusController();
+
+    try {
+      const response = await bootstrapStatutoryEvidence(statutoryDiscountDecisionCommandId, fetch, controller.signal);
+      commitEvidenceChannel(response, generation, sequence);
+    } catch (error: unknown) {
+      if (controller.signal.aborted || generation !== requestGeneration.current) {
+        return;
+      }
+      if (isRecoverableEvidenceConflict(error)) {
+        await reconcileEvidenceStatus(generation, false);
+        return;
+      }
+      transitionCaptureState("idle");
+      setOperationError(error instanceof Error ? error.message : "Evidence status is temporarily unavailable.");
+    }
+  }
+
+  async function reconcileEvidenceStatus(generation: number, fromPoll: boolean, conflictRetry = 0) {
+    const sequence = evidenceReadSequence.current + 1;
+    evidenceReadSequence.current = sequence;
+    const controller = replaceStatusController();
 
     try {
       const response = await retrieveStatutoryEvidenceStatus(
@@ -136,15 +163,56 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
         fetch,
         controller.signal
       );
-      setChannel(response);
-      setCaptureState("ready");
-      setPollAttempt((current) => fromPoll ? current + 1 : 0);
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        setCaptureState("idle");
-        setOperationError(error instanceof Error ? error.message : "Evidence status is temporarily unavailable.");
+      if (commitEvidenceChannel(response, generation, sequence)) {
+        setPollAttempt((current) => fromPoll ? current + 1 : 0);
+        setOperationError("");
       }
+    } catch (error: unknown) {
+      if (controller.signal.aborted || generation !== requestGeneration.current) {
+        return;
+      }
+      if (isRecoverableEvidenceConflict(error) && conflictRetry < 2) {
+        setOperationError("Evidence status is being reconciled automatically. Please wait a moment.");
+        await waitForAutomaticReadback(500);
+        if (generation === requestGeneration.current) {
+          await reconcileEvidenceStatus(generation, fromPoll, conflictRetry + 1);
+        }
+        return;
+      }
+      transitionCaptureState("idle");
+      setOperationError(
+        isRecoverableEvidenceConflict(error)
+          ? "Evidence status is being reconciled automatically. Please wait a moment."
+          : error instanceof Error ? error.message : "Evidence status is temporarily unavailable."
+      );
     }
+  }
+
+  function replaceStatusController() {
+    statusAbortController.current?.abort();
+    const controller = new AbortController();
+    statusAbortController.current = controller;
+    return controller;
+  }
+
+  function commitEvidenceChannel(
+    response: WebPayStatutoryEvidenceChannelResponse,
+    generation: number,
+    sequence: number
+  ) {
+    if (generation !== requestGeneration.current || sequence < committedEvidenceSequence.current) {
+      return false;
+    }
+
+    committedEvidenceSequence.current = sequence;
+    setChannel(response);
+    transitionCaptureState("ready");
+    return true;
+  }
+
+  function transitionCaptureState(next: CaptureState) {
+    captureStateRef.current = next;
+    setCaptureState(next);
   }
 
   function handleFileSelection(files: FileList | null) {
@@ -165,7 +233,7 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
   }
 
   async function handleUpload() {
-    if (!channel || !selectedFile || captureState === "uploading" || captureState === "authorizing" || captureState === "finalizing") {
+    if (!channel || !selectedFile || isCaptureBusy(captureStateRef.current)) {
       return;
     }
 
@@ -175,52 +243,50 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
       return;
     }
 
+    const generation = requestGeneration.current;
+    const operationSequence = evidenceReadSequence.current + 1;
+    evidenceReadSequence.current = operationSequence;
+    statusAbortController.current?.abort();
     const controller = new AbortController();
-    abortController.current = controller;
+    uploadAbortController.current = controller;
     setOperationError("");
     setFileError("");
     setUploadPercent(0);
 
     try {
-      setCaptureState("authorizing");
+      transitionCaptureState("authorizing");
       const checksum = await computeSha256(selectedFile);
+      if (generation !== requestGeneration.current) return;
       const uploadSession = await requestStatutoryEvidenceUploadSession(channel, selectedFile, checksum);
+      if (generation !== requestGeneration.current) return;
       if (!uploadSession.opaqueUploadSessionReference) {
         throw new Error("Evidence upload authorization was incomplete. Refresh and try again.");
       }
 
-      setCaptureState("uploading");
+      transitionCaptureState("uploading");
       await uploadStatutoryEvidence(
         uploadSession.opaqueUploadSessionReference,
         selectedFile,
         (progress) => setUploadPercent(progress.percent),
         controller.signal
       );
+      if (generation !== requestGeneration.current) return;
 
-      setCaptureState("finalizing");
+      transitionCaptureState("finalizing");
       const finalized = await finalizeStatutoryEvidenceUpload(uploadSession.opaqueUploadSessionReference);
-      setChannel(finalized);
+      if (!commitEvidenceChannel(finalized, generation, operationSequence)) return;
       setSelectedFile(null);
       setUploadPercent(100);
       setPollAttempt(0);
-      setCaptureState("ready");
-    } catch (error) {
-      setCaptureState("idle");
+    } catch (error: unknown) {
+      if (generation !== requestGeneration.current) return;
+      transitionCaptureState("idle");
       if (error instanceof DOMException && error.name === "AbortError") {
-        setOperationError("The photo upload was cancelled. Refresh the evidence status before trying again.");
-        const reconciliationController = new AbortController();
-        abortController.current = reconciliationController;
-        try {
-          const reconciled = await retrieveStatutoryEvidenceStatus(
-            { statutoryDiscountDecisionCommandId },
-            fetch,
-            reconciliationController.signal
-          );
-          setChannel(reconciled);
-          setPollAttempt(0);
-        } catch {
-          // Keep the bounded cancellation guidance when reconciliation is unavailable.
-        }
+        setOperationError("The photo upload was cancelled. Current evidence status is being restored automatically.");
+        await reconcileEvidenceStatus(generation, false);
+      } else if (isRecoverableEvidenceConflict(error)) {
+        setOperationError("Evidence status changed while the photo was being prepared. Current status is being restored automatically.");
+        await reconcileEvidenceStatus(generation, false);
       } else {
         setOperationError(error instanceof Error ? error.message : "The photo could not be uploaded. Please try again.");
       }
@@ -228,7 +294,7 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
   }
 
   function cancelUpload() {
-    abortController.current?.abort();
+    uploadAbortController.current?.abort();
   }
 
   const lifecycleCopy = getLifecycleCopy(channel);
@@ -349,6 +415,19 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
       </div>
     </section>
   );
+}
+
+function isCaptureBusy(state: CaptureState) {
+  return state === "authorizing" || state === "uploading" || state === "finalizing";
+}
+
+function isRecoverableEvidenceConflict(error: unknown) {
+  return error instanceof StatutoryEvidenceError &&
+    error.errorCode?.toUpperCase() === "WEBPAY_STATUTORY_EVIDENCE_CONFLICT";
+}
+
+function waitForAutomaticReadback(delayMilliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, delayMilliseconds));
 }
 
 function getLifecycleCopy(channel: WebPayStatutoryEvidenceChannelResponse | null): { label: string; message: string; tone: string } {

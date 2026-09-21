@@ -38,8 +38,6 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     private static readonly Guid StatutoryApplicationId = Guid.Parse("21000000-0000-4000-8000-000000000033");
     private static readonly Guid OriginalTariffSnapshotId = Guid.Parse("21000000-0000-4000-8000-000000000034");
     private static readonly Guid AppliedPolicyReferenceId = Guid.Parse("21000000-0000-4000-8000-000000000035");
-    private static readonly Guid PosServerFiscalDiscountPrivilegeTypeCodeId =
-        Guid.Parse("10000000-0000-0000-0000-000000000501");
 
     [Fact]
     public async Task TerminalCashFiscalIssuance_ConfirmedCashPayment_TriggersExistingFiscalIssuancePath()
@@ -240,7 +238,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal(TerminalCashTenderId, statutoryFacts.TerminalCashTenderId);
 
         var privilege = Assert.Single(fiscalContext.DiscountPrivilegeDetails);
-        Assert.Equal(PosServerFiscalDiscountPrivilegeTypeCodeId, privilege.DiscountPrivilegeTypeCodeId);
+        Assert.Null(privilege.DiscountPrivilegeTypeCodeId);
         Assert.Equal(11_161, privilege.BasisAmountMinorUnits);
         Assert.Equal(2_232, privilege.DiscountAmountMinorUnits);
         Assert.Equal(1_339, privilege.VatPrivilegeAmountMinorUnits);

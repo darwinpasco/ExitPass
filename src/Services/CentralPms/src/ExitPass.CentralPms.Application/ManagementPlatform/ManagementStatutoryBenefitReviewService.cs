@@ -7,6 +7,7 @@ namespace ExitPass.CentralPms.Application.ManagementPlatform;
 
 public sealed class ManagementStatutoryBenefitReviewService : IManagementStatutoryBenefitReviewService
 {
+    private const string MediatedEvidenceAuditSourceChannel = "CENTRAL_PMS";
     private readonly IManagementStatutoryBenefitReviewRepository _repository;
     private readonly IStatutoryDiscountServiceChannelReviewRepository _canonicalReviews;
     private readonly IAuthorizedStatutoryBenefitDecisionService _decisions;
@@ -141,7 +142,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                 canonical.SiteGroupId,
                 canonical.SourceChannel,
                 correlationId,
-                new StatutoryEvidenceActor(actor.UserId, null, "MANAGEMENT_PLATFORM")),
+                new StatutoryEvidenceActor(actor.UserId, null, MediatedEvidenceAuditSourceChannel)),
             cancellationToken).ConfigureAwait(false);
         if (authoritative is null)
         {
@@ -209,7 +210,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                 canonical.SiteGroupId,
                 canonical.SourceChannel,
                 correlationId,
-                new StatutoryEvidenceActor(actor.UserId, null, "MANAGEMENT_PLATFORM")),
+                new StatutoryEvidenceActor(actor.UserId, null, MediatedEvidenceAuditSourceChannel)),
             cancellationToken).ConfigureAwait(false);
     }
 

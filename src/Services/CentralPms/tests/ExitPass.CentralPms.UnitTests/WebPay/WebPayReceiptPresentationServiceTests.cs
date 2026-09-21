@@ -13,6 +13,8 @@ public sealed class WebPayReceiptPresentationServiceTests
     private static readonly Guid PaymentAttemptId = Guid.Parse("44444444-4444-4444-4444-444444444444");
     private static readonly Guid CorrelationId = Guid.Parse("77777777-7777-7777-7777-777777777777");
     private static readonly Guid PosFiscalDocumentId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+    private static readonly Guid StatutoryApplicationId = Guid.Parse("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    private static readonly Guid StatutoryDecisionId = Guid.Parse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
 
     [Fact]
     public async Task GetByPaymentAttemptIdAsync_WhenRecorded_ReturnsAuthoritativePosPresentation()
@@ -46,6 +48,53 @@ public sealed class WebPayReceiptPresentationServiceTests
     }
 
     [Fact]
+    public async Task GetByStatutoryApplicationAsync_WhenRecorded_ReturnsPosInvoiceWithoutPaymentAncestry()
+    {
+        var reference = StatutoryReference();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByStatutoryApplicationCommandIdAsync(StatutoryApplicationId, Arg.Any<CancellationToken>())
+            .Returns(reference);
+        var posClient = Substitute.For<IPosServerFiscalDocumentClient>();
+        posClient.GetFiscalDocumentPresentationAsync(PosFiscalDocumentId, CorrelationId,
+                Arg.Any<PosServerRoutingContext>(), Arg.Any<CancellationToken>())
+            .Returns(Presentation(PosFiscalDocumentId, "SI-ZERO-001"));
+        var sut = new WebPayReceiptPresentationService(repository, posClient);
+
+        var result = await sut.GetByStatutoryApplicationAsync(
+            StatutoryApplicationId, StatutoryDecisionId, reference.ParkingSessionId,
+            CorrelationId, CancellationToken.None);
+
+        result.PaymentAttemptId.Should().BeNull();
+        result.PaymentConfirmationId.Should().BeNull();
+        result.FiscalDocumentNumber.Should().Be("SI-ZERO-001");
+        await repository.DidNotReceiveWithAnyArgs().FindLatestByPaymentAttemptIdAsync(default, default);
+    }
+
+    [Theory]
+    [InlineData("wrong-decision")]
+    [InlineData("wrong-session")]
+    [InlineData("payment-ancestry")]
+    public async Task GetByStatutoryApplicationAsync_WhenContextOrAncestryDiffers_FailsClosed(string mismatch)
+    {
+        var reference = StatutoryReference();
+        if (mismatch == "payment-ancestry") reference = reference with { PaymentAttemptId = PaymentAttemptId };
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByStatutoryApplicationCommandIdAsync(StatutoryApplicationId, Arg.Any<CancellationToken>())
+            .Returns(reference);
+        var posClient = Substitute.For<IPosServerFiscalDocumentClient>();
+        var sut = new WebPayReceiptPresentationService(repository, posClient);
+
+        var act = () => sut.GetByStatutoryApplicationAsync(
+            StatutoryApplicationId,
+            mismatch == "wrong-decision" ? Guid.NewGuid() : StatutoryDecisionId,
+            mismatch == "wrong-session" ? Guid.NewGuid() : reference.ParkingSessionId,
+            CorrelationId, CancellationToken.None);
+
+        await act.Should().ThrowAsync<WebPayReceiptPresentationRejectedException>();
+        await posClient.DidNotReceiveWithAnyArgs().GetFiscalDocumentPresentationAsync(default, default, default!, default);
+    }
+
+    [Fact]
     public async Task GetByPaymentAttemptIdAsync_WhenFiscalIssuancePending_DoesNotCallPosServer()
     {
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
@@ -67,6 +116,25 @@ public sealed class WebPayReceiptPresentationServiceTests
         await posClient
             .DidNotReceiveWithAnyArgs()
             .GetFiscalDocumentPresentationAsync(default, default, default!, default);
+    }
+
+    [Fact]
+    public async Task GetByPaymentAttemptIdAsync_WhenPaymentAncestryIsMissing_FailsClosed()
+    {
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindLatestByPaymentAttemptIdAsync(PaymentAttemptId, Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+            {
+                PaymentConfirmationId = null
+            });
+        var posClient = Substitute.For<IPosServerFiscalDocumentClient>();
+        var sut = new WebPayReceiptPresentationService(repository, posClient);
+
+        var act = () => sut.GetByPaymentAttemptIdAsync(PaymentAttemptId, CorrelationId, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<WebPayReceiptPresentationRejectedException>())
+            .Which.ErrorCode.Should().Be("WEBPAY_RECEIPT_ANCESTRY_MISMATCH");
+        await posClient.DidNotReceiveWithAnyArgs().GetFiscalDocumentPresentationAsync(default, default, default!, default);
     }
 
     [Fact]
@@ -288,6 +356,16 @@ public sealed class WebPayReceiptPresentationServiceTests
             FirstRecordedAt: DateTimeOffset.Parse("2026-05-23T13:00:00+08:00"),
             LastUpdatedAt: DateTimeOffset.Parse("2026-05-23T13:01:00+08:00"),
             RecordedByServiceIdentityId: null);
+
+    private static FiscalIssuanceReferenceRecord StatutoryReference() =>
+        Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+        {
+            PaymentAttemptId = null,
+            PaymentConfirmationId = null,
+            CompletionBasis = FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality,
+            StatutoryDiscountDecisionCommandId = StatutoryDecisionId,
+            StatutoryDiscountPayableBasisApplicationCommandId = StatutoryApplicationId
+        };
 }
 
 public sealed class WebPayPaymentAttemptStatusServiceTests

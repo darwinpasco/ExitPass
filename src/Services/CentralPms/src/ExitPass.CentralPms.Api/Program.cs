@@ -654,7 +654,13 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentOpsService, VendorPaymentAcknowledgmentOpsService>();
 
     builder.Services.AddScoped<IDigitalPaymentFiscalIssuanceService, DigitalPaymentFiscalIssuanceService>();
-    builder.Services.AddScoped<IZeroPayableStatutoryFiscalIssuanceService, ZeroPayableStatutoryFiscalIssuanceService>();
+    builder.Services.AddScoped<IZeroPayableStatutoryFiscalIssuanceService>(serviceProvider =>
+        new ZeroPayableStatutoryFiscalIssuanceService(
+            serviceProvider.GetRequiredService<IFiscalIssuanceReferenceRepository>(),
+            serviceProvider.GetRequiredService<IFiscalIssuanceOrchestrationService>(),
+            serviceProvider.GetRequiredService<IFiscalIssuancePosServerLiveIntegrationService>(),
+            serviceProvider.GetRequiredService<FiscalIssuancePosServerIntegrationOptions>(),
+            projectionServiceIdentityId));
 
     builder.Services.AddScoped<IReportVerifiedPaymentOutcomeUseCase, ReportVerifiedPaymentOutcomeHandler>();
 
@@ -680,7 +686,8 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IIssueExitAuthorizationGateway>(serviceProvider =>
         new IssueExitAuthorizationGateway(
             mainDatabaseConnectionString,
-            serviceProvider.GetRequiredService<ILogger<IssueExitAuthorizationGateway>>()));
+            serviceProvider.GetRequiredService<ILogger<IssueExitAuthorizationGateway>>(),
+            projectionServiceIdentityId));
 
     builder.Services.AddScoped<IConsumeExitAuthorizationUseCase, ConsumeExitAuthorizationHandler>();
     builder.Services.AddScoped<IConsumeExitAuthorizationGateway>(serviceProvider =>

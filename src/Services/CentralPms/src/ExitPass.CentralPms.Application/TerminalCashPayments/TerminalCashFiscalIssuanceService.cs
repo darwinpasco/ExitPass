@@ -30,8 +30,6 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     };
     private static readonly string CanonicalDeliveryRequestHash = Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes("{}"))).ToLowerInvariant();
-    private static readonly Guid StatutoryDiscountPrivilegeTypeCodeId =
-        Guid.Parse("10000000-0000-0000-0000-000000000501");
 
     private readonly ITerminalCashPaymentService _terminalCashPayments;
     private readonly IFiscalIssuanceReferenceRepository _fiscalReferences;
@@ -746,7 +744,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         return
         [
             new CentralPmsFiscalDiscountPrivilegeDetailContext(
-                DiscountPrivilegeTypeCodeId: StatutoryDiscountPrivilegeTypeCodeId,
+                DiscountPrivilegeTypeCodeId: null,
                 BasisAmountMinorUnits: statutoryContext.VatExclusiveBasisAmountMinorUnits,
                 DiscountAmountMinorUnits: statutoryContext.StatutoryDiscountAmountMinorUnits,
                 VatPrivilegeAmountMinorUnits: statutoryContext.VatAmountMinorUnits,

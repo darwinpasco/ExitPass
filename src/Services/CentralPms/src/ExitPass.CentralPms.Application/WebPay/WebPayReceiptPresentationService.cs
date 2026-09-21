@@ -60,6 +60,54 @@ public sealed class WebPayReceiptPresentationService : IWebPayReceiptPresentatio
                 retryable: true);
         }
 
+        if (reference.PaymentAttemptId != paymentAttemptId ||
+            reference.PaymentConfirmationId is null ||
+            reference.CompletionBasis != FiscalCompletionBasisCodes.PaymentFinality)
+        {
+            throw Rejected("WEBPAY_RECEIPT_ANCESTRY_MISMATCH", "Payment fiscal ancestry is inconsistent.", Status409Conflict, false);
+        }
+
+        return await GetByReferenceAsync(reference, correlationId, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<WebPayReceiptPresentationResult> GetByStatutoryApplicationAsync(
+        Guid statutoryDiscountPayableBasisApplicationCommandId,
+        Guid statutoryDiscountDecisionCommandId,
+        Guid parkingSessionId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (statutoryDiscountPayableBasisApplicationCommandId == Guid.Empty ||
+            statutoryDiscountDecisionCommandId == Guid.Empty || parkingSessionId == Guid.Empty ||
+            correlationId == Guid.Empty)
+        {
+            throw Rejected("STATUTORY_RECEIPT_CONTEXT_REQUIRED", "Statutory receipt context is required.", Status400BadRequest, false);
+        }
+
+        var reference = await _fiscalReferences.FindByStatutoryApplicationCommandIdAsync(
+            statutoryDiscountPayableBasisApplicationCommandId, cancellationToken).ConfigureAwait(false);
+        if (reference is null || reference.StatutoryDiscountDecisionCommandId != statutoryDiscountDecisionCommandId ||
+            reference.ParkingSessionId != parkingSessionId)
+        {
+            throw Rejected("WEBPAY_FISCAL_ISSUANCE_NOT_FOUND", "Fiscal issuance was not found for this statutory transaction.", Status404NotFound, false);
+        }
+
+        if (reference.CompletionBasis != FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality ||
+            reference.PaymentAttemptId is not null || reference.PaymentConfirmationId is not null ||
+            reference.StatutoryDiscountPayableBasisApplicationCommandId != statutoryDiscountPayableBasisApplicationCommandId)
+        {
+            throw Rejected("STATUTORY_RECEIPT_ANCESTRY_MISMATCH", "Statutory fiscal ancestry is inconsistent.", Status409Conflict, false);
+        }
+
+        return await GetByReferenceAsync(reference, correlationId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<WebPayReceiptPresentationResult> GetByReferenceAsync(
+        FiscalIssuanceReferenceRecord reference,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+
         EnsureFiscalRecorded(reference);
 
         if (reference.PosServerFiscalDocumentId is null || reference.PosServerFiscalDocumentId == Guid.Empty)
@@ -93,8 +141,8 @@ public sealed class WebPayReceiptPresentationService : IWebPayReceiptPresentatio
         EnsurePosPresentationAvailable(reference, posPresentation);
 
         return new WebPayReceiptPresentationResult(
-            reference.PaymentAttemptId!.Value,
-            reference.PaymentConfirmationId!.Value,
+            reference.PaymentAttemptId,
+            reference.PaymentConfirmationId,
             reference.FiscalIssuanceReferenceId,
             reference.FiscalIssuanceState,
             reference.PosServerFiscalDocumentId.Value,

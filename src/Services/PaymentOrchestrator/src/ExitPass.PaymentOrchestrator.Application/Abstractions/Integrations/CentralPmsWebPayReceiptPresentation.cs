@@ -6,8 +6,8 @@ namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 /// POS Server-owned Sales Invoice presentation read through Central PMS for WebPay.
 /// </summary>
 public sealed record CentralPmsWebPayReceiptPresentation(
-    Guid PaymentAttemptId,
-    Guid PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
     Guid FiscalIssuanceReferenceId,
     string FiscalIssuanceState,
     Guid PosFiscalDocumentId,

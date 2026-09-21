@@ -198,6 +198,42 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         result.Value.Items[0].PreviewPermitted.Should().BeTrue();
         result.Value.Items[0].GetType().GetProperties().Select(property => property.Name)
             .Should().NotContain(name => name.Contains("Storage", StringComparison.OrdinalIgnoreCase));
+        await evidenceReview.Received(1).ReadAuthorizedAsync(
+            DecisionReference,
+            Arg.Is<StatutoryEvidenceAuthorizedReviewContext>(context =>
+                context.SiteId == SiteA &&
+                context.ExpectedDecisionSourceChannel == "WEBPAY" &&
+                context.Actor.UserId == Actor().UserId &&
+                context.Actor.SourceChannel == "CENTRAL_PMS"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task EvidencePreview_UsesCentralPmsMediatedAuditChannelForAuthorizedHumanReviewer()
+    {
+        var itemReference = Guid.Parse("72000000-0000-4000-8000-000000000502");
+        var evidenceReview = Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>();
+        evidenceReview.OpenAuthorizedPreviewAsync(
+                DecisionReference,
+                itemReference,
+                Arg.Any<StatutoryEvidenceAuthorizedReviewContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryEvidencePreviewResult(
+                "REJECTED", "PREVIEW_UNAVAILABLE", false, CorrelationId, null, null));
+        var service = CreateService(AllowedRepository(), evidenceReview: evidenceReview);
+
+        await service.OpenEvidencePreviewAsync(
+            Actor(), DecisionReference, itemReference, CorrelationId, CancellationToken.None);
+
+        await evidenceReview.Received(1).OpenAuthorizedPreviewAsync(
+            DecisionReference,
+            itemReference,
+            Arg.Is<StatutoryEvidenceAuthorizedReviewContext>(context =>
+                context.SiteId == SiteA &&
+                context.ExpectedDecisionSourceChannel == "WEBPAY" &&
+                context.Actor.UserId == Actor().UserId &&
+                context.Actor.SourceChannel == "CENTRAL_PMS"),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]

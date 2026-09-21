@@ -34,6 +34,13 @@ public static class WebPayReceiptPresentationEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .Produces<ErrorResponse>(StatusCodes.Status503ServiceUnavailable);
 
+        app.MapGet("/v1/webpay/statutory-applications/{applicationCommandId:guid}/receipt-presentation", ReadStatutoryReceiptPresentationAsync)
+            .WithName("GetWebPayStatutoryReceiptPresentation")
+            .WithTags("WebPay")
+            .Produces<WebPayReceiptPresentationResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status409Conflict);
+
         return app;
     }
 
@@ -117,6 +124,34 @@ public static class WebPayReceiptPresentationEndpoints
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
+            return Results.Json(
+                BuildError(ex.ErrorCode, ex.Message, correlationId, ex.Retryable),
+                statusCode: ex.HttpStatusCode);
+        }
+    }
+
+    private static async Task<IResult> ReadStatutoryReceiptPresentationAsync(
+        Guid applicationCommandId,
+        Guid decisionCommandId,
+        Guid parkingSessionId,
+        HttpRequest request,
+        IWebPayReceiptPresentationService service,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadCorrelationId(request, out var correlationId, out var headerError))
+        {
+            return Results.BadRequest(headerError);
+        }
+
+        try
+        {
+            var result = await service.GetByStatutoryApplicationAsync(
+                applicationCommandId, decisionCommandId, parkingSessionId, correlationId, cancellationToken)
+                .ConfigureAwait(false);
+            return Results.Ok(ToResponse(result));
+        }
+        catch (WebPayReceiptPresentationRejectedException ex)
+        {
             return Results.Json(
                 BuildError(ex.ErrorCode, ex.Message, correlationId, ex.Retryable),
                 statusCode: ex.HttpStatusCode);

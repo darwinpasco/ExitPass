@@ -254,11 +254,28 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
     public async Task<CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>> GetReceiptPresentationAsync(
         Guid paymentAttemptId,
         Guid correlationId,
+        CancellationToken cancellationToken) =>
+        await ReadReceiptPresentationAsync(
+            new Uri(_webPayPaymentAttemptsBaseUri, $"{paymentAttemptId:D}/receipt-presentation"),
+            correlationId, cancellationToken).ConfigureAwait(false);
+
+    public async Task<CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>> GetStatutoryReceiptPresentationAsync(
+        Guid applicationCommandId,
+        Guid decisionCommandId,
+        Guid parkingSessionId,
+        Guid correlationId,
+        CancellationToken cancellationToken) =>
+        await ReadReceiptPresentationAsync(
+            new Uri(_webPayPaymentAttemptsBaseUri,
+                $"../statutory-applications/{applicationCommandId:D}/receipt-presentation?decisionCommandId={decisionCommandId:D}&parkingSessionId={parkingSessionId:D}"),
+            correlationId, cancellationToken).ConfigureAwait(false);
+
+    private async Task<CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>> ReadReceiptPresentationAsync(
+        Uri uri,
+        Guid correlationId,
         CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(
-            HttpMethod.Get,
-            new Uri(_webPayPaymentAttemptsBaseUri, $"{paymentAttemptId:D}/receipt-presentation"));
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.Add("X-Correlation-Id", correlationId.ToString());
 
         using var response = await _httpClient.SendAsync(request, cancellationToken);
@@ -1144,7 +1161,12 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
             payload.SiteGroupId,
             payload.PayableBasisReady,
             payload.PayableBasisReadinessStatus,
-            payload.PayableBasisReadinessAction);
+            payload.PayableBasisReadinessAction,
+            payload.ZeroPayableStatutoryFinality,
+            payload.CompletionAuthority,
+            payload.ExitAuthorizationEligibility,
+            payload.ZeroPayableFiscalCompletion,
+            payload.ExitAuthorization);
 
     private static CentralPmsStatutoryDiscountAvailability ToStatutoryAvailability(StatutoryDiscountAvailabilityResponse payload) =>
         new(
@@ -1286,8 +1308,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         string AttemptStatus);
 
     private sealed record WebPayReceiptPresentationResponse(
-        Guid PaymentAttemptId,
-        Guid PaymentConfirmationId,
+        Guid? PaymentAttemptId,
+        Guid? PaymentConfirmationId,
         Guid FiscalIssuanceReferenceId,
         string FiscalIssuanceState,
         Guid PosFiscalDocumentId,
@@ -1503,7 +1525,12 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         string? VatTreatment = null,
         bool PayableBasisReady = false,
         string PayableBasisReadinessStatus = "NOT_READY",
-        string? PayableBasisReadinessAction = null);
+        string? PayableBasisReadinessAction = null,
+        JsonElement? ZeroPayableStatutoryFinality = null,
+        JsonElement? CompletionAuthority = null,
+        JsonElement? ExitAuthorizationEligibility = null,
+        JsonElement? ZeroPayableFiscalCompletion = null,
+        JsonElement? ExitAuthorization = null);
 
     private sealed record StatutoryEvidenceBootstrapRequest(
         Guid StatutoryDiscountDecisionCommandId,

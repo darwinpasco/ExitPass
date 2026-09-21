@@ -1,16 +1,21 @@
 using System.Net;
 using System.Net.Http.Json;
 using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
+using ExitPass.CentralPms.Domain.Sessions;
+using ExitPass.CentralPms.Domain.Tariffs;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using ExitPass.CentralPms.Infrastructure.Payments;
+using ExitPass.CentralPms.Infrastructure.VendorParking;
 using ExitPass.CentralPms.Infrastructure.TerminalCashPayments;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -392,6 +397,13 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 .Be(ZeroPayablePosCallEvidence.ElectronicJournalReference);
             repeatedReadback.ZeroPayableFiscalCompletion.Should()
                 .BeEquivalentTo(finalityReadback.ZeroPayableFiscalCompletion);
+            if (sourceChannel == "WEBPAY")
+            {
+                finalityReadback.ExitAuthorization.Should().NotBeNull();
+                finalityReadback.ExitAuthorization!.ExitAuthorizationId.Should()
+                    .Be(exitAuthorization.ExitAuthorizationId);
+                repeatedReadback.ExitAuthorization.Should().BeEquivalentTo(finalityReadback.ExitAuthorization);
+            }
             zeroPayablePosEvidence.IssueCount.Should().Be(1);
             zeroPayablePosEvidence.LastMapping.Should().NotBeNull();
             zeroPayablePosEvidence.LastMapping!.Tenders.Should().BeEmpty();
@@ -430,6 +442,8 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             counts.ExitAuthorizationCount.Should().Be(1);
             counts.VendorPaymentAcknowledgmentCount.Should().Be(0);
 
+            await AssertCompletedExpiredZeroPayableVendorReadbackAsync(context, application.AppliedTariffSnapshotId!.Value);
+
             await AssertFiscalCompletionAncestryConstraintsAsync(context.ParkingSessionId);
             await AssertZeroPayableReaderCardinalityConstraintsAsync();
             await AssertExitAuthorizationStatutoryAncestryConstraintsAsync(
@@ -441,6 +455,8 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 context,
                 exitAuthorization.ExitAuthorizationId,
                 application.StatutoryDiscountPayableBasisApplicationCommandId!.Value);
+            await AssertCompletedExpiredZeroPayableVendorReadbackAsync(
+                context, application.AppliedTariffSnapshotId!.Value, expectReused: false);
             await AssertEveryPaymentAttemptStatusBlocksFinalityAsync(
                 serviceClient,
                 context,
@@ -1466,6 +1482,58 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         client.DefaultRequestHeaders.Add("X-Operator-Shift-Id", ReviewerShiftId.ToString());
         client.DefaultRequestHeaders.Add("X-Site-Id", context.SiteId.ToString());
         client.DefaultRequestHeaders.Add("X-Site-Group-Id", context.SiteGroupId.ToString());
+    }
+
+    private static async Task AssertCompletedExpiredZeroPayableVendorReadbackAsync(
+        PaymentTestContext context,
+        Guid appliedTariffSnapshotId,
+        bool expectReused = true)
+    {
+        await using (var connection = new Npgsql.NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var expire = new Npgsql.NpgsqlCommand(
+                """
+                UPDATE core.tariff_snapshots
+                SET calculated_at = NOW() - INTERVAL '2 hours',
+                    expires_at = NOW() - INTERVAL '1 hour'
+                WHERE tariff_snapshot_id = @tariff_snapshot_id;
+                """, connection);
+            expire.Parameters.AddWithValue("tariff_snapshot_id", appliedTariffSnapshotId);
+            (await expire.ExecuteNonQueryAsync()).Should().Be(1);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var request = new PersistVendorParkingResolutionRequest
+        {
+            ParkingSession = ParkingSession.Rehydrate(
+                Guid.NewGuid(), context.SiteGroupId.ToString("D"), context.SiteId.ToString("D"),
+                context.VendorSystemCode, $"RACE-VSESSION-{context.ParkingSessionId:N}",
+                "TICKET", "ABC1234", $"TICKET-{context.SiteCode}", now.AddHours(-2),
+                ParkingSessionStatus.PaymentRequired),
+            TariffSnapshot = TariffSnapshot.Rehydrate(
+                Guid.NewGuid(), context.ParkingSessionId, TariffSnapshotSourceType.Base,
+                100m, 0m, 0m, 100m, "PHP", 100m, null, null,
+                now, now.AddMinutes(15), TariffSnapshotStatus.Active, null, null),
+            CorrelationId = Guid.NewGuid()
+        };
+        var persistence = new VendorParkingResolutionPersistence(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+
+        if (expectReused)
+        {
+            var result = await persistence.PersistAsync(request, CancellationToken.None);
+            result.ParkingSessionWasReused.Should().BeTrue();
+            result.TariffSnapshotWasReused.Should().BeTrue();
+            result.ParkingSession.ParkingSessionId.Should().Be(context.ParkingSessionId);
+            result.TariffSnapshot.TariffSnapshotId.Should().Be(appliedTariffSnapshotId);
+            result.TariffSnapshot.NetPayable.Should().Be(0m);
+        }
+        else
+        {
+            var rejected = await Assert.ThrowsAsync<VendorParkingResolutionPersistenceException>(
+                () => persistence.PersistAsync(request, CancellationToken.None));
+            rejected.ErrorCode.Should().Be("EFFECTIVE_PAYABLE_BASIS_INVALID");
+        }
     }
 
     private static CustomWebApplicationFactory CreateFactory(

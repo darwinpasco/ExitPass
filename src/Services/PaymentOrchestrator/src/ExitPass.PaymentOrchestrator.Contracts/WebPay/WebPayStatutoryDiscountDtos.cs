@@ -648,4 +648,10 @@ public sealed class WebPayStatutoryDiscountDecisionResponse
     /// Payable-basis application timestamp when available.
     /// </summary>
     public DateTimeOffset? AppliedAt { get; set; }
+
+    public System.Text.Json.JsonElement? ZeroPayableStatutoryFinality { get; set; }
+    public System.Text.Json.JsonElement? CompletionAuthority { get; set; }
+    public System.Text.Json.JsonElement? ExitAuthorizationEligibility { get; set; }
+    public System.Text.Json.JsonElement? ZeroPayableFiscalCompletion { get; set; }
+    public System.Text.Json.JsonElement? ExitAuthorization { get; set; }
 }
