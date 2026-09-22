@@ -13,10 +13,13 @@ describe("statutory ID masking", () => {
     expect(isAutomaticallyMaskedStatutoryIdReference(expected)).toBe(true);
   });
 
-  it("rejects values that cannot be masked without overlap", () => {
-    expect(maskStatutoryIdReference("AB1234")).toEqual({
+  it("fully masks four-to-six character values and rejects shorter values", () => {
+    expect(maskStatutoryIdReference("AB12")).toEqual({ ok: true, maskedValue: "****" });
+    expect(maskStatutoryIdReference("AB1234")).toEqual({ ok: true, maskedValue: "******" });
+    expect(isAutomaticallyMaskedStatutoryIdReference("****")).toBe(true);
+    expect(maskStatutoryIdReference("AB1")).toEqual({
       ok: false,
-      message: "Enter at least 7 characters so WebPay can mask the ID reference safely."
+      message: "Enter at least 4 characters for the ID No. / Control No."
     });
   });
 

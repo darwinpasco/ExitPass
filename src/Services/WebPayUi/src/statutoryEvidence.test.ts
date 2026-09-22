@@ -4,6 +4,7 @@ import {
   finalizeStatutoryEvidenceUpload,
   requestStatutoryEvidenceUploadSession,
   retrieveStatutoryEvidenceStatus,
+  uploadEvidenceForNewStatutoryRequest,
   uploadStatutoryEvidence,
   validateStatutoryEvidenceFile
 } from "./statutoryEvidence";
@@ -173,6 +174,42 @@ describe("WebPay statutory evidence API", () => {
   it.each(["image/jpeg", "image/png"])("accepts a bounded %s photo", (type) => {
     const file = new File([new Uint8Array([1])], type === "image/jpeg" ? "id.jpg" : "id.png", { type });
     expect(validateStatutoryEvidenceFile(file, channel())).toBeNull();
+  });
+
+  it("finalizes a selected photo through the existing protected routes before returning", async () => {
+    const file = new File([new Uint8Array([1, 2, 3])], "id.jpg", { type: "image/jpeg" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new Uint8Array([1, 2, 3]).buffer });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(channel()))
+      .mockResolvedValueOnce(jsonResponse({
+        classification: "AUTHORIZED",
+        retryable: false,
+        correlationId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        opaqueUploadSessionReference: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        method: "PUT",
+        expiresAt: "2026-09-22T10:05:00Z",
+        acceptedContentType: "image/jpeg",
+        maximumContentLengthBytes: 5_000_000
+      }))
+      .mockResolvedValueOnce(jsonResponse(channel({ lifecycleClassification: "VALIDATION_PENDING" })));
+    const xhr = new FakeXmlHttpRequest();
+    const send = xhr.send.bind(xhr);
+    xhr.send = (body) => {
+      send(body);
+      xhr.status = 200;
+      queueMicrotask(() => xhr.onload?.(new ProgressEvent("load")));
+    };
+
+    const result = await uploadEvidenceForNewStatutoryRequest(decisionId, file, fetchMock as never, () => xhr as never);
+
+    expect(result.lifecycleClassification).toBe("VALIDATION_PENDING");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/v1/webpay/statutory-discounts/evidence/bootstrap",
+      "/v1/webpay/statutory-discounts/evidence/upload-sessions",
+      "/v1/webpay/statutory-discounts/evidence/upload-sessions/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee/finalize"
+    ]);
+    expect(xhr.sentBody).toBe(file);
+    expect(xhr.openArgs[1]).toContain("/evidence/upload-sessions/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
   });
 });
 

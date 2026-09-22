@@ -1270,9 +1270,16 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         Require(command.ActorUserId, "ACTOR_USER_ID_REQUIRED", "Actor user id is required for the current statutory-discount application path.");
         Require(command.CorrelationId, "CORRELATION_ID_REQUIRED", "Correlation id is required.");
         Require(command.IdempotencyKey, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required.");
-        Require(command.MaskedIdReference, "MASKED_ID_REFERENCE_REQUIRED", "Masked ID reference is required.");
-
         var sourceChannel = StatutoryDiscountSourceChannels.Normalize(command.SourceChannel);
+        if (sourceChannel != StatutoryDiscountSourceChannels.WebPay)
+        {
+            Require(command.MaskedIdReference, "MASKED_ID_REFERENCE_REQUIRED", "Masked ID reference is required.");
+        }
+        else if (!string.IsNullOrWhiteSpace(command.MaskedIdReference) && !command.MaskedIdReference.Contains('*'))
+        {
+            throw Rejected("MASKED_ID_REFERENCE_REQUIRED", "WebPay ID reference must be masked when supplied.");
+        }
+
         if (!StatutoryDiscountSourceChannels.IsSupported(sourceChannel))
         {
             throw Rejected("UNSUPPORTED_SOURCE_CHANNEL", "Source channel must be OPERATOR_CONSOLE, WEBPAY, or ASSISTED_PAYMENT_TERMINAL.");
@@ -1333,7 +1340,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             EntitlementType = entitlementType,
             IdDocumentType = Normalize(command.IdDocumentType),
             IssuingAuthority = Normalize(command.IssuingAuthority),
-            MaskedIdReference = command.MaskedIdReference.Trim(),
+            MaskedIdReference = command.MaskedIdReference?.Trim() ?? string.Empty,
             IdempotencyKey = command.IdempotencyKey.Trim(),
             TicketReference = NormalizeOptional(command.TicketReference),
             PlateNumber = NormalizeOptional(command.PlateNumber),

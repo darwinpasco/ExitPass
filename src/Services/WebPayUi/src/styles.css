@@ -1032,9 +1032,12 @@ summary:focus-visible {
 }
 
 .checkbox-field input {
+  flex: 0 0 20px;
   width: 20px;
   height: 20px;
+  min-width: 20px;
   margin-top: 2px;
+  accent-color: #1760ad;
 }
 
 .statutory-actions {
@@ -1325,6 +1328,31 @@ summary:focus-visible {
   border: 1px solid #c7d7ec;
   border-radius: 14px;
   background: linear-gradient(145deg, #f8fbff, #ffffff);
+}
+
+.session-summary dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  overflow-x: auto;
+}
+
+.session-summary dl > div {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) max-content;
+  align-items: baseline;
+  gap: 12px;
+  min-width: max-content;
+}
+
+.session-summary dt,
+.session-summary dd {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.session-summary dd {
+  text-align: right;
 }
 
 .payable-basis-panel {

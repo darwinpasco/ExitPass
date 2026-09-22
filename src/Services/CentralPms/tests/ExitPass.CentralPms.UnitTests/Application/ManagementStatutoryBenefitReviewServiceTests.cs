@@ -163,6 +163,77 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             Arg.Any<CancellationToken>());
     }
 
+    [Theory]
+    [InlineData("APPROVE")]
+    [InlineData("REJECT")]
+    public async Task Decision_RequiredEvidenceNotReviewable_DoesNotReachDecisionService(string action)
+    {
+        var evidenceReview = Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>();
+        evidenceReview.ReadAuthorizedAsync(DecisionReference, Arg.Any<StatutoryEvidenceAuthorizedReviewContext>(), Arg.Any<CancellationToken>())
+            .Returns(AuthoritativeEvidence() with { Items = [] });
+        var decisions = new FakeDecisionService();
+        var service = CreateService(AllowedRepository(), decisions: decisions, evidenceReview: evidenceReview);
+
+        var result = await service.DecideAsync(Actor(), Command(action, action == "REJECT" ? "NOT_ELIGIBLE" : null), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Invalid);
+        result.Classification.Should().Be("STATUTORY_BENEFIT_EVIDENCE_NOT_REVIEWABLE");
+        decisions.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Approve_RequiredPhotoStillInValidation_DoesNotReachDecisionService()
+    {
+        var evidence = AuthoritativeEvidence();
+        var evidenceReview = Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>();
+        evidenceReview.ReadAuthorizedAsync(DecisionReference, Arg.Any<StatutoryEvidenceAuthorizedReviewContext>(), Arg.Any<CancellationToken>())
+            .Returns(evidence with
+            {
+                Items = [evidence.Items[0] with { ReviewabilityStatus = "VALIDATION_PENDING", PreviewPermitted = false }]
+            });
+        var decisions = new FakeDecisionService();
+        var service = CreateService(AllowedRepository(), decisions: decisions, evidenceReview: evidenceReview);
+
+        var result = await service.DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Classification.Should().Be("STATUTORY_BENEFIT_EVIDENCE_NOT_REVIEWABLE");
+        decisions.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Approve_WhenWebPayIdIsOmitted_StillRequestsCanonicalApplication()
+    {
+        var repository = AllowedRepository();
+        repository.AutomaticApplicationCaller = new ManagementStatutoryBenefitAutomaticApplicationCaller(
+            Guid.Parse("72000000-0000-4000-8000-000000000401"),
+            "WEBPAY",
+            "WEBPAY",
+            "statutory-discounts.decision.submit.webpay");
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                IdDocumentType = null,
+                IssuingAuthority = null,
+                ExpiryDate = null,
+                MaskedIdReference = null
+            }
+        };
+        var facade = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
+        var service = CreateService(repository, canonical, decisionFacade: facade);
+
+        var result = await service.DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        await facade.Received(1).SubmitAsync(
+            Arg.Is<StatutoryDiscountDecisionCommand>(application =>
+                application.ApplyPayableBasis &&
+                application.MaskedIdReference == string.Empty &&
+                application.IdDocumentType == string.Empty &&
+                application.IssuingAuthority == string.Empty),
+            Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task Reject_DoesNotRequestPayableBasisApplication()
     {
@@ -310,14 +381,22 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         FakeCanonicalRepository? canonical = null,
         FakeDecisionService? decisions = null,
         IStatutoryDiscountDecisionFacadeService? decisionFacade = null,
-        IOperatorConsoleStatutoryEvidenceReviewService? evidenceReview = null) =>
-        new(
+        IOperatorConsoleStatutoryEvidenceReviewService? evidenceReview = null)
+    {
+        var review = evidenceReview ?? Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>();
+        if (evidenceReview is null)
+        {
+            review.ReadAuthorizedAsync(DecisionReference, Arg.Any<StatutoryEvidenceAuthorizedReviewContext>(), Arg.Any<CancellationToken>())
+                .Returns(AuthoritativeEvidence());
+        }
+        return new(
             repository,
             canonical ?? new FakeCanonicalRepository { Detail = Detail() },
             decisions ?? new FakeDecisionService(),
             decisionFacade ?? Substitute.For<IStatutoryDiscountDecisionFacadeService>(),
-            evidenceReview ?? Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>(),
+            review,
             new FakeAuditRepository());
+    }
 
     private static OperatorConsoleStatutoryEvidenceReviewResult AuthoritativeEvidence()
     {

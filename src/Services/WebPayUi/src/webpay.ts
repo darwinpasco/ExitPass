@@ -632,19 +632,9 @@ export function buildStatutoryDiscountDecisionBody(
     throw new Error("Resolve your parking session before requesting a statutory discount.");
   }
 
-  const idDocumentType = request.idDocumentType.trim();
-  if (!idDocumentType) {
-    throw new Error("Enter the document type shown on your entitlement ID.");
-  }
-
-  const issuingAuthority = request.issuingAuthority.trim();
-  if (!issuingAuthority) {
-    throw new Error("Enter the issuing authority shown on your entitlement ID.");
-  }
-
   const maskedIdReference = request.maskedIdReference.trim();
-  if (!maskedIdReference || !isMaskedIdReference(maskedIdReference)) {
-    throw new Error("Enter the ID reference normally and let WebPay mask it automatically.");
+  if (maskedIdReference && !isMaskedIdReference(maskedIdReference)) {
+    throw new Error("Enter at least 4 characters for the ID No. / Control No. and let WebPay mask it automatically.");
   }
 
   if (!request.requesterAttestation) {
@@ -655,8 +645,6 @@ export function buildStatutoryDiscountDecisionBody(
     requestReference: request.requestReference.trim() || createRequestReference(),
     parkingSessionId: request.parkingSessionId.trim(),
     entitlementType,
-    idDocumentType,
-    issuingAuthority,
     maskedIdReference,
     evidenceCaptureRequested: Boolean(request.evidenceCaptureRequested),
     requesterAttestation: true
@@ -861,7 +849,7 @@ export function toStatutoryDiscountMessage(errorCode?: string, _message?: string
     case "WEBPAY_STATUTORY_REQUEST_TEMPORARILY_UNAVAILABLE":
       return "Statutory discount status is temporarily unavailable. Refresh status shortly.";
     case "WEBPAY_STATUTORY_SERVICE_UNAVAILABLE":
-      return "Parking-privilege requests are temporarily unavailable. Please try again later or ask a parking attendant for assistance.";
+      return "Parking discount requests are temporarily unavailable. Please try again later or ask a parking attendant for assistance.";
     case "STATUTORY_DISCOUNT_PAYABLE_BASIS_FACTS_UNAVAILABLE":
       return "Statutory discount payable basis is missing required authoritative facts.";
     case "STATUTORY_DISCOUNT_TERMINAL_FAILURE":
@@ -892,13 +880,13 @@ export function toStatutoryDiscountAvailabilityMessage(errorCode?: string, _mess
     case "POLICY_NOT_PUBLISHED":
     case "REQUIRED_POLICY_FACTS_INCOMPLETE":
     case "BENEFIT_EFFECT_NOT_SUPPORTED":
-      return "Parking privilege requests are not available for this parking session. You may continue with the regular parking amount.";
+      return "Parking discount requests are not available for this parking session. You may continue with the regular parking amount.";
     case "WEBPAY_STATUTORY_AVAILABILITY_TEMPORARILY_UNAVAILABLE":
     case "WEBPAY_STATUTORY_SERVICE_UNAVAILABLE":
     case "TEMPORARILY_UNAVAILABLE":
-      return "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.";
+      return "Parking discount availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.";
     default:
-      return "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.";
+      return "Parking discount availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.";
   }
 }
 
@@ -906,17 +894,17 @@ export function toStatutoryPendingLifecycleRediscoveryMessage(errorCode?: string
   switch ((errorCode ?? "").toUpperCase()) {
     case "WEBPAY_STATUTORY_PENDING_LIFECYCLE_REDISCOVERY_REQUEST_INVALID":
     case "VALIDATION_FAILED":
-      return "The parking privilege request could not be checked for this parking session. Please try again.";
+      return "The parking discount request could not be checked for this parking session. Please try again.";
     case "WEBPAY_STATUTORY_SERVICE_UNAVAILABLE":
     case "WEBPAY_STATUTORY_REQUEST_TEMPORARILY_UNAVAILABLE":
     case "CENTRAL_PMS_UNAVAILABLE":
     case "SOURCE_UNAVAILABLE":
     case "UNEXPECTED_FAILURE":
-      return "The parking privilege request could not be checked right now. Please try again.";
+      return "The parking discount request could not be checked right now. Please try again.";
     case "ACCESS_DENIED":
       return "Parking-privilege requests are temporarily unavailable. Please try again later or ask a parking attendant for assistance.";
     default:
-      return "The parking privilege request could not be checked right now. Please try again.";
+      return "The parking discount request could not be checked right now. Please try again.";
   }
 }
 

@@ -38,7 +38,7 @@ export function validateInvoiceCustomerInformation(
     ["Customer Name", normalized.customerName, invoiceCustomerInformationLimits.customerName],
     ["Address", normalized.address, invoiceCustomerInformationLimits.address],
     ["TIN", normalized.tin, invoiceCustomerInformationLimits.tin],
-    ["Business Style", normalized.businessStyle, invoiceCustomerInformationLimits.businessStyle]
+    ["Business Style / Business Name", normalized.businessStyle, invoiceCustomerInformationLimits.businessStyle]
   ];
 
   if (includeStatutoryId) {

@@ -238,6 +238,34 @@ export function validateStatutoryEvidenceFile(
   return null;
 }
 
+export async function uploadEvidenceForNewStatutoryRequest(
+  statutoryDiscountDecisionCommandId: string,
+  file: File,
+  fetchImpl: typeof fetch = fetch,
+  xhrFactory: () => XMLHttpRequest = () => new XMLHttpRequest()
+): Promise<WebPayStatutoryEvidenceChannelResponse> {
+  const channel = await bootstrapStatutoryEvidence(statutoryDiscountDecisionCommandId, fetchImpl);
+  if (!channel.evidenceRequired) {
+    throw new Error("The required photo could not be attached to this request. Please try again.");
+  }
+
+  if (["VALIDATION_PENDING", "SCAN_PENDING", "REVIEWABLE", "REVIEW_PENDING", "APPROVED", "APPLIED"].includes(channel.lifecycleClassification)) {
+    return channel;
+  }
+
+  const validationError = validateStatutoryEvidenceFile(file, channel);
+  if (validationError) throw new Error(validationError);
+
+  const checksum = await computeSha256(file);
+  const uploadSession = await requestStatutoryEvidenceUploadSession(channel, file, checksum, fetchImpl);
+  if (!uploadSession.opaqueUploadSessionReference) {
+    throw new Error("The photo upload could not be prepared. Please try again.");
+  }
+
+  await uploadStatutoryEvidence(uploadSession.opaqueUploadSessionReference, file, () => undefined, undefined, xhrFactory);
+  return finalizeStatutoryEvidenceUpload(uploadSession.opaqueUploadSessionReference, fetchImpl);
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) {
     return `${Math.max(1, Math.ceil(bytes / 1024))} KB`;

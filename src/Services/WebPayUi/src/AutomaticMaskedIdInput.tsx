@@ -5,9 +5,10 @@ type AutomaticMaskedIdInputProps = {
   value: string;
   disabled?: boolean;
   onChange: (maskedValue: string) => void;
+  onValidityChange?: (valid: boolean) => void;
 };
 
-export function AutomaticMaskedIdInput({ value, disabled = false, onChange }: AutomaticMaskedIdInputProps) {
+export function AutomaticMaskedIdInput({ value, disabled = false, onChange, onValidityChange }: AutomaticMaskedIdInputProps) {
   const descriptionId = useId();
   const errorId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -28,16 +29,19 @@ export function AutomaticMaskedIdInput({ value, disabled = false, onChange }: Au
 
     if (nextValue.includes("*")) {
       setError("Enter the ID reference without asterisks. WebPay masks it automatically.");
+      onValidityChange?.(false);
       return;
     }
 
     if (nextValue && !/^[A-Za-z0-9-]+$/.test(nextValue)) {
       setError("Use letters, numbers, and hyphens only.");
+      onValidityChange?.(false);
       return;
     }
 
     setRawValue(nextValue);
     setError("");
+    onValidityChange?.(!nextValue || nextValue.trim().length >= 4);
   }
 
   function maskCurrentValue() {
@@ -51,12 +55,14 @@ export function AutomaticMaskedIdInput({ value, disabled = false, onChange }: Au
     if (!result.ok) {
       onChange("");
       setError(result.message);
+      onValidityChange?.(false);
       return;
     }
 
     onChange(result.maskedValue);
     setIsEditing(false);
     setError("");
+    onValidityChange?.(true);
   }
 
   function startReplacement() {
@@ -64,6 +70,7 @@ export function AutomaticMaskedIdInput({ value, disabled = false, onChange }: Au
     setRawValue("");
     setIsEditing(true);
     setError("");
+    onValidityChange?.(true);
     requestAnimationFrame(() => inputRef.current?.focus());
   }
 
@@ -71,7 +78,7 @@ export function AutomaticMaskedIdInput({ value, disabled = false, onChange }: Au
 
   return (
     <div className="field automatic-mask-field">
-      <label htmlFor="statutory-id-reference">ID reference</label>
+      <label htmlFor="statutory-id-reference">ID No. / Control No. (optional)</label>
       <div className="automatic-mask-control">
         <input
           ref={inputRef}
@@ -80,7 +87,7 @@ export function AutomaticMaskedIdInput({ value, disabled = false, onChange }: Au
           value={isEditing ? rawValue : value}
           onChange={handleChange}
           onBlur={maskCurrentValue}
-          placeholder="Enter the ID reference"
+          placeholder="ID No. / Control No."
           autoComplete="off"
           autoCapitalize="characters"
           spellCheck={false}
@@ -95,7 +102,7 @@ export function AutomaticMaskedIdInput({ value, disabled = false, onChange }: Au
           </button>
         )}
       </div>
-      <small id={descriptionId}>Enter the reference normally. WebPay automatically shows only the first 2 and last 4 characters.</small>
+      <small id={descriptionId}>Optional. If entered, use at least 4 characters. WebPay masks the reference automatically.</small>
       {error && (
         <p id={errorId} className="field-error" role="alert">
           {error}

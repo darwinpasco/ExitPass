@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import { QrScanner } from "./QrScanner";
 import { StatutoryEvidenceCapture } from "./StatutoryEvidenceCapture";
 import { AutomaticMaskedIdInput } from "./AutomaticMaskedIdInput";
+import { uploadEvidenceForNewStatutoryRequest, validateStatutoryEvidenceFile } from "./statutoryEvidence";
 import { formatCustomerSupportReference } from "./customerSafeReference";
 import {
   emptyInvoiceCustomerInformation,
@@ -98,13 +99,9 @@ type ReturnPageMode = "success" | "cancelled";
 type PaymentStatusKind = "pending" | "confirmed" | "failed" | "expired" | "cancelled";
 type StatutoryDiscountFormState = {
   entitlementType: StatutoryDiscountEntitlementType;
-  idDocumentType: string;
-  issuingAuthority: string;
-  expiryDate: string;
   maskedIdReference: string;
   requesterAttestation: boolean;
   beneficiaryResidencySatisfied: boolean;
-  attestationNotes: string;
 };
 
 type StatutoryDiscountUiState = {
@@ -146,13 +143,9 @@ type AppliedStatutoryPaymentBasis = {
 
 const defaultStatutoryDiscountForm: StatutoryDiscountFormState = {
   entitlementType: "SENIOR_CITIZEN",
-  idDocumentType: "",
-  issuingAuthority: "",
-  expiryDate: "",
   maskedIdReference: "",
   requesterAttestation: false,
-  beneficiaryResidencySatisfied: false,
-  attestationNotes: ""
+  beneficiaryResidencySatisfied: false
 };
 
 const emptyStatutoryDiscountUiState: StatutoryDiscountUiState = {
@@ -204,6 +197,11 @@ export function App() {
   const [stage, setStage] = useState<WebPayStage>("INPUT");
   const [showStatutoryDiscountForm, setShowStatutoryDiscountForm] = useState(false);
   const [statutoryDiscountForm, setStatutoryDiscountForm] = useState<StatutoryDiscountFormState>(defaultStatutoryDiscountForm);
+  const [statutoryEvidenceFile, setStatutoryEvidenceFile] = useState<File | null>(null);
+  const [statutoryEvidenceFileError, setStatutoryEvidenceFileError] = useState("");
+  const [evidenceReviewability, setEvidenceReviewability] = useState<{ decisionId: string; ready: boolean } | null>(null);
+  const pendingEvidenceDecision = useRef<WebPayStatutoryDiscountDecisionResponse | null>(null);
+  const [statutoryIdReferenceValid, setStatutoryIdReferenceValid] = useState(true);
   const [statutoryDiscountState, setStatutoryDiscountState] = useState<StatutoryDiscountUiState>(emptyStatutoryDiscountUiState);
   const [statutoryAvailabilityState, setStatutoryAvailabilityState] =
     useState<StatutoryDiscountAvailabilityUiState>(emptyStatutoryDiscountAvailabilityState);
@@ -237,6 +235,7 @@ export function App() {
   }
 
   function handleQrDecoded(value: string) {
+    pendingEvidenceDecision.current = null;
     statutorySessionGeneration.current += 1;
     const normalized = normalizeTicketReference(value);
     const context = extractPaymentIntentContext(value);
@@ -251,6 +250,9 @@ export function App() {
     setActivePaymentAttempt(null);
     setShowStatutoryDiscountForm(false);
     setStatutoryDiscountForm(defaultStatutoryDiscountForm);
+    setStatutoryEvidenceFile(null);
+    setStatutoryEvidenceFileError("");
+    setStatutoryIdReferenceValid(true);
     setStatutoryDiscountState(emptyStatutoryDiscountUiState);
     setStatutoryAvailabilityState(emptyStatutoryDiscountAvailabilityState);
     setStatutoryPendingLifecycle(null);
@@ -261,6 +263,7 @@ export function App() {
   }
 
   function clearLookupState() {
+    pendingEvidenceDecision.current = null;
     statutorySessionGeneration.current += 1;
     setError("");
     setResolveError("");
@@ -270,6 +273,9 @@ export function App() {
     setActivePaymentAttempt(null);
     setShowStatutoryDiscountForm(false);
     setStatutoryDiscountForm(defaultStatutoryDiscountForm);
+    setStatutoryEvidenceFile(null);
+    setStatutoryEvidenceFileError("");
+    setStatutoryIdReferenceValid(true);
     setStatutoryDiscountState(emptyStatutoryDiscountUiState);
     setStatutoryAvailabilityState(emptyStatutoryDiscountAvailabilityState);
     setStatutoryPendingLifecycle(null);
@@ -439,7 +445,7 @@ export function App() {
       setStatutoryAvailabilityState({
         availability: null,
         isLoading: false,
-        error: apiError instanceof Error ? apiError.message : "Parking privilege availability is temporarily unavailable."
+        error: apiError instanceof Error ? apiError.message : "Parking discount availability is temporarily unavailable."
       });
     }
   }
@@ -812,13 +818,10 @@ export function App() {
       ticketReference: resolvedSession.ticketReference ?? ticketReference,
       plateNumber: resolvedSession.plateNumber ?? plateNumber,
       entitlementType: statutoryDiscountForm.entitlementType,
-      idDocumentType: statutoryDiscountForm.idDocumentType,
-      issuingAuthority: statutoryDiscountForm.issuingAuthority,
-      expiryDate: statutoryDiscountForm.expiryDate || null,
       maskedIdReference: statutoryDiscountForm.maskedIdReference,
-      evidenceCaptureRequested: statutoryAvailabilityRequiresEvidence(statutoryAvailabilityState.availability),
+      evidenceCaptureRequested: true,
       requesterAttestation: statutoryDiscountForm.requesterAttestation,
-      attestationNotes: statutoryDiscountForm.attestationNotes || null,
+      attestationNotes: null,
       originalTariffSnapshotId: resolvedSession.tariffSnapshotId,
       beneficiaryResidencySatisfied: statutoryDiscountForm.beneficiaryResidencySatisfied
     };
@@ -829,11 +832,25 @@ export function App() {
       return;
     }
 
+    if (!statutoryIdReferenceValid) {
+      setStatutoryDiscountState((current) => ({ ...current, error: "Enter at least 4 characters for the ID No. / Control No., or leave it empty." }));
+      return;
+    }
+
+    const fileError = validateStatutoryEvidenceFile(statutoryEvidenceFile, {
+      allowedContentTypes: ["image/jpeg", "image/png"],
+      maximumContentLengthBytes: 0
+    });
+    if (fileError || !statutoryEvidenceFile) {
+      setStatutoryEvidenceFileError(fileError ?? "Choose a JPEG or PNG photo before submitting.");
+      return;
+    }
+
     const coveredEntitlements = getCoveredStatutoryEntitlementTypes(statutoryAvailabilityState.availability);
     if (!coveredEntitlements.includes(statutoryDiscountForm.entitlementType)) {
       setStatutoryDiscountState((current) => ({
         ...current,
-        error: "Parking privilege requests are not available for this parking session. You may continue with the regular parking amount.",
+        error: "Parking discount requests are not available for this parking session. You may continue with the regular parking amount.",
         message: ""
       }));
       return;
@@ -844,6 +861,9 @@ export function App() {
       statutoryDiscountState.idempotencyKey ||
       createStatutoryDecisionIdempotencyKey(resolvedSession.parkingSessionId, statutoryDiscountForm.entitlementType);
     const correlationId = statutoryDiscountState.correlationId || createRequestReference();
+    const retryDecision = pendingEvidenceDecision.current?.parkingSessionId === resolvedSession.parkingSessionId
+      ? pendingEvidenceDecision.current
+      : null;
 
     setStatutoryDiscountState((current) => ({
       ...current,
@@ -859,21 +879,37 @@ export function App() {
       parkingSessionId: resolvedSession.parkingSessionId,
       entitlementType: statutoryDiscountForm.entitlementType,
       decisionIdempotencyKey: idempotencyKey,
+      statutoryDiscountDecisionCommandId: retryDecision?.statutoryDiscountDecisionCommandId,
       requestReference,
       correlationId,
-      stage: "DECISION_SUBMITTING"
+      stage: retryDecision ? "DECISION_PENDING" : "DECISION_SUBMITTING"
     });
     saveStatutoryRecovery(submittingRecord);
     setError("");
 
     try {
-      const decision = await submitStatutoryDiscountDecision(
-        buildCurrentStatutoryDiscountRequest(requestReference),
-        idempotencyKey,
-        correlationId
-      );
+      const decision = retryDecision
+        ? retryDecision
+        : await submitStatutoryDiscountDecision(
+            buildCurrentStatutoryDiscountRequest(requestReference),
+            idempotencyKey,
+            correlationId
+          );
+      pendingEvidenceDecision.current = decision;
+
+      updateRecoveryFromDecision(decision, {
+        ...submittingRecord,
+        parkingSessionId: decision.parkingSessionId,
+        entitlementType: normalizeEntitlementType(decision.entitlementType, statutoryDiscountForm.entitlementType),
+        stage: getStatutoryRecoveryStageFromDecision(decision)
+      });
+      setStatutoryDiscountState((current) => ({ ...current, message: "Uploading the required photo for review..." }));
+      const evidence = await uploadEvidenceForNewStatutoryRequest(decision.statutoryDiscountDecisionCommandId, statutoryEvidenceFile);
+      setEvidenceReviewability({ decisionId: decision.statutoryDiscountDecisionCommandId, ready: evidence.readyForReview });
+      pendingEvidenceDecision.current = null;
 
       setShowStatutoryDiscountForm(false);
+      setStatutoryEvidenceFile(null);
       setStatutoryDiscountState((current) => ({
         ...current,
         decision,
@@ -882,12 +918,6 @@ export function App() {
         message: getStatutoryDiscountStatusCopy(decision).body,
         error: ""
       }));
-      updateRecoveryFromDecision(decision, {
-        ...submittingRecord,
-        parkingSessionId: decision.parkingSessionId,
-        entitlementType: normalizeEntitlementType(decision.entitlementType, statutoryDiscountForm.entitlementType),
-        stage: getStatutoryRecoveryStageFromDecision(decision)
-      });
     } catch (apiError) {
       setStatutoryDiscountState((current) => ({
         ...current,
@@ -1179,7 +1209,13 @@ export function App() {
 
       {!summary && statutoryDiscountState.decision && (
         <StatutoryDiscountRequestPanel
+          evidenceReviewable={evidenceReviewability?.decisionId === statutoryDiscountState.decision.statutoryDiscountDecisionCommandId && evidenceReviewability.ready}
+          onEvidenceReviewabilityChange={(decisionId, ready) => setEvidenceReviewability({ decisionId, ready })}
+          evidenceRetryPending={false}
           form={statutoryDiscountForm}
+          evidenceFile={null}
+          evidenceFileError=""
+          idReferenceValid={true}
           state={statutoryDiscountState}
           availabilityState={statutoryAvailabilityState}
           pendingLifecycle={statutoryPendingLifecycle}
@@ -1189,6 +1225,8 @@ export function App() {
           onShowForm={() => undefined}
           onCancel={() => undefined}
           onFormChange={setStatutoryDiscountForm}
+          onIdReferenceValidityChange={() => undefined}
+          onEvidenceFileChange={() => undefined}
           onSubmit={() => undefined}
           onRefresh={() => void handleRefreshStatutoryDecision()}
           onRefreshAvailability={() => undefined}
@@ -1277,7 +1315,13 @@ export function App() {
 
         {summary && stage === "SESSION_RESOLVED" && !isPaymentComplete && !isPayablePending && (
           <StatutoryDiscountRequestPanel
+            evidenceReviewable={Boolean(statutoryDiscountState.decision && evidenceReviewability?.decisionId === statutoryDiscountState.decision.statutoryDiscountDecisionCommandId && evidenceReviewability.ready)}
+            onEvidenceReviewabilityChange={(decisionId, ready) => setEvidenceReviewability({ decisionId, ready })}
+            evidenceRetryPending={Boolean(pendingEvidenceDecision.current)}
             form={statutoryDiscountForm}
+            evidenceFile={statutoryEvidenceFile}
+            evidenceFileError={statutoryEvidenceFileError}
+            idReferenceValid={statutoryIdReferenceValid}
             state={statutoryDiscountState}
             availabilityState={statutoryAvailabilityState}
             pendingLifecycle={statutoryPendingLifecycle}
@@ -1297,11 +1341,23 @@ export function App() {
             onCancel={() => {
               setShowStatutoryDiscountForm(false);
               setStatutoryDiscountForm(defaultStatutoryDiscountForm);
+              setStatutoryEvidenceFile(null);
+              setStatutoryEvidenceFileError("");
+              setStatutoryIdReferenceValid(true);
               setStatutoryDiscountState(emptyStatutoryDiscountUiState);
               setStatutoryPendingLifecycle(null);
               clearStatutoryRecovery();
             }}
             onFormChange={setStatutoryDiscountForm}
+            onIdReferenceValidityChange={setStatutoryIdReferenceValid}
+            onEvidenceFileChange={(file) => {
+              const error = validateStatutoryEvidenceFile(file, {
+                allowedContentTypes: ["image/jpeg", "image/png"],
+                maximumContentLengthBytes: 0
+              });
+              setStatutoryEvidenceFile(error ? null : file);
+              setStatutoryEvidenceFileError(error ?? "");
+            }}
             onSubmit={() => void handleSubmitStatutoryDiscount()}
             onRefresh={() => void handleRefreshStatutoryDecision()}
             onRefreshAvailability={() => void refreshStatutoryAvailability(summary)}
@@ -1481,7 +1537,13 @@ export function App() {
 }
 
 function StatutoryDiscountRequestPanel({
+  evidenceReviewable,
+  onEvidenceReviewabilityChange,
+  evidenceRetryPending,
   form,
+  evidenceFile,
+  evidenceFileError,
+  idReferenceValid,
   state,
   availabilityState,
   pendingLifecycle,
@@ -1491,6 +1553,8 @@ function StatutoryDiscountRequestPanel({
   onShowForm,
   onCancel,
   onFormChange,
+  onIdReferenceValidityChange,
+  onEvidenceFileChange,
   onSubmit,
   onRefresh,
   onRefreshAvailability,
@@ -1500,7 +1564,13 @@ function StatutoryDiscountRequestPanel({
   showSupportReference,
   parkingSummary
 }: {
+  evidenceReviewable: boolean;
+  onEvidenceReviewabilityChange: (decisionId: string, ready: boolean) => void;
+  evidenceRetryPending: boolean;
   form: StatutoryDiscountFormState;
+  evidenceFile: File | null;
+  evidenceFileError: string;
+  idReferenceValid: boolean;
   state: StatutoryDiscountUiState;
   availabilityState: StatutoryDiscountAvailabilityUiState;
   pendingLifecycle: WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse | null;
@@ -1510,6 +1580,8 @@ function StatutoryDiscountRequestPanel({
   onShowForm: () => void;
   onCancel: () => void;
   onFormChange: (form: StatutoryDiscountFormState) => void;
+  onIdReferenceValidityChange: (valid: boolean) => void;
+  onEvidenceFileChange: (file: File | null) => void;
   onSubmit: () => void;
   onRefresh: () => void;
   onRefreshAvailability: () => void;
@@ -1520,7 +1592,14 @@ function StatutoryDiscountRequestPanel({
   parkingSummary: ParkingSessionResolveResponse | null;
 }) {
   const decision = state.decision;
-  const copy = decision ? getStatutoryDiscountStatusCopy(decision) : null;
+  const evidencePending = Boolean(decision && !evidenceReviewable &&
+    decision.decisionCommandStatus.toUpperCase() === "AWAITING_REVIEW" &&
+    decision.decisionResultStatus?.toUpperCase() === "NOT_DECIDED" &&
+    decision.payableBasisReadinessStatus.toUpperCase() === "AWAITING_REVIEW" &&
+    !decision.safeErrorCode);
+  const copy = evidencePending
+    ? { heading: "Evidence processing", body: "The photo is being checked. The request will be available for review once the evidence is ready.", tone: "pending" }
+    : decision ? getStatutoryDiscountStatusCopy(decision) : null;
   const availabilityCopy = getStatutoryAvailabilityCopy(availabilityState);
   const requiresResidencyConfirmation = availabilityState.availability?.residencyRequirement?.toUpperCase() === "RESIDENT_ONLY";
   const zeroPayableCompletion = Boolean(decision && isZeroPayableStatutoryDecision(decision));
@@ -1557,20 +1636,20 @@ function StatutoryDiscountRequestPanel({
       {!decision && !showForm && (
         <p className="statutory-copy">
           {canStartRequest
-            ? "Submit safe entitlement details for review. Payment remains unavailable until review and payable-basis application are complete; WebPay does not approve the entitlement."
+            ? "Submit Senior Citizen or PWD ID for review. Discount remains unavailable until reviewed and approved."
             : "Regular parking payment remains available."}
         </p>
       )}
 
       {showForm && canStartRequest && (
         <div className="statutory-form">
+          <p className="statutory-copy">Submit Senior Citizen or PWD ID for review. Discount remains unavailable until reviewed and approved.</p>
           <fieldset disabled={state.isSubmitting || state.isApplying}>
-            <legend>Entitlement details for review</legend>
-
             <label className="field">
-              <span>Entitlement type</span>
+              <span>Benefit type</span>
               <select
                 value={form.entitlementType}
+                disabled={evidenceRetryPending}
                 onChange={(event) => onFormChange({ ...form, entitlementType: event.target.value as StatutoryDiscountEntitlementType })}
               >
                 {coveredEntitlements.includes("SENIOR_CITIZEN") && <option value="SENIOR_CITIZEN">Senior Citizen</option>}
@@ -1578,42 +1657,11 @@ function StatutoryDiscountRequestPanel({
               </select>
             </label>
 
-            <label className="field">
-              <span>ID document type</span>
-              <input
-                name="idDocumentType"
-                value={form.idDocumentType}
-                onChange={(event) => onFormChange({ ...form, idDocumentType: event.target.value })}
-                placeholder="OSCA, PWD ID, or equivalent"
-                autoComplete="off"
-              />
-            </label>
-
-            <label className="field">
-              <span>Issuing authority</span>
-              <input
-                name="issuingAuthority"
-                value={form.issuingAuthority}
-                onChange={(event) => onFormChange({ ...form, issuingAuthority: event.target.value })}
-                placeholder="City, municipality, or issuing office"
-                autoComplete="off"
-              />
-            </label>
-
-            <label className="field">
-              <span>Expiry date</span>
-              <input
-                name="expiryDate"
-                type="date"
-                value={form.expiryDate}
-                onChange={(event) => onFormChange({ ...form, expiryDate: event.target.value })}
-              />
-            </label>
-
             <AutomaticMaskedIdInput
               value={form.maskedIdReference}
-              disabled={state.isSubmitting || state.isApplying}
+              disabled={state.isSubmitting || state.isApplying || evidenceRetryPending}
               onChange={(maskedIdReference) => onFormChange({ ...form, maskedIdReference })}
+              onValidityChange={onIdReferenceValidityChange}
             />
 
             <label className="checkbox-field">
@@ -1621,9 +1669,10 @@ function StatutoryDiscountRequestPanel({
                 name="requesterAttestation"
                 type="checkbox"
                 checked={form.requesterAttestation}
+                disabled={evidenceRetryPending}
                 onChange={(event) => onFormChange({ ...form, requesterAttestation: event.target.checked })}
               />
-              <span>I confirm these entitlement details are correct and require review.</span>
+              <span>I confirm this request is accurate and understand that the discount requires review and approval.</span>
             </label>
 
             {requiresResidencyConfirmation && (
@@ -1632,29 +1681,26 @@ function StatutoryDiscountRequestPanel({
                   name="beneficiaryResidencySatisfied"
                   type="checkbox"
                   checked={form.beneficiaryResidencySatisfied}
+                  disabled={evidenceRetryPending}
                   onChange={(event) => onFormChange({ ...form, beneficiaryResidencySatisfied: event.target.checked })}
                 />
-                <span>I confirm the beneficiary is a resident of the policy jurisdiction and that residency evidence will be reviewed.</span>
+                <span>I confirm the beneficiary is a resident of the policy jurisdiction and that residency evidence will be reviewed. Professional Parking Group reserves the right to reject or disapprove the discount based on the result of the review.</span>
               </label>
             )}
 
-            <label className="field">
-              <span>Optional note for review</span>
-              <textarea
-                name="attestationNotes"
-                value={form.attestationNotes}
-                onChange={(event) => onFormChange({ ...form, attestationNotes: event.target.value })}
-                maxLength={240}
-                placeholder="Short safe note only. Do not enter a full ID number."
+            <label className="field evidence-file-field">
+              <span>Evidence photo (required)</span>
+              <input
+                type="file"
+                accept="image/jpeg,image/png"
+                capture="environment"
+                onChange={(event) => onEvidenceFileChange(event.currentTarget.files?.item(0) ?? null)}
               />
+              <small>A photo of the beneficiary's ID is required for review and approval. JPEG or PNG only.</small>
             </label>
+            {evidenceFile && <p className="selected-file">Selected: {evidenceFile.name}</p>}
+            {evidenceFileError && <div className="form-error" role="alert">{evidenceFileError}</div>}
           </fieldset>
-
-          {statutoryAvailabilityRequiresEvidence(availabilityState.availability) && (
-            <p className="statutory-copy">
-              A photo is required after this request is created. The photo does not approve or apply the statutory privilege.
-            </p>
-          )}
 
           {state.isSubmitting && <p role="status">Submitting statutory discount request...</p>}
           {state.error && <div className="form-error" role="alert">{state.error}</div>}
@@ -1664,7 +1710,7 @@ function StatutoryDiscountRequestPanel({
               type="button"
               className="primary-button"
               onClick={onSubmit}
-              disabled={state.isSubmitting || (requiresResidencyConfirmation && !form.beneficiaryResidencySatisfied)}
+              disabled={state.isSubmitting || !evidenceFile || !idReferenceValid || !form.requesterAttestation || (requiresResidencyConfirmation && !form.beneficiaryResidencySatisfied)}
             >
               Submit for review
             </button>
@@ -1710,7 +1756,7 @@ function StatutoryDiscountRequestPanel({
 
           {zeroPayableCompletion && (
             <div className="statutory-completion" aria-label="Statutory completion">
-              <strong>{isTerminalStatutoryDecision(decision) && decision.exitAuthorization ? "Transaction complete" : "Free parking privilege applied"}</strong>
+              <strong>{isTerminalStatutoryDecision(decision) && decision.exitAuthorization ? "Transaction complete" : "Full parking discount applied"}</strong>
               <p>Amount due: PHP 0.00. No payment is required.</p>
               {decision.zeroPayableFiscalCompletion?.fiscalPrerequisiteSatisfied && decision.zeroPayableFiscalCompletion.fiscalDocumentNumber ? (
                 <p>Sales Invoice issued. SI No: <strong>{decision.zeroPayableFiscalCompletion.fiscalDocumentNumber}</strong></p>
@@ -1738,7 +1784,7 @@ function StatutoryDiscountRequestPanel({
 
           {state.isPolling && <p role="status">Checking statutory discount status automatically...</p>}
           {state.isApplying && <p role="status">Applying approved statutory discount...</p>}
-          {state.message && <p className="statutory-copy">{state.message}</p>}
+          {state.message && !evidencePending && <p className="statutory-copy">{state.message}</p>}
           {pendingLifecycle?.classification === "FOUND" && pendingLifecycle.opaqueContinuationUrl && (
             <p className="statutory-copy">
               You may close this page and return using{" "}
@@ -1748,6 +1794,7 @@ function StatutoryDiscountRequestPanel({
           {state.error && <div className="form-error" role="alert">{state.error}</div>}
           <StatutoryEvidenceCapture
             statutoryDiscountDecisionCommandId={decision.statutoryDiscountDecisionCommandId}
+            onReviewabilityChange={onEvidenceReviewabilityChange}
           />
           <div className="statutory-actions">
             {!state.isPolling && !state.isApplying && !isTerminalStatutoryDecision(decision) && (
@@ -1806,10 +1853,10 @@ function RegularPaymentConfirmationDialog({
         aria-describedby="regular-payment-description"
       >
         <p className="eyebrow">Regular payment confirmation</p>
-        <h2 id="regular-payment-heading">Proceed without the parking privilege?</h2>
+        <h2 id="regular-payment-heading">Proceed without the parking discount?</h2>
         <div id="regular-payment-description" className="dialog-copy">
           <p>
-            The statutory parking privilege has not been applied. If you continue now, this payment will use the current
+            The statutory parking discount has not been applied. If you continue now, this payment will use the current
             regular parking amount: <strong>{amountLabel}</strong>.
           </p>
           <p>Approval after payment will not automatically refund or retroactively adjust this transaction.</p>
@@ -2203,7 +2250,7 @@ function InvoiceCustomerInformationPanel({
           />
         </label>
         <label className="field">
-          <span>Business Style</span>
+          <span>Business Style / Business Name</span>
           <input
             name="businessStyle"
             value={value.businessStyle}
@@ -3196,7 +3243,7 @@ function isRejectedStatutoryDecision(decision: WebPayStatutoryDiscountDecisionRe
 
 function getStatutoryDiscountPaymentAvailabilityCopy(decision: WebPayStatutoryDiscountDecisionResponse): string {
   if (isZeroPayableStatutoryDecision(decision)) {
-    return "The approved parking privilege reduced the amount due to PHP 0.00. No payment is required.";
+    return "The approved parking discount reduced the amount due to PHP 0.00. No payment is required.";
   }
 
   if (getAppliedStatutoryPaymentBasis(decision)) {
@@ -3204,7 +3251,7 @@ function getStatutoryDiscountPaymentAvailabilityCopy(decision: WebPayStatutoryDi
   }
 
   if (isPendingReviewStatutoryDecision(decision)) {
-    return "The parking privilege is not applied while review is pending. You may keep waiting or explicitly choose to pay the regular amount.";
+    return "The parking discount is not applied while review is pending. You may keep waiting or explicitly choose to pay the regular amount.";
   }
 
   return "Payment with the statutory discount is not ready yet. Check the request status before continuing.";
@@ -3239,15 +3286,15 @@ function getStatutoryAvailabilityCopy(
 ): { heading: string; body: string; tone: "pending" | "success" | "warning" | "error" } | null {
   if (state.isLoading) {
     return {
-      heading: "Checking parking privilege availability",
-      body: "Checking whether this parking session has an active covered Senior Citizen or PWD parking privilege.",
+      heading: "Checking parking discount availability",
+      body: "Checking whether this parking session has an active covered Senior Citizen or PWD parking discount.",
       tone: "pending"
     };
   }
 
   if (state.error) {
     return {
-      heading: "Parking privilege availability unavailable",
+      heading: "Parking discount availability unavailable",
       body: state.error,
       tone: "warning"
     };
@@ -3264,15 +3311,15 @@ function getStatutoryAvailabilityCopy(
       ? "Senior Citizen and PWD"
       : covered[0] === "SENIOR_CITIZEN" ? "Senior Citizen" : "PWD";
     return {
-      heading: "Parking privilege request available",
-      body: `${label} parking privilege requests may be submitted for review for this parking session.`,
+      heading: "Parking discount request available",
+      body: `${label} parking discount requests may be submitted for review for this parking session.`,
       tone: "success"
     };
   }
 
   return {
-    heading: "Parking privilege request not available",
-    body: "Parking privilege requests are not available for this parking session. You may continue with the regular parking amount.",
+    heading: "Parking discount request not available",
+    body: "Parking discount requests are not available for this parking session. You may continue with the regular parking amount.",
     tone: "warning"
   };
 }
@@ -3371,7 +3418,7 @@ function getCrossTabRecoveryMessage(record: WebPayStatutoryRecoveryRecord): stri
 function getStatutoryDiscountPaymentBlockMessage(decision: WebPayStatutoryDiscountDecisionResponse): string {
   if (decision.payableBasisReady) {
     if (isZeroPayableStatutoryDecision(decision)) {
-      return "No payment is required for this approved parking privilege.";
+      return "No payment is required for this approved parking discount.";
     }
 
     return getAppliedStatutoryPaymentBasis(decision)
@@ -3399,7 +3446,7 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
     }
     const fiscalDocumentNumber = decision.zeroPayableFiscalCompletion?.fiscalDocumentNumber?.trim();
     return {
-      heading: "Free parking privilege applied",
+      heading: "Full parking discount applied",
       body: fiscalDocumentNumber
         ? "The amount due is PHP 0.00. No payment is required, and the Digital Sales Invoice is available."
         : "The amount due is PHP 0.00. No payment is required; required transaction completion is in progress.",
@@ -3434,7 +3481,7 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
   if (readinessStatus === "DECISION_APPROVED_APPLICATION_NOT_REQUESTED" || readinessAction === "SUBMIT_APPLICATION_INTENT") {
     return {
       heading: "Entitlement approved",
-      body: "Central PMS is applying the approved parking privilege. This page will update automatically.",
+      body: "Central PMS is applying the approved parking discount. This page will update automatically.",
       tone: "pending"
     };
   }
@@ -3479,7 +3526,7 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
   ) {
     return {
       heading: "Awaiting review",
-      body: "Your Senior Citizen or PWD parking privilege request was received and is awaiting review. Payment remains unavailable until review and payable-basis application are complete.",
+      body: "Your Senior Citizen or PWD parking discount request was received and is awaiting review. Payment remains unavailable until review and payable-basis application are complete.",
       tone: "pending"
     };
   }
@@ -3494,7 +3541,7 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
 
   return {
     heading: "Awaiting review",
-    body: "Your Senior Citizen or PWD parking privilege request was received and is awaiting review. Payment remains unavailable until review and payable-basis application are complete.",
+    body: "Your Senior Citizen or PWD parking discount request was received and is awaiting review. Payment remains unavailable until review and payable-basis application are complete.",
     tone: "pending"
   };
 }

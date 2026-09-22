@@ -696,21 +696,7 @@ public static class WebPayPaymentIntentEndpoints
             errors.Add("entitlementType must be SENIOR_CITIZEN or PWD.");
         }
 
-        if (string.IsNullOrWhiteSpace(request.IdDocumentType))
-        {
-            errors.Add("idDocumentType is required.");
-        }
-
-        if (string.IsNullOrWhiteSpace(request.IssuingAuthority))
-        {
-            errors.Add("issuingAuthority is required.");
-        }
-
-        if (string.IsNullOrWhiteSpace(request.MaskedIdReference))
-        {
-            errors.Add("maskedIdReference is required.");
-        }
-        else if (!request.MaskedIdReference.Contains('*'))
+        if (!string.IsNullOrWhiteSpace(request.MaskedIdReference) && !request.MaskedIdReference.Contains('*'))
         {
             errors.Add("maskedIdReference must be masked.");
         }
@@ -759,10 +745,10 @@ public static class WebPayPaymentIntentEndpoints
             BlankToNull(request.TicketReference),
             BlankToNull(request.PlateNumber),
             entitlementType,
-            request.IdDocumentType!.Trim(),
-            request.IssuingAuthority!.Trim(),
+            request.IdDocumentType?.Trim() ?? string.Empty,
+            request.IssuingAuthority?.Trim() ?? string.Empty,
             request.ExpiryDate,
-            request.MaskedIdReference!.Trim(),
+            request.MaskedIdReference?.Trim() ?? string.Empty,
             request.EvidenceCaptureRequested,
             request.EvidenceReferences?.Select(static evidence => new CentralPmsStatutoryDiscountEvidenceReference(
                 evidence.EvidenceType!.Trim(),

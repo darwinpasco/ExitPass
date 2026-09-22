@@ -440,6 +440,25 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
+    public async Task SubmitAsync_WhenWebPayLeavesReviewerFactsAndOptionalIdEmpty_CreatesAwaitingReviewDecision()
+    {
+        var fixture = CreateFixture();
+        var command = Command(sourceChannel: "WEBPAY", applyPayableBasis: false, maskedIdReference: "") with
+        {
+            IdDocumentType = "",
+            IssuingAuthority = "",
+            ExpiryDate = null,
+            EvidenceReferences = []
+        };
+
+        var result = await fixture.Sut.SubmitAsync(command, CancellationToken.None);
+
+        result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+        fixture.Repository.LastDecisionCommand.Should().NotBeNull();
+        fixture.Repository.ApplicationCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task SubmitAsync_WhenAptSubmitsPermittedFacts_CreatesAwaitingReviewDecisionOnly()
     {
         var fixture = CreateFixture();

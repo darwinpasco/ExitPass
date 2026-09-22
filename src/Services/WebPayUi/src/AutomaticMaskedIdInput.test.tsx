@@ -18,7 +18,7 @@ describe("AutomaticMaskedIdInput", () => {
   it("accepts keyboard entry and removes the full value from the DOM after blur", async () => {
     const user = userEvent.setup();
     const { container } = render(<Harness />);
-    const input = screen.getByLabelText(/^ID reference$/i);
+    const input = screen.getByLabelText(/^ID No\. \/ Control No\. \(optional\)$/i);
 
     await user.type(input, "SC12345678");
     expect(input).toHaveValue("SC12345678");
@@ -26,14 +26,14 @@ describe("AutomaticMaskedIdInput", () => {
 
     expect(input).toHaveValue("SC****5678");
     expect(container.innerHTML).not.toContain("SC12345678");
-    expect(input).toHaveAccessibleDescription(/automatically shows only the first 2 and last 4/i);
+    expect(input).toHaveAccessibleDescription(/WebPay masks the reference automatically/i);
     expect(screen.queryByText(/type asterisks|with asterisks/i)).not.toBeInTheDocument();
   });
 
   it("supports pasted input, deletion, and replacement without revealing the prior value", async () => {
     const user = userEvent.setup();
     render(<Harness />);
-    const input = screen.getByLabelText(/^ID reference$/i);
+    const input = screen.getByLabelText(/^ID No\. \/ Control No\. \(optional\)$/i);
 
     await user.click(input);
     await user.paste("ABCD1239");
@@ -51,12 +51,12 @@ describe("AutomaticMaskedIdInput", () => {
   it("clears short and malformed values rather than leaving them visible", async () => {
     const user = userEvent.setup();
     render(<Harness />);
-    const input = screen.getByLabelText(/^ID reference$/i);
+    const input = screen.getByLabelText(/^ID No\. \/ Control No\. \(optional\)$/i);
 
-    await user.type(input, "AB1234");
+    await user.type(input, "AB1");
     await user.tab();
     expect(input).toHaveValue("");
-    expect(screen.getByRole("alert")).toHaveTextContent(/at least 7 characters/i);
+    expect(screen.getByRole("alert")).toHaveTextContent(/at least 4 characters/i);
 
     await user.click(input);
     fireEvent.change(input, { target: { value: "SC1234ñ5678" } });
@@ -67,7 +67,7 @@ describe("AutomaticMaskedIdInput", () => {
   it("does not persist raw or masked values in browser storage", async () => {
     const user = userEvent.setup();
     render(<Harness />);
-    const input = screen.getByLabelText(/^ID reference$/i);
+    const input = screen.getByLabelText(/^ID No\. \/ Control No\. \(optional\)$/i);
 
     fireEvent.change(input, { target: { value: "SC12345678" } });
     fireEvent.blur(input);
