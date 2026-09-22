@@ -266,6 +266,31 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             }
         }
 
+        var review = await _canonicalReviews.GetAsync(
+            command.DecisionCommandReference, command.CorrelationId, cancellationToken).ConfigureAwait(false);
+        if (review is null)
+        {
+            return NotFound<ManagementStatutoryBenefitDecisionResult>(command.CorrelationId);
+        }
+
+        if (review.ReviewStatus == StatutoryDiscountServiceChannelReviewStatuses.PendingReview && review.EvidenceRequired)
+        {
+            var evidence = await _evidenceReview.ReadAuthorizedAsync(
+                command.DecisionCommandReference,
+                new StatutoryEvidenceAuthorizedReviewContext(
+                    metadata.SiteReference,
+                    review.SiteGroupId,
+                    review.SourceChannel,
+                    command.CorrelationId,
+                    new StatutoryEvidenceActor(actor.UserId, null, MediatedEvidenceAuditSourceChannel)),
+                cancellationToken).ConfigureAwait(false);
+            if (evidence?.Items.Any(item => item.ReviewabilityStatus == "REVIEWABLE" && item.PreviewPermitted) != true)
+            {
+                await AuditAsync("STATUTORY_BENEFIT_REVIEW_DECISION", "REJECTED", "STATUTORY_BENEFIT_EVIDENCE_NOT_REVIEWABLE", actor, metadata.SiteReference, command.CorrelationId, cancellationToken);
+                return Invalid<ManagementStatutoryBenefitDecisionResult>("STATUTORY_BENEFIT_EVIDENCE_NOT_REVIEWABLE", command.CorrelationId);
+            }
+        }
+
         var result = await _decisions.DecideAuthorizedAsync(
             new AuthorizedStatutoryBenefitDecisionCommand(
                 command.DecisionCommandReference,
@@ -476,7 +501,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             source.IdDocumentType ?? string.Empty,
             source.IssuingAuthority ?? string.Empty,
             source.ExpiryDate,
-            source.MaskedIdReference ?? throw new InvalidOperationException("The approved statutory-benefit request lacks a masked ID reference."),
+            source.MaskedIdReference ?? string.Empty,
             source.EvidenceRequired,
             source.EvidenceReferences.Select(evidence => new StatutoryDiscountEvidenceReference(
                 evidence.EvidenceType,

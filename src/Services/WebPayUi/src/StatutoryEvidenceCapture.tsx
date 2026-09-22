@@ -27,7 +27,10 @@ const captureLifecycleStates = new Set([
 ]);
 const previewLifecycleStates = new Set(["REVIEWABLE", "REVIEW_PENDING", "APPROVED", "APPLIED"]);
 
-export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }: { statutoryDiscountDecisionCommandId: string }) {
+export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId, onReviewabilityChange }: {
+  statutoryDiscountDecisionCommandId: string;
+  onReviewabilityChange?: (decisionId: string, ready: boolean) => void;
+}) {
   const [channel, setChannel] = useState<WebPayStatutoryEvidenceChannelResponse | null>(null);
   const [captureState, setCaptureState] = useState<CaptureState>("loading");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -206,6 +209,7 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
 
     committedEvidenceSequence.current = sequence;
     setChannel(response);
+    onReviewabilityChange?.(statutoryDiscountDecisionCommandId, response.readyForReview);
     transitionCaptureState("ready");
     return true;
   }
@@ -459,11 +463,11 @@ function getLifecycleCopy(channel: WebPayStatutoryEvidenceChannelResponse | null
     case "MALWARE_DETECTED":
       return { label: "Unsafe file detected", message: "The selected file cannot be used. Choose another photo if replacement is allowed.", tone: "error" };
     case "REVIEWABLE":
-      return { label: "Ready for review", message: "The photo is ready for review. This does not mean the statutory privilege is approved.", tone: "success" };
+      return { label: "Ready for review", message: "The photo is ready for review. This does not mean the statutory discount is approved.", tone: "success" };
     case "REVIEW_PENDING":
-      return { label: "Awaiting review", message: "The photo was received and the statutory privilege request is awaiting review.", tone: "pending" };
+      return { label: "Awaiting review", message: "The photo was received and the statutory discount request is awaiting review.", tone: "pending" };
     case "APPROVED":
-      return { label: "Approved", message: "The request was approved. Central PMS is applying the governed parking privilege automatically.", tone: "success" };
+      return { label: "Approved", message: "The request was approved. Central PMS is applying the governed parking discount automatically.", tone: "success" };
     case "REJECTED":
       return { label: "Not approved", message: "The request was not approved. Regular parking payment remains available.", tone: "warning" };
     case "APPLIED":

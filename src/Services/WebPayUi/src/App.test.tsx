@@ -21,6 +21,12 @@ vi.mock("jspdf", () => ({
 }));
 vi.mock("qrcode", () => ({ default: { toDataURL: documentDownloadMocks.qrToDataUrl } }));
 
+const evidenceUploadMocks = vi.hoisted(() => ({ upload: vi.fn() }));
+vi.mock("./statutoryEvidence", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./statutoryEvidence")>(),
+  uploadEvidenceForNewStatutoryRequest: evidenceUploadMocks.upload
+}));
+
 vi.mock("@zxing/browser", () => ({
   BrowserQRCodeReader: vi.fn().mockImplementation(() => ({
     decodeFromVideoDevice: vi.fn().mockRejectedValue(new DOMException("Denied", "NotAllowedError"))
@@ -179,7 +185,9 @@ function stubWebPayFetch(options?: {
           : isStatutoryRead
             ? options?.statutoryReadPayload ?? statutoryDecisionResponse()
           : isStatutoryEvidence
-            ? options?.statutoryEvidencePayload ?? statutoryEvidenceResponse()
+            ? options?.statutoryEvidencePayload ?? (evidenceUploadMocks.upload.mock.calls.length > 0
+                ? statutoryEvidenceResponse({ lifecycleClassification: "REVIEWABLE", readyForReview: true })
+                : statutoryEvidenceResponse())
           : options?.intentPayload ?? successResponse
       )
     };
@@ -460,6 +468,8 @@ beforeEach(() => {
     toDataURL: () => "data:image/png;base64,c2FsZXMtaW52b2ljZQ=="
   });
   documentDownloadMocks.qrToDataUrl.mockResolvedValue("data:image/png;base64,ZXhpdC1xcg==");
+  evidenceUploadMocks.upload.mockReset();
+  evidenceUploadMocks.upload.mockResolvedValue(statutoryEvidenceResponse({ lifecycleClassification: "VALIDATION_PENDING" }));
   localStorage.clear();
 });
 
@@ -484,10 +494,9 @@ describe("ExitPass WebPay UI", () => {
   async function submitBasicStatutoryRequest() {
     await resolveTicket("TICKET-STAT-104");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
-    await userEvent.type(screen.getByLabelText(/id document type/i), "OSCA");
-    await userEvent.type(screen.getByLabelText(/issuing authority/i), "Quezon City");
-    await userEvent.type(screen.getByLabelText(/^id reference$/i), "SC00001234");
-    await userEvent.click(screen.getByLabelText(/i confirm these entitlement details/i));
+    await userEvent.type(screen.getByLabelText(/id no\. \/ control no\./i), "SC00001234");
+    await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
+    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
   }
 
@@ -499,9 +508,91 @@ describe("ExitPass WebPay UI", () => {
     await resolveTicket("TICKET-STAT-104");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
 
-    expect(screen.getByLabelText(/^id reference$/i)).toBeInTheDocument();
-    expect(screen.getByText(/automatically shows only the first 2 and last 4 characters/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/id no\. \/ control no\./i)).toBeInTheDocument();
+    expect(screen.getByText(/webpay masks the reference automatically/i)).toBeInTheDocument();
     expect(screen.queryByText(/use a masked reference with asterisks/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Submit Senior Citizen or PWD ID for review. Discount remains unavailable until reviewed and approved.")).toBeInTheDocument();
+    expect(screen.getByText("A photo of the beneficiary's ID is required for review and approval. JPEG or PNG only.")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/id document type/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/issuing authority/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/expiry date/i)).not.toBeInTheDocument();
+  });
+
+  it("requires a selected JPEG or PNG before the statutory decision is submitted", async () => {
+    const fetchMock = stubWebPayFetch();
+    render(<App />);
+    await resolveTicket("TICKET-PHOTO-REQUIRED");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+    await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
+
+    const submit = screen.getByRole("button", { name: /submit for review/i });
+    expect(submit).toBeDisabled();
+    expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions")).toHaveLength(0);
+
+    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["pdf"], "id.pdf", { type: "application/pdf" }), { applyAccept: false });
+    expect(submit).toBeDisabled();
+    expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions")).toHaveLength(0);
+
+    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    expect(submit).toBeEnabled();
+  });
+
+  it("allows a blank optional ID and completes the protected photo upload before showing review status", async () => {
+    const fetchMock = stubWebPayFetch({ statutoryEvidencePayload: statutoryEvidenceResponse({ lifecycleClassification: "VALIDATION_PENDING" }) });
+    let completeUpload: (value: unknown) => void = () => undefined;
+    evidenceUploadMocks.upload.mockReturnValueOnce(new Promise((resolve) => { completeUpload = resolve; }));
+    render(<App />);
+    await resolveTicket("TICKET-OPTIONAL-ID");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+    await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
+    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["png-bytes"], "id.png", { type: "image/png" }));
+    await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
+
+    await waitFor(() => expect(evidenceUploadMocks.upload).toHaveBeenCalledTimes(1));
+    const decisionPost = firstRouteCall(fetchMock, "/v1/webpay/statutory-discounts/decisions");
+    const body = JSON.parse((decisionPost[1] as RequestInit).body as string);
+    expect(body.maskedIdReference).toBe("");
+    expect(body).not.toHaveProperty("idDocumentType");
+    expect(body).not.toHaveProperty("issuingAuthority");
+    expect(screen.queryByRole("heading", { name: /awaiting review/i })).not.toBeInTheDocument();
+    completeUpload(statutoryEvidenceResponse({ lifecycleClassification: "VALIDATION_PENDING" }));
+    expect(await screen.findByRole("heading", { name: /evidence processing/i })).toBeInTheDocument();
+  });
+
+  it("retries a failed photo upload against the same statutory decision", async () => {
+    const fetchMock = stubWebPayFetch();
+    evidenceUploadMocks.upload.mockRejectedValueOnce(new Error("Photo upload failed safely."));
+    render(<App />);
+    await resolveTicket("TICKET-RETRY-PHOTO");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+    await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
+    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Photo upload failed safely.");
+    expect(screen.queryByRole("heading", { name: /awaiting review/i })).not.toBeInTheDocument();
+    expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions").filter((call) => (call[1] as RequestInit)?.method === "POST")).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
+    await waitFor(() => expect(evidenceUploadMocks.upload).toHaveBeenCalledTimes(2));
+    expect(evidenceUploadMocks.upload.mock.calls[1][0]).toBe(evidenceUploadMocks.upload.mock.calls[0][0]);
+    expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions").filter((call) => (call[1] as RequestInit)?.method === "POST")).toHaveLength(1);
+  });
+
+  it("masks a four-character ID completely before submission", async () => {
+    const fetchMock = stubWebPayFetch();
+    render(<App />);
+    await resolveTicket("TICKET-FOUR-ID");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+    await userEvent.type(screen.getByLabelText(/id no\. \/ control no\./i), "AB12");
+    await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
+    expect(screen.getByLabelText(/id no\. \/ control no\./i)).toHaveValue("****");
+    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions").filter((call) => (call[1] as RequestInit)?.method === "POST")).toHaveLength(1));
+    const body = JSON.parse((firstRouteCall(fetchMock, "/v1/webpay/statutory-discounts/decisions")[1] as RequestInit).body as string);
+    expect(body.maskedIdReference).toBe("****");
+    expect(document.body.innerHTML).not.toContain("AB12");
   });
 
   it("WebPay_WhenEnterPressedInTicketInput_ResolvesSessionOnly", async () => {
@@ -553,9 +644,9 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
     await resolveTicket("TICKET-COVERED-BOTH");
 
-    expect(await screen.findByText("Parking privilege request available")).toBeInTheDocument();
+    expect(await screen.findByText("Parking discount request available")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
-    const entitlementSelect = screen.getByLabelText(/entitlement type/i);
+    const entitlementSelect = screen.getByLabelText(/benefit type/i);
     expect(entitlementSelect).toHaveTextContent("Senior Citizen");
     expect(entitlementSelect).toHaveTextContent("PWD");
     expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
@@ -570,10 +661,10 @@ describe("ExitPass WebPay UI", () => {
 
     render(<App />);
     await resolveTicket("TICKET-COVERED-SENIOR");
-    await screen.findByText("Parking privilege request available");
+    await screen.findByText("Parking discount request available");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
 
-    const entitlementSelect = screen.getByLabelText(/entitlement type/i);
+    const entitlementSelect = screen.getByLabelText(/benefit type/i);
     expect(entitlementSelect).toHaveTextContent("Senior Citizen");
     expect(entitlementSelect).not.toHaveTextContent("PWD");
     expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
@@ -588,10 +679,10 @@ describe("ExitPass WebPay UI", () => {
 
     render(<App />);
     await resolveTicket("TICKET-COVERED-PWD");
-    await screen.findByText("Parking privilege request available");
+    await screen.findByText("Parking discount request available");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
 
-    const entitlementSelect = screen.getByLabelText(/entitlement type/i);
+    const entitlementSelect = screen.getByLabelText(/benefit type/i);
     await waitFor(() => expect(entitlementSelect).toHaveValue("PWD"));
     expect(entitlementSelect).toHaveTextContent("PWD");
     expect(entitlementSelect).not.toHaveTextContent("Senior Citizen");
@@ -610,7 +701,7 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
     await resolveTicket("TICKET-NO-COVERAGE");
 
-    expect(await screen.findByText("Parking privilege request not available")).toBeInTheDocument();
+    expect(await screen.findByText("Parking discount request not available")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /request statutory discount/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/entitlement type/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/id document type/i)).not.toBeInTheDocument();
@@ -632,7 +723,7 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
     await resolveTicket("TICKET-AVAILABILITY-UNAVAILABLE");
 
-    expect(await screen.findByText("Parking privilege availability unavailable")).toBeInTheDocument();
+    expect(await screen.findByText("Parking discount availability unavailable")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /request statutory discount/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /check availability/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
@@ -789,14 +880,13 @@ describe("ExitPass WebPay UI", () => {
 
     await resolveTicket("TICKET-STAT-101");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
-    expect(screen.getByText(/Entitlement details for review/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/choose or take a clear photo/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Entitlement details for review/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/evidence photo/i)).toBeInTheDocument();
 
-    await userEvent.selectOptions(screen.getByLabelText(/entitlement type/i), "SENIOR_CITIZEN");
-    await userEvent.type(screen.getByLabelText(/id document type/i), "OSCA");
-    await userEvent.type(screen.getByLabelText(/issuing authority/i), "Quezon City");
-    await userEvent.type(screen.getByLabelText(/^id reference$/i), "SC00001234");
-    await userEvent.click(screen.getByLabelText(/i confirm these entitlement details/i));
+    await userEvent.selectOptions(screen.getByLabelText(/benefit type/i), "SENIOR_CITIZEN");
+    await userEvent.type(screen.getByLabelText(/id no\. \/ control no\./i), "SC00001234");
+    await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
+    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
 
     await waitFor(() =>
@@ -812,7 +902,11 @@ describe("ExitPass WebPay UI", () => {
     expect(body.parkingSessionId).toBe(successResponse.parkingSessionId);
     expect(body.originalTariffSnapshotId).toBe(successResponse.tariffSnapshotId);
     expect(body.maskedIdReference).toBe("SC****1234");
-    expect(body.evidenceCaptureRequested).toBe(false);
+    expect(body.evidenceCaptureRequested).toBe(true);
+    expect(body).not.toHaveProperty("idDocumentType");
+    expect(body).not.toHaveProperty("issuingAuthority");
+    expect(body).not.toHaveProperty("expiryDate");
+    expect(evidenceUploadMocks.upload).toHaveBeenCalledWith(statutoryDecisionCommandId, expect.objectContaining({ name: "id.jpg" }));
     expect(body).not.toHaveProperty("sourceChannel");
     expect(body).not.toHaveProperty("reviewerUserId");
     expect(body).not.toHaveProperty("reviewerAttestation");
@@ -834,10 +928,9 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
     await resolveTicket("TICKET-PITX-RESIDENT");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
-    await userEvent.type(screen.getByLabelText(/id document type/i), "OSCA");
-    await userEvent.type(screen.getByLabelText(/issuing authority/i), "City of Paranaque");
-    await userEvent.type(screen.getByLabelText(/^id reference$/i), "SC00001234");
-    await userEvent.click(screen.getByLabelText(/i confirm these entitlement details/i));
+    await userEvent.type(screen.getByLabelText(/id no\. \/ control no\./i), "SC00001234");
+    await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
+    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
 
     const submit = screen.getByRole("button", { name: /submit for review/i });
     expect(submit).toBeDisabled();
@@ -916,7 +1009,7 @@ describe("ExitPass WebPay UI", () => {
     await submitBasicStatutoryRequest();
 
     expect(await screen.findByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
-    expect(screen.getAllByText(/parking privilege request was received and is awaiting review/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/parking discount request was received and is awaiting review/i).length).toBeGreaterThan(0);
     expect(document.body).not.toHaveTextContent("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     expect(document.body).not.toHaveTextContent("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     expect(document.body).not.toHaveTextContent("11111111-1111-4111-8111-111111111111");
@@ -949,7 +1042,7 @@ describe("ExitPass WebPay UI", () => {
 
     await resolveTicket("TICKET-STAT-REDISCOVER");
 
-    expect(await screen.findByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /evidence processing/i })).toBeInTheDocument();
     expect(await screen.findByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^upload photo$/i })).toBeInTheDocument();
     expect(screen.getByText(/existing statutory discount request was restored/i)).toBeInTheDocument();
@@ -994,7 +1087,7 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.type(screen.getByLabelText(/plate number/i), "ABC1234");
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
 
-    expect(await screen.findByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /evidence processing/i })).toBeInTheDocument();
     expect(await screen.findByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^upload photo$/i })).toBeInTheDocument();
   });
@@ -1016,7 +1109,7 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.type(screen.getByLabelText(/plate number/i), "ABC1234");
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
 
-    expect(await screen.findByRole("heading", { name: /free parking privilege applied/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /full parking discount applied/i })).toBeInTheDocument();
     expect(screen.getAllByText("Statutory benefit").some((label) => label.parentElement?.textContent?.includes("PHP 100.00"))).toBe(true);
     expect(screen.getAllByText("Amount due").some((label) => label.parentElement?.textContent?.includes("PHP 0.00"))).toBe(true);
     expect(screen.queryByRole("heading", { name: /payment method/i })).not.toBeInTheDocument();
@@ -1087,7 +1180,7 @@ describe("ExitPass WebPay UI", () => {
     const fetchMock = stubWebPayFetch({
       statutoryRediscoveryPayload: {
         errorCode: "WEBPAY_STATUTORY_REQUEST_TEMPORARILY_UNAVAILABLE",
-        message: "The parking privilege request could not be checked right now. Please try again.",
+        message: "The parking discount request could not be checked right now. Please try again.",
         retryable: true,
         correlationId: "77777777-7777-7777-7777-777777777777"
       },
@@ -1116,11 +1209,11 @@ describe("ExitPass WebPay UI", () => {
     await waitFor(() => expect(payRegular).toBeEnabled(), { timeout: 6000 });
     await userEvent.click(payRegular);
 
-    expect(screen.getByRole("dialog", { name: /proceed without the parking privilege/i })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /proceed without the parking discount/i })).toBeInTheDocument();
     expect(screen.getByText(/approval after payment will not automatically refund or retroactively adjust/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /keep waiting/i }));
 
-    expect(screen.queryByRole("dialog", { name: /proceed without the parking privilege/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /proceed without the parking discount/i })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/v1/webpay/payment-intents"))).toHaveLength(0);
   });
@@ -1236,11 +1329,10 @@ describe("ExitPass WebPay UI", () => {
 
     await resolveTicket("TICKET-STAT-102");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
-    await userEvent.selectOptions(screen.getByLabelText(/entitlement type/i), "PWD");
-    await userEvent.type(screen.getByLabelText(/id document type/i), "PWD ID");
-    await userEvent.type(screen.getByLabelText(/issuing authority/i), "Cebu City");
-    await userEvent.type(screen.getByLabelText(/^id reference$/i), "PW00005678");
-    await userEvent.click(screen.getByLabelText(/i confirm these entitlement details/i));
+    await userEvent.selectOptions(screen.getByLabelText(/benefit type/i), "PWD");
+    await userEvent.type(screen.getByLabelText(/id no\. \/ control no\./i), "PW00005678");
+    await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
+    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
     const submit = screen.getByRole("button", { name: /submit for review/i });
     await userEvent.dblClick(submit);
 
@@ -1249,7 +1341,7 @@ describe("ExitPass WebPay UI", () => {
     expect(statutoryPosts).toHaveLength(1);
     const body = JSON.parse((statutoryPosts[0][1] as RequestInit).body as string);
     expect(body.entitlementType).toBe("PWD");
-    expect(screen.getAllByText(/parking privilege request was received and is awaiting review/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/parking discount request was received and is awaiting review/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
   });
 
@@ -1260,11 +1352,10 @@ describe("ExitPass WebPay UI", () => {
 
     await resolveTicket("TICKET-STAT-103");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
-    await userEvent.type(screen.getByLabelText(/id document type/i), "OSCA");
-    await userEvent.type(screen.getByLabelText(/issuing authority/i), "Quezon City");
-    const idInput = screen.getByLabelText(/^id reference$/i);
+    const idInput = screen.getByLabelText(/id no\. \/ control no\./i);
     await userEvent.type(idInput, "123456789012");
-    await userEvent.click(screen.getByLabelText(/i confirm these entitlement details/i));
+    await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
+    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
 
     await screen.findByRole("heading", { name: /awaiting review/i });
@@ -1283,15 +1374,13 @@ describe("ExitPass WebPay UI", () => {
 
     await resolveTicket("TICKET-STAT-103");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
-    await userEvent.type(screen.getByLabelText(/id document type/i), "OSCA");
-    await userEvent.type(screen.getByLabelText(/issuing authority/i), "Quezon City");
-    const idInput = screen.getByLabelText(/^id reference$/i);
-    await userEvent.type(idInput, "AB1234");
+    const idInput = screen.getByLabelText(/id no\. \/ control no\./i);
+    await userEvent.type(idInput, "AB1");
     await userEvent.tab();
 
     expect(idInput).toHaveValue("");
-    expect(await screen.findByRole("alert")).toHaveTextContent(/at least 7 characters/i);
-    expect(document.body.innerHTML).not.toContain("AB1234");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/at least 4 characters/i);
+    expect(document.body.innerHTML).not.toContain("AB1");
     expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/statutory-discounts/decisions"))).toHaveLength(0);
   });
 
@@ -1469,7 +1558,7 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
     await submitBasicStatutoryRequest();
 
-    expect(await screen.findByRole("heading", { name: /free parking privilege applied/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /full parking discount applied/i })).toBeInTheDocument();
     expect(screen.getAllByText(/No payment is required/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/SI-00000024/i)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /payment method/i })).not.toBeInTheDocument();
@@ -1706,7 +1795,7 @@ describe("ExitPass WebPay UI", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: /free parking privilege applied/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /full parking discount applied/i })).toBeInTheDocument();
     expect(screen.getAllByText("Amount due").some((label) => label.parentElement?.textContent?.includes("PHP 0.00"))).toBe(true);
     expect(screen.queryByRole("button", { name: /refresh status/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /apply approved discount/i })).not.toBeInTheDocument();
@@ -2327,6 +2416,11 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.queryByText("PaymentRequired")).not.toBeInTheDocument();
     expect(screen.queryByText("Not Started")).not.toBeInTheDocument();
     expect(screen.getByText("Fee Valid Until")).toBeInTheDocument();
+    const summary = screen.getByRole("region", { name: /mactan newtown parking/i });
+    for (const label of ["Ticket", "Plate", "Entry Time", "Fee Valid Until"]) {
+      const row = Array.from(summary.querySelectorAll("dl > div")).find((candidate) => candidate.querySelector("dt")?.textContent === label);
+      expect(row?.querySelector("dd")?.textContent).toBeTruthy();
+    }
     expect(screen.getByText("TICKET-TEST-023")).toBeInTheDocument();
     expect(screen.getByText("ABC 1234")).toBeInTheDocument();
     expect(screen.getAllByText(/May 18, 2026/).length).toBeGreaterThanOrEqual(2);

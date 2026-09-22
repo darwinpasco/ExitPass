@@ -132,8 +132,34 @@ public sealed class PostgresManagementStatutoryBenefitReviewRepository : IManage
             WHERE r.source_channel IN ('WEBPAY', 'ASSISTED_PAYMENT_TERMINAL')
               AND r.site_id = ANY(@authorized_sites)
               AND (@site_reference IS NULL OR r.site_id = @site_reference)
-              AND (@status = 'ALL' OR r.review_status = @status)
-              AND (@source_channel IS NULL OR r.source_channel = @source_channel)
+               AND (@status = 'ALL' OR r.review_status = @status)
+               AND (
+                    r.source_channel <> 'WEBPAY'
+                    OR r.review_status <> 'PENDING_REVIEW'
+                    OR NOT d.evidence_required
+                    OR EXISTS (
+                        SELECT 1
+                        FROM discounts.statutory_evidence_sets evidence_set
+                        JOIN discounts.statutory_evidence_items item
+                          ON item.statutory_evidence_set_id = evidence_set.statutory_evidence_set_id
+                        WHERE evidence_set.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
+                          AND evidence_set.parking_session_id = r.parking_session_id
+                          AND evidence_set.site_id IS NOT DISTINCT FROM r.site_id
+                          AND evidence_set.site_group_id IS NOT DISTINCT FROM r.site_group_id
+                          AND evidence_set.source_channel = r.source_channel
+                          AND evidence_set.set_status <> 'TOMBSTONED'
+                          AND evidence_set.retention_status IN ('ACTIVE', 'HELD')
+                          AND evidence_set.deletion_status = 'NOT_REQUESTED'
+                          AND item.upload_status = 'UPLOADED'
+                          AND item.validation_status = 'PASSED'
+                          AND item.scan_status IN ('CLEAN', 'PASSED')
+                          AND item.reviewability_status = 'REVIEWABLE'
+                          AND item.binding_status NOT IN ('REJECTED', 'SUPERSEDED')
+                          AND item.retention_status IN ('ACTIVE', 'HELD')
+                          AND item.deletion_status = 'NOT_REQUESTED'
+                    )
+               )
+               AND (@source_channel IS NULL OR r.source_channel = @source_channel)
               AND (@benefit_type IS NULL OR r.entitlement_type = @benefit_type)
               AND (@submitted_from IS NULL OR r.submitted_at >= @submitted_from)
               AND (@submitted_to IS NULL OR r.submitted_at < @submitted_to)

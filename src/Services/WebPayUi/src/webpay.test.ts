@@ -239,7 +239,7 @@ describe("WebPay QR and payment intent helpers", () => {
       )
     ).rejects.toMatchObject({
       name: "StatutoryDiscountDecisionError",
-      message: "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.",
+      message: "Parking discount availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.",
       retryable: true
     } satisfies Partial<StatutoryDiscountDecisionError>);
   });
@@ -427,7 +427,7 @@ describe("WebPay QR and payment intent helpers", () => {
         "77777777-7777-7777-7777-777777777777",
         fetchMock as never
       )
-    ).rejects.toThrow("Parking-privilege requests are temporarily unavailable");
+    ).rejects.toThrow("Parking discount requests are temporarily unavailable");
   });
 
   it("WebPay_WhenStatutoryServiceUnavailable_ShowsSafeRetryGuidance", async () => {

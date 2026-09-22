@@ -448,6 +448,32 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     }
 
     [Fact]
+    public async Task WebPayStatutoryDiscountSubmit_WhenReviewerFactsAreOmitted_AcceptsOptionalId()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
+        using var client = CreateClient(state);
+        var body = StatutoryDecisionRequest();
+        body.IdDocumentType = null;
+        body.IssuingAuthority = null;
+        body.ExpiryDate = null;
+        body.MaskedIdReference = null;
+        body.EvidenceReferences = [];
+        using var request = new HttpRequestMessage(HttpMethod.Post, StatutoryDecisionRoute)
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.Add("Idempotency-Key", "statutory-decision:webpay:optional-id");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(string.Empty, state.CapturedStatutorySubmitRequest!.IdDocumentType);
+        Assert.Equal(string.Empty, state.CapturedStatutorySubmitRequest.IssuingAuthority);
+        Assert.Equal(string.Empty, state.CapturedStatutorySubmitRequest.MaskedIdReference);
+        Assert.True(state.CapturedStatutorySubmitRequest.EvidenceCaptureRequested);
+    }
+
+    [Fact]
     public async Task WebPayStatutoryReadback_PreservesCanonicalZeroPayableCompletionFacts()
     {
         var state = new WebPayEndpointState("QRPH", "PAYMONGO", null)

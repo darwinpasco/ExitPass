@@ -1,4 +1,6 @@
+using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.Infrastructure.ManagementPlatform;
 using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
@@ -11,6 +13,34 @@ namespace ExitPass.CentralPms.IntegrationTests.Persistence;
 [Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
 {
+    [Fact]
+    public async Task ManagementQueue_HidesEvidencePendingWebPayRequestUntilCurrentEvidenceIsReviewable()
+    {
+        var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            nameof(ManagementQueue_HidesEvidencePendingWebPayRequestUntilCurrentEvidenceIsReviewable),
+            StatutoryDiscountSourceChannels.WebPay);
+        try
+        {
+            var repository = new PostgresManagementStatutoryBenefitReviewRepository(
+                StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+            var query = new ManagementStatutoryBenefitReviewQuery(
+                "PENDING_REVIEW", seeded.Context.SiteId, "WEBPAY", null, null, null,
+                seeded.Context.ParkingSessionId.ToString(), 1, 25, seeded.Context.CorrelationId);
+
+            var pending = await repository.ListAsync(query, new HashSet<Guid> { seeded.Context.SiteId }, CancellationToken.None);
+            pending.Items.Should().NotContain(item => item.DecisionCommandReference == seeded.Decision.StatutoryDiscountDecisionCommandId);
+
+            await ReplaceIntakeEvidenceWithCanonicalReviewableEvidenceAsync(seeded, Guid.NewGuid());
+            var reviewable = await repository.ListAsync(query, new HashSet<Guid> { seeded.Context.SiteId }, CancellationToken.None);
+            reviewable.Items.Should().ContainSingle(item => item.DecisionCommandReference == seeded.Decision.StatutoryDiscountDecisionCommandId);
+        }
+        finally
+        {
+            await DeleteCanonicalEvidenceAsync(seeded.Decision.StatutoryDiscountDecisionCommandId);
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
+        }
+    }
+
     [Fact]
     public async Task UpsertIntake_ReplayIsIdempotent_AndListReturnsOnlyEligiblePendingRows()
     {
