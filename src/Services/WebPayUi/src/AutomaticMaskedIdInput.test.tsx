@@ -48,6 +48,17 @@ describe("AutomaticMaskedIdInput", () => {
     expect(input).toHaveValue("*********6789");
   });
 
+  it("keeps an exactly four-character reference fully visible", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const input = screen.getByLabelText(/^ID No\. \/ Control No\. \(optional\)$/i);
+
+    await user.type(input, "ABCD");
+    await user.tab();
+
+    expect(input).toHaveValue("ABCD");
+  });
+
   it("clears short and malformed values rather than leaving them visible", async () => {
     const user = userEvent.setup();
     render(<Harness />);

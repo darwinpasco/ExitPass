@@ -1046,6 +1046,25 @@ summary:focus-visible {
   gap: 10px;
 }
 
+.regular-payment-choice {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 16px;
+  border-top: 1px solid #d0d5dd;
+}
+
+.regular-payment-button {
+  width: 100%;
+  min-height: 52px;
+}
+
+.regular-payment-choice p {
+  margin: 0;
+  color: #475467;
+  line-height: 1.5;
+}
+
 .statutory-status {
   display: grid;
   gap: 10px;
@@ -1516,6 +1535,12 @@ summary:focus-visible {
 
 .customer-information-panel .field span {
   font-size: 14px;
+}
+
+.customer-information-panel input[readonly] {
+  color: #344054;
+  background: #f2f4f7;
+  cursor: default;
 }
 
 .qr-instructions {
