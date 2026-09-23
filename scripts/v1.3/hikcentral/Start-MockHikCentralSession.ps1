@@ -636,7 +636,12 @@ function Invoke-SelfTest {
     }
     $testCount += Invoke-TestCase 'adapter restoration remains in finally' {
         $source = Get-Content -LiteralPath $PSCommandPath -Raw
-        Assert-Test ($source -match '(?s)finally\s*\{.*if \(\$realAdapterStopped.*docker.*start.*Wait-Http \$realAdapterHealthUrl') 'The finally block no longer starts and verifies the ordinary adapter.'
+        Assert-Test ($source -match '(?s)finally\s*\{.*if \(\$realAdapterStopped.*docker.*start.*Get-ContainerInspect.*Get-LoopbackContainerUrl.*Wait-Http \$realAdapterHealthUrl') 'The finally block no longer starts, re-inspects, and verifies the ordinary adapter.'
+    }
+    $testCount += Invoke-TestCase 'restoration diagnostics do not mask startup failure' {
+        $source = Get-Content -LiteralPath $PSCommandPath -Raw
+        Assert-Test ($source -match '(?s)catch\s*\{\s*\$startupError = \$_\s*throw\s*\}\s*finally') 'Mock startup must preserve the original startup exception.'
+        Assert-Test ($source -match '(?s)if \(\$null -ne \$startupError\).*Write-Warning \$message.*original mock startup failure') 'Restoration diagnostics must not replace the original startup failure.'
     }
     $testCount += Invoke-TestCase 'mock startup restores projection readiness after adapter swap' {
         $source = Get-Content -LiteralPath $PSCommandPath -Raw
@@ -661,6 +666,8 @@ if ($SelfTest) {
     Invoke-SelfTest
     return
 }
+
+$startupError = $null
 
 try {
     & docker version *> $null
@@ -755,6 +762,10 @@ try {
         Invoke-Docker -Arguments @('logs', '--follow', $mockAdapterContainer) | Out-Null
     }
 }
+catch {
+    $startupError = $_
+    throw
+}
 finally {
     $restorationError = $null
     try {
@@ -773,7 +784,24 @@ finally {
 
         if ($realAdapterStopped -and -not [string]::IsNullOrWhiteSpace($realAdapterName)) {
             Invoke-Docker -Arguments @('start', $realAdapterName) | Out-Null
-            Wait-Http $realAdapterHealthUrl 200 90
+            $restored = Get-ContainerInspect $realAdapterName
+            $realAdapterHealthUrl = "$(Get-LoopbackContainerUrl $restored '8080/tcp')/health/ready"
+            try {
+                Wait-Http $realAdapterHealthUrl 200 90
+            }
+            catch {
+                $state = if ($restored.State.Running) { 'running' } else { "stopped (exit_code=$($restored.State.ExitCode))" }
+                $logs = (Invoke-Docker -Arguments @('logs', '--tail', '80', $realAdapterName) -AllowFailure).Output -join [Environment]::NewLine
+                throw @"
+Ordinary PITX Site Adapter did not become ready after restoration.
+Container: $realAdapterName
+State: $state
+Health URL: $realAdapterHealthUrl
+Recent logs:
+$logs
+"@
+            }
+
             $restored = Get-ContainerInspect $realAdapterName
             $attachment = Get-NetworkAttachment $restored $networkName
             if ($null -eq $attachment -or $attachment.Aliases -notcontains 'pitx-site-adapter') {
@@ -790,12 +818,20 @@ finally {
     }
 
     if ($null -ne $restorationError) {
-        Write-Error @"
+        $message = @"
 SITE ADAPTER RESTORATION FAILED
 $($restorationError.Exception.Message)
 Recovery command:
 docker start $realAdapterName
 Then verify: $realAdapterHealthUrl
 "@
+
+        if ($null -ne $startupError) {
+            Write-Warning $message
+            Write-Warning "The original mock startup failure is preserved below."
+        }
+        else {
+            throw $message
+        }
     }
 }
