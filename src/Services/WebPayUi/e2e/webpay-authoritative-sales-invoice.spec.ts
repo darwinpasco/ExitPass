@@ -478,23 +478,46 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
     await restartedPage.close();
   });
 
-  test("pending-review Pay regular amount requires warning and creates ordinary payment intent without statutory IDs", async ({ page }) => {
+  test("pending-review Pay regular amount returns to method selection before creating an ordinary payment intent", async ({ page }) => {
     const apiRequests = collectApiRequests(page);
 
-    await submitStatutoryRequest(page, "WEBPAY-STAT-PENDING-REGULAR", "Senior Citizen", "SC-****-1234");
-    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+    await seedStatutoryScenario("pending", "WEBPAY-STAT-PENDING-REGULAR");
+    await resolveTicketOnStartPage(page, "WEBPAY-STAT-PENDING-REGULAR");
+    await expect(page.getByRole("button", { name: /pay regular amount/i })).toBeVisible();
     await page.getByRole("button", { name: /pay regular amount/i }).click();
 
-    await expect(page.getByRole("dialog", { name: /proceed without the parking privilege/i })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: /proceed without the parking discount/i })).toBeVisible();
     await expect(page.getByText(/will not automatically refund or retroactively adjust/i)).toBeVisible();
     let state = await getFixtureState();
     expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
     expect(state.providerHandoffCount).toBe(0);
     await page.getByRole("button", { name: /keep waiting/i }).click();
-    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /pay regular amount/i })).toBeVisible();
 
     await page.getByRole("button", { name: /pay regular amount/i }).click();
     await page.getByRole("button", { name: /continue with regular payment/i }).click();
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: /evidence processing/i })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: /senior citizen or pwd request/i })).toHaveCount(0);
+    await expect(page.getByText(/checking statutory discount status automatically/i)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /upload replacement photo|refresh evidence status|pay regular amount/i })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: /payment already started/i })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /continue existing payment/i })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: /payment method/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /customer information/i })).toBeVisible();
+    await expect(page.getByLabel("Customer Name")).toBeEditable();
+    const paymentMethodSection = page.getByRole("region", { name: /payment method/i });
+    for (const method of ["QRPh", "GCash", "Maya", "Card"]) {
+      await paymentMethodSection.getByText(method, { exact: true }).click();
+      await expect(page.getByRole("radio", { name: new RegExp(`^${method}`, "i") })).toBeChecked();
+    }
+    await paymentMethodSection.getByText("Maya", { exact: true }).click();
+    await expect(page.getByRole("button", { name: /continue to payment/i })).toHaveCount(1);
+    state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
+    expect(state.providerHandoffCount).toBe(0);
+
+    await page.getByRole("button", { name: /continue to payment/i }).click();
     await expect(page.getByRole("link", { name: /continue to payment/i })).toHaveAttribute("href", "https://payments.test/handoff");
 
     state = await getFixtureState();
@@ -503,15 +526,12 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
     const paymentRequests = state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents");
     expect(paymentRequests).toHaveLength(2);
     const body = paymentRequests[0].body as Record<string, unknown>;
+    expect(body.paymentMethod).toBe("MAYA");
     expect(body.expectedAmountMinorUnits).toBe(12900);
     expect(body.expectedCurrency).toBe("PHP");
     expect(body.tariffSnapshotId).toBe("30000000-0000-4000-8000-000000000001");
     expect(body).not.toHaveProperty("statutoryDiscountDecisionCommandId");
     expect(body).not.toHaveProperty("statutoryDiscountPayableBasisApplicationCommandId");
-    expect(state.latestStatutoryDecisionSubmissionResponse?.body).toMatchObject({
-      statutoryDiscountDecisionCommandId,
-      requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-    });
     expect(state.latestStatutoryDecisionReadResponse?.body).toMatchObject({
       statutoryDiscountDecisionCommandId,
       requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
@@ -557,18 +577,29 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
   });
 
   test("changed regular amount before pending-review payment requires renewed confirmation", async ({ page }) => {
-    await submitStatutoryRequest(page, "WEBPAY-STAT-REGULAR-AMOUNT-CHANGED", "Senior Citizen", "SC-****-1234");
-    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+    await seedStatutoryScenario("pending", "WEBPAY-STAT-REGULAR-AMOUNT-CHANGED");
+    await resolveTicketOnStartPage(page, "WEBPAY-STAT-REGULAR-AMOUNT-CHANGED");
+    await expect(page.getByRole("button", { name: /pay regular amount/i })).toBeVisible();
 
     await page.getByRole("button", { name: /pay regular amount/i }).click();
     await page.getByRole("button", { name: /continue with regular payment/i }).click();
+    await expect(page.getByRole("heading", { name: /payment method/i })).toBeVisible();
+    let state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
+
+    await page.getByRole("button", { name: /continue to payment/i }).click();
     await expect(page.getByText(/regular parking amount changed before payment/i)).toBeVisible();
     await expect(page.getByText("PHP 159.00").first()).toBeVisible();
-    let state = await getFixtureState();
+    state = await getFixtureState();
     expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
     expect(state.providerHandoffCount).toBe(0);
 
     await page.getByRole("button", { name: /continue with regular payment/i }).click();
+    await expect(page.getByRole("heading", { name: /payment method/i })).toBeVisible();
+    state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
+
+    await page.getByRole("button", { name: /continue to payment/i }).click();
     await expect(page.getByRole("link", { name: /continue to payment/i })).toHaveAttribute("href", "https://payments.test/handoff");
 
     state = await getFixtureState();
