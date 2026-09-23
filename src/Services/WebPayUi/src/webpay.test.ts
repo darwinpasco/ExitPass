@@ -165,7 +165,8 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(headers["X-Correlation-Id"]).toBe("77777777-7777-7777-7777-777777777777");
     const body = JSON.parse(request.body as string);
     expect(body.entitlementType).toBe("SENIOR_CITIZEN");
-    expect(body.maskedIdReference).toBe("******1234");
+    expect(body.idControlReference).toBe("12345678");
+    expect(body.maskedIdReference).toBe("****5678");
     expect(body.evidenceCaptureRequested).toBe(false);
     expect(body).not.toHaveProperty("sourceChannel");
     expect(body).not.toHaveProperty("reviewerUserId");
@@ -633,13 +634,29 @@ describe("WebPay QR and payment intent helpers", () => {
     } satisfies Partial<StatutoryDiscountDecisionError>);
   });
 
-  it("WebPay_WhenStatutoryRequestIsBuilt_RejectsUnsafeFullIdAndUnsupportedFields", () => {
+  it.each([
+    ["2234", "2234"],
+    ["12345678", "****5678"],
+    ["ABCDEFGH", "****EFGH"]
+  ])("WebPay_WhenStatutoryRequestIsBuilt_PreservesRawIdAndDerivesPresentationMask", (rawValue, maskedValue) => {
+    const body = buildStatutoryDiscountDecisionBody({
+      ...statutoryDecisionRequest(),
+      idControlReference: rawValue,
+      maskedIdReference: "SHOULD-NOT-WIN"
+    });
+
+    expect(body.idControlReference).toBe(rawValue);
+    expect(body.maskedIdReference).toBe(maskedValue);
+    expect(body.idControlReference).not.toContain("*");
+  });
+
+  it("WebPay_WhenStatutoryRequestIsBuilt_RejectsMaskedAuthoritativeIdAndUnsupportedFields", () => {
     expect(() =>
       buildStatutoryDiscountDecisionBody({
         ...statutoryDecisionRequest(),
-        maskedIdReference: "123456789012"
+        idControlReference: "****5678"
       })
-    ).toThrow(/let WebPay mask it automatically/i);
+    ).toThrow(/without asterisks/i);
 
     const body = buildStatutoryDiscountDecisionBody({
       ...statutoryDecisionRequest(),
@@ -1017,6 +1034,17 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(getResumeUrl({ checkoutUrl: "https://payments.test/checkout" })).toBe("https://payments.test/checkout");
   });
 
+  it.each([
+    ["", undefined],
+    ["not-a-url", undefined],
+    ["javascript:alert(1)", undefined],
+    ["data:text/html,unsafe", undefined],
+    ["ftp://payments.test/handoff", undefined],
+    ["http://payments.test/handoff", "http://payments.test/handoff"]
+  ])("WebPay_GetResumeUrl_RejectsUnsafeOrMalformedUrls(%s)", (candidate, expected) => {
+    expect(getResumeUrl({ handoffUrl: candidate })).toBe(expected);
+  });
+
   it("WebPay_WhenDefaultSiteGroupIdIsConfigured_IncludesSiteGroupId", () => {
     vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "11111111-1111-1111-1111-111111111111");
 
@@ -1111,7 +1139,8 @@ function statutoryDecisionRequest() {
     idDocumentType: "OSCA",
     issuingAuthority: "QUEZON_CITY",
     expiryDate: "2030-12-31",
-    maskedIdReference: "******1234",
+    idControlReference: "12345678",
+    maskedIdReference: "****5678",
     evidenceCaptureRequested: false,
     requesterAttestation: true,
     originalTariffSnapshotId: "66666666-6666-4666-8666-666666666666"

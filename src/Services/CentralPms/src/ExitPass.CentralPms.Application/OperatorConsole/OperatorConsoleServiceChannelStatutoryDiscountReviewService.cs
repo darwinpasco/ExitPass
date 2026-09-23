@@ -161,6 +161,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
                         access.EvaluationId,
                         requestedDecision,
                         canonical.ReasonCode ?? NormalizeOptional(command.DecisionReasonCode),
+                        ReviewedDocument(detail),
                         command.CorrelationId,
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -192,6 +193,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
                     command.StatutoryDiscountDecisionCommandId,
                     command.UserId,
                     NormalizeOptional(command.DecisionReasonCode),
+                    ReviewedDocument(detail),
                     command.CorrelationId,
                     cancellationToken)
                 .ConfigureAwait(false)
@@ -242,6 +244,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
                 access.EvaluationId,
                 requestedDecision,
                 NormalizeOptional(command.DecisionReasonCode),
+                ReviewedDocument(detail),
                 command.CorrelationId,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -339,6 +342,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
                     command.AuthorizationEvaluationReference,
                     requestedDecision,
                     canonical.ReasonCode ?? NormalizeOptional(command.Reason),
+                    command.ReviewedDocument,
                     command.CorrelationId,
                     cancellationToken).ConfigureAwait(false);
             }
@@ -365,6 +369,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
                 command.DecisionCommandReference,
                 command.ReviewerUserId,
                 NormalizeOptional(command.Reason),
+                command.ReviewedDocument,
                 command.CorrelationId,
                 cancellationToken).ConfigureAwait(false)
             : null;
@@ -406,6 +411,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
             command.AuthorizationEvaluationReference,
             requestedDecision,
             NormalizeOptional(command.Reason),
+            command.ReviewedDocument,
             command.CorrelationId,
             cancellationToken).ConfigureAwait(false);
 
@@ -421,6 +427,10 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
         string? reason = null,
         DateTimeOffset? decidedAt = null) =>
         new(false, false, false, status, decision, reason, errorCode, decidedAt);
+
+    private static StatutoryDiscountServiceChannelReviewedDocument ReviewedDocument(
+        StatutoryDiscountServiceChannelReviewDetail detail) =>
+        new(detail.IdDocumentType, detail.IssuingAuthority, detail.ExpiryDate, IdControlReference: null);
 
     private async Task<OperatorConsoleAccessEvaluationResult> EvaluateAndPersistAsync(
         OperatorConsoleReviewAccessContext context,

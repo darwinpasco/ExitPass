@@ -15,7 +15,7 @@ import type {
   WebPayStatutoryDiscountDecisionRequest,
   WebPayStatutoryDiscountDecisionResponse
 } from "./types";
-import { isAutomaticallyMaskedStatutoryIdReference } from "./statutoryIdMasking";
+import { maskStatutoryIdReference } from "./statutoryIdMasking";
 
 const paymentIntentPath = "/v1/webpay/payment-intents";
 const parkingSessionResolvePath = "/v1/webpay/parking-session";
@@ -633,10 +633,12 @@ export function buildStatutoryDiscountDecisionBody(
     throw new Error("Resolve your parking session before requesting a statutory discount.");
   }
 
-  const maskedIdReference = request.maskedIdReference.trim();
-  if (maskedIdReference && !isAutomaticallyMaskedStatutoryIdReference(maskedIdReference)) {
-    throw new Error("Enter at least 4 characters for the ID No. / Control No. and let WebPay mask it automatically.");
+  const idControlReference = request.idControlReference.trim();
+  const idReference = idControlReference ? maskStatutoryIdReference(idControlReference) : null;
+  if (idReference && !idReference.ok) {
+    throw new Error(idReference.message);
   }
+  const maskedIdReference = idReference?.ok ? idReference.maskedValue : "";
 
   if (!request.requesterAttestation) {
     throw new Error("Confirm that the entitlement details you entered are correct.");
@@ -646,6 +648,7 @@ export function buildStatutoryDiscountDecisionBody(
     requestReference: request.requestReference.trim() || createRequestReference(),
     parkingSessionId: request.parkingSessionId.trim(),
     entitlementType,
+    idControlReference,
     maskedIdReference,
     evidenceCaptureRequested: Boolean(request.evidenceCaptureRequested),
     requesterAttestation: true
@@ -984,7 +987,17 @@ export function isActivePaymentAttemptConflict(statusCode: number, error: ApiErr
 }
 
 export function getResumeUrl(handoff?: WebPayHandoff | null): string | undefined {
-  return firstNonBlank(handoff?.resumePaymentUrl ?? undefined, handoff?.handoffUrl ?? undefined, handoff?.checkoutUrl ?? undefined);
+  const candidate = firstNonBlank(handoff?.resumePaymentUrl ?? undefined, handoff?.handoffUrl ?? undefined, handoff?.checkoutUrl ?? undefined);
+  if (!candidate) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeHandoff(error: ApiError): WebPayHandoff | null {

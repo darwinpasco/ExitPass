@@ -161,7 +161,10 @@ public sealed record StatutoryDiscountDecisionCommand(
     bool? BeneficiaryResidencySatisfied,
     string IdempotencyKey,
     Guid CorrelationId,
-    StatutoryDiscountServiceChannelCallerContext? ServiceChannelCaller = null);
+    StatutoryDiscountServiceChannelCallerContext? ServiceChannelCaller = null)
+{
+    public string? IdControlReference { get; init; }
+}
 
 /// <summary>
 /// Metadata-only evidence reference for the shared statutory-discount command.
@@ -335,6 +338,7 @@ public static class StatutoryDiscountDecisionSemanticHash
             idDocumentType = Normalize(command.IdDocumentType),
             issuingAuthority = Normalize(command.IssuingAuthority),
             expiryDate = command.ExpiryDate,
+            idControlReference = NormalizeSensitiveOptional(command.IdControlReference),
             maskedIdReference = NormalizeOptional(command.MaskedIdReference),
             evidenceCaptureRequested = command.EvidenceCaptureRequested,
             evidenceReferences = (command.EvidenceReferences ?? [])
@@ -377,6 +381,9 @@ public static class StatutoryDiscountDecisionSemanticHash
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
+
+    private static string? NormalizeSensitiveOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
 
 internal static class StatutoryDiscountDecisionMappings

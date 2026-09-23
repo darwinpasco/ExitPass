@@ -24,6 +24,8 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     private static readonly Guid AppliedTariffSnapshotId = Guid.Parse("6d000000-0000-0000-0000-00000000000d");
     private static readonly Guid PayableBasisApplicationId = Guid.Parse("6d000000-0000-0000-0000-00000000000e");
     private static readonly Guid CorrelationId = Guid.Parse("6d000000-0000-0000-0000-00000000000f");
+    private static readonly Guid RefreshedTariffSnapshotId = Guid.Parse("6d000000-0000-0000-0000-000000000100");
+    private static readonly Guid VendorSystemId = Guid.Parse("6d000000-0000-0000-0000-000000000101");
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-07-21T08:00:00Z");
 
     [Fact]
@@ -523,6 +525,63 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
+    public async Task SubmitAsync_WhenApprovedServiceChannelDecisionIsApplied_RevalidatesTariffAndUsesFreshSnapshot()
+    {
+        var fixture = CreateFixture();
+        await CreateApprovedServiceChannelDecisionAsync(fixture, "WEBPAY");
+        fixture.PayableBasisRevalidationService.RevalidateAsync(
+                Arg.Any<StatutoryDiscountServiceChannelReviewDetail>(),
+                Arg.Any<Guid>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new StatutoryDiscountPayableBasisRevalidationResult(
+                Succeeded: true,
+                RefreshedTariffSnapshotId,
+                ErrorCode: null,
+                Retryable: false));
+
+        await fixture.Sut.SubmitAsync(
+            Command(sourceChannel: "WEBPAY", applyPayableBasis: true),
+            CancellationToken.None);
+
+        await fixture.PayableBasisRevalidationService.Received(1).RevalidateAsync(
+            Arg.Any<StatutoryDiscountServiceChannelReviewDetail>(),
+            Arg.Any<Guid>(),
+            Arg.Any<CancellationToken>());
+        await fixture.ApplyService.Received(1).ApplyAsync(
+            Arg.Is<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(command =>
+                command.OriginalTariffSnapshotId == RefreshedTariffSnapshotId),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenReviewerMetadataChangedAfterIntake_AppliesAgainstCanonicalDecision()
+    {
+        var fixture = CreateFixture();
+        await CreateApprovedServiceChannelDecisionAsync(fixture, "WEBPAY");
+        fixture.ServiceChannelReviewRepository.GetAsync(
+                CommandId,
+                Arg.Any<Guid>(),
+                Arg.Any<CancellationToken>())
+            .Returns(AppliedServiceChannelReviewDetail() with
+            {
+                IdDocumentType = "PWD_ID",
+                IssuingAuthority = "REVIEWED_ISSUER",
+                ExpiryDate = DateOnly.Parse("2031-02-03"),
+                MaskedIdReference = "****5678"
+            });
+
+        var result = await fixture.Sut.SubmitAsync(
+            Command(sourceChannel: "WEBPAY", applyPayableBasis: true),
+            CancellationToken.None);
+
+        result.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.Applied);
+        fixture.Repository.ApplicationCount.Should().Be(1);
+        await fixture.ApplyService.Received(1).ApplyAsync(
+            Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task SubmitAsync_WhenApprovedAptDecisionRequestsApplicationIntent_AppliesPayableBasis()
     {
         var fixture = CreateFixture();
@@ -646,6 +705,11 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     public async Task SubmitAsync_WhenServiceChannelAppliesDeferredBasis_UsesPersistedReviewerAuthority()
     {
         var fixture = CreateFixture();
+        fixture.ServiceChannelReviewRepository.GetAsync(
+                CommandId,
+                Arg.Any<Guid>(),
+                Arg.Any<CancellationToken>())
+            .Returns(AppliedServiceChannelReviewDetail());
         var pending = await fixture.Sut.SubmitAsync(
             Command(sourceChannel: "WEBPAY", applyPayableBasis: false),
             CancellationToken.None);
@@ -716,7 +780,10 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             SubmittedAt: Now,
             ReviewedAt: Now,
             PayableBasisApplicationStatus: "APPLIED",
-            CorrelationId);
+            CorrelationId)
+        {
+            VendorSystemId = VendorSystemId
+        };
 
     [Fact]
     public async Task SubmitAsync_WhenApprovedDecisionLacksFrozenPolicyAuthority_DoesNotApply()
@@ -874,6 +941,11 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             "ELIGIBLE",
             CorrelationId,
             CancellationToken.None);
+        fixture.ServiceChannelReviewRepository.GetAsync(
+                pending.StatutoryDiscountDecisionCommandId,
+                Arg.Any<Guid>(),
+                Arg.Any<CancellationToken>())
+            .Returns(AppliedServiceChannelReviewDetail() with { SourceChannel = sourceChannel });
     }
 
     private static async Task CreateRejectedServiceChannelDecisionAsync(TestFixture fixture, string sourceChannel)
@@ -925,6 +997,16 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         var parkingEligibilityResolver = Substitute.For<IStatutoryDiscountParkingEligibilityResolver>();
         parkingEligibilityResolver.ResolveAsync(Arg.Any<StatutoryDiscountParkingAvailabilityRequest>(), Arg.Any<CancellationToken>())
             .Returns(call => availability ?? AvailablePolicy((StatutoryDiscountParkingAvailabilityRequest)call[0]!));
+        var payableBasisRevalidationService = Substitute.For<IStatutoryDiscountPayableBasisRevalidationService>();
+        payableBasisRevalidationService.RevalidateAsync(
+                Arg.Any<StatutoryDiscountServiceChannelReviewDetail>(),
+                Arg.Any<Guid>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new StatutoryDiscountPayableBasisRevalidationResult(
+                Succeeded: true,
+                OriginalTariffSnapshotId,
+                ErrorCode: null,
+                Retryable: false));
         var zeroPayableFinalityReader = Substitute.For<IStatutoryDiscountZeroPayableFinalityReader>();
 
         var sut = new StatutoryDiscountDecisionFacadeService(
@@ -938,6 +1020,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             serviceChannelReviewRepository,
             parkingEligibilityResolver,
             parkingEligibilityRepository,
+            payableBasisRevalidationService,
             zeroPayableFinalityReader);
 
         return new TestFixture(
@@ -948,6 +1031,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             applyService,
             serviceChannelReviewRepository,
             parkingEligibilityRepository,
+            payableBasisRevalidationService,
             sut);
     }
 
@@ -1236,6 +1320,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         IOperatorConsoleStatutoryDiscountApplyPayableBasisService ApplyService,
         IStatutoryDiscountServiceChannelReviewRepository ServiceChannelReviewRepository,
         InMemoryParkingEligibilityRepository ParkingEligibilityRepository,
+        IStatutoryDiscountPayableBasisRevalidationService PayableBasisRevalidationService,
         StatutoryDiscountDecisionFacadeService Sut);
 
     private sealed class InMemoryParkingEligibilityRepository : IStatutoryDiscountParkingEligibilityRepository

@@ -332,6 +332,7 @@ export type WebPayStatutoryDiscountDecisionRequest = {
   idDocumentType?: string;
   issuingAuthority?: string;
   expiryDate?: string | null;
+  idControlReference: string;
   maskedIdReference: string;
   evidenceCaptureRequested: boolean;
   requesterAttestation: boolean;

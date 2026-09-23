@@ -7,10 +7,10 @@ namespace ExitPass.CentralPms.UnitTests.Application;
 public sealed class ApprovedIdentityRoleCatalogTests
 {
     [Fact]
-    public void Catalog_ContainsExactlyTheEightApprovedAssignableRoles()
+    public void Catalog_ContainsExactlyTheNineApprovedAssignableRoles()
     {
         ApprovedIdentityRoleCatalog.AssignableCodes.Should().BeEquivalentTo([
-            "SYSTEM_ADMINISTRATOR", "OPERATIONS_SUPERVISOR", "SITE_OPERATOR", "PARKING_ATTENDANT",
+            "SYSTEM_ADMINISTRATOR", "OPERATIONS_SUPERVISOR", "STATUTORY_DISCOUNT_PROCESSOR", "SITE_OPERATOR", "PARKING_ATTENDANT",
             "APT_CASHIER_OPERATOR", "FINANCE_RECONCILIATION_ANALYST",
             "COMPLIANCE_POLICY_ADMINISTRATOR", "EXECUTIVE_MANAGEMENT"
         ]);
@@ -26,6 +26,10 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [InlineData("SYSTEM_ADMINISTRATOR", "NATIVE_PARKING_APP", false)]
     [InlineData("OPERATIONS_SUPERVISOR", "MANAGEMENT_PLATFORM", true)]
     [InlineData("OPERATIONS_SUPERVISOR", "OPERATOR_CONSOLE", true)]
+    [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "MANAGEMENT_PLATFORM", true)]
+    [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "OPERATOR_CONSOLE", false)]
+    [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "APT", false)]
+    [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "NATIVE_PARKING_APP", false)]
     [InlineData("SITE_OPERATOR", "MANAGEMENT_PLATFORM", false)]
     [InlineData("SITE_OPERATOR", "OPERATOR_CONSOLE", true)]
     [InlineData("SITE_OPERATOR", "APT", false)]
@@ -57,6 +61,9 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [InlineData("OPERATIONS_SUPERVISOR", "SITE", true)]
     [InlineData("OPERATIONS_SUPERVISOR", "SITE_GROUP", false)]
     [InlineData("OPERATIONS_SUPERVISOR", "GLOBAL", false)]
+    [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "GLOBAL", true)]
+    [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "SITE", false)]
+    [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "SITE_GROUP", false)]
     [InlineData("SITE_OPERATOR", "SITE_GROUP", false)]
     [InlineData("APT_CASHIER_OPERATOR", "GLOBAL", false)]
     [InlineData("FINANCE_RECONCILIATION_ANALYST", "GLOBAL", true)]
@@ -96,10 +103,14 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [Fact]
     public void Policies_ExposeTheCanonicalMetadataForH2()
     {
-        ApprovedIdentityRoleCatalog.Policies.Should().HaveCount(8);
+        ApprovedIdentityRoleCatalog.Policies.Should().HaveCount(9);
         ApprovedIdentityRoleCatalog.TryGetPolicy("EXECUTIVE_MANAGEMENT", out var executive).Should().BeTrue();
         executive!.DefaultAssignmentScope.Should().Be("GLOBAL");
         executive.AllowedAssignmentScopes.Should().Equal("GLOBAL");
+        ApprovedIdentityRoleCatalog.TryGetPolicy("STATUTORY_DISCOUNT_PROCESSOR", out var processor).Should().BeTrue();
+        processor!.AllowedApplicationAudiences.Should().Equal("MANAGEMENT_PLATFORM");
+        processor.AllowedAssignmentScopes.Should().Equal("GLOBAL");
+        processor.DefaultAssignmentScope.Should().Be("GLOBAL");
         ApprovedIdentityRoleCatalog.TryGetPolicy("NOT_A_ROLE", out _).Should().BeFalse();
     }
 }

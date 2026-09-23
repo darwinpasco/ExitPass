@@ -699,7 +699,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             Currency: "PHP",
             DecisionTimestamp: DateTimeOffset.Parse("2026-07-28T01:20:00Z"),
             AppliedAt: DateTimeOffset.Parse("2026-07-28T01:21:00Z"),
-            MaskedIdReference: "SC-***-1234");
+            IdControlReference: "SC-1234");
 
     private static string Serialize(object value) =>
         System.Text.Json.JsonSerializer.Serialize(value);

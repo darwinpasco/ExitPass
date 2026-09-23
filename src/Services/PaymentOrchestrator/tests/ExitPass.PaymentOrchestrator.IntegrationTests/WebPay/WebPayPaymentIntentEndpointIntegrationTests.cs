@@ -443,6 +443,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.Equal("READY", body.PayableBasisReadinessStatus);
         Assert.Equal("statutory-decision:webpay:test", state.CapturedStatutorySubmitIdempotencyKey);
         Assert.Equal("SENIOR_CITIZEN", state.CapturedStatutorySubmitRequest!.EntitlementType);
+        Assert.Equal("12345678", state.CapturedStatutorySubmitRequest.IdControlReference);
         Assert.True(state.CapturedStatutorySubmitRequest.BeneficiaryResidencySatisfied);
         Assert.True(state.CapturedStatutoryAvailabilityRequest!.BeneficiaryResidencySatisfied);
     }
@@ -457,6 +458,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         body.IssuingAuthority = null;
         body.ExpiryDate = null;
         body.MaskedIdReference = null;
+        body.IdControlReference = null;
         body.EvidenceReferences = [];
         using var request = new HttpRequestMessage(HttpMethod.Post, StatutoryDecisionRoute)
         {
@@ -896,11 +898,14 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     {
         var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
         using var client = CreateClient(state);
+        var applicationRequest = StatutoryDecisionRequest();
+        applicationRequest.IdControlReference = "99999999";
+        applicationRequest.MaskedIdReference = "stale-mask";
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"{StatutoryDecisionRoute}/{StatutoryDecisionCommandId:D}/apply-payable-basis")
         {
-            Content = JsonContent.Create(StatutoryDecisionRequest())
+            Content = JsonContent.Create(applicationRequest)
         };
         request.Headers.Add("Idempotency-Key", "statutory-application:webpay:test");
         request.Headers.Add("X-Correlation-Id", "33333333-3333-3333-3333-333333333333");
@@ -912,6 +917,13 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.Equal(1, state.ApplyStatutoryDiscountPayableBasisCallCount);
         Assert.Equal("statutory-application:webpay:test", state.CapturedStatutoryApplyIdempotencyKey);
         Assert.Equal(StatutoryDecisionCommandId, state.CapturedStatutoryReadbackId);
+        Assert.NotNull(state.CapturedStatutoryApplyRequest);
+        Assert.Equal(Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), state.CapturedStatutoryApplyRequest!.RequestReference);
+        Assert.Equal(Guid.Parse("44444444-4444-4444-4444-444444444444"), state.CapturedStatutoryApplyRequest.ParkingSessionId);
+        Assert.Equal("SENIOR_CITIZEN", state.CapturedStatutoryApplyRequest.EntitlementType);
+        Assert.Null(state.CapturedStatutoryApplyRequest.IdControlReference);
+        Assert.Equal(string.Empty, state.CapturedStatutoryApplyRequest.MaskedIdReference);
+        Assert.Empty(state.CapturedStatutoryApplyRequest.EvidenceReferences ?? []);
     }
 
     /// <summary>
@@ -988,7 +1000,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             IdDocumentType = "OSCA",
             IssuingAuthority = "QUEZON_CITY",
             ExpiryDate = DateOnly.Parse("2030-12-31"),
-            MaskedIdReference = "SC-****-0001",
+            IdControlReference = "12345678",
+            MaskedIdReference = "****5678",
             EvidenceCaptureRequested = true,
             EvidenceReferences = new[]
             {

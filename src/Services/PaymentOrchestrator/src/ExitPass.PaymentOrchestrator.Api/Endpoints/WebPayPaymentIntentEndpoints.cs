@@ -289,12 +289,6 @@ public static class WebPayPaymentIntentEndpoints
                 return Results.Json(idempotencyError, statusCode: StatusCodes.Status400BadRequest);
             }
 
-            if (!TryBuildCentralPmsStatutoryRequest(request, correlationId, out var centralPmsRequest, out var validationError))
-            {
-                httpContext.Response.Headers["X-Correlation-Id"] = correlationId.ToString();
-                return Results.Json(validationError, statusCode: StatusCodes.Status400BadRequest);
-            }
-
             var readback = await centralPmsClient.GetStatutoryDiscountDecisionAsync(
                     statutoryDiscountDecisionCommandId,
                     correlationId,
@@ -305,17 +299,15 @@ public static class WebPayPaymentIntentEndpoints
                 return ToStatutoryDecisionResult(readback, httpContext, correlationId);
             }
 
-            if (readback.Value.ParkingSessionId != centralPmsRequest.ParkingSessionId ||
-                !string.Equals(readback.Value.EntitlementType, centralPmsRequest.EntitlementType, StringComparison.OrdinalIgnoreCase))
+            if (!TryBuildCanonicalStatutoryApplicationRequest(
+                    request,
+                    readback.Value,
+                    correlationId,
+                    out var centralPmsRequest,
+                    out var validationError))
             {
                 httpContext.Response.Headers["X-Correlation-Id"] = correlationId.ToString();
-                return Results.Json(
-                    BuildStatutoryErrorResponse(
-                        "STATUTORY_DISCOUNT_DECISION_REQUEST_MISMATCH",
-                        "The application request does not match the canonical statutory-discount decision.",
-                        retryable: false,
-                        correlationId),
-                    statusCode: StatusCodes.Status409Conflict);
+                return Results.Json(validationError, statusCode: StatusCodes.Status409Conflict);
             }
 
             var result = await centralPmsClient.ApplyStatutoryDiscountPayableBasisAsync(
@@ -696,9 +688,25 @@ public static class WebPayPaymentIntentEndpoints
             errors.Add("entitlementType must be SENIOR_CITIZEN or PWD.");
         }
 
-        if (!string.IsNullOrWhiteSpace(request.MaskedIdReference) && !request.MaskedIdReference.Contains('*'))
+        var idControlReference = BlankToNull(request.IdControlReference);
+        if (idControlReference is not null &&
+            (idControlReference.Length is < 4 or > 64 ||
+             idControlReference.Any(char.IsWhiteSpace) ||
+             idControlReference.Contains('*') ||
+             idControlReference.Any(character => !char.IsLetterOrDigit(character) && character != '-')))
         {
-            errors.Add("maskedIdReference must be masked.");
+            errors.Add("idControlReference must contain 4 to 64 letters, numbers, or hyphens without whitespace or masking characters.");
+        }
+
+        var maskedIdReference = BlankToNull(request.MaskedIdReference);
+        var expectedMaskedIdReference = idControlReference is null
+            ? null
+            : idControlReference.Length <= 4
+                ? idControlReference
+                : $"{new string('*', idControlReference.Length - 4)}{idControlReference[^4..]}";
+        if (!string.Equals(maskedIdReference, expectedMaskedIdReference, StringComparison.Ordinal))
+        {
+            errors.Add("maskedIdReference must be the presentation-safe mask derived from idControlReference.");
         }
 
         if (!request.RequesterAttestation)
@@ -763,7 +771,65 @@ public static class WebPayPaymentIntentEndpoints
             BlankToNull(request.AttestationNotes),
             BlankToNull(request.ReasonCode),
             request.OriginalTariffSnapshotId,
-            request.BeneficiaryResidencySatisfied);
+            request.BeneficiaryResidencySatisfied)
+        {
+            IdControlReference = idControlReference
+        };
+        error = new { };
+        return true;
+    }
+
+    private static bool TryBuildCanonicalStatutoryApplicationRequest(
+        WebPayStatutoryDiscountDecisionRequest request,
+        CentralPmsStatutoryDiscountDecision canonicalDecision,
+        Guid correlationId,
+        out CentralPmsStatutoryDiscountDecisionRequest centralPmsRequest,
+        out object error)
+    {
+        var suppliedEntitlement = Normalize(request.EntitlementType);
+        var canonicalEntitlement = Normalize(canonicalDecision.EntitlementType);
+        var mismatch =
+            (request.RequestReference != Guid.Empty && request.RequestReference != canonicalDecision.RequestReference) ||
+            (request.ParkingSessionId != Guid.Empty && request.ParkingSessionId != canonicalDecision.ParkingSessionId) ||
+            (request.SiteId.HasValue && request.SiteId != canonicalDecision.SiteId) ||
+            (request.SiteGroupId.HasValue && request.SiteGroupId != canonicalDecision.SiteGroupId) ||
+            (suppliedEntitlement.Length > 0 && !string.Equals(suppliedEntitlement, canonicalEntitlement, StringComparison.Ordinal));
+        if (mismatch)
+        {
+            centralPmsRequest = null!;
+            error = BuildStatutoryErrorResponse(
+                "STATUTORY_DISCOUNT_DECISION_REQUEST_MISMATCH",
+                "The application request does not match the canonical statutory-discount decision.",
+                retryable: false,
+                correlationId);
+            return false;
+        }
+
+        // Application recovery is identified by the approved canonical decision. Reviewer-editable
+        // metadata, including the complete statutory ID, is intentionally neither required from nor
+        // replayed by the browser after approval.
+        centralPmsRequest = new CentralPmsStatutoryDiscountDecisionRequest(
+            canonicalDecision.RequestReference,
+            canonicalDecision.ParkingSessionId,
+            canonicalDecision.SiteId,
+            canonicalDecision.SiteGroupId,
+            TicketReference: null,
+            PlateNumber: null,
+            canonicalEntitlement,
+            IdDocumentType: string.Empty,
+            IssuingAuthority: string.Empty,
+            ExpiryDate: null,
+            MaskedIdReference: string.Empty,
+            EvidenceCaptureRequested: false,
+            EvidenceReferences: null,
+            RequesterAttestation: false,
+            AttestationNotes: null,
+            ReasonCode: null,
+            canonicalDecision.OriginalTariffSnapshotId,
+            BeneficiaryResidencySatisfied: null)
+        {
+            IdControlReference = null
+        };
         error = new { };
         return true;
     }

@@ -343,6 +343,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
     [Theory]
     [InlineData("SYSTEM_ADMINISTRATOR", "GLOBAL")]
     [InlineData("OPERATIONS_SUPERVISOR", "SITE")]
+    [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "GLOBAL")]
     [InlineData("SITE_OPERATOR", "SITE")]
     [InlineData("PARKING_ATTENDANT", "SITE")]
     [InlineData("APT_CASHIER_OPERATOR", "SITE")]
@@ -379,6 +380,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
     [Theory]
     [InlineData("SYSTEM_ADMINISTRATOR", "GLOBAL")]
     [InlineData("OPERATIONS_SUPERVISOR", "SITE")]
+    [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "GLOBAL")]
     [InlineData("COMPLIANCE_POLICY_ADMINISTRATOR", "GLOBAL")]
     [InlineData("EXECUTIVE_MANAGEMENT", "GLOBAL")]
     public async Task AssignRole_DirectlyAssignsApprovedRolesWithCanonicalScope(string roleCode, string expectedScope)
@@ -485,6 +487,28 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
     }
 
     [Fact]
+    public async Task CreateUser_WithSiteScopedStatutoryDiscountProcessor_FailsClosedBeforePersistence()
+    {
+        var seed = await SeedAdministratorAsync();
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var username = $"i021.processor.site.{Guid.NewGuid():N}";
+        var roleId = await GetRoleIdAsync(ApprovedIdentityRoleCatalog.StatutoryDiscountProcessor);
+
+        var result = await repository.CreateUserAsync(
+            seed.Actor,
+            new CreateIdentityUserCommand(
+                username, "I-021 Site-scoped Statutory Processor", null, null, "COMPLIANCE_USER",
+                roleId, "SITE", seed.SiteId, null,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_PROCESSOR_SITE", "processor-site", Guid.NewGuid(),
+                Bootstrap: BootstrapMaterial()),
+            CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Invalid);
+        result.Classification.Should().Be("ROLE_SCOPE_INCOMPATIBLE");
+        (await CountUsersByUsernameAsync(username)).Should().Be(0);
+    }
+
+    [Fact]
     public async Task PrivilegedDecision_RequiresIndependentActorAndAtomicallyProvisionsAuthority()
     {
         var requester = await SeedAdministratorAsync();
@@ -529,7 +553,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
 
         var all = await repository.ListRolesAsync(seed.Actor, new(null, false), Guid.NewGuid(), CancellationToken.None);
         all.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
-        all.Value.Should().HaveCount(8);
+        all.Value.Should().HaveCount(9);
         all.Value!.Select(role => role.Code).Should().BeEquivalentTo(ApprovedIdentityRoleCatalog.AssignableCodes);
         all.Value.Should().OnlyContain(role => role.Provenance == "CANONICAL_ROLE" && role.HumanAssignable && role.DirectAddUserEligible);
         all.Value.Should().NotContain(role =>
@@ -537,7 +561,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             role.Code == "OPERATOR_SUPPORT_STAFF" || role.Code == "FINANCE_RECONCILIATION");
 
         var finance = await repository.ListRolesAsync(seed.Actor, new("FINANCE_USER", true), Guid.NewGuid(), CancellationToken.None);
-        finance.Value.Should().HaveCount(8);
+        finance.Value.Should().HaveCount(9);
         finance.Value.Should().Contain(role => role.Code == "FINANCE_RECONCILIATION_ANALYST" &&
             role.Name == "Finance / Reconciliation Analyst" && role.DirectAddUserEligible && !role.IsPrivileged);
 
@@ -609,6 +633,27 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         var unrelatedPermission = await repository.ResolveAuthorizedSitesAsync(
             seed.Actor, "operations.manual_gate", CancellationToken.None);
         unrelatedPermission.Should().BeNull("the repository accepts only Management Platform statutory-review permissions");
+    }
+
+    [Theory]
+    [InlineData(ManagementStatutoryBenefitReviewValues.ListPermission)]
+    [InlineData(ManagementStatutoryBenefitReviewValues.DetailPermission)]
+    [InlineData(ManagementStatutoryBenefitReviewValues.EvidencePermission)]
+    [InlineData(ManagementStatutoryBenefitReviewValues.ApprovePermission)]
+    [InlineData(ManagementStatutoryBenefitReviewValues.RejectPermission)]
+    public async Task StatutoryDiscountProcessor_GlobalGrantAuthorizesEverySiteForReviewPermission(string permission)
+    {
+        var seed = await SeedAdministratorAsync();
+        await RevokeAllRoleAssignmentsAsync(seed.Actor.UserId);
+        await AssignStatutoryDiscountProcessorGloballyAsync(seed.Actor.UserId);
+        var repository = new PostgresManagementStatutoryBenefitReviewRepository(_database.ConnectionString);
+
+        var authorization = await repository.ResolveAuthorizedSitesAsync(seed.Actor, permission, CancellationToken.None);
+
+        authorization.Should().NotBeNull();
+        authorization!.HasGlobalGrant.Should().BeTrue();
+        authorization.SiteReferences.Should().Contain(seed.SiteId);
+        authorization.SiteReferences.Should().HaveCountGreaterThan(1);
     }
 
     [Fact]
@@ -1285,6 +1330,31 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("user_id", userId);
         command.Parameters.AddWithValue("site_id", siteId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task AssignStatutoryDiscountProcessorGloballyAsync(Guid userId)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        const string sql = """
+            WITH assignment AS (
+                INSERT INTO identity.user_roles (
+                    user_role_id, user_id, role_id, assignment_status, assignment_reason_code,
+                    assigned_by_user_id, effective_from, created_by_user_id, updated_by_user_id)
+                SELECT gen_random_uuid(), @user_id, role_id, 'ACTIVE', 'RBAC_GLOBAL_SCOPE_TEST',
+                       @user_id, now() - interval '1 minute', @user_id, @user_id
+                FROM identity.roles WHERE role_code='STATUTORY_DISCOUNT_PROCESSOR'
+                RETURNING user_role_id)
+            INSERT INTO identity.user_role_scope_grants (
+                user_role_scope_grant_id, user_role_id, scope_type, grant_status,
+                grant_reason_code, effective_from, granted_by_user_id, created_by_user_id, updated_by_user_id)
+            SELECT gen_random_uuid(), user_role_id, 'GLOBAL', 'ACTIVE', 'RBAC_GLOBAL_SCOPE_TEST',
+                   now() - interval '1 minute', @user_id, @user_id, @user_id
+            FROM assignment;
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("user_id", userId);
         await command.ExecuteNonQueryAsync();
     }
 

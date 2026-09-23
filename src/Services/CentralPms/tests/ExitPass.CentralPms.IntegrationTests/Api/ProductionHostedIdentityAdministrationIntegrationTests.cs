@@ -61,7 +61,7 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         var rolesResponse = await client.GetAsync("/v1/management-platform/identity/roles");
         rolesResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var roles = await rolesResponse.Content.ReadFromJsonAsync<IdentityRoleDefinition[]>();
-        roles.Should().NotBeNull().And.HaveCount(8);
+        roles.Should().NotBeNull().And.HaveCount(9);
         foreach (var role in roles!)
         {
             ApprovedIdentityRoleCatalog.TryGetPolicy(role.Code, out var policy).Should().BeTrue();
