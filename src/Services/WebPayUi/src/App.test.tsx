@@ -3,6 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { formatCustomerSupportReference } from "./customerSafeReference";
+import {
+  loadInvoiceCustomerInformationDraft,
+  saveInvoiceCustomerInformationDraft
+} from "./invoiceCustomerInformationDraft";
 import { createStatutoryRecoveryRecord, statutoryRecoveryStorageKey } from "./statutoryRecovery";
 
 const documentDownloadMocks = vi.hoisted(() => ({
@@ -471,12 +475,14 @@ beforeEach(() => {
   evidenceUploadMocks.upload.mockReset();
   evidenceUploadMocks.upload.mockResolvedValue(statutoryEvidenceResponse({ lifecycleClassification: "VALIDATION_PENDING" }));
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   localStorage.clear();
+  sessionStorage.clear();
   window.history.pushState({}, "", "/");
 });
 
@@ -810,6 +816,76 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.queryByLabelText(/OSCA ID No/i)).not.toBeInTheDocument();
   });
 
+  it("WebPay_WhenSessionResolved_RendersCustomerInformationBeforeStatutoryDiscount", async () => {
+    stubWebPayFetch();
+    render(<App />);
+
+    await resolveTicket("TICKET-CUSTOMER-ORDER");
+
+    const customerHeading = screen.getByRole("heading", { name: /customer information/i });
+    const statutoryHeading = screen.getByRole("heading", { name: /senior citizen or pwd request/i });
+    expect(customerHeading.compareDocumentPosition(statutoryHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("WebPay_WhenSameSessionIsResolved_RestoresItsCustomerInformationDraft", async () => {
+    saveInvoiceCustomerInformationDraft(successResponse.parkingSessionId, {
+      customerName: "Juan Dela Cruz",
+      address: "Paranaque City",
+      tin: "123-456-789-000",
+      businessStyle: "Juan Parking Services",
+      statutoryIdNumber: ""
+    });
+    stubWebPayFetch();
+    render(<App />);
+
+    await resolveTicket("TICKET-CUSTOMER-RESTORE");
+
+    expect(screen.getByLabelText(/customer name/i)).toHaveValue("Juan Dela Cruz");
+    expect(screen.getByLabelText(/^address$/i)).toHaveValue("Paranaque City");
+    expect(screen.getByLabelText(/^tin$/i)).toHaveValue("123-456-789-000");
+    expect(screen.getByLabelText(/business style/i)).toHaveValue("Juan Parking Services");
+  });
+
+  it("WebPay_WhenLookupIsIntentionallyReplaced_ClearsTheActiveSessionDraft", async () => {
+    stubWebPayFetch();
+    render(<App />);
+    await resolveTicket("TICKET-CUSTOMER-CLEAR");
+
+    await userEvent.type(screen.getByLabelText(/customer name/i), "Juan Dela Cruz");
+    await waitFor(() => expect(
+      loadInvoiceCustomerInformationDraft(successResponse.parkingSessionId)?.customerName
+    ).toBe("Juan Dela Cruz"));
+
+    await userEvent.clear(screen.getByLabelText(/ticket reference/i));
+
+    expect(loadInvoiceCustomerInformationDraft(successResponse.parkingSessionId)).toBeNull();
+    expect(screen.queryByRole("heading", { name: /customer information/i })).not.toBeInTheDocument();
+  });
+
+  it("WebPay_WhenStatutoryReviewLifecycleChanges_PreservesCustomerInformation", async () => {
+    const fetchMock = stubWebPayFetch();
+    render(<App />);
+    await resolveTicket("TICKET-CUSTOMER-STATUTORY");
+
+    await userEvent.type(screen.getByLabelText(/customer name/i), "Juan Dela Cruz");
+    await userEvent.type(screen.getByLabelText(/^address$/i), "Paranaque City");
+    await userEvent.type(screen.getByLabelText(/^tin$/i), "123-456-789-000");
+    await userEvent.type(screen.getByLabelText(/business style/i), "Juan Parking Services");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+
+    expect(screen.getByLabelText(/customer name/i)).toHaveValue("Juan Dela Cruz");
+    await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
+    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
+
+    expect(await screen.findByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/customer name/i)).toHaveValue("Juan Dela Cruz");
+    expect(screen.getByLabelText(/^address$/i)).toHaveValue("Paranaque City");
+    expect(screen.getByLabelText(/^tin$/i)).toHaveValue("123-456-789-000");
+    expect(screen.getByLabelText(/business style/i)).toHaveValue("Juan Parking Services");
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
+  });
+
   it("WebPay_WhenCustomerInformationEntered_CarriesTrimmedFieldsAndPreservesPayableAmount", async () => {
     const fetchMock = stubWebPayFetch();
     render(<App />);
@@ -1009,7 +1085,7 @@ describe("ExitPass WebPay UI", () => {
     await submitBasicStatutoryRequest();
 
     expect(await screen.findByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
-    expect(screen.getAllByText(/parking discount request was received and is awaiting review/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/parking discount request was received and is awaiting review/i)).toHaveLength(1);
     expect(document.body).not.toHaveTextContent("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     expect(document.body).not.toHaveTextContent("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     expect(document.body).not.toHaveTextContent("11111111-1111-4111-8111-111111111111");
@@ -1030,6 +1106,22 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
 
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes(`/v1/webpay/statutory-discounts/decisions/${statutoryDecisionCommandId}`))).toBe(true);
+  });
+
+  it("WebPay_WhenAwaitingReviewIsRediscovered_RendersCanonicalStatusOnlyOnceAlongsidePolling", async () => {
+    stubWebPayFetch({
+      statutoryRediscoveryPayload: statutoryPendingLifecycleRediscoveryResponse(),
+      statutoryReadPayload: statutoryDecisionResponse(),
+      statutoryEvidencePayload: statutoryEvidenceResponse({ lifecycleClassification: "REVIEWABLE", readyForReview: true })
+    });
+    render(<App />);
+
+    await resolveTicket("TICKET-STAT-REDISCOVER-REVIEWABLE");
+
+    expect(await screen.findByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
+    expect(screen.getAllByText(/parking discount request was received and is awaiting review/i)).toHaveLength(1);
+    expect(screen.getByText(/checking statutory discount status automatically/i)).toBeInTheDocument();
+    expect(screen.getByText(/existing statutory discount request was restored/i)).toBeInTheDocument();
   });
 
   it("WebPay_WhenPendingLifecycleRediscoveryFindsExistingDecision_RestoresPendingPanelAndContinuationWithoutNewDecision", async () => {
@@ -1205,16 +1297,23 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
 
     await submitBasicStatutoryRequest();
+    await userEvent.type(screen.getByLabelText(/customer name/i), "Juan Dela Cruz");
     const payRegular = await screen.findByRole("button", { name: /pay regular amount/i });
     await waitFor(() => expect(payRegular).toBeEnabled(), { timeout: 6000 });
+    expect(payRegular).toHaveClass("primary-button", "regular-payment-button");
+    expect(payRegular).not.toHaveClass("ghost-button");
+    expect(screen.getByRole("button", { name: /upload replacement photo/i })).not.toHaveClass("primary-button");
+    expect(screen.getByRole("button", { name: /refresh evidence status/i })).not.toHaveClass("primary-button");
     await userEvent.click(payRegular);
 
     expect(screen.getByRole("dialog", { name: /proceed without the parking discount/i })).toBeInTheDocument();
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
     expect(screen.getByText(/approval after payment will not automatically refund or retroactively adjust/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /keep waiting/i }));
 
     expect(screen.queryByRole("dialog", { name: /proceed without the parking discount/i })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/customer name/i)).toHaveValue("Juan Dela Cruz");
     expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/v1/webpay/payment-intents"))).toHaveLength(0);
   });
 
@@ -1224,6 +1323,10 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
 
     await submitBasicStatutoryRequest();
+    await userEvent.type(screen.getByLabelText(/customer name/i), "Juan Dela Cruz");
+    await userEvent.type(screen.getByLabelText(/^address$/i), "Paranaque City");
+    await userEvent.type(screen.getByLabelText(/^tin$/i), "123-456-789-000");
+    await userEvent.type(screen.getByLabelText(/business style/i), "Juan Parking Services");
     const payRegular = await screen.findByRole("button", { name: /pay regular amount/i });
     await waitFor(() => expect(payRegular).toBeEnabled(), { timeout: 6000 });
     await userEvent.click(payRegular);
@@ -1240,8 +1343,23 @@ describe("ExitPass WebPay UI", () => {
     expect(body.expectedAmountMinorUnits).toBe(successResponse.amountMinorUnits);
     expect(body.expectedCurrency).toBe(successResponse.currency);
     expect(body.tariffSnapshotId).toBe(successResponse.tariffSnapshotId);
+    expect(body.invoiceCustomerInformation).toEqual({
+      customerName: "Juan Dela Cruz",
+      address: "Paranaque City",
+      tin: "123-456-789-000",
+      businessStyle: "Juan Parking Services",
+      statutoryIdNumber: ""
+    });
     expect(body).not.toHaveProperty("statutoryDiscountDecisionCommandId");
     expect(body).not.toHaveProperty("statutoryDiscountPayableBasisApplicationCommandId");
+    expect(screen.getByRole("heading", { name: /customer information/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/customer name/i)).toHaveValue("Juan Dela Cruz");
+    expect(screen.getByLabelText(/customer name/i)).toHaveAttribute("readonly");
+    expect(screen.getByLabelText(/^address$/i)).toHaveValue("Paranaque City");
+    expect(screen.getByLabelText(/^tin$/i)).toHaveValue("123-456-789-000");
+    expect(screen.getByLabelText(/business style/i)).toHaveValue("Juan Parking Services");
+    expect(screen.getByText(/these details were submitted for your sales invoice/i)).toBeInTheDocument();
+    expect(screen.getByText(/payment handoff ready/i)).toBeInTheDocument();
   });
 
   it("WebPay_WhenRegularAmountChangesBeforePendingReviewPayment_RequiresRenewedConfirmation", async () => {
@@ -1341,7 +1459,7 @@ describe("ExitPass WebPay UI", () => {
     expect(statutoryPosts).toHaveLength(1);
     const body = JSON.parse((statutoryPosts[0][1] as RequestInit).body as string);
     expect(body.entitlementType).toBe("PWD");
-    expect(screen.getAllByText(/parking discount request was received and is awaiting review/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/parking discount request was received and is awaiting review/i)).toHaveLength(1);
     expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
   });
 
@@ -1563,6 +1681,8 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByText(/SI-00000024/i)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /payment method/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /continue to payment/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /customer information/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/customer name/i)).toHaveAttribute("readonly");
     expect(screen.getAllByText("Statutory benefit").some((label) => label.parentElement?.textContent?.includes("PHP 100.00"))).toBe(true);
     expect(screen.getAllByText("Amount due").some((label) => label.parentElement?.textContent?.includes("PHP 0.00"))).toBe(true);
     expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
