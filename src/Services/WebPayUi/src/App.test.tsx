@@ -1316,7 +1316,7 @@ describe("ExitPass WebPay UI", () => {
     expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/v1/webpay/payment-intents"))).toHaveLength(0);
   });
 
-  it("WebPay_WhenPendingReviewCustomerConfirmsRegularPayment_RevalidatesAndCreatesOrdinaryIntentOnly", async () => {
+  it("WebPay_WhenPendingReviewCustomerConfirmsRegularPayment_ReturnsToEditableOrdinaryPaymentBeforeCreatingIntent", async () => {
     const fetchMock = stubWebPayFetch();
 
     render(<App />);
@@ -1331,14 +1331,39 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.click(payRegular);
     await userEvent.click(screen.getByRole("button", { name: /continue with regular payment/i }));
 
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /proceed without the parking discount/i })).not.toBeInTheDocument());
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
+    expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: /awaiting review/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/checking statutory discount status automatically/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /upload replacement photo/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /refresh evidence status/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /pay regular amount/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /payment already started/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /continue existing payment/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /payment method/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /customer information/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/customer name/i)).toBeEnabled();
+    expect(screen.getByLabelText(/customer name/i)).not.toHaveAttribute("readonly");
+
+    for (const label of ["QRPh", "GCash", "Maya", "Card"]) {
+      const method = screen.getByRole("radio", { name: new RegExp(`^${label}`, "i") });
+      await userEvent.click(method);
+      expect(method).toBeChecked();
+    }
+    await userEvent.click(screen.getByRole("radio", { name: /^Maya/i }));
+    expect(screen.getAllByRole("button", { name: /continue to payment/i })).toHaveLength(1);
+    expect(screen.queryByRole("link", { name: /continue to payment/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /continue to payment/i }));
     await screen.findByText("Payment handoff ready");
 
-    const decisionReads = routeCalls(fetchMock, `/v1/webpay/statutory-discounts/decisions/${statutoryDecisionCommandId}`);
-    expect(decisionReads.length).toBeGreaterThan(0);
     expect(routeCalls(fetchMock, "/v1/webpay/parking-session").length).toBeGreaterThanOrEqual(2);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1);
 
     const paymentIntentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
     const body = JSON.parse((paymentIntentCall[1] as RequestInit).body as string);
+    expect(body.paymentMethod).toBe("MAYA");
     expect(body.expectedAmountMinorUnits).toBe(successResponse.amountMinorUnits);
     expect(body.expectedCurrency).toBe(successResponse.currency);
     expect(body.tariffSnapshotId).toBe(successResponse.tariffSnapshotId);
@@ -1359,6 +1384,8 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByLabelText(/business style/i)).toHaveValue("Juan Parking Services");
     expect(screen.getByText(/these details were submitted for your sales invoice/i)).toBeInTheDocument();
     expect(screen.getByText(/payment handoff ready/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /continue to payment/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: /continue to payment/i })).toHaveLength(1);
   });
 
   it("WebPay_WhenRegularAmountChangesBeforePendingReviewPayment_RequiresRenewedConfirmation", async () => {
@@ -1405,11 +1432,19 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.click(payRegular);
     await userEvent.click(screen.getByRole("button", { name: /continue with regular payment/i }));
 
+    expect(screen.getByRole("heading", { name: /payment method/i })).toBeInTheDocument();
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole("button", { name: /continue to payment/i }));
     expect(await screen.findByText(/regular parking amount changed before payment/i)).toBeInTheDocument();
     expect(screen.getAllByText(/PHP 130.00/i).length).toBeGreaterThan(0);
     expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
 
     await userEvent.click(screen.getByRole("button", { name: /continue with regular payment/i }));
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
+    expect(screen.getByRole("heading", { name: /payment method/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /continue to payment/i }));
     await screen.findByText("Payment handoff ready");
 
     const paymentIntentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
@@ -1417,6 +1452,40 @@ describe("ExitPass WebPay UI", () => {
     expect(body.expectedAmountMinorUnits).toBe(13000);
     expect(body.tariffSnapshotId).toBe(changedResolve.tariffSnapshotId);
     expect(body).not.toHaveProperty("statutoryDiscountDecisionCommandId");
+  });
+
+  it("WebPay_WhenRegularPaymentMeetsPreExistingActiveAttempt_PreservesRecoveryOnlyAfterOrdinaryContinue", async () => {
+    const fetchMock = stubWebPayFetch({
+      intentOk: false,
+      intentStatus: 409,
+      intentPayload: {
+        ...activePaymentAttemptConflict,
+        handoff: {
+          type: "Redirect",
+          resumePaymentUrl: "https://payments.test/existing"
+        }
+      }
+    });
+
+    render(<App />);
+    await submitBasicStatutoryRequest();
+    const payRegular = await screen.findByRole("button", { name: /pay regular amount/i });
+    await waitFor(() => expect(payRegular).toBeEnabled(), { timeout: 6000 });
+    await userEvent.click(payRegular);
+    await userEvent.click(screen.getByRole("button", { name: /continue with regular payment/i }));
+
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
+    expect(screen.queryByRole("heading", { name: /payment already started/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /continue existing payment/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /continue to payment/i }));
+
+    expect(await screen.findByRole("heading", { name: /payment already started/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /continue existing payment/i })).toHaveAttribute(
+      "href",
+      "https://payments.test/existing"
+    );
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1);
   });
 
   it("WebPay_WhenLocalValidationRecoveryResetParamPresent_ClearsOnlyStatutoryRecoveryBeforeLoad", () => {

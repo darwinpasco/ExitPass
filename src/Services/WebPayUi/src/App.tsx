@@ -138,6 +138,12 @@ type RegularPaymentConfirmationState = {
   message: string;
 };
 
+type RegularPaymentSelection = {
+  amountMinorUnits: number;
+  currency: string;
+  tariffSnapshotId: string;
+};
+
 type AppliedStatutoryPaymentBasis = {
   tariffSnapshotId: string;
   amountMinorUnits: number;
@@ -214,6 +220,7 @@ export function App() {
     useState<WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse | null>(null);
   const [regularPaymentConfirmation, setRegularPaymentConfirmation] =
     useState<RegularPaymentConfirmationState>(emptyRegularPaymentConfirmation);
+  const [regularPaymentSelection, setRegularPaymentSelection] = useState<RegularPaymentSelection | null>(null);
   const [initialRecoveryLoad] = useState(() => {
     if (resetStatutoryRecoveryForLocalValidation) {
       clearStatutoryRecoveryRecord();
@@ -263,6 +270,7 @@ export function App() {
     setStatutoryAvailabilityState(emptyStatutoryDiscountAvailabilityState);
     setStatutoryPendingLifecycle(null);
     setRegularPaymentConfirmation(emptyRegularPaymentConfirmation);
+    setRegularPaymentSelection(null);
     clearActiveInvoiceCustomerInformationDraft();
     clearStatutoryRecovery();
     setStage("INPUT");
@@ -286,6 +294,7 @@ export function App() {
     setStatutoryAvailabilityState(emptyStatutoryDiscountAvailabilityState);
     setStatutoryPendingLifecycle(null);
     setRegularPaymentConfirmation(emptyRegularPaymentConfirmation);
+    setRegularPaymentSelection(null);
     clearActiveInvoiceCustomerInformationDraft();
     setStage("INPUT");
   }
@@ -707,54 +716,41 @@ export function App() {
     window.setTimeout(() => regularPaymentButtonRef.current?.focus(), 0);
   }
 
-  async function confirmRegularPayment() {
-    if (!resolvedSession || regularPaymentConfirmation.isRevalidating) {
+  function confirmRegularPayment() {
+    if (!resolvedSession || regularPaymentConfirmation.isRevalidating || regularPaymentConfirmation.amountMinorUnits === null) {
       return;
     }
 
-    setRegularPaymentConfirmation((current) => ({ ...current, isRevalidating: true, message: "" }));
+    statutoryPollGeneration.current += 1;
+    setStatutoryDiscountState((current) => ({ ...current, isPolling: false }));
+    setRegularPaymentSelection({
+      amountMinorUnits: regularPaymentConfirmation.amountMinorUnits,
+      currency: regularPaymentConfirmation.currency || resolvedSession.currency,
+      tariffSnapshotId: regularPaymentConfirmation.tariffSnapshotId || resolvedSession.tariffSnapshotId
+    });
+    setRegularPaymentConfirmation(emptyRegularPaymentConfirmation);
+  }
+
+  async function handleCreateRegularPaymentIntent() {
+    if (!resolvedSession || !regularPaymentSelection) {
+      return;
+    }
+
+    setError("");
+    setIsSubmitting(true);
+    paymentIntentInFlight.current = true;
 
     try {
-      const currentDecisionId = statutoryDiscountState.decision?.statutoryDiscountDecisionCommandId;
-      if (currentDecisionId) {
-        const decision = await retrieveStatutoryDiscountDecision(currentDecisionId, statutoryDiscountState.correlationId || undefined);
-        setStatutoryDiscountState((current) => ({
-          ...current,
-          decision,
-          isPolling: shouldPollStatutoryDecision(decision),
-          message: getStatutoryDiscountStatusCopy(decision).body,
-          error: ""
-        }));
-        updateRecoveryFromDecision(decision);
-
-        if (canSubmitApplicationIntent(decision) || getAppliedStatutoryPaymentBasis(decision)) {
-          setRegularPaymentConfirmation({
-            ...emptyRegularPaymentConfirmation,
-            isOpen: true,
-            amountMinorUnits: resolvedSession.amountMinorUnits,
-            currency: resolvedSession.currency,
-            tariffSnapshotId: resolvedSession.tariffSnapshotId,
-            message: "The statutory request status changed before payment. Review the updated status before choosing how to continue."
-          });
-          return;
-        }
-
-        if (!isPendingReviewStatutoryDecision(decision) && !isRejectedStatutoryDecision(decision)) {
-          setRegularPaymentConfirmation(emptyRegularPaymentConfirmation);
-          return;
-        }
-      }
-
       const latestSession = await fetchCurrentParkingSession();
       setResolvedSession(latestSession);
       setStage("SESSION_RESOLVED");
 
       const amountChanged =
-        latestSession.amountMinorUnits !== regularPaymentConfirmation.amountMinorUnits ||
-        latestSession.currency.toUpperCase() !== regularPaymentConfirmation.currency.toUpperCase() ||
-        latestSession.tariffSnapshotId !== regularPaymentConfirmation.tariffSnapshotId;
+        latestSession.amountMinorUnits !== regularPaymentSelection.amountMinorUnits ||
+        latestSession.currency.toUpperCase() !== regularPaymentSelection.currency.toUpperCase() ||
+        latestSession.tariffSnapshotId !== regularPaymentSelection.tariffSnapshotId;
 
-      if (amountChanged && !regularPaymentConfirmation.requiresRenewedConfirmation) {
+      if (amountChanged) {
         setRegularPaymentConfirmation({
           isOpen: true,
           amountMinorUnits: latestSession.amountMinorUnits,
@@ -767,14 +763,13 @@ export function App() {
         return;
       }
 
-      setRegularPaymentConfirmation(emptyRegularPaymentConfirmation);
       await handleCreatePaymentIntent({ forceRegularAmount: true, sessionOverride: latestSession });
     } catch (apiError) {
-      setRegularPaymentConfirmation((current) => ({
-        ...current,
-        isRevalidating: false,
-        message: apiError instanceof Error ? apiError.message : "Regular payment could not be revalidated. Please try again."
-      }));
+      setError(apiError instanceof Error ? apiError.message : "Regular payment could not be revalidated. Please try again.");
+      setStage("ERROR");
+    } finally {
+      setIsSubmitting(false);
+      paymentIntentInFlight.current = false;
     }
   }
 
@@ -807,13 +802,18 @@ export function App() {
       return;
     }
 
-    if (isStatutoryValidationPending(resolvedSession)) {
-      setError("Statutory discount validation is pending review.");
+    if (stage !== "SESSION_RESOLVED" || !resolvedSession) {
+      await handleResolveParkingSession();
       return;
     }
 
-    if (stage !== "SESSION_RESOLVED" || !resolvedSession) {
-      await handleResolveParkingSession();
+    if (regularPaymentSelection) {
+      await handleCreateRegularPaymentIntent();
+      return;
+    }
+
+    if (isStatutoryValidationPending(resolvedSession)) {
+      setError("Statutory discount validation is pending review.");
       return;
     }
 
@@ -989,7 +989,7 @@ export function App() {
 
   useEffect(() => {
     const decision = statutoryDiscountState.decision;
-    if (!decision || !statutoryDiscountState.isPolling || !shouldPollStatutoryDecision(decision)) {
+    if (regularPaymentSelection || !decision || !statutoryDiscountState.isPolling || !shouldPollStatutoryDecision(decision)) {
       return;
     }
 
@@ -1039,7 +1039,8 @@ export function App() {
     statutoryDiscountState.decision?.statutoryDiscountDecisionCommandId,
     statutoryDiscountState.isPolling,
     statutoryDiscountState.correlationId,
-    resolvedSession?.parkingSessionId
+    resolvedSession?.parkingSessionId,
+    regularPaymentSelection
   ]);
 
   useLayoutEffect(() => {
@@ -1182,11 +1183,13 @@ export function App() {
   const handoff = result?.handoff;
   const activeResumeUrl = getResumeUrl(activePaymentAttempt?.handoff);
   const unresolvedSummary = resolvedSession ?? (result ? toParkingSessionResolveResponse(result) : null);
-  const summary = bindAppliedStatutoryPayableBasis(unresolvedSummary, statutoryDiscountState.decision);
+  const summary = regularPaymentSelection
+    ? unresolvedSummary
+    : bindAppliedStatutoryPayableBasis(unresolvedSummary, statutoryDiscountState.decision);
   const isPaymentComplete = isPaidStatus(summary?.paymentStatus);
-  const isPayablePending = isStatutoryValidationPending(summary);
-  const isActiveStatutoryWorkflow = Boolean(statutoryDiscountState.decision);
-  const appliedStatutoryBasis = getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision);
+  const isPayablePending = !regularPaymentSelection && isStatutoryValidationPending(summary);
+  const isActiveStatutoryWorkflow = !regularPaymentSelection && Boolean(statutoryDiscountState.decision);
+  const appliedStatutoryBasis = regularPaymentSelection ? null : getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision);
   const zeroPayableStatutoryCompletion = Boolean(appliedStatutoryBasis?.amountMinorUnits === 0);
   const statutoryRecoveryMutationInFlight = hasKnownInFlightStatutoryRecoveryStage(statutoryRecoveryRecord);
   const canPayRegularWhilePending =
@@ -1199,10 +1202,10 @@ export function App() {
   const statutoryDiscountPaymentBlocked =
     stage === "SESSION_RESOLVED" &&
     (isPayablePending || (isActiveStatutoryWorkflow && !appliedStatutoryBasis));
-  const statutoryRecoveryPaymentBlocked = stage === "SESSION_RESOLVED" && statutoryRecoveryMutationInFlight;
+  const statutoryRecoveryPaymentBlocked = stage === "SESSION_RESOLVED" && !regularPaymentSelection && statutoryRecoveryMutationInFlight;
   const coveredStatutoryEntitlements = getCoveredStatutoryEntitlementTypes(statutoryAvailabilityState.availability);
   const canStartStatutoryDiscountRequest = coveredStatutoryEntitlements.length > 0 || Boolean(statutoryDiscountState.decision);
-  const showStatutoryInvoiceId = hasApprovedStatutoryBenefit(summary, statutoryDiscountState.decision);
+  const showStatutoryInvoiceId = !regularPaymentSelection && hasApprovedStatutoryBenefit(summary, statutoryDiscountState.decision);
   const invoiceCustomerInformationReadOnly = Boolean(
     result || activePaymentAttempt || stage === "HANDOFF_READY" || stage === "ACTIVE_ATTEMPT" || zeroPayableStatutoryCompletion
   );
@@ -1224,7 +1227,7 @@ export function App() {
 
       <QrScanner onDecoded={handleQrDecoded} />
 
-      {statutoryRecoveryMessage && (
+      {!regularPaymentSelection && statutoryRecoveryMessage && (
         <section className="statutory-recovery-panel" aria-live="polite" aria-labelledby="statutory-recovery-heading">
           <div>
             <p className="eyebrow">Saved request</p>
@@ -1247,7 +1250,7 @@ export function App() {
         </section>
       )}
 
-      {!summary && statutoryDiscountState.decision && (
+      {!regularPaymentSelection && !summary && statutoryDiscountState.decision && (
         <StatutoryDiscountRequestPanel
           readOnly={false}
           evidenceReviewable={evidenceReviewability?.decisionId === statutoryDiscountState.decision.statutoryDiscountDecisionCommandId && evidenceReviewability.ready}
@@ -1364,7 +1367,7 @@ export function App() {
           />
         )}
 
-        {summary && !isPaymentComplete && !isPayablePending &&
+        {!regularPaymentSelection && summary && !isPaymentComplete && !isPayablePending &&
           (stage === "SESSION_RESOLVED" || Boolean(statutoryDiscountState.decision && (stage === "HANDOFF_READY" || stage === "ACTIVE_ATTEMPT"))) && (
           <StatutoryDiscountRequestPanel
             readOnly={stage !== "SESSION_RESOLVED"}
@@ -1539,7 +1542,7 @@ export function App() {
           amountLabel={displayValue(formatCurrencyAmount(regularPaymentConfirmation.amountMinorUnits, regularPaymentConfirmation.currency || resolvedSession.currency))}
           confirmButtonRef={regularPaymentConfirmButtonRef}
           onCancel={closeRegularPaymentConfirmation}
-          onConfirm={() => void confirmRegularPayment()}
+          onConfirm={confirmRegularPayment}
         />
       )}
 
@@ -3297,12 +3300,6 @@ function isPendingReviewStatutoryDecision(decision: WebPayStatutoryDiscountDecis
       overall === "PENDING_REVIEW" ||
       recovery === "PENDING_REVIEW" ||
       recovery === "PENDING");
-}
-
-function isRejectedStatutoryDecision(decision: WebPayStatutoryDiscountDecisionResponse): boolean {
-  const readinessStatus = decision.payableBasisReadinessStatus.toUpperCase();
-  const decisionResult = decision.decisionResultStatus?.toUpperCase() ?? "";
-  return readinessStatus === "DECISION_REJECTED" || decisionResult === "REJECTED";
 }
 
 function getStatutoryDiscountPaymentAvailabilityCopy(decision: WebPayStatutoryDiscountDecisionResponse): string {
