@@ -374,6 +374,65 @@ function Start-MockAdapter($RealAdapter) {
     Invoke-Docker -Arguments ($arguments.ToArray()) | Out-Null
 }
 
+function Initialize-EmptyProjectionMapping([string] $WireMockAdminUrl, $RealAdapter) {
+    $appKeyMount = @($RealAdapter.Mounts | Where-Object {
+        $_.Type -eq 'bind' -and $_.Destination -eq '/run/exitpass/secrets/hikcentral/app-key'
+    })
+
+    if ($appKeyMount.Count -ne 1 -or
+        -not (Test-Path -LiteralPath $appKeyMount[0].Source -PathType Leaf)) {
+        throw 'The ordinary PITX adapter HikCentral app-key mount is unavailable for mock initialization.'
+    }
+
+    $appKey = (Get-Content -LiteralPath $appKeyMount[0].Source -Raw).Trim()
+    if ([string]::IsNullOrWhiteSpace($appKey)) {
+        throw 'The configured HikCentral app key is blank.'
+    }
+
+    $mapping = @{
+        name = 'ExitPass mock empty passageway inventory'
+        priority = 1
+        request = @{
+            method = 'POST'
+            urlPath = '/artemis/api/vehicle/v1/parkinglot/passageway/record'
+            headers = @{
+                'Content-Type' = @{ matches = '(?i)^application/json(?:\s*;.*)?$' }
+                'X-Ca-Key' = @{ equalTo = $appKey }
+                'X-Ca-Signature' = @{ matches = '.+' }
+            }
+            bodyPatterns = @(
+                @{ matchesJsonPath = "$[?(@.queryInfo.parkingLotIndexCode == '$expectedParkingLot')]" }
+            )
+        }
+        response = @{
+            status = 200
+            headers = @{ 'Content-Type' = 'application/json' }
+            jsonBody = @{
+                code = '0'
+                msg = 'Success'
+                data = @{
+                    total = 0
+                    pageIndex = 1
+                    pageSize = 100
+                    list = @()
+                }
+            }
+        }
+    }
+
+    $body = $mapping | ConvertTo-Json -Depth 30 -Compress
+    Invoke-RestMethod -Method Post -Uri "$($WireMockAdminUrl.TrimEnd('/'))/__admin/mappings" -ContentType 'application/json' -Body $body -TimeoutSec 15 | Out-Null
+
+    $registered = Invoke-RestMethod -Method Get -Uri "$($WireMockAdminUrl.TrimEnd('/'))/__admin/mappings" -TimeoutSec 15
+    $matching = @($registered.mappings | Where-Object {
+        $_.request.urlPath -eq '/artemis/api/vehicle/v1/parkinglot/passageway/record'
+    })
+
+    if ($matching.Count -ne 1) {
+        throw "WireMock did not retain exactly one initial passageway mapping (found $($matching.Count))."
+    }
+}
+
 function Write-RuntimeState([string] $WireMockAdminUrl) {
     [IO.Directory]::CreateDirectory($runtimeRoot) | Out-Null
     ConvertTo-Json -InputObject @() | Set-Content -LiteralPath $sessionsPath -Encoding UTF8
@@ -646,7 +705,12 @@ function Invoke-SelfTest {
     $testCount += Invoke-TestCase 'mock startup restores projection readiness after adapter swap' {
         $source = Get-Content -LiteralPath $PSCommandPath -Raw
         Assert-Test ($source -match "Resolve-CentralPmsRuntime\s+-HealthPath\s+'/health/live'") 'Mock startup must require only Central PMS liveness before swapping adapters.'
-        Assert-Test ($source -match '(?s)Write-RuntimeState \$wireMockAdminUrl.*-RefreshMappings.*Wait-Http "\$centralUrl/health/ready" 200 90') 'Mock startup must seed an empty passageway mapping and then wait for Central PMS readiness.'
+        Assert-Test ($source -match '(?s)Write-RuntimeState \$wireMockAdminUrl.*Initialize-EmptyProjectionMapping \$wireMockAdminUrl \$realAdapter.*Wait-Http "\$centralUrl/health/ready" 200 90') 'Mock startup must seed an empty passageway mapping and then wait for Central PMS readiness.'
+    }
+    $testCount += Invoke-TestCase 'empty projection mapping is seeded internally' {
+        $source = Get-Content -LiteralPath $PSCommandPath -Raw
+        Assert-Test ($source -match 'function Initialize-EmptyProjectionMapping') 'The launcher no longer owns its initial empty projection mapping.'
+        Assert-Test ($source -notmatch '(?s)Write-RuntimeState \$wireMockAdminUrl\s*\r?\n\s*& powershell\.exe.*-RefreshMappings') 'Mock startup must not shell out to the on-demand creator for initial readiness.'
     }
     $testCount += Invoke-TestCase 'persisted route invariance' {
         $source = Get-Content -LiteralPath $PSCommandPath -Raw
@@ -725,14 +789,10 @@ try {
 
     Write-RuntimeState $wireMockAdminUrl
 
-    # Seed a successful empty passageway response before waiting for Central PMS
-    # readiness. Without this mapping, WireMock returns 404 for the projection pull,
-    # which keeps the required vendor-session projection health check unhealthy.
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $creatorPath -RefreshMappings | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Failed to initialize the empty mock HikCentral passageway mapping.'
-    }
-
+    # Seed the first successful empty projection response directly in this launcher.
+    # The on-demand creator is reserved for adding or refreshing sessions after
+    # mock mode has become operational.
+    Initialize-EmptyProjectionMapping $wireMockAdminUrl $realAdapter
     # The mock adapter can now satisfy the required projection cycle. Wait for the
     # normal readiness contract only after the replacement adapter is operational.
     Wait-Http "$centralUrl/health/ready" 200 90
