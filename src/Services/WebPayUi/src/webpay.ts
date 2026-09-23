@@ -15,6 +15,7 @@ import type {
   WebPayStatutoryDiscountDecisionRequest,
   WebPayStatutoryDiscountDecisionResponse
 } from "./types";
+import { isAutomaticallyMaskedStatutoryIdReference } from "./statutoryIdMasking";
 
 const paymentIntentPath = "/v1/webpay/payment-intents";
 const parkingSessionResolvePath = "/v1/webpay/parking-session";
@@ -633,7 +634,7 @@ export function buildStatutoryDiscountDecisionBody(
   }
 
   const maskedIdReference = request.maskedIdReference.trim();
-  if (maskedIdReference && !isMaskedIdReference(maskedIdReference)) {
+  if (maskedIdReference && !isAutomaticallyMaskedStatutoryIdReference(maskedIdReference)) {
     throw new Error("Enter at least 4 characters for the ID No. / Control No. and let WebPay mask it automatically.");
   }
 
@@ -946,16 +947,6 @@ export function toReceiptPresentationMessage(errorCode?: string, _message?: stri
 
 function isPayableBasisRefreshRequired(error: ApiError): boolean {
   return (error.errorCode ?? "").toUpperCase() === refreshRequiredErrorCode;
-}
-
-function isMaskedIdReference(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed.includes("*")) {
-    return false;
-  }
-
-  const digits = trimmed.replace(/\D/g, "");
-  return digits.length <= 6 && /^[A-Za-z0-9* -]{4,40}$/.test(trimmed);
 }
 
 async function readStatutoryDiscountDecisionResponse(response: Response): Promise<WebPayStatutoryDiscountDecisionResponse> {

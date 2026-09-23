@@ -36,13 +36,13 @@ export function maskStatutoryIdReference(value: string): StatutoryIdMaskResult {
 
   return {
     ok: true,
-    maskedValue: normalized.length <= 6
-      ? "*".repeat(normalized.length)
-      : `${normalized.slice(0, 2)}${"*".repeat(normalized.length - 6)}${normalized.slice(-4)}`
+    maskedValue: normalized.length === statutoryIdMinimumLength
+      ? normalized
+      : `${"*".repeat(normalized.length - statutoryIdMinimumLength)}${normalized.slice(-statutoryIdMinimumLength)}`
   };
 }
 
 export function isAutomaticallyMaskedStatutoryIdReference(value: string): boolean {
   const normalized = value.trim();
-  return /^\*{4,6}$/.test(normalized) || /^[A-Za-z0-9-]{2}\*+[A-Za-z0-9-]{4}$/.test(normalized);
+  return /^[A-Za-z0-9-]{4}$/.test(normalized) || /^\*+[A-Za-z0-9-]{4}$/.test(normalized);
 }

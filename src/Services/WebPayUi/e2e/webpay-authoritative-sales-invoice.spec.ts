@@ -397,7 +397,7 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
     const state = await getFixtureState();
     const decisionRequest = state.requestLog.find((request) => request.path.includes("/statutory-discounts/decisions"));
     expect(decisionRequest).toBeDefined();
-    expect(decisionRequest?.body).toMatchObject({ maskedIdReference: "12******9012" });
+    expect(decisionRequest?.body).toMatchObject({ maskedIdReference: "********9012" });
     const customerMarkup = await page.locator("body").evaluate((body) => body.outerHTML);
     expect(customerMarkup).not.toContain("123456789012");
     expect(customerMarkup).not.toMatch(/(?:aria-label|aria-description|title)=["'][^"']*123456789012/i);

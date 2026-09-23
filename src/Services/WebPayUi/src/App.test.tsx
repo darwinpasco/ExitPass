@@ -585,20 +585,19 @@ describe("ExitPass WebPay UI", () => {
     expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions").filter((call) => (call[1] as RequestInit)?.method === "POST")).toHaveLength(1);
   });
 
-  it("masks a four-character ID completely before submission", async () => {
+  it("keeps a four-character ID visible before submission", async () => {
     const fetchMock = stubWebPayFetch();
     render(<App />);
     await resolveTicket("TICKET-FOUR-ID");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
     await userEvent.type(screen.getByLabelText(/id no\. \/ control no\./i), "AB12");
     await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
-    expect(screen.getByLabelText(/id no\. \/ control no\./i)).toHaveValue("****");
+    expect(screen.getByLabelText(/id no\. \/ control no\./i)).toHaveValue("AB12");
     await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
     await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions").filter((call) => (call[1] as RequestInit)?.method === "POST")).toHaveLength(1));
     const body = JSON.parse((firstRouteCall(fetchMock, "/v1/webpay/statutory-discounts/decisions")[1] as RequestInit).body as string);
-    expect(body.maskedIdReference).toBe("****");
-    expect(document.body.innerHTML).not.toContain("AB12");
+    expect(body.maskedIdReference).toBe("AB12");
   });
 
   it("WebPay_WhenEnterPressedInTicketInput_ResolvesSessionOnly", async () => {
@@ -977,7 +976,7 @@ describe("ExitPass WebPay UI", () => {
     expect(body.entitlementType).toBe("SENIOR_CITIZEN");
     expect(body.parkingSessionId).toBe(successResponse.parkingSessionId);
     expect(body.originalTariffSnapshotId).toBe(successResponse.tariffSnapshotId);
-    expect(body.maskedIdReference).toBe("SC****1234");
+    expect(body.maskedIdReference).toBe("******1234");
     expect(body.evidenceCaptureRequested).toBe(true);
     expect(body).not.toHaveProperty("idDocumentType");
     expect(body).not.toHaveProperty("issuingAuthority");
@@ -1480,7 +1479,7 @@ describe("ExitPass WebPay UI", () => {
     const statutoryPosts = fetchMock.mock.calls.filter((call) => String(call[0]).endsWith("/statutory-discounts/decisions"));
     expect(statutoryPosts).toHaveLength(1);
     const body = JSON.parse((statutoryPosts[0][1] as RequestInit).body as string);
-    expect(body.maskedIdReference).toBe("12******9012");
+    expect(body.maskedIdReference).toBe("********9012");
     expect(document.body.innerHTML).not.toContain("123456789012");
     expect(JSON.stringify(localStorage)).not.toContain("123456789012");
   });
@@ -1681,7 +1680,7 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByText(/SI-00000024/i)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /payment method/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /continue to payment/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /customer information/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /customer information/i, level: 2 })).toBeInTheDocument();
     expect(screen.getByLabelText(/customer name/i)).toHaveAttribute("readonly");
     expect(screen.getAllByText("Statutory benefit").some((label) => label.parentElement?.textContent?.includes("PHP 100.00"))).toBe(true);
     expect(screen.getAllByText("Amount due").some((label) => label.parentElement?.textContent?.includes("PHP 0.00"))).toBe(true);
@@ -2510,6 +2509,8 @@ describe("ExitPass WebPay UI", () => {
       "href",
       "https://payments.test/handoff"
     );
+    expect(screen.getAllByRole("link", { name: /continue to payment/i })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /continue to payment/i })).not.toBeInTheDocument();
     expect(screen.getAllByText("PHP").length).toBeGreaterThan(0);
     expect(screen.getByText("Ready to continue")).toBeInTheDocument();
     expect(screen.queryByText("PENDING_PROVIDER")).not.toBeInTheDocument();
@@ -2532,12 +2533,14 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByText("Entry Time")).toBeInTheDocument();
     expect(screen.getByText("Duration")).toBeInTheDocument();
     expect(screen.getByText("Original parking fee")).toBeInTheDocument();
-    expect(screen.getAllByText("Amount Due").length).toBeGreaterThan(0);
+    const summary = screen.getByRole("region", { name: /mactan newtown parking/i });
+    const feeSummary = screen.getByRole("region", { name: /parking fee/i });
+    expect(summary).not.toHaveTextContent("Amount Due");
+    expect(feeSummary).toHaveTextContent("Amount Due");
     expect(screen.queryByText("PaymentRequired")).not.toBeInTheDocument();
     expect(screen.queryByText("Not Started")).not.toBeInTheDocument();
     expect(screen.getByText("Fee Valid Until")).toBeInTheDocument();
-    const summary = screen.getByRole("region", { name: /mactan newtown parking/i });
-    for (const label of ["Ticket", "Plate", "Entry Time", "Fee Valid Until"]) {
+    for (const label of ["Ticket", "Plate", "Entry Time", "Duration", "Fee Valid Until"]) {
       const row = Array.from(summary.querySelectorAll("dl > div")).find((candidate) => candidate.querySelector("dt")?.textContent === label);
       expect(row?.querySelector("dd")?.textContent).toBeTruthy();
     }
