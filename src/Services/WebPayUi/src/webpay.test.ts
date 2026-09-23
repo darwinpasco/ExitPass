@@ -165,7 +165,7 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(headers["X-Correlation-Id"]).toBe("77777777-7777-7777-7777-777777777777");
     const body = JSON.parse(request.body as string);
     expect(body.entitlementType).toBe("SENIOR_CITIZEN");
-    expect(body.maskedIdReference).toBe("SC-****-1234");
+    expect(body.maskedIdReference).toBe("******1234");
     expect(body.evidenceCaptureRequested).toBe(false);
     expect(body).not.toHaveProperty("sourceChannel");
     expect(body).not.toHaveProperty("reviewerUserId");
@@ -1111,7 +1111,7 @@ function statutoryDecisionRequest() {
     idDocumentType: "OSCA",
     issuingAuthority: "QUEZON_CITY",
     expiryDate: "2030-12-31",
-    maskedIdReference: "SC-****-1234",
+    maskedIdReference: "******1234",
     evidenceCaptureRequested: false,
     requesterAttestation: true,
     originalTariffSnapshotId: "66666666-6666-4666-8666-666666666666"

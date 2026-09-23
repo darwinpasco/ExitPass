@@ -1513,7 +1513,7 @@ export function App() {
           </section>
         )}
 
-        {!zeroPayableStatutoryCompletion && <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || statutoryDiscountPaymentBlocked || statutoryRecoveryPaymentBlocked}>
+        {!zeroPayableStatutoryCompletion && stage !== "HANDOFF_READY" && <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || statutoryDiscountPaymentBlocked || statutoryRecoveryPaymentBlocked}>
           <img src="/assets/icons/payment.svg" alt="" aria-hidden="true" />
           {isResolving
             ? "Resolving..."
@@ -3157,11 +3157,6 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
         <div>
           <p className="eyebrow">Parking Session Summary</p>
           <h2 id="session-summary-heading">{siteName}</h2>
-        </div>
-        <div className="amount-due">
-          <span>Amount Due</span>
-          <strong>{formatAmount(summary.amountMinorUnits ?? result.amountMinorUnits, summary.currency ?? result.currency)}</strong>
-          <small>{summary.currency ?? result.currency}</small>
         </div>
       </div>
       <dl>
