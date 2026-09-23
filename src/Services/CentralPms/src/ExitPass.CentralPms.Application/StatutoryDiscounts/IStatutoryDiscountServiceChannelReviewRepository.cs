@@ -22,6 +22,7 @@ public interface IStatutoryDiscountServiceChannelReviewRepository
         Guid statutoryDiscountDecisionCommandId,
         Guid reviewerUserId,
         string? decisionReasonCode,
+        StatutoryDiscountServiceChannelReviewedDocument reviewedDocument,
         Guid correlationId,
         CancellationToken cancellationToken);
 
@@ -37,6 +38,7 @@ public interface IStatutoryDiscountServiceChannelReviewRepository
         Guid accessEvaluationId,
         string decision,
         string? decisionReasonCode,
+        StatutoryDiscountServiceChannelReviewedDocument reviewedDocument,
         Guid correlationId,
         CancellationToken cancellationToken);
 }

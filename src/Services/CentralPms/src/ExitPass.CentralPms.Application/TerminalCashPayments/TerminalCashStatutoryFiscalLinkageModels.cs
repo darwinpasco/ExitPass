@@ -94,4 +94,4 @@ public sealed record TerminalCashStatutoryFiscalLinkageContext(
     string Currency,
     DateTimeOffset? DecisionTimestamp,
     DateTimeOffset? AppliedAt,
-    string? MaskedIdReference);
+    string? IdControlReference);

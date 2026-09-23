@@ -64,7 +64,11 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
     {
         var canonical = new FakeCanonicalRepository
         {
-            Detail = Detail() with { GoverningPolicy = ResidentOnlyPolicy() }
+            Detail = Detail() with
+            {
+                GoverningPolicy = ResidentOnlyPolicy(),
+                IdControlReference = "ABC1234"
+            }
         };
         var service = CreateService(AllowedRepository(), canonical);
 
@@ -72,6 +76,53 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
 
         result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
         result.Value!.BeneficiaryResidencySatisfied.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("2234", "2234")]
+    [InlineData("12345", "*2345")]
+    [InlineData("12345678", "****5678")]
+    [InlineData("ABCDEFGH", "****EFGH")]
+    public async Task Detail_MasksAuthoritativeIdControlReferenceAndNeverReturnsTheRawValue(
+        string authoritativeReference,
+        string expectedMask)
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                IdControlReference = authoritativeReference,
+                MaskedIdReference = "legacy-mask"
+            }
+        };
+
+        var result = await CreateService(AllowedRepository(idControlReference: authoritativeReference), canonical)
+            .GetAsync(Actor(), DecisionReference, CorrelationId, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        result.Value!.MaskedIdReference.Should().Be(expectedMask);
+        result.Value.HasAuthoritativeIdControlReference.Should().BeTrue();
+        result.Value.GetType().GetProperty("IdControlReference").Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Detail_WhenOnlyHistoricalMaskExists_ReportsNoAuthoritativeReference()
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                IdControlReference = null,
+                MaskedIdReference = "****5678"
+            }
+        };
+
+        var result = await CreateService(AllowedRepository(), canonical)
+            .GetAsync(Actor(), DecisionReference, CorrelationId, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        result.Value!.MaskedIdReference.Should().Be("****5678");
+        result.Value.HasAuthoritativeIdControlReference.Should().BeFalse();
     }
 
     [Fact]
@@ -145,7 +196,11 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             "statutory-discounts.decision.submit.webpay");
         var canonical = new FakeCanonicalRepository
         {
-            Detail = Detail() with { GoverningPolicy = ResidentOnlyPolicy() }
+            Detail = Detail() with
+            {
+                GoverningPolicy = ResidentOnlyPolicy(),
+                IdControlReference = "ABC1234"
+            }
         };
         var facade = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
         var service = CreateService(repository, canonical, decisionFacade: facade);
@@ -158,6 +213,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
                 application.ApplyPayableBasis &&
                 application.ParkingSessionId == ParkingSessionReference &&
                 application.BeneficiaryResidencySatisfied == true &&
+                application.IdControlReference == "ABC1234" &&
                 application.IdempotencyKey == $"management-review-auto-apply:{DecisionReference:N}" &&
                 application.ServiceChannelCaller!.SourceChannel == "WEBPAY"),
             Arg.Any<CancellationToken>());
@@ -201,7 +257,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
     }
 
     [Fact]
-    public async Task Approve_WhenWebPayIdIsOmitted_StillRequestsCanonicalApplication()
+    public async Task Approve_WhenWebPayMetadataIsMissing_UsesSafeReviewerMetadata()
     {
         var repository = AllowedRepository();
         repository.AutomaticApplicationCaller = new ManagementStatutoryBenefitAutomaticApplicationCaller(
@@ -219,19 +275,113 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
                 MaskedIdReference = null
             }
         };
+        var decisions = new FakeDecisionService();
         var facade = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
-        var service = CreateService(repository, canonical, decisionFacade: facade);
+        var service = CreateService(repository, canonical, decisions, facade);
 
         var result = await service.DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
 
         result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
-        await facade.Received(1).SubmitAsync(
-            Arg.Is<StatutoryDiscountDecisionCommand>(application =>
-                application.ApplyPayableBasis &&
-                application.MaskedIdReference == string.Empty &&
-                application.IdDocumentType == string.Empty &&
-                application.IssuingAuthority == string.Empty),
-            Arg.Any<CancellationToken>());
+        decisions.CapturedCommand!.ReviewedDocument.Should().Be(new StatutoryDiscountServiceChannelReviewedDocument(
+            "PWD_ID", "LOCAL_GOVERNMENT", new DateOnly(2027, 8, 24), "ABC1234"));
+    }
+
+    [Fact]
+    public async Task Approve_WhenIdReplacementIsOmitted_RetainsExistingAuthoritativeValue()
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with { IdControlReference = "124553456" }
+        };
+        var decisions = new FakeDecisionService();
+        var command = Command("APPROVE") with
+        {
+            ExpiryDate = null,
+            IdControlReference = null
+        };
+
+        var result = await CreateService(AllowedRepository(), canonical, decisions)
+            .DecideAsync(Actor(), command, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        decisions.CapturedCommand!.ReviewedDocument.ExpiryDate.Should().Be(new DateOnly(2027, 8, 24));
+        decisions.CapturedCommand.ReviewedDocument.IdControlReference.Should().Be("124553456");
+    }
+
+    [Fact]
+    public async Task Approve_WithoutExistingOrReviewerMetadata_FailsClosed()
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with { IdDocumentType = null, IssuingAuthority = null, ExpiryDate = null, MaskedIdReference = null, IdControlReference = null }
+        };
+        var decisions = new FakeDecisionService();
+        var command = Command("APPROVE") with { IdDocumentType = null, IssuingAuthority = null, ExpiryDate = null, IdControlReference = null };
+
+        var result = await CreateService(AllowedRepository(), canonical, decisions)
+            .DecideAsync(Actor(), command, CancellationToken.None);
+
+        result.Classification.Should().Be("STATUTORY_BENEFIT_APPROVAL_METADATA_REQUIRED");
+        decisions.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Approve_PreservesFourCharacterAndLongAuthoritativeReferences()
+    {
+        var accepted = new FakeDecisionService();
+        var service = CreateService(AllowedRepository(), decisions: accepted);
+        var result = await service.DecideAsync(
+            Actor(), Command("APPROVE") with { IdControlReference = "8764" }, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        accepted.CapturedCommand!.ReviewedDocument.IdControlReference.Should().Be("8764");
+
+        var longReference = new FakeDecisionService();
+        result = await CreateService(AllowedRepository(), decisions: longReference).DecideAsync(
+            Actor(), Command("APPROVE") with { IdControlReference = "12345678" }, CancellationToken.None);
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        longReference.CapturedCommand!.ReviewedDocument.IdControlReference.Should().Be("12345678");
+    }
+
+    [Fact]
+    public async Task Approve_DoesNotCopyAuthoritativeIdControlReferenceIntoAuditSummary()
+    {
+        var audit = new FakeAuditRepository();
+        var result = await CreateService(AllowedRepository(), audit: audit).DecideAsync(
+            Actor(), Command("APPROVE") with { IdControlReference = "12345678" }, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        audit.Summaries.Should().Contain(summary => summary.Contains("idControlReferenceSupplied=True", StringComparison.Ordinal));
+        audit.Summaries.Should().OnlyContain(summary => !summary.Contains("12345678", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Approve_RejectsUnsupportedDocumentTypeBeforePersistence()
+    {
+        var decisions = new FakeDecisionService();
+
+        var result = await CreateService(AllowedRepository(), decisions: decisions).DecideAsync(
+            Actor(), Command("APPROVE") with { IdDocumentType = "ARBITRARY_DOCUMENT" }, CancellationToken.None);
+
+        result.Classification.Should().Be("INVALID_STATUTORY_BENEFIT_REVIEW_METADATA");
+        decisions.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Approve_RequiresAUsefulVisibleLastFourReference()
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with { MaskedIdReference = "****", IdControlReference = null }
+        };
+        var decisions = new FakeDecisionService();
+        var command = Command("APPROVE") with { IdControlReference = null };
+
+        var result = await CreateService(AllowedRepository(), canonical, decisions)
+            .DecideAsync(Actor(), command, CancellationToken.None);
+
+        result.Classification.Should().Be("STATUTORY_BENEFIT_APPROVAL_METADATA_REQUIRED");
+        decisions.Calls.Should().Be(0);
     }
 
     [Fact]
@@ -250,6 +400,35 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
 
         result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
         await facade.DidNotReceiveWithAnyArgs().SubmitAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task Reject_RequiresOnlyReason_WhenHistoricalApprovalMetadataIsIncomplete()
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                IdDocumentType = null,
+                IssuingAuthority = null,
+                ExpiryDate = null,
+                IdControlReference = null,
+                MaskedIdReference = "****5678"
+            }
+        };
+        var decisions = new FakeDecisionService();
+
+        var result = await CreateService(AllowedRepository(), canonical, decisions)
+            .DecideAsync(Actor(), Command("REJECT", "IDENTITY_NOT_VERIFIABLE") with
+            {
+                IdDocumentType = null,
+                IssuingAuthority = null,
+                ExpiryDate = null,
+                IdControlReference = null
+            }, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        decisions.Calls.Should().Be(1);
     }
 
     [Fact]
@@ -381,7 +560,8 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         FakeCanonicalRepository? canonical = null,
         FakeDecisionService? decisions = null,
         IStatutoryDiscountDecisionFacadeService? decisionFacade = null,
-        IOperatorConsoleStatutoryEvidenceReviewService? evidenceReview = null)
+        IOperatorConsoleStatutoryEvidenceReviewService? evidenceReview = null,
+        FakeAuditRepository? audit = null)
     {
         var review = evidenceReview ?? Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>();
         if (evidenceReview is null)
@@ -395,7 +575,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             decisions ?? new FakeDecisionService(),
             decisionFacade ?? Substitute.For<IStatutoryDiscountDecisionFacadeService>(),
             review,
-            new FakeAuditRepository());
+            audit ?? new FakeAuditRepository());
     }
 
     private static OperatorConsoleStatutoryEvidenceReviewResult AuthoritativeEvidence()
@@ -472,10 +652,10 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         ApplicationRetryable: retryable,
         ApplicationRecoveryAction: StatutoryDiscountDecisionRecoveryActions.RetrySameRequestWithOriginalKey);
 
-    private static FakeManagementRepository AllowedRepository(long version = 7) => new()
+    private static FakeManagementRepository AllowedRepository(long version = 7, string? idControlReference = null) => new()
     {
         AuthorizedSites = new ManagementStatutoryBenefitAuthorizedSites(new HashSet<Guid> { SiteA, SiteB }, true),
-        Metadata = new ManagementStatutoryBenefitReviewMetadata(SiteA, "SITE-A", "Site A", "Head Office Reviewer", version)
+        Metadata = new ManagementStatutoryBenefitReviewMetadata(SiteA, "SITE-A", "Site A", "Head Office Reviewer", version, idControlReference)
     };
 
     private static IdentityAdministrationActor Actor() => new(UserId, SessionId);
@@ -484,7 +664,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         new(status, null, null, null, null, null, null, 1, 25, CorrelationId);
 
     private static ManagementStatutoryBenefitDecisionCommand Command(string decision, string? reason = null, long expectedVersion = 7) =>
-        new(DecisionReference, decision, reason, expectedVersion, "idempotency-001", CorrelationId);
+        new(DecisionReference, decision, reason, expectedVersion, "idempotency-001", "PWD_ID", "LOCAL_GOVERNMENT", new DateOnly(2027, 8, 24), "ABC1234", CorrelationId);
 
     private static StatutoryDiscountServiceChannelReviewDetail Detail(
         string status = "PENDING_REVIEW",
@@ -578,23 +758,29 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         public Task<StatutoryDiscountServiceChannelReviewDetail?> GetAsync(Guid statutoryDiscountDecisionCommandId, Guid correlationId, CancellationToken cancellationToken) => Task.FromResult(Detail);
         public Task UpsertIntakeAsync(StatutoryDiscountServiceChannelReviewIntakeCommand command, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task<StatutoryDiscountServiceChannelReviewQueueResult> ListAsync(StatutoryDiscountServiceChannelReviewQueueQuery query, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<StatutoryDiscountServiceChannelValidationLinkage?> EnsureApprovedValidationLinkageAsync(Guid statutoryDiscountDecisionCommandId, Guid reviewerUserId, string? decisionReasonCode, Guid correlationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<StatutoryDiscountServiceChannelValidationLinkage?> EnsureApprovedValidationLinkageAsync(Guid statutoryDiscountDecisionCommandId, Guid reviewerUserId, string? decisionReasonCode, StatutoryDiscountServiceChannelReviewedDocument reviewedDocument, Guid correlationId, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<StatutoryDiscountServiceChannelReviewerAuthority?> GetValidationReviewerAuthorityAsync(Guid statutoryDiscountValidationId, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<StatutoryDiscountServiceChannelReviewDetail> RecordReviewCompletionAsync(Guid statutoryDiscountDecisionCommandId, Guid reviewerUserId, Guid? operatorDeviceBindingId, Guid? operatorShiftId, Guid accessEvaluationId, string decision, string? decisionReasonCode, Guid correlationId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<StatutoryDiscountServiceChannelReviewDetail> RecordReviewCompletionAsync(Guid statutoryDiscountDecisionCommandId, Guid reviewerUserId, Guid? operatorDeviceBindingId, Guid? operatorShiftId, Guid accessEvaluationId, string decision, string? decisionReasonCode, StatutoryDiscountServiceChannelReviewedDocument reviewedDocument, Guid correlationId, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class FakeDecisionService : IAuthorizedStatutoryBenefitDecisionService
     {
         public int Calls { get; private set; }
+        public AuthorizedStatutoryBenefitDecisionCommand? CapturedCommand { get; private set; }
         public AuthorizedStatutoryBenefitDecisionResult Result { get; init; } = new(true, true, false, "APPROVED", "APPROVE", null, null, SubmittedAt.AddMinutes(5));
-        public Task<AuthorizedStatutoryBenefitDecisionResult> DecideAuthorizedAsync(AuthorizedStatutoryBenefitDecisionCommand command, CancellationToken cancellationToken) { Calls++; return Task.FromResult(Result); }
+        public Task<AuthorizedStatutoryBenefitDecisionResult> DecideAuthorizedAsync(AuthorizedStatutoryBenefitDecisionCommand command, CancellationToken cancellationToken) { Calls++; CapturedCommand = command; return Task.FromResult(Result); }
     }
 
     private sealed class FakeAuditRepository : ICentralPmsRbacRepository
     {
+        public List<string> Summaries { get; } = [];
         public Task<bool> UserHasAnyPermissionAsync(Guid userId, IReadOnlyCollection<string> permissionCodes, CancellationToken cancellationToken) => Task.FromResult(true);
         public Task<bool> ServiceIdentityIsActiveAsync(Guid serviceIdentityId, CancellationToken cancellationToken) => Task.FromResult(true);
         public Task RecordDeniedAsync(string policyName, Guid? userId, Guid? serviceIdentityId, Guid? correlationId, string requestPath, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task RecordAuditEventAsync(string eventType, string eventResult, string eventReasonCode, string targetEntityType, Guid? targetEntityId, Guid? actorUserId, Guid? actorServiceIdentityId, Guid? correlationId, string summary, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task RecordAuditEventAsync(string eventType, string eventResult, string eventReasonCode, string targetEntityType, Guid? targetEntityId, Guid? actorUserId, Guid? actorServiceIdentityId, Guid? correlationId, string summary, CancellationToken cancellationToken)
+        {
+            Summaries.Add(summary);
+            return Task.CompletedTask;
+        }
     }
 }

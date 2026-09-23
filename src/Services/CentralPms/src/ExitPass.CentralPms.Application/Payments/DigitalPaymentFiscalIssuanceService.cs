@@ -211,14 +211,14 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             null,
             BuildAppliedStatutoryFiscalFacts(context, statutory),
             SiteId: context.SiteId,
-            InvoiceCustomerInformation: context.InvoiceCustomerInformation is null
+            InvoiceCustomerInformation: context.InvoiceCustomerInformation is null && string.IsNullOrWhiteSpace(statutory?.IdControlReference)
                 ? null
                 : new CentralPmsInvoiceCustomerInformationContext(
-                    context.InvoiceCustomerInformation.CustomerName,
-                    context.InvoiceCustomerInformation.Address,
-                    context.InvoiceCustomerInformation.Tin,
-                    context.InvoiceCustomerInformation.BusinessStyle,
-                    statutory is null ? null : context.InvoiceCustomerInformation.StatutoryIdNumber));
+                    context.InvoiceCustomerInformation?.CustomerName,
+                    context.InvoiceCustomerInformation?.Address,
+                    context.InvoiceCustomerInformation?.Tin,
+                    context.InvoiceCustomerInformation?.BusinessStyle,
+                    statutory?.IdControlReference));
     }
 
     private static void EnsureStatutoryContextMatches(

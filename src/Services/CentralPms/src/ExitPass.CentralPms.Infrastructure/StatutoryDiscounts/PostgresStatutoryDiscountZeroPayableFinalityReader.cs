@@ -86,6 +86,7 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
                 ROUND(validation.statutory_discount_amount * 100)::bigint AS validation_discount_minor,
                 ROUND(validation.net_amount_after_discount * 100)::bigint AS validation_final_minor,
                 validation.currency_code::text AS validation_currency,
+                validation.id_control_reference AS validation_id_control_reference,
 
                 authority.statutory_discount_decision_command_id AS authority_decision_id,
                 authority.statutory_discount_policy_version_id AS authority_policy_version_id,
@@ -215,7 +216,10 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
                 NullableInt64(reader, "validation_gross_minor"),
                 NullableInt64(reader, "validation_discount_minor"),
                 NullableInt64(reader, "validation_final_minor"),
-                NullableString(reader, "validation_currency")),
+                NullableString(reader, "validation_currency"))
+            {
+                IdControlReference = NullableString(reader, "validation_id_control_reference")
+            },
             new StatutoryDiscountZeroPayablePolicyAnchor(
                 NullableGuid(reader, "authority_decision_id"),
                 NullableGuid(reader, "authority_policy_version_id"),

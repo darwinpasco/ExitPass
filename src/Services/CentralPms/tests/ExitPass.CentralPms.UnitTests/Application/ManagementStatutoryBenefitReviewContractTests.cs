@@ -55,6 +55,13 @@ public sealed class ManagementStatutoryBenefitReviewContractTests
         preview.GetProperty("csrfRequired").GetBoolean().Should().BeTrue();
         preview.GetProperty("storageLocatorExposed").GetBoolean().Should().BeFalse();
         preview.GetProperty("cacheable").GetBoolean().Should().BeFalse();
+        var privacy = root.GetProperty("privacy");
+        privacy.GetProperty("idControlReferenceExposure").GetString().Should().Be("masked-readback-and-authorized-replacement-write-only");
+        privacy.GetProperty("rawIdControlReferenceInDetailResponse").GetBoolean().Should().BeFalse();
+        privacy.GetProperty("idControlReferenceAuditPosture").GetString().Should().Be("presence-or-masked-presentation-only");
+        privacy.GetProperty("excluded").EnumerateArray()
+            .Select(value => value.GetString())
+            .Should().NotContain("rawStatutoryId");
     }
 
     [Fact]
@@ -66,5 +73,7 @@ public sealed class ManagementStatutoryBenefitReviewContractTests
         names.Should().NotContain("SiteGroupReference");
         names.Should().NotContain("Role");
         names.Should().NotContain("Permission");
+        names.Should().Contain("IdControlReference");
+        names.Should().NotContain("RawIdReference");
     }
 }

@@ -7,6 +7,13 @@ namespace ExitPass.CentralPms.Application.ManagementPlatform;
 
 public sealed class ManagementStatutoryBenefitReviewService : IManagementStatutoryBenefitReviewService
 {
+    private static readonly HashSet<string> SupportedIdDocumentTypes = new(StringComparer.Ordinal)
+    {
+        "SENIOR_CITIZEN_ID",
+        "PWD_ID",
+        "OTHER_SUPPORTING_DOCUMENT"
+    };
+
     private const string MediatedEvidenceAuditSourceChannel = "CENTRAL_PMS";
     private readonly IManagementStatutoryBenefitReviewRepository _repository;
     private readonly IStatutoryDiscountServiceChannelReviewRepository _canonicalReviews;
@@ -273,6 +280,11 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             return NotFound<ManagementStatutoryBenefitDecisionResult>(command.CorrelationId);
         }
 
+        if (!TryResolveReviewedDocument(command, review, decision, out var reviewedDocument, out var metadataError))
+        {
+            return Invalid<ManagementStatutoryBenefitDecisionResult>(metadataError!, command.CorrelationId);
+        }
+
         if (review.ReviewStatus == StatutoryDiscountServiceChannelReviewStatuses.PendingReview && review.EvidenceRequired)
         {
             var evidence = await _evidenceReview.ReadAuthorizedAsync(
@@ -299,6 +311,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                 decision,
                 command.RejectionReason,
                 command.IdempotencyKey,
+                reviewedDocument!,
                 command.CorrelationId),
             cancellationToken);
 
@@ -339,8 +352,16 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                         ToAutomaticApplicationCommand(canonical, caller, command.CorrelationId),
                         cancellationToken).ConfigureAwait(false);
                 }
-                catch (StatutoryDiscountDecisionRejectedException)
+                catch (StatutoryDiscountDecisionRejectedException exception)
                 {
+                    await AuditAsync(
+                        "STATUTORY_BENEFIT_AUTOMATIC_APPLICATION",
+                        "FAILED",
+                        exception.ErrorCode,
+                        actor,
+                        metadata.SiteReference,
+                        command.CorrelationId,
+                        cancellationToken);
                     application = await _decisionFacade.GetAsync(
                         command.DecisionCommandReference,
                         command.CorrelationId,
@@ -407,7 +428,15 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                 (decision == "APPROVE" && application?.PayableBasisReady != true
                     ? StatutoryDiscountDecisionRecoveryActions.RetrySameRequestWithOriginalKey
                     : null));
-        await AuditAsync("STATUTORY_BENEFIT_REVIEW_DECISION", result.AlreadyDecided ? "DUPLICATE" : "SUCCESS", "TERMINAL_DECISION_RECORDED", actor, metadata.SiteReference, command.CorrelationId, cancellationToken);
+        await AuditAsync(
+            "STATUTORY_BENEFIT_REVIEW_DECISION",
+            result.AlreadyDecided ? "DUPLICATE" : "SUCCESS",
+            "TERMINAL_DECISION_RECORDED",
+            actor,
+            metadata.SiteReference,
+            command.CorrelationId,
+            cancellationToken,
+            BuildReviewedMetadataAuditSummary(reviewedDocument!));
         return ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitDecisionResult>.Succeeded(value, command.CorrelationId);
     }
 
@@ -417,9 +446,86 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             StatutoryDiscountApplicationStageStatuses.NotRequested,
             StringComparison.Ordinal);
 
-    private Task AuditAsync(string type, string result, string reason, IdentityAdministrationActor actor, Guid? site, Guid correlationId, CancellationToken cancellationToken) =>
+    private Task AuditAsync(
+        string type,
+        string result,
+        string reason,
+        IdentityAdministrationActor actor,
+        Guid? site,
+        Guid correlationId,
+        CancellationToken cancellationToken,
+        string? safeDetails = null) =>
         _audit.RecordAuditEventAsync(type, result, reason, "STATUTORY_BENEFIT_REVIEW", site, actor.UserId, null, correlationId,
-            $"Management Platform statutory-benefit review event {reason}.", cancellationToken);
+            $"Management Platform statutory-benefit review event {reason}.{(safeDetails is null ? string.Empty : $" {safeDetails}")}", cancellationToken);
+
+    private static bool TryResolveReviewedDocument(
+        ManagementStatutoryBenefitDecisionCommand command,
+        StatutoryDiscountServiceChannelReviewDetail review,
+        string decision,
+        out StatutoryDiscountServiceChannelReviewedDocument? reviewedDocument,
+        out string? errorCode)
+    {
+        if (decision == "REJECT")
+        {
+            reviewedDocument = new StatutoryDiscountServiceChannelReviewedDocument(
+                NormalizeOptional(review.IdDocumentType),
+                NormalizeOptional(review.IssuingAuthority),
+                review.ExpiryDate,
+                NormalizeOptional(review.IdControlReference));
+            errorCode = null;
+            return true;
+        }
+
+        var idDocumentType = NormalizeOptional(command.IdDocumentType) ?? NormalizeOptional(review.IdDocumentType);
+        var issuingAuthority = NormalizeOptional(command.IssuingAuthority) ?? NormalizeOptional(review.IssuingAuthority);
+        var expiryDate = command.ExpiryDate ?? review.ExpiryDate;
+        // A missing value means the reviewer left the existing governed value unchanged.
+        // The browser receives only its masked presentation and cannot safely replay the raw value.
+        var idControlReference = NormalizeOptional(command.IdControlReference) ??
+            NormalizeOptional(review.IdControlReference);
+
+        if (idDocumentType?.Length > 64 ||
+            (idDocumentType is not null && !SupportedIdDocumentTypes.Contains(idDocumentType)) ||
+            issuingAuthority?.Length > 128 ||
+            idControlReference?.Length > 64 ||
+            (idControlReference is not null && !IsValidIdControlReference(idControlReference)))
+        {
+            reviewedDocument = null;
+            errorCode = "INVALID_STATUTORY_BENEFIT_REVIEW_METADATA";
+            return false;
+        }
+
+        if (decision == "APPROVE" &&
+            (string.IsNullOrWhiteSpace(idDocumentType) ||
+             string.IsNullOrWhiteSpace(issuingAuthority) ||
+             !expiryDate.HasValue ||
+             !IsValidIdControlReference(idControlReference)))
+        {
+            reviewedDocument = null;
+            errorCode = "STATUTORY_BENEFIT_APPROVAL_METADATA_REQUIRED";
+            return false;
+        }
+
+        reviewedDocument = new StatutoryDiscountServiceChannelReviewedDocument(
+            idDocumentType,
+            issuingAuthority,
+            expiryDate,
+            idControlReference);
+        errorCode = null;
+        return true;
+    }
+
+    private static bool IsValidIdControlReference(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        value.Length is >= 4 and <= 64 &&
+        !value.Any(char.IsWhiteSpace) &&
+        !value.Contains('*', StringComparison.Ordinal);
+
+    private static string BuildReviewedMetadataAuditSummary(StatutoryDiscountServiceChannelReviewedDocument metadata) =>
+        $"Reviewed metadata supplied: documentType={metadata.IdDocumentType is not null}; issuingAuthority={metadata.IssuingAuthority is not null}; expiryDate={metadata.ExpiryDate.HasValue}; idControlReferenceSupplied={metadata.IdControlReference is not null}.";
+
+    private static string? NormalizeOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static ManagementStatutoryBenefitReviewQuery? Normalize(ManagementStatutoryBenefitReviewQuery query)
     {
@@ -451,6 +557,10 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         ManagementStatutoryBenefitReviewMetadata metadata,
         Guid correlationId)
     {
+        var authoritativeIdControlReference = NormalizeOptional(metadata.IdControlReference);
+        var maskedIdReference = authoritativeIdControlReference is null
+            ? NormalizeOptional(source.MaskedIdReference)
+            : MaskIdControlReference(authoritativeIdControlReference);
         var money = source.OriginalAmountMinorUnits.HasValue && source.StatutoryDiscountAmountMinorUnits.HasValue && source.FinalPayableAmountMinorUnits.HasValue
             ? new ManagementStatutoryBenefitMoney(source.OriginalAmountMinorUnits.Value, source.StatutoryDiscountAmountMinorUnits.Value, source.FinalPayableAmountMinorUnits.Value, ManagementStatutoryBenefitReviewValues.Currency)
             : null;
@@ -474,7 +584,8 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             source.IdDocumentType,
             source.IssuingAuthority,
             source.ExpiryDate,
-            source.MaskedIdReference,
+            maskedIdReference,
+            authoritativeIdControlReference is not null,
             source.RequesterAttestation,
             RequiredResidencyWasSatisfied(source),
             source.AttestationNotes ?? source.ReasonCode,
@@ -484,6 +595,11 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             metadata.Version,
             correlationId);
     }
+
+    private static string MaskIdControlReference(string value) =>
+        value.Length <= 4
+            ? value
+            : $"{new string('*', value.Length - 4)}{value[^4..]}";
 
     private static StatutoryDiscountDecisionCommand ToAutomaticApplicationCommand(
         StatutoryDiscountServiceChannelReviewDetail source,
@@ -531,7 +647,10 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                 caller.ServiceIdentityId,
                 caller.SourceChannel,
                 caller.ApplicationAudience,
-                caller.PermissionCode));
+                caller.PermissionCode))
+        {
+            IdControlReference = source.IdControlReference
+        };
 
     private static bool? RequiredResidencyWasSatisfied(StatutoryDiscountServiceChannelReviewDetail source) =>
         string.Equals(

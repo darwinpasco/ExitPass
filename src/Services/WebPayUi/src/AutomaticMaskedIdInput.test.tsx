@@ -24,7 +24,7 @@ describe("AutomaticMaskedIdInput", () => {
     expect(input).toHaveValue("SC12345678");
     await user.tab();
 
-    expect(input).toHaveValue("SC****5678");
+    expect(input).toHaveValue("******5678");
     expect(container.innerHTML).not.toContain("SC12345678");
     expect(input).toHaveAccessibleDescription(/WebPay masks the reference automatically/i);
     expect(screen.queryByText(/type asterisks|with asterisks/i)).not.toBeInTheDocument();
@@ -39,13 +39,13 @@ describe("AutomaticMaskedIdInput", () => {
     await user.paste("ABCD1239");
     await user.keyboard("{Backspace}4");
     await user.tab();
-    expect(input).toHaveValue("AB**1234");
+    expect(input).toHaveValue("****1234");
 
     await user.click(screen.getByRole("button", { name: /change/i }));
     expect(input).toHaveValue("");
     await user.type(input, "PWD-123456789");
     await user.tab();
-    expect(input).toHaveValue("PW*******6789");
+    expect(input).toHaveValue("*********6789");
   });
 
   it("clears short and malformed values rather than leaving them visible", async () => {
@@ -72,7 +72,7 @@ describe("AutomaticMaskedIdInput", () => {
     fireEvent.change(input, { target: { value: "SC12345678" } });
     fireEvent.blur(input);
 
-    expect(JSON.stringify(localStorage)).not.toMatch(/SC12345678|SC\*\*\*\*5678/);
-    expect(JSON.stringify(sessionStorage)).not.toMatch(/SC12345678|SC\*\*\*\*5678/);
+    expect(JSON.stringify(localStorage)).not.toMatch(/SC12345678|\*\*\*\*\*\*5678/);
+    expect(JSON.stringify(sessionStorage)).not.toMatch(/SC12345678|\*\*\*\*\*\*5678/);
   });
 });

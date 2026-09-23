@@ -3,20 +3,20 @@ import { isAutomaticallyMaskedStatutoryIdReference, maskStatutoryIdReference } f
 
 describe("statutory ID masking", () => {
   it.each([
-    ["SC12345678", "SC****5678"],
-    ["PWD-123456789", "PW*******6789"],
-    ["ABCD1234", "AB**1234"],
-    ["AB12345", "AB*2345"],
-    ["ZX-123456789012345", "ZX************2345"]
-  ])("masks %s using the first-2 and last-4 rule", (rawValue, expected) => {
-    expect(maskStatutoryIdReference(rawValue)).toEqual({ ok: true, maskedValue: expected });
+    ["SC12345678", "******5678"],
+    ["PWD-123456789", "*********6789"],
+    ["ABCD1234", "****1234"],
+    ["AB12345", "***2345"],
+    ["ZX-123456789012345", "**************2345"]
+  ])("masks %s while preserving only the final four characters", (rawValue, expected) => {
+    expect(maskStatutoryIdReference(rawValue)).toEqual({ ok: true, normalizedValue: rawValue, maskedValue: expected });
     expect(isAutomaticallyMaskedStatutoryIdReference(expected)).toBe(true);
   });
 
-  it("fully masks four-to-six character values and rejects shorter values", () => {
-    expect(maskStatutoryIdReference("AB12")).toEqual({ ok: true, maskedValue: "****" });
-    expect(maskStatutoryIdReference("AB1234")).toEqual({ ok: true, maskedValue: "******" });
-    expect(isAutomaticallyMaskedStatutoryIdReference("****")).toBe(true);
+  it("shows an exact four-character value and masks only leading characters for longer values", () => {
+    expect(maskStatutoryIdReference("AB12")).toEqual({ ok: true, normalizedValue: "AB12", maskedValue: "AB12" });
+    expect(maskStatutoryIdReference("AB1234")).toEqual({ ok: true, normalizedValue: "AB1234", maskedValue: "**1234" });
+    expect(isAutomaticallyMaskedStatutoryIdReference("**1234")).toBe(true);
     expect(maskStatutoryIdReference("AB1")).toEqual({
       ok: false,
       message: "Enter at least 4 characters for the ID No. / Control No."

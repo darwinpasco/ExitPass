@@ -44,7 +44,10 @@ public sealed record StatutoryDiscountServiceChannelReviewIntakeCommand(
     string? ReasonCode,
     Guid? OriginalTariffSnapshotId,
     Guid CorrelationId,
-    DateTimeOffset SubmittedAt);
+    DateTimeOffset SubmittedAt)
+{
+    public string? IdControlReference { get; init; }
+}
 
 /// <summary>
 /// Query for Operator Console service-channel statutory-discount review rows.
@@ -142,7 +145,17 @@ public sealed record StatutoryDiscountServiceChannelReviewDetail(
     DateTimeOffset SubmittedAt,
     DateTimeOffset? ReviewedAt,
     string? PayableBasisApplicationStatus,
-    Guid CorrelationId);
+    Guid CorrelationId)
+{
+    public string? IdControlReference { get; init; }
+
+    /// <summary>
+    /// Internal provider-neutral vendor identity used to re-resolve the parking tariff before
+    /// applying an approved statutory benefit. This value is not part of public or Management
+    /// Platform readback.
+    /// </summary>
+    public Guid? VendorSystemId { get; init; }
+}
 
 public sealed record StatutoryDiscountServiceChannelReviewPolicyAuthority(
     Guid StatutoryDiscountPolicyVersionId,
@@ -184,6 +197,12 @@ public sealed record StatutoryDiscountServiceChannelValidationLinkage(
     string? Currency,
     string BenefitType,
     string DiscountBaseScope);
+
+public sealed record StatutoryDiscountServiceChannelReviewedDocument(
+    string? IdDocumentType,
+    string? IssuingAuthority,
+    DateOnly? ExpiryDate,
+    string? IdControlReference);
 
 /// <summary>
 /// Trusted reviewer operating context retained with an approved service-channel review.

@@ -111,4 +111,24 @@ public sealed class WebPayPaymentIntentContractTests
         Assert.Contains("\"entryTime\":", json);
         Assert.DoesNotContain("2030-04-01", json, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void WebPayStatutoryDecision_RawIdIsWriteOnlyAcrossThePublicContract()
+    {
+        var request = new WebPayStatutoryDiscountDecisionRequest
+        {
+            IdControlReference = "12345678",
+            MaskedIdReference = "****5678"
+        };
+
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var writeJson = JsonSerializer.Serialize(request, options);
+        var readJson = JsonSerializer.Serialize(new WebPayStatutoryDiscountDecisionResponse(), options);
+
+        Assert.Contains("\"idControlReference\":\"12345678\"", writeJson);
+        Assert.Contains("\"maskedIdReference\":\"****5678\"", writeJson);
+        Assert.DoesNotContain("idControlReference", readJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("maskedIdReference", readJson, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(typeof(WebPayStatutoryDiscountDecisionResponse).GetProperty(nameof(request.IdControlReference)));
+    }
 }

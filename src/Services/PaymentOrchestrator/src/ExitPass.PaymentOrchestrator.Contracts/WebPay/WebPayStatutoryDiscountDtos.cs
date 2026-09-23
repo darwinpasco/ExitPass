@@ -56,7 +56,13 @@ public sealed class WebPayStatutoryDiscountDecisionRequest
     public DateOnly? ExpiryDate { get; set; }
 
     /// <summary>
-    /// Masked entitlement identifier reference. Full statutory identifiers are not accepted.
+    /// Complete statutory ID/control value accepted only on this secure write path.
+    /// It is not returned through public WebPay readback contracts.
+    /// </summary>
+    public string? IdControlReference { get; set; }
+
+    /// <summary>
+    /// Presentation-safe masked entitlement identifier reference.
     /// </summary>
     public string? MaskedIdReference { get; set; }
 

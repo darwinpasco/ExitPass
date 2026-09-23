@@ -126,6 +126,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
                 CommandId,
                 UserId,
                 "ELIGIBLE",
+                Arg.Any<StatutoryDiscountServiceChannelReviewedDocument>(),
                 CorrelationId,
                 Arg.Any<CancellationToken>())
             .Returns(ValidationLinkage());
@@ -150,6 +151,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
                 EvaluationId,
                 "APPROVE",
                 "ELIGIBLE",
+                Arg.Any<StatutoryDiscountServiceChannelReviewedDocument>(),
                 CorrelationId,
                 Arg.Any<CancellationToken>())
             .Returns(ReviewDetail(reviewStatus: StatutoryDiscountServiceChannelReviewStatuses.Approved));
@@ -192,6 +194,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
                 EvaluationId,
                 "REJECT",
                 "ID_NOT_VALID",
+                Arg.Any<StatutoryDiscountServiceChannelReviewedDocument>(),
                 CorrelationId,
                 Arg.Any<CancellationToken>())
             .Returns(ReviewDetail(reviewStatus: StatutoryDiscountServiceChannelReviewStatuses.Rejected));
@@ -247,6 +250,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
                 EvaluationId,
                 "APPROVE",
                 "ELIGIBLE",
+                Arg.Any<StatutoryDiscountServiceChannelReviewedDocument>(),
                 CorrelationId,
                 Arg.Any<CancellationToken>())
             .Returns(ReviewDetail(reviewStatus: StatutoryDiscountServiceChannelReviewStatuses.Approved));
@@ -264,6 +268,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             EvaluationId,
             "APPROVE",
             "ELIGIBLE",
+            Arg.Any<StatutoryDiscountServiceChannelReviewedDocument>(),
             CorrelationId,
             Arg.Any<CancellationToken>());
     }

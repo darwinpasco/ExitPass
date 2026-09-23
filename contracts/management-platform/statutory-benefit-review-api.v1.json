@@ -51,7 +51,10 @@
       },
       "csrfRequired": true,
       "optimisticVersionRequired": true,
-      "idempotencyKeyRequired": true
+      "idempotencyKeyRequired": true,
+      "reviewedMetadata": ["idDocumentType", "issuingAuthority", "expiryDate", "idControlReference"],
+      "authoritativeIdControlReferenceAccepted": true,
+      "omittedIdControlReferenceRetainsAuthoritativeValue": true
     }
   ],
   "listFilters": ["status", "siteReference", "sourceChannel", "benefitType", "submittedFrom", "submittedTo", "search", "page", "pageSize"],
@@ -72,6 +75,9 @@
   },
   "privacy": {
     "excluded": ["plateNumber", "rawEvidence", "storageLocator", "checksum", "credentials", "tokens", "browserAuthority"],
+    "idControlReferenceExposure": "masked-readback-and-authorized-replacement-write-only",
+    "rawIdControlReferenceInDetailResponse": false,
+    "idControlReferenceAuditPosture": "presence-or-masked-presentation-only",
     "browserStorageAllowed": false,
     "controlledEvidencePreview": "authenticated-inline-stream-only"
   },

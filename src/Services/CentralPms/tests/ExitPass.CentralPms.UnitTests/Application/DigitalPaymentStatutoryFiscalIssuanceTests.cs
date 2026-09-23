@@ -364,7 +364,7 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
             "PHP",
             DateTimeOffset.Parse("2026-08-24T01:30:00Z"),
             DateTimeOffset.Parse("2026-08-24T01:45:00Z"),
-            null);
+            "OSCA-12345");
 
     private static FiscalIssuanceReferenceRecord Reference(DigitalPaymentFiscalContext context) =>
         new(

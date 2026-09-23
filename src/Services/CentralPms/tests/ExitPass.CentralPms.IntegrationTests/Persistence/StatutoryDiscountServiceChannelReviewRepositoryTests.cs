@@ -54,12 +54,24 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
         try
         {
             var repository = StatutoryDiscountReviewIntegrationTestSupport.CreateReviewRepository();
+            var intake = StatutoryDiscountReviewIntegrationTestSupport.IntakeCommand(
+                pending.Context,
+                pending.Decision,
+                StatutoryDiscountSourceChannels.WebPay) with
+            {
+                IdControlReference = "12345678"
+            };
             await repository.UpsertIntakeAsync(
-                StatutoryDiscountReviewIntegrationTestSupport.IntakeCommand(
-                    pending.Context,
-                    pending.Decision,
-                    StatutoryDiscountSourceChannels.WebPay),
+                intake,
                 CancellationToken.None);
+
+            var pendingDetail = await repository.GetAsync(
+                pending.Decision.StatutoryDiscountDecisionCommandId,
+                pending.Context.CorrelationId,
+                CancellationToken.None);
+            pendingDetail.Should().NotBeNull();
+            pendingDetail!.IdControlReference.Should().Be("12345678");
+            pendingDetail.MaskedIdReference.Should().Be("SC-****-1234");
 
             await repository.RecordReviewCompletionAsync(
                 completed.Decision.StatutoryDiscountDecisionCommandId,
@@ -69,6 +81,7 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
                 Guid.NewGuid(),
                 "APPROVE",
                 "ELIGIBLE",
+                ReviewedDocument(),
                 completed.Context.CorrelationId,
                 CancellationToken.None);
             await StatutoryDiscountReviewIntegrationTestSupport.CreateStagedService()
@@ -153,6 +166,7 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
                 accessEvaluationId,
                 decision,
                 decision == "APPROVE" ? "ELIGIBLE" : "DOCUMENT_INVALID",
+                ReviewedDocument(),
                 seeded.Context.CorrelationId,
                 CancellationToken.None);
 
@@ -162,13 +176,34 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
             completed.ReviewerUserId.Should().Be(reviewerUserId);
             completed.ReviewerAccessEvaluationId.Should().Be(accessEvaluationId);
             completed.ReviewerDecision.Should().Be(decision);
+            completed.IdDocumentType.Should().Be("SENIOR_CITIZEN_ID");
+            completed.IssuingAuthority.Should().Be("LOCAL_GOVERNMENT");
+            completed.ExpiryDate.Should().Be(new DateOnly(2027, 9, 23));
+            completed.IdControlReference.Should().Be(decision == "APPROVE" ? "12345678" : null);
+            completed.MaskedIdReference.Should().Be("SC-****-1234");
             completed.EvidenceReferences
                 .Select(evidence => evidence.ReferenceNumberMasked)
                 .Where(masked => masked is not null)
                 .Should()
                 .OnlyContain(masked => masked!.Contains("****"));
-            completed.MaskedIdReference.Should().Contain("****");
             completed.MaskedIdReference.Should().NotContain("123456789");
+
+            var replayed = await repository.RecordReviewCompletionAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                Guid.NewGuid(),
+                null,
+                null,
+                Guid.NewGuid(),
+                decision,
+                "REPLAY",
+                new StatutoryDiscountServiceChannelReviewedDocument("PWD_ID", "OTHER_AUTHORITY", null, "87654321"),
+                Guid.NewGuid(),
+                CancellationToken.None);
+            replayed.IdDocumentType.Should().Be("SENIOR_CITIZEN_ID");
+            replayed.IssuingAuthority.Should().Be("LOCAL_GOVERNMENT");
+            replayed.ExpiryDate.Should().Be(new DateOnly(2027, 9, 23));
+            replayed.IdControlReference.Should().Be(decision == "APPROVE" ? "12345678" : null);
+            replayed.MaskedIdReference.Should().Be("SC-****-1234");
             (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(seeded.Decision.StatutoryDiscountDecisionCommandId)).Should().Be(0);
             (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(seeded.Context.ParkingSessionId)).Should().Be(0);
         }
@@ -206,6 +241,7 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
                 Guid.NewGuid(),
                 "REJECT",
                 "DOCUMENT_INVALID",
+                ReviewedDocument(),
                 seeded.Context.CorrelationId,
                 CancellationToken.None);
 
@@ -295,18 +331,22 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
                 Guid.NewGuid(),
                 "APPROVE",
                 "ELIGIBLE",
+                ReviewedDocument(),
                 seeded.Context.CorrelationId,
                 CancellationToken.None);
             var linkage = await repository.EnsureApprovedValidationLinkageAsync(
                 seeded.Decision.StatutoryDiscountDecisionCommandId,
                 reviewerUserId,
                 "ELIGIBLE",
+                ReviewedDocument(),
                 seeded.Context.CorrelationId,
                 CancellationToken.None);
 
             linkage.Should().NotBeNull();
+            (await ReadAuthoritativeIdControlReferenceAsync(linkage!.StatutoryDiscountValidationId))
+                .Should().Be("12345678");
             var authority = await repository.GetValidationReviewerAuthorityAsync(
-                linkage!.StatutoryDiscountValidationId,
+                linkage.StatutoryDiscountValidationId,
                 CancellationToken.None);
 
             authority.Should().Be(new StatutoryDiscountServiceChannelReviewerAuthority(
@@ -339,6 +379,7 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
                 seeded.Decision.StatutoryDiscountDecisionCommandId,
                 seeded.Context.RequestedByUserId,
                 "ELIGIBLE",
+                ReviewedDocument(),
                 seeded.Context.CorrelationId,
                 CancellationToken.None);
 
@@ -447,6 +488,23 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync()) values.Add(reader.GetString(0));
         return values;
+    }
+
+    private static StatutoryDiscountServiceChannelReviewedDocument ReviewedDocument() =>
+        new("SENIOR_CITIZEN_ID", "LOCAL_GOVERNMENT", new DateOnly(2027, 9, 23), "12345678");
+
+    private static async Task<string?> ReadAuthoritativeIdControlReferenceAsync(Guid validationId)
+    {
+        const string sql = """
+            SELECT id_control_reference
+              FROM discounts.statutory_discount_validations
+             WHERE statutory_discount_validation_id = @validation_id;
+            """;
+        await using var connection = new NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("validation_id", NpgsqlDbType.Uuid, validationId);
+        return await command.ExecuteScalarAsync() as string;
     }
 
     private static async Task DeleteCanonicalEvidenceAsync(Guid decisionCommandId)

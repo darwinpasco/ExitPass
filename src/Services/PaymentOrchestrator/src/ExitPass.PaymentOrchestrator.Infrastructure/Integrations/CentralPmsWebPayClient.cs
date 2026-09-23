@@ -899,7 +899,10 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
             ReviewerAttestation: null,
             applyPayableBasis,
             request.OriginalTariffSnapshotId,
-            request.BeneficiaryResidencySatisfied);
+            request.BeneficiaryResidencySatisfied)
+        {
+            IdControlReference = request.IdControlReference
+        };
 
         using var message = new HttpRequestMessage(HttpMethod.Post, _statutoryDiscountDecisionsUri)
         {
@@ -1378,7 +1381,10 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         bool? ReviewerAttestation,
         bool ApplyPayableBasis,
         Guid? OriginalTariffSnapshotId,
-        bool? BeneficiaryResidencySatisfied);
+        bool? BeneficiaryResidencySatisfied)
+    {
+        public string? IdControlReference { get; init; }
+    }
 
     private sealed record StatutoryDiscountEvidenceReferenceRequest(
         string EvidenceType,

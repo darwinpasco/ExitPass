@@ -1,7 +1,8 @@
 export const statutoryIdMinimumLength = 4;
+export const statutoryIdMaximumLength = 64;
 
 export type StatutoryIdMaskResult =
-  | { ok: true; maskedValue: string }
+  | { ok: true; normalizedValue: string; maskedValue: string }
   | { ok: false; message: string };
 
 const allowedStatutoryIdReference = /^[A-Za-z0-9-]+$/;
@@ -34,15 +35,23 @@ export function maskStatutoryIdReference(value: string): StatutoryIdMaskResult {
     };
   }
 
+  if (normalized.length > statutoryIdMaximumLength) {
+    return {
+      ok: false,
+      message: "Enter no more than 64 characters for the ID No. / Control No."
+    };
+  }
+
   return {
     ok: true,
-    maskedValue: normalized.length <= 6
-      ? "*".repeat(normalized.length)
-      : `${normalized.slice(0, 2)}${"*".repeat(normalized.length - 6)}${normalized.slice(-4)}`
+    normalizedValue: normalized,
+    maskedValue: normalized.length <= 4
+      ? normalized
+      : `${"*".repeat(normalized.length - 4)}${normalized.slice(-4)}`
   };
 }
 
 export function isAutomaticallyMaskedStatutoryIdReference(value: string): boolean {
   const normalized = value.trim();
-  return /^\*{4,6}$/.test(normalized) || /^[A-Za-z0-9-]{2}\*+[A-Za-z0-9-]{4}$/.test(normalized);
+  return /^\*+[A-Za-z0-9-]{4}$/.test(normalized);
 }

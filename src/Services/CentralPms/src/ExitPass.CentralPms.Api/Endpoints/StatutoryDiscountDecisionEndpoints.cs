@@ -313,7 +313,10 @@ public static class StatutoryDiscountDecisionEndpoints
                     effectiveSourceChannel,
                     effectiveSourceChannel,
                     ChannelPermissions[effectiveSourceChannel])
-                : null);
+                : null)
+        {
+            IdControlReference = body.IdControlReference
+        };
 
     private static StatutoryDiscountDecisionResponse ToResponse(StatutoryDiscountDecisionResult result) =>
         new(

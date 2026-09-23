@@ -9,7 +9,7 @@ public sealed class PersistentIstUatOperationsSupervisorRoleReconciliationTests
     [Fact]
     public void SourceCatalogAndUatSeed_KeepTheCanonicalOperationsSupervisorContract()
     {
-        ApprovedIdentityRoleCatalog.AssignableCodes.Should().HaveCount(8);
+        ApprovedIdentityRoleCatalog.AssignableCodes.Should().HaveCount(9);
         ApprovedIdentityRoleCatalog.AssignableCodes.Should().Contain(ApprovedIdentityRoleCatalog.OperationsSupervisor);
         ApprovedIdentityRoleCatalog.AssignableCodes.Should().NotContain("UAT_OPERATIONS_SUPERVISOR");
         ApprovedIdentityRoleCatalog.IsApplicationEligible(

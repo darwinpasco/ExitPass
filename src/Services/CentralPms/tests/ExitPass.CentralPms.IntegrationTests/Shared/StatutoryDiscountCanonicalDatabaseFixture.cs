@@ -538,6 +538,14 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_IdentityRbacApprovedRoleCatalog_v1.3.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_IdentityRbacApprovedRoleCatalog_v1.3.sql")),
                 new ApplicationSchemaSource(
+                    "statutory discount processor Identity/RBAC role",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_IdentityRbacStatutoryDiscountProcessor_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_IdentityRbacStatutoryDiscountProcessor_v1.3.sql")),
+                new ApplicationSchemaSource(
+                    "statutory ID control reference",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_StatutoryIdControlReference_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPmsStatutoryIdControlReference_v1.3.sql")),
+                new ApplicationSchemaSource(
                     "human authentication lifecycle",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_HumanAuthenticationLifecycle_v1.3.sql"),
                     ValidatorPath: null),

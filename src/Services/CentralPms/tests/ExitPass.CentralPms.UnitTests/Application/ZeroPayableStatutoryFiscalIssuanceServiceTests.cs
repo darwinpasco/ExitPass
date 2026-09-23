@@ -75,6 +75,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal(2679, tax.TaxableAmountMinorUnits);
         Assert.Equal(321, tax.TaxAmountMinorUnits);
         Assert.Equal(0, Assert.Single(mapped.Totals).AmountMinorUnits);
+        Assert.NotNull(mapped.InvoiceCustomerInformation);
+        Assert.Equal("12345678", mapped.InvoiceCustomerInformation.StatutoryIdNumber);
         Assert.False(result.FiscalPrerequisiteSatisfied);
     }
 
@@ -140,7 +142,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         new(references, orchestration, posServer, Options(), CentralPmsServiceIdentityId);
 
     private static ZeroPayableStatutoryFiscalIssuanceCommand Command() =>
-        new(Finality(), Authority(), Guid.Parse("a1000000-0000-4000-8000-00000000000d"), 2679, "VAT_EXCLUSIVE", "LOCAL_ORDINANCE_APPLIED");
+        new(Finality(), Authority(), Guid.Parse("a1000000-0000-4000-8000-00000000000d"), 2679, "VAT_EXCLUSIVE", "LOCAL_ORDINANCE_APPLIED", "12345678");
 
     private static StatutoryDiscountZeroPayableFinality Finality() =>
         new(

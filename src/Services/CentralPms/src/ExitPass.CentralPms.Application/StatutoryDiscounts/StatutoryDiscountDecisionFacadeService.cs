@@ -26,6 +26,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
     private readonly IStatutoryDiscountServiceChannelReviewRepository _serviceChannelReviewRepository;
     private readonly IStatutoryDiscountParkingEligibilityResolver _parkingEligibilityResolver;
     private readonly IStatutoryDiscountParkingEligibilityRepository _parkingEligibilityRepository;
+    private readonly IStatutoryDiscountPayableBasisRevalidationService _payableBasisRevalidationService;
     private readonly IStatutoryDiscountZeroPayableFinalityReader _zeroPayableFinalityReader;
     private readonly IZeroPayableStatutoryFiscalIssuanceService? _zeroPayableFiscalIssuanceService;
     private readonly IIssueExitAuthorizationUseCase? _issueExitAuthorizationUseCase;
@@ -41,6 +42,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         IStatutoryDiscountServiceChannelReviewRepository serviceChannelReviewRepository,
         IStatutoryDiscountParkingEligibilityResolver parkingEligibilityResolver,
         IStatutoryDiscountParkingEligibilityRepository parkingEligibilityRepository,
+        IStatutoryDiscountPayableBasisRevalidationService payableBasisRevalidationService,
         IStatutoryDiscountZeroPayableFinalityReader zeroPayableFinalityReader,
         IZeroPayableStatutoryFiscalIssuanceService? zeroPayableFiscalIssuanceService = null,
         IIssueExitAuthorizationUseCase? issueExitAuthorizationUseCase = null)
@@ -55,6 +57,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         _serviceChannelReviewRepository = serviceChannelReviewRepository ?? throw new ArgumentNullException(nameof(serviceChannelReviewRepository));
         _parkingEligibilityResolver = parkingEligibilityResolver ?? throw new ArgumentNullException(nameof(parkingEligibilityResolver));
         _parkingEligibilityRepository = parkingEligibilityRepository ?? throw new ArgumentNullException(nameof(parkingEligibilityRepository));
+        _payableBasisRevalidationService = payableBasisRevalidationService ?? throw new ArgumentNullException(nameof(payableBasisRevalidationService));
         _zeroPayableFinalityReader = zeroPayableFinalityReader ?? throw new ArgumentNullException(nameof(zeroPayableFinalityReader));
         _zeroPayableFiscalIssuanceService = zeroPayableFiscalIssuanceService;
         _issueExitAuthorizationUseCase = issueExitAuthorizationUseCase;
@@ -160,6 +163,11 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
             if (serviceChannelApplicationIntent && !HasPayableBasisFacts(decision))
             {
+                normalized = await RevalidateServiceChannelPayableBasisAsync(
+                        normalized,
+                        decision,
+                        cancellationToken)
+                    .ConfigureAwait(false);
                 application = await ApplyDeferredServiceChannelPayableBasisAsync(
                         normalized,
                         decision,
@@ -172,7 +180,11 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                 var applicationStart = await CreateOrResolveApplicationStageAsync(normalized, decision, cancellationToken)
                     .ConfigureAwait(false);
                 applicationResultClassification = applicationStart.ResultClassification;
-                application = await ResolveApplicationStageAsync(normalized, applicationStart, cancellationToken)
+                application = await ResolveApplicationStageAsync(
+                        normalized,
+                        applicationStart,
+                        serviceChannelApplicationIntent ? decision : null,
+                        cancellationToken)
                     .ConfigureAwait(false);
             }
         }
@@ -314,7 +326,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                         enriched.RequestReference,
                         enriched.VatExclusiveBasisAmountMinorUnits.Value,
                         enriched.VatTreatment,
-                        enriched.PolicyResolutionBasis),
+                        enriched.PolicyResolutionBasis,
+                        resolution.Finality!.IdControlReference),
                     cancellationToken).ConfigureAwait(false)
                 : await _zeroPayableFiscalIssuanceService.ReadAsync(
                     resolution.Finality!.StatutoryDiscountPayableBasisApplicationCommandId,
@@ -664,25 +677,23 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                 "Frozen local-ordinance policy authority is required before payable-basis application can be requested.");
         }
 
-        // A later service-channel payable-basis request supplies the newly created tariff
-        // snapshot. That server-validated application input is not part of the immutable
-        // eligibility-decision semantics established before a payable basis existed.
-        var comparisonCommand = BindFrozenPolicyAuthority(decisionCommand, authority) with
-        {
-            OriginalTariffSnapshotId = decision.OriginalTariffSnapshotId,
-            // Service-channel intake never accepts calculated tariff facts. Values added
-            // to the decision readback after older approvals are results, not request
-            // semantics, and must not make the later basis-creation request conflict.
-            OriginalTariffFacts = null
-        };
-        var expectedSemanticHash = StatutoryDiscountDecisionV2SemanticHash.Compute(comparisonCommand);
-
-        if (!string.Equals(decision.SemanticHashSourceVersion, StatutoryDiscountDecisionV2SemanticHash.SourceVersion, StringComparison.Ordinal) ||
-            !string.Equals(decision.SemanticRequestHash, expectedSemanticHash, StringComparison.Ordinal))
+        var canonicalReview = await _serviceChannelReviewRepository.GetAsync(
+                decision.StatutoryDiscountDecisionCommandId,
+                normalized.CorrelationId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (decision.ParkingSessionId != normalized.ParkingSessionId ||
+            !string.Equals(decision.EntitlementType, normalized.EntitlementType, StringComparison.Ordinal) ||
+            (canonicalReview is not null &&
+             (canonicalReview.ParkingSessionId != normalized.ParkingSessionId ||
+              !string.Equals(canonicalReview.SourceChannel, normalized.SourceChannel, StringComparison.Ordinal) ||
+              !string.Equals(canonicalReview.EntitlementType, normalized.EntitlementType, StringComparison.Ordinal) ||
+              canonicalReview.SiteId != normalized.SiteId ||
+              canonicalReview.SiteGroupId != normalized.SiteGroupId)))
         {
             throw new StatutoryDiscountDecisionRejectedException(
                 "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT",
-                "A statutory-discount decision already exists for materially different decision facts.");
+                "The payable-basis application intent does not match the approved canonical statutory request.");
         }
 
         if ((decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.Received
@@ -695,6 +706,41 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         }
 
         return decision;
+    }
+
+    private async Task<StatutoryDiscountDecisionCommand> RevalidateServiceChannelPayableBasisAsync(
+        StatutoryDiscountDecisionCommand command,
+        StatutoryDiscountDecisionV2Record decision,
+        CancellationToken cancellationToken)
+    {
+        var review = await _serviceChannelReviewRepository.GetAsync(
+                decision.StatutoryDiscountDecisionCommandId,
+                command.CorrelationId,
+                cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new StatutoryDiscountDecisionRejectedException(
+                "STATUTORY_DISCOUNT_SERVICE_CHANNEL_REVIEW_REQUIRED",
+                "The approved statutory-discount review is unavailable for payable-basis revalidation.");
+
+        var revalidation = await _payableBasisRevalidationService.RevalidateAsync(
+                review,
+                command.CorrelationId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (!revalidation.Succeeded || !revalidation.TariffSnapshotId.HasValue)
+        {
+            if (revalidation.Retryable)
+            {
+                throw new InvalidOperationException(
+                    "The authoritative parking payable basis could not be refreshed yet.");
+            }
+
+            throw new StatutoryDiscountDecisionRejectedException(
+                revalidation.ErrorCode ?? "STATUTORY_DISCOUNT_PAYABLE_BASIS_REVALIDATION_FAILED",
+                "The authoritative parking payable basis could not be revalidated.");
+        }
+
+        return command with { OriginalTariffSnapshotId = revalidation.TariffSnapshotId };
     }
 
     private async Task<StatutoryDiscountPayableBasisApplicationV1Record> ApplyDeferredServiceChannelPayableBasisAsync(
@@ -832,6 +878,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
     private async Task<StatutoryDiscountPayableBasisApplicationV1Record?> ResolveApplicationStageAsync(
         StatutoryDiscountDecisionCommand normalized,
         StagedStatutoryDiscountCommandStartResult<StatutoryDiscountPayableBasisApplicationV1Record> start,
+        StatutoryDiscountDecisionV2Record? serviceChannelDecision,
         CancellationToken cancellationToken)
     {
         var record = start.Record!;
@@ -844,6 +891,15 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             or StatutoryDiscountPayableBasisApplicationV1CommandStates.FailedNonRetryable)
         {
             return record;
+        }
+
+        if (serviceChannelDecision is not null)
+        {
+            normalized = await RevalidateServiceChannelPayableBasisAsync(
+                    normalized,
+                    serviceChannelDecision,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
 
         var processing = await _stagedCommandService.MarkApplicationProcessingAsync(
@@ -1004,7 +1060,10 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             command.ReasonCode,
             command.OriginalTariffSnapshotId,
             command.CorrelationId,
-            decision.CreatedAt);
+            decision.CreatedAt)
+        {
+            IdControlReference = command.IdControlReference
+        };
 
     private static StatutoryDiscountPayableBasisApplicationV1Command ToApplicationV1Command(
         StatutoryDiscountDecisionCommand command,
@@ -1275,9 +1334,21 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         {
             Require(command.MaskedIdReference, "MASKED_ID_REFERENCE_REQUIRED", "Masked ID reference is required.");
         }
-        else if (!string.IsNullOrWhiteSpace(command.MaskedIdReference) && !command.MaskedIdReference.Contains('*'))
+        else if (!string.IsNullOrWhiteSpace(command.MaskedIdReference) &&
+                 command.MaskedIdReference.Length > 4 &&
+                 !command.MaskedIdReference.Contains('*'))
         {
             throw Rejected("MASKED_ID_REFERENCE_REQUIRED", "WebPay ID reference must be masked when supplied.");
+        }
+
+        var idControlReference = NormalizeSensitiveOptional(command.IdControlReference);
+        if (idControlReference is not null &&
+            (idControlReference.Length is < 4 or > 64 ||
+             idControlReference.Any(char.IsWhiteSpace) ||
+             idControlReference.Contains('*') ||
+             idControlReference.Any(character => !char.IsLetterOrDigit(character) && character != '-')))
+        {
+            throw Rejected("INVALID_ID_CONTROL_REFERENCE", "ID/control reference format is invalid.");
         }
 
         if (!StatutoryDiscountSourceChannels.IsSupported(sourceChannel))
@@ -1340,6 +1411,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             EntitlementType = entitlementType,
             IdDocumentType = Normalize(command.IdDocumentType),
             IssuingAuthority = Normalize(command.IssuingAuthority),
+            IdControlReference = idControlReference,
             MaskedIdReference = command.MaskedIdReference?.Trim() ?? string.Empty,
             IdempotencyKey = command.IdempotencyKey.Trim(),
             TicketReference = NormalizeOptional(command.TicketReference),
@@ -1370,6 +1442,9 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
+
+    private static string? NormalizeSensitiveOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static bool IsServiceChannel(string sourceChannel) =>
         sourceChannel is StatutoryDiscountSourceChannels.WebPay
