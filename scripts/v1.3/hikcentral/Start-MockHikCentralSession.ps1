@@ -170,7 +170,11 @@ function Select-CentralPmsRuntime([object[]] $Containers) {
     return $approved[0]
 }
 
-function Resolve-CentralPmsRuntime([object[]] $Containers, [scriptblock] $ReadinessProbe) {
+function Resolve-CentralPmsRuntime(
+    [object[]] $Containers,
+    [scriptblock] $ReadinessProbe,
+    [string] $HealthPath = '/health/ready'
+) {
     if ($null -eq $Containers) {
         $names = (Invoke-Docker -Arguments @('ps', '-a', '--format', '{{.Names}}')).Output
         $Containers = @($names |
@@ -178,13 +182,17 @@ function Resolve-CentralPmsRuntime([object[]] $Containers, [scriptblock] $Readin
             ForEach-Object { Get-ContainerInspect $_ })
     }
 
+    if ([string]::IsNullOrWhiteSpace($HealthPath) -or -not $HealthPath.StartsWith('/')) {
+        throw "Central PMS health path must be an absolute application path."
+    }
+
     $runtime = Select-CentralPmsRuntime $Containers
-    $readyUrl = "$($runtime.HostUrl)/health/ready"
+    $healthUrl = "$($runtime.HostUrl)$HealthPath"
     if ($null -eq $ReadinessProbe) {
-        Wait-Http $readyUrl
+        Wait-Http $healthUrl
     }
     else {
-        & $ReadinessProbe $readyUrl
+        & $ReadinessProbe $healthUrl
     }
     return $runtime
 }
@@ -616,6 +624,11 @@ function Invoke-SelfTest {
     $testCount += Invoke-TestCase 'readiness failure prevents resolution' {
         Assert-Throws { Resolve-CentralPmsRuntime @($standard) { param($Url) throw "Synthetic readiness failure at $Url" } } 'Synthetic readiness failure.*health/ready'
     }
+    $testCount += Invoke-TestCase 'mock startup may use Central PMS liveness before projection recovery' {
+        Assert-Throws {
+            Resolve-CentralPmsRuntime @($standard) { param($Url) throw "Synthetic liveness probe at $Url" } '/health/live'
+        } 'Synthetic liveness probe.*health/live'
+    }
     $testCount += Invoke-TestCase 'loopback URL resolution' {
         $dynamicPort = New-TestContainer -Name $standardCentralPmsContainer -Aliases @($standardCentralPmsAlias) -RuntimeLabel $centralPmsRuntimeLabelValue -HostPort '49123'
         $result = Select-CentralPmsRuntime @($dynamicPort)
@@ -624,6 +637,11 @@ function Invoke-SelfTest {
     $testCount += Invoke-TestCase 'adapter restoration remains in finally' {
         $source = Get-Content -LiteralPath $PSCommandPath -Raw
         Assert-Test ($source -match '(?s)finally\s*\{.*if \(\$realAdapterStopped.*docker.*start.*Wait-Http \$realAdapterHealthUrl') 'The finally block no longer starts and verifies the ordinary adapter.'
+    }
+    $testCount += Invoke-TestCase 'mock startup restores projection readiness after adapter swap' {
+        $source = Get-Content -LiteralPath $PSCommandPath -Raw
+        Assert-Test ($source -match "Resolve-CentralPmsRuntime\s+-HealthPath\s+'/health/live'") 'Mock startup must require only Central PMS liveness before swapping adapters.'
+        Assert-Test ($source -match '(?s)Write-RuntimeState \$wireMockAdminUrl.*-RefreshMappings.*Wait-Http "\$centralUrl/health/ready" 200 90') 'Mock startup must seed an empty passageway mapping and then wait for Central PMS readiness.'
     }
     $testCount += Invoke-TestCase 'persisted route invariance' {
         $source = Get-Content -LiteralPath $PSCommandPath -Raw
@@ -671,7 +689,10 @@ try {
     $realAdapterHealthUrl = "$(Get-LoopbackContainerUrl $realAdapter '8080/tcp')/health/ready"
     Wait-Http $realAdapterHealthUrl
 
-    $centralRuntime = Resolve-CentralPmsRuntime
+    # Mock startup must not require projection readiness before the mock adapter exists.
+    # Central PMS only needs to be alive here; full readiness is restored after the
+    # mock adapter and initial empty passageway mapping are active.
+    $centralRuntime = Resolve-CentralPmsRuntime -HealthPath '/health/live'
     $centralUrl = $centralRuntime.HostUrl
     Write-Output "Central PMS runtime discovered: $($centralRuntime.Name) ($($centralRuntime.Kind))"
     Write-Output "Central PMS host URL: $centralUrl"
@@ -697,7 +718,20 @@ try {
 
     Write-RuntimeState $wireMockAdminUrl
 
+    # Seed a successful empty passageway response before waiting for Central PMS
+    # readiness. Without this mapping, WireMock returns 404 for the projection pull,
+    # which keeps the required vendor-session projection health check unhealthy.
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $creatorPath -RefreshMappings | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Failed to initialize the empty mock HikCentral passageway mapping.'
+    }
+
+    # The mock adapter can now satisfy the required projection cycle. Wait for the
+    # normal readiness contract only after the replacement adapter is operational.
+    Wait-Http "$centralUrl/health/ready" 200 90
+
     Write-Output ''
+    Write-Output 'Central PMS readiness restored through the mock Site Adapter.'
     Write-Output 'MOCK HIKCENTRAL ACTIVE'
     Write-Output 'SIMULATED HIKCENTRAL SESSION - NOT REAL PITX ACCEPTANCE'
     Write-Output ''
