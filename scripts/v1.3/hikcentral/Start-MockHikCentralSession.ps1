@@ -170,7 +170,11 @@ function Select-CentralPmsRuntime([object[]] $Containers) {
     return $approved[0]
 }
 
-function Resolve-CentralPmsRuntime([object[]] $Containers, [scriptblock] $ReadinessProbe) {
+function Resolve-CentralPmsRuntime(
+    [object[]] $Containers,
+    [scriptblock] $ReadinessProbe,
+    [string] $HealthPath = '/health/ready'
+) {
     if ($null -eq $Containers) {
         $names = (Invoke-Docker -Arguments @('ps', '-a', '--format', '{{.Names}}')).Output
         $Containers = @($names |
@@ -178,13 +182,17 @@ function Resolve-CentralPmsRuntime([object[]] $Containers, [scriptblock] $Readin
             ForEach-Object { Get-ContainerInspect $_ })
     }
 
+    if ([string]::IsNullOrWhiteSpace($HealthPath) -or -not $HealthPath.StartsWith('/')) {
+        throw "Central PMS health path must be an absolute application path."
+    }
+
     $runtime = Select-CentralPmsRuntime $Containers
-    $readyUrl = "$($runtime.HostUrl)/health/ready"
+    $healthUrl = "$($runtime.HostUrl)$HealthPath"
     if ($null -eq $ReadinessProbe) {
-        Wait-Http $readyUrl
+        Wait-Http $healthUrl
     }
     else {
-        & $ReadinessProbe $readyUrl
+        & $ReadinessProbe $healthUrl
     }
     return $runtime
 }
@@ -364,6 +372,65 @@ function Start-MockAdapter($RealAdapter) {
     }
     $arguments.Add($RealAdapter.Config.Image)
     Invoke-Docker -Arguments ($arguments.ToArray()) | Out-Null
+}
+
+function Initialize-EmptyProjectionMapping([string] $WireMockAdminUrl, $RealAdapter) {
+    $appKeyMount = @($RealAdapter.Mounts | Where-Object {
+        $_.Type -eq 'bind' -and $_.Destination -eq '/run/exitpass/secrets/hikcentral/app-key'
+    })
+
+    if ($appKeyMount.Count -ne 1 -or
+        -not (Test-Path -LiteralPath $appKeyMount[0].Source -PathType Leaf)) {
+        throw 'The ordinary PITX adapter HikCentral app-key mount is unavailable for mock initialization.'
+    }
+
+    $appKey = (Get-Content -LiteralPath $appKeyMount[0].Source -Raw).Trim()
+    if ([string]::IsNullOrWhiteSpace($appKey)) {
+        throw 'The configured HikCentral app key is blank.'
+    }
+
+    $mapping = @{
+        name = 'ExitPass mock empty passageway inventory'
+        priority = 1
+        request = @{
+            method = 'POST'
+            urlPath = '/artemis/api/vehicle/v1/parkinglot/passageway/record'
+            headers = @{
+                'Content-Type' = @{ matches = '(?i)^application/json(?:\s*;.*)?$' }
+                'X-Ca-Key' = @{ equalTo = $appKey }
+                'X-Ca-Signature' = @{ matches = '.+' }
+            }
+            bodyPatterns = @(
+                @{ matchesJsonPath = "$[?(@.queryInfo.parkingLotIndexCode == '$expectedParkingLot')]" }
+            )
+        }
+        response = @{
+            status = 200
+            headers = @{ 'Content-Type' = 'application/json' }
+            jsonBody = @{
+                code = '0'
+                msg = 'Success'
+                data = @{
+                    total = 0
+                    pageIndex = 1
+                    pageSize = 100
+                    list = @()
+                }
+            }
+        }
+    }
+
+    $body = $mapping | ConvertTo-Json -Depth 30 -Compress
+    Invoke-RestMethod -Method Post -Uri "$($WireMockAdminUrl.TrimEnd('/'))/__admin/mappings" -ContentType 'application/json' -Body $body -TimeoutSec 15 | Out-Null
+
+    $registered = Invoke-RestMethod -Method Get -Uri "$($WireMockAdminUrl.TrimEnd('/'))/__admin/mappings" -TimeoutSec 15
+    $matching = @($registered.mappings | Where-Object {
+        $_.request.urlPath -eq '/artemis/api/vehicle/v1/parkinglot/passageway/record'
+    })
+
+    if ($matching.Count -ne 1) {
+        throw "WireMock did not retain exactly one initial passageway mapping (found $($matching.Count))."
+    }
 }
 
 function Write-RuntimeState([string] $WireMockAdminUrl) {
@@ -616,6 +683,11 @@ function Invoke-SelfTest {
     $testCount += Invoke-TestCase 'readiness failure prevents resolution' {
         Assert-Throws { Resolve-CentralPmsRuntime @($standard) { param($Url) throw "Synthetic readiness failure at $Url" } } 'Synthetic readiness failure.*health/ready'
     }
+    $testCount += Invoke-TestCase 'mock startup may use Central PMS liveness before projection recovery' {
+        Assert-Throws {
+            Resolve-CentralPmsRuntime @($standard) { param($Url) throw "Synthetic liveness probe at $Url" } '/health/live'
+        } 'Synthetic liveness probe.*health/live'
+    }
     $testCount += Invoke-TestCase 'loopback URL resolution' {
         $dynamicPort = New-TestContainer -Name $standardCentralPmsContainer -Aliases @($standardCentralPmsAlias) -RuntimeLabel $centralPmsRuntimeLabelValue -HostPort '49123'
         $result = Select-CentralPmsRuntime @($dynamicPort)
@@ -623,7 +695,22 @@ function Invoke-SelfTest {
     }
     $testCount += Invoke-TestCase 'adapter restoration remains in finally' {
         $source = Get-Content -LiteralPath $PSCommandPath -Raw
-        Assert-Test ($source -match '(?s)finally\s*\{.*if \(\$realAdapterStopped.*docker.*start.*Wait-Http \$realAdapterHealthUrl') 'The finally block no longer starts and verifies the ordinary adapter.'
+        Assert-Test ($source -match '(?s)finally\s*\{.*if \(\$realAdapterStopped.*docker.*start.*Get-ContainerInspect.*Get-LoopbackContainerUrl.*Wait-Http \$realAdapterHealthUrl') 'The finally block no longer starts, re-inspects, and verifies the ordinary adapter.'
+    }
+    $testCount += Invoke-TestCase 'restoration diagnostics do not mask startup failure' {
+        $source = Get-Content -LiteralPath $PSCommandPath -Raw
+        Assert-Test ($source -match '(?s)catch\s*\{\s*\$startupError = \$_\s*throw\s*\}\s*finally') 'Mock startup must preserve the original startup exception.'
+        Assert-Test ($source -match '(?s)if \(\$null -ne \$startupError\).*Write-Warning \$message.*original mock startup failure') 'Restoration diagnostics must not replace the original startup failure.'
+    }
+    $testCount += Invoke-TestCase 'mock startup restores projection readiness after adapter swap' {
+        $source = Get-Content -LiteralPath $PSCommandPath -Raw
+        Assert-Test ($source -match "Resolve-CentralPmsRuntime\s+-HealthPath\s+'/health/live'") 'Mock startup must require only Central PMS liveness before swapping adapters.'
+        Assert-Test ($source -match '(?s)Write-RuntimeState \$wireMockAdminUrl.*Initialize-EmptyProjectionMapping \$wireMockAdminUrl \$realAdapter.*Wait-Http "\$centralUrl/health/ready" 200 90') 'Mock startup must seed an empty passageway mapping and then wait for Central PMS readiness.'
+    }
+    $testCount += Invoke-TestCase 'empty projection mapping is seeded internally' {
+        $source = Get-Content -LiteralPath $PSCommandPath -Raw
+        Assert-Test ($source -match 'function Initialize-EmptyProjectionMapping') 'The launcher no longer owns its initial empty projection mapping.'
+        Assert-Test ($source -notmatch '(?s)Write-RuntimeState \$wireMockAdminUrl\s*\r?\n\s*& powershell\.exe.*-RefreshMappings') 'Mock startup must not shell out to the on-demand creator for initial readiness.'
     }
     $testCount += Invoke-TestCase 'persisted route invariance' {
         $source = Get-Content -LiteralPath $PSCommandPath -Raw
@@ -643,6 +730,8 @@ if ($SelfTest) {
     Invoke-SelfTest
     return
 }
+
+$startupError = $null
 
 try {
     & docker version *> $null
@@ -671,7 +760,10 @@ try {
     $realAdapterHealthUrl = "$(Get-LoopbackContainerUrl $realAdapter '8080/tcp')/health/ready"
     Wait-Http $realAdapterHealthUrl
 
-    $centralRuntime = Resolve-CentralPmsRuntime
+    # Mock startup must not require projection readiness before the mock adapter exists.
+    # Central PMS only needs to be alive here; full readiness is restored after the
+    # mock adapter and initial empty passageway mapping are active.
+    $centralRuntime = Resolve-CentralPmsRuntime -HealthPath '/health/live'
     $centralUrl = $centralRuntime.HostUrl
     Write-Output "Central PMS runtime discovered: $($centralRuntime.Name) ($($centralRuntime.Kind))"
     Write-Output "Central PMS host URL: $centralUrl"
@@ -697,7 +789,16 @@ try {
 
     Write-RuntimeState $wireMockAdminUrl
 
+    # Seed the first successful empty projection response directly in this launcher.
+    # The on-demand creator is reserved for adding or refreshing sessions after
+    # mock mode has become operational.
+    Initialize-EmptyProjectionMapping $wireMockAdminUrl $realAdapter
+    # The mock adapter can now satisfy the required projection cycle. Wait for the
+    # normal readiness contract only after the replacement adapter is operational.
+    Wait-Http "$centralUrl/health/ready" 200 90
+
     Write-Output ''
+    Write-Output 'Central PMS readiness restored through the mock Site Adapter.'
     Write-Output 'MOCK HIKCENTRAL ACTIVE'
     Write-Output 'SIMULATED HIKCENTRAL SESSION - NOT REAL PITX ACCEPTANCE'
     Write-Output ''
@@ -721,6 +822,10 @@ try {
         Invoke-Docker -Arguments @('logs', '--follow', $mockAdapterContainer) | Out-Null
     }
 }
+catch {
+    $startupError = $_
+    throw
+}
 finally {
     $restorationError = $null
     try {
@@ -739,7 +844,24 @@ finally {
 
         if ($realAdapterStopped -and -not [string]::IsNullOrWhiteSpace($realAdapterName)) {
             Invoke-Docker -Arguments @('start', $realAdapterName) | Out-Null
-            Wait-Http $realAdapterHealthUrl 200 90
+            $restored = Get-ContainerInspect $realAdapterName
+            $realAdapterHealthUrl = "$(Get-LoopbackContainerUrl $restored '8080/tcp')/health/ready"
+            try {
+                Wait-Http $realAdapterHealthUrl 200 90
+            }
+            catch {
+                $state = if ($restored.State.Running) { 'running' } else { "stopped (exit_code=$($restored.State.ExitCode))" }
+                $logs = (Invoke-Docker -Arguments @('logs', '--tail', '80', $realAdapterName) -AllowFailure).Output -join [Environment]::NewLine
+                throw @"
+Ordinary PITX Site Adapter did not become ready after restoration.
+Container: $realAdapterName
+State: $state
+Health URL: $realAdapterHealthUrl
+Recent logs:
+$logs
+"@
+            }
+
             $restored = Get-ContainerInspect $realAdapterName
             $attachment = Get-NetworkAttachment $restored $networkName
             if ($null -eq $attachment -or $attachment.Aliases -notcontains 'pitx-site-adapter') {
@@ -756,12 +878,20 @@ finally {
     }
 
     if ($null -ne $restorationError) {
-        Write-Error @"
+        $message = @"
 SITE ADAPTER RESTORATION FAILED
 $($restorationError.Exception.Message)
 Recovery command:
 docker start $realAdapterName
 Then verify: $realAdapterHealthUrl
 "@
+
+        if ($null -ne $startupError) {
+            Write-Warning $message
+            Write-Warning "The original mock startup failure is preserved below."
+        }
+        else {
+            throw $message
+        }
     }
 }
