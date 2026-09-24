@@ -23,7 +23,10 @@ public sealed record CentralPmsStatutoryDiscountDecisionRequest(
     string? AttestationNotes,
     string? ReasonCode,
     Guid? OriginalTariffSnapshotId,
-    bool? BeneficiaryResidencySatisfied = null);
+    bool? BeneficiaryResidencySatisfied = null)
+{
+    public string? IdControlReference { get; init; }
+}
 
 /// <summary>
 /// Metadata-only evidence reference forwarded to Central PMS.

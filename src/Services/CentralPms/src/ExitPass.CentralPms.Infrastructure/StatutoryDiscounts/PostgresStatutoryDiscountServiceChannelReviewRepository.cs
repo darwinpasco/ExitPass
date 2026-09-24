@@ -43,6 +43,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 issuing_authority,
                 expiry_date,
                 masked_id_reference,
+                id_control_reference,
                 evidence_references,
                 requester_attestation,
                 attestation_notes,
@@ -68,6 +69,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 @issuing_authority,
                 @expiry_date,
                 @masked_id_reference,
+                @id_control_reference,
                 @evidence_references,
                 @requester_attestation,
                 @attestation_notes,
@@ -83,6 +85,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                SET request_reference = operator_console.statutory_discount_service_channel_reviews.request_reference,
                    ticket_reference = COALESCE(operator_console.statutory_discount_service_channel_reviews.ticket_reference, EXCLUDED.ticket_reference),
                    plate_number = COALESCE(operator_console.statutory_discount_service_channel_reviews.plate_number, EXCLUDED.plate_number),
+                   id_control_reference = COALESCE(operator_console.statutory_discount_service_channel_reviews.id_control_reference, EXCLUDED.id_control_reference),
                    evidence_references = CASE
                        WHEN operator_console.statutory_discount_service_channel_reviews.evidence_references = '[]'::jsonb
                        THEN EXCLUDED.evidence_references
@@ -216,7 +219,8 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 payable.statutory_discount_amount_minor_units,
                 payable.final_payable_amount_minor_units AS net_payable_amount_minor_units,
                 payable.currency_code,
-                payable.original_tariff_snapshot_id AS effective_original_tariff_snapshot_id,
+                COALESCE(payable.original_tariff_snapshot_id, r.original_tariff_snapshot_id) AS effective_original_tariff_snapshot_id,
+                original_tariff.vendor_system_id AS original_vendor_system_id,
                 dpa.statutory_discount_policy_version_id AS governing_policy_version_id,
                 dpa.jurisdiction_id AS governing_jurisdiction_id,
                 dpa.jurisdiction_code AS governing_jurisdiction_code,
@@ -272,6 +276,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 ORDER BY app.updated_at DESC, app.statutory_discount_payable_basis_application_id DESC
                 LIMIT 1
             ) AS payable ON TRUE
+            LEFT JOIN core.tariff_snapshots AS original_tariff
+              ON original_tariff.tariff_snapshot_id = COALESCE(
+                    payable.original_tariff_snapshot_id,
+                    r.original_tariff_snapshot_id)
             WHERE r.statutory_discount_decision_command_id = @statutory_discount_decision_command_id;
             """;
 
@@ -289,6 +297,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         Guid statutoryDiscountDecisionCommandId,
         Guid reviewerUserId,
         string? decisionReasonCode,
+        StatutoryDiscountServiceChannelReviewedDocument reviewedDocument,
         Guid correlationId,
         CancellationToken cancellationToken)
     {
@@ -307,6 +316,14 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return null;
         }
+
+        source = source with
+        {
+            IdDocumentType = reviewedDocument.IdDocumentType,
+            IssuingAuthority = reviewedDocument.IssuingAuthority,
+            ExpiryDate = reviewedDocument.ExpiryDate,
+            IdControlReference = reviewedDocument.IdControlReference
+        };
 
         if (source.StatutoryDiscountValidationId.HasValue)
         {
@@ -436,6 +453,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         Guid accessEvaluationId,
         string decision,
         string? decisionReasonCode,
+        StatutoryDiscountServiceChannelReviewedDocument reviewedDocument,
         Guid correlationId,
         CancellationToken cancellationToken)
     {
@@ -470,6 +488,22 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                        WHEN review_status = 'PENDING_REVIEW' THEN @decision_reason_code
                        ELSE reviewer_decision_reason_code
                    END,
+                   id_document_type = CASE
+                       WHEN review_status = 'PENDING_REVIEW' THEN @id_document_type
+                       ELSE id_document_type
+                   END,
+                   issuing_authority = CASE
+                       WHEN review_status = 'PENDING_REVIEW' THEN @issuing_authority
+                       ELSE issuing_authority
+                   END,
+                   expiry_date = CASE
+                       WHEN review_status = 'PENDING_REVIEW' THEN @expiry_date
+                       ELSE expiry_date
+                   END,
+                   id_control_reference = CASE
+                       WHEN review_status = 'PENDING_REVIEW' AND @decision = 'APPROVE' THEN @id_control_reference
+                       ELSE id_control_reference
+                   END,
                    review_correlation_id = CASE
                        WHEN review_status = 'PENDING_REVIEW' THEN @correlation_id
                        ELSE review_correlation_id
@@ -499,6 +533,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         command.Parameters.Add("access_evaluation_id", NpgsqlDbType.Uuid).Value = accessEvaluationId;
         command.Parameters.Add("decision", NpgsqlDbType.Varchar).Value = NormalizeRequired(decision);
         AddNullable(command, "decision_reason_code", NpgsqlDbType.Varchar, NormalizeOptional(decisionReasonCode));
+        AddNullable(command, "id_document_type", NpgsqlDbType.Varchar, NormalizeOptional(reviewedDocument.IdDocumentType));
+        AddNullable(command, "issuing_authority", NpgsqlDbType.Varchar, NormalizeOptional(reviewedDocument.IssuingAuthority));
+        AddNullable(command, "expiry_date", NpgsqlDbType.Date, reviewedDocument.ExpiryDate);
+        AddNullable(command, "id_control_reference", NpgsqlDbType.Varchar, NormalizeSensitiveOptional(reviewedDocument.IdControlReference));
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = correlationId;
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
@@ -521,6 +559,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         AddNullable(command, "issuing_authority", NpgsqlDbType.Varchar, NormalizeOptional(source.IssuingAuthority));
         AddNullable(command, "expiry_date", NpgsqlDbType.Date, source.ExpiryDate);
         AddNullable(command, "masked_id_reference", NpgsqlDbType.Varchar, source.MaskedIdReference);
+        AddNullable(command, "id_control_reference", NpgsqlDbType.Varchar, NormalizeSensitiveOptional(source.IdControlReference));
         command.Parameters.Add("evidence_references", NpgsqlDbType.Jsonb).Value =
             JsonSerializer.Serialize(source.EvidenceReferences ?? [], JsonOptions);
         command.Parameters.Add("requester_attestation", NpgsqlDbType.Boolean).Value = source.RequesterAttestation;
@@ -612,7 +651,11 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("submitted_at")),
             GetNullableDateTimeOffset(reader, "reviewed_at"),
             GetNullableString(reader, "application_status"),
-            correlationId);
+            correlationId)
+        {
+            IdControlReference = GetNullableString(reader, "id_control_reference"),
+            VendorSystemId = GetNullableGuid(reader, "original_vendor_system_id")
+        };
 
     private static async Task<ReviewSourceRow?> ReadReviewSourceForUpdateAsync(
         NpgsqlConnection connection,
@@ -632,6 +675,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 review.issuing_authority,
                 review.expiry_date,
                 review.masked_id_reference,
+                review.id_control_reference,
                 CASE
                     WHEN review.evidence_references <> '[]'::jsonb THEN review.evidence_references
                     ELSE COALESCE(canonical_evidence.evidence_references, '[]'::jsonb)
@@ -703,7 +747,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             reader.GetBoolean(reader.GetOrdinal("requester_attestation")),
             GetNullableString(reader, "attestation_notes"),
             GetNullableGuid(reader, "original_tariff_snapshot_id"),
-            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("submitted_at")));
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("submitted_at")))
+        {
+            IdControlReference = GetNullableString(reader, "id_control_reference")
+        };
     }
 
     private static async Task<PolicyReferenceRow?> ResolvePolicyAsync(
@@ -765,7 +812,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 id_document_type,
                 issuing_authority,
                 id_expiry_date,
-                masked_id_reference,
+                id_control_reference,
                 policy_resolution_basis,
                 local_ordinance_applied,
                 national_law_fallback_applied,
@@ -796,7 +843,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 @id_document_type,
                 @issuing_authority,
                 @id_expiry_date,
-                @masked_id_reference,
+                @id_control_reference,
                 @policy_resolution_basis::discounts.policy_resolution_basis_enum,
                 @local_ordinance_applied,
                 @national_law_fallback_applied,
@@ -830,7 +877,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         AddNullable(command, "id_document_type", NpgsqlDbType.Varchar, NormalizeOptional(source.IdDocumentType));
         AddNullable(command, "issuing_authority", NpgsqlDbType.Varchar, NormalizeOptional(source.IssuingAuthority));
         AddNullable(command, "id_expiry_date", NpgsqlDbType.Date, source.ExpiryDate);
-        AddNullable(command, "masked_id_reference", NpgsqlDbType.Varchar, source.MaskedIdReference);
+        AddNullable(command, "id_control_reference", NpgsqlDbType.Varchar, NormalizeSensitiveOptional(source.IdControlReference));
         command.Parameters.Add("policy_resolution_basis", NpgsqlDbType.Text).Value = policy.PolicyResolutionBasis;
         command.Parameters.Add("local_ordinance_applied", NpgsqlDbType.Boolean).Value = policy.LocalOrdinanceApplied;
         command.Parameters.Add("national_law_fallback_applied", NpgsqlDbType.Boolean).Value = !policy.LocalOrdinanceApplied;
@@ -1048,6 +1095,9 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
 
+    private static string? NormalizeSensitiveOptional(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     private static void AddNullable<T>(NpgsqlCommand command, string name, NpgsqlDbType type, T? value)
     {
         var parameter = command.Parameters.Add(name, type);
@@ -1110,7 +1160,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         bool RequesterAttestation,
         string? AttestationNotes,
         Guid? OriginalTariffSnapshotId,
-        DateTimeOffset SubmittedAt);
+        DateTimeOffset SubmittedAt)
+    {
+        public string? IdControlReference { get; init; }
+    }
 
     private sealed record PolicyReferenceRow(
         Guid PolicyReferenceId,

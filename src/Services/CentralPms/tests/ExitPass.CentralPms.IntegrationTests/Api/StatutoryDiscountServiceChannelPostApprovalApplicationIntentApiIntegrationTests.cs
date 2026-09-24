@@ -1547,6 +1547,9 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 services.RemoveAll<IOperatorConsoleAccessEvaluationWriter>();
                 services.AddSingleton<IOperatorConsoleAccessEvaluationService>(new FakeAccessEvaluationService(access));
                 services.AddSingleton<IOperatorConsoleAccessEvaluationWriter>(new FakeAccessEvaluationWriter(access));
+                services.RemoveAll<IStatutoryDiscountPayableBasisRevalidationService>();
+                services.AddSingleton<IStatutoryDiscountPayableBasisRevalidationService>(
+                    new FixedPayableBasisRevalidationService(context.TariffSnapshotId));
                 if (zeroPayablePosEvidence is not null)
                 {
                     var sitePosServerId = Guid.Parse("9b000000-0000-0000-0000-000000000007");
@@ -1585,6 +1588,20 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                             zeroPayablePosEvidence));
                 }
             });
+
+    private sealed class FixedPayableBasisRevalidationService(Guid tariffSnapshotId)
+        : IStatutoryDiscountPayableBasisRevalidationService
+    {
+        public Task<StatutoryDiscountPayableBasisRevalidationResult> RevalidateAsync(
+            StatutoryDiscountServiceChannelReviewDetail review,
+            Guid correlationId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new StatutoryDiscountPayableBasisRevalidationResult(
+                Succeeded: true,
+                tariffSnapshotId,
+                ErrorCode: null,
+                Retryable: false));
+    }
 
     private sealed class ZeroPayablePosCallEvidence
     {

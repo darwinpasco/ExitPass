@@ -420,6 +420,7 @@ public sealed class CentralPmsWebPayClientTests
         Assert.False(root.GetProperty("applyPayableBasis").GetBoolean());
         Assert.Equal("SENIOR_CITIZEN", root.GetProperty("entitlementType").GetString());
         Assert.Equal("WEBPAY-REQ-001", root.GetProperty("ticketReference").GetString());
+        Assert.Equal("12345678", root.GetProperty("idControlReference").GetString());
         Assert.Equal("SC-****-0001", root.GetProperty("maskedIdReference").GetString());
         Assert.Equal(TariffSnapshotId, root.GetProperty("originalTariffSnapshotId").GetGuid());
         Assert.True(root.GetProperty("beneficiaryResidencySatisfied").GetBoolean());
@@ -1120,7 +1121,10 @@ public sealed class CentralPmsWebPayClientTests
             "Customer attests eligibility for review.",
             null,
             TariffSnapshotId,
-            BeneficiaryResidencySatisfied: true);
+            BeneficiaryResidencySatisfied: true)
+        {
+            IdControlReference = "12345678"
+        };
     }
 
     private static CentralPmsStatutoryDiscountAvailabilityRequest StatutoryAvailabilityRequest()

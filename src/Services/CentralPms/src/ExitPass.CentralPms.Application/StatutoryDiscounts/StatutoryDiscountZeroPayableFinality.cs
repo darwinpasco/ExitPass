@@ -26,7 +26,10 @@ public sealed record StatutoryDiscountZeroPayableFinality(
     DateTimeOffset DecidedAt,
     DateTimeOffset AppliedAt,
     Guid CorrelationId,
-    string FinalityState = StatutoryDiscountFinalityStates.ZeroPayableStatutoryFinality);
+    string FinalityState = StatutoryDiscountFinalityStates.ZeroPayableStatutoryFinality)
+{
+    public string? IdControlReference { get; init; }
+}
 
 public sealed record StatutoryDiscountZeroPayableDecisionAnchor(
     Guid DecisionCommandId,
@@ -90,7 +93,10 @@ public sealed record StatutoryDiscountZeroPayableValidationAnchor(
     long? GrossAmountMinorUnits,
     long? StatutoryDiscountAmountMinorUnits,
     long? FinalPayableAmountMinorUnits,
-    string? Currency);
+    string? Currency)
+{
+    public string? IdControlReference { get; init; }
+}
 
 public sealed record StatutoryDiscountZeroPayablePolicyAnchor(
     Guid? DecisionCommandId,
@@ -256,7 +262,10 @@ public static class StatutoryDiscountZeroPayableFinalityResolver
                 decision.SourceChannel,
                 decision.DecidedAt!.Value,
                 application.AppliedAt!.Value,
-                application.CorrelationId!.Value),
+                application.CorrelationId!.Value)
+            {
+                IdControlReference = validation.IdControlReference
+            },
             RejectionCode: null);
     }
 

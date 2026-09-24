@@ -74,6 +74,7 @@ public sealed record ManagementStatutoryBenefitReviewDetail(
     string? IssuingAuthority,
     DateOnly? ExpiryDate,
     string? MaskedIdReference,
+    bool HasAuthoritativeIdControlReference,
     bool RequesterAttestation,
     bool? BeneficiaryResidencySatisfied,
     string? SubmissionReason,
@@ -131,6 +132,10 @@ public sealed record ManagementStatutoryBenefitDecisionCommand(
     string? RejectionReason,
     long ExpectedVersion,
     string IdempotencyKey,
+    string? IdDocumentType,
+    string? IssuingAuthority,
+    DateOnly? ExpiryDate,
+    string? IdControlReference,
     Guid CorrelationId);
 
 public sealed record ManagementStatutoryBenefitDecisionResult(
@@ -191,7 +196,8 @@ public sealed record ManagementStatutoryBenefitReviewMetadata(
     string SiteCode,
     string SiteName,
     string? ReviewerDisplayName,
-    long Version);
+    long Version,
+    string? IdControlReference);
 
 public interface IManagementStatutoryBenefitReviewRepository
 {
@@ -260,6 +266,7 @@ public sealed record AuthorizedStatutoryBenefitDecisionCommand(
     string Decision,
     string? Reason,
     string IdempotencyKey,
+    StatutoryDiscountServiceChannelReviewedDocument ReviewedDocument,
     Guid CorrelationId);
 
 public sealed record AuthorizedStatutoryBenefitDecisionResult(

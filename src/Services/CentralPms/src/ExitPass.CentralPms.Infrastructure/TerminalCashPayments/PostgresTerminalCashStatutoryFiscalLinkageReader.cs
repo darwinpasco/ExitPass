@@ -111,7 +111,7 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
                 decision.decided_at,
                 review.site_id AS review_site_id,
                 review.site_group_id AS review_site_group_id,
-                review.masked_id_reference,
+                validation.id_control_reference,
                 app.application_status::text AS immutable_application_status,
                 app.applied_tariff_snapshot_id AS immutable_applied_tariff_snapshot_id,
                 validation.statutory_discount_validation_id AS approved_validation_id
@@ -268,7 +268,7 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
                 currency,
                 row.DecidedAt,
                 row.ApplicationAppliedAt,
-                row.MaskedIdReference));
+                row.IdControlReference));
     }
 
     private static StatutoryFiscalLinkageRow ReadRow(NpgsqlDataReader reader)
@@ -312,7 +312,7 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
             GetNullableDateTimeOffset(reader, "decided_at"),
             GetNullableGuid(reader, "review_site_id"),
             GetNullableGuid(reader, "review_site_group_id"),
-            GetNullableString(reader, "masked_id_reference"),
+            GetNullableString(reader, "id_control_reference"),
             GetNullableString(reader, "immutable_application_status"),
             GetNullableGuid(reader, "immutable_applied_tariff_snapshot_id"),
             GetNullableGuid(reader, "approved_validation_id"));
@@ -393,7 +393,7 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
         DateTimeOffset? DecidedAt,
         Guid? ReviewSiteId,
         Guid? ReviewSiteGroupId,
-        string? MaskedIdReference,
+        string? IdControlReference,
         string? ImmutableApplicationStatus,
         Guid? ImmutableAppliedTariffSnapshotId,
         Guid? ApprovedValidationId);

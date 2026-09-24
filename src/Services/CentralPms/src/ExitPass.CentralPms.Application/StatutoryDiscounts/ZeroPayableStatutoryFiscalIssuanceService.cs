@@ -277,7 +277,15 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 finality.SourceChannel),
             SiteId: finality.SiteId,
             CompletionBasis: FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality,
-            CompletionAuthorityRef: applicationRef);
+            CompletionAuthorityRef: applicationRef,
+            InvoiceCustomerInformation: string.IsNullOrWhiteSpace(command.StatutoryIdNumber)
+                ? null
+                : new CentralPmsInvoiceCustomerInformationContext(
+                    CustomerName: null,
+                    Address: null,
+                    Tin: null,
+                    BusinessStyle: null,
+                    StatutoryIdNumber: command.StatutoryIdNumber.Trim()));
     }
 
     private static void Validate(ZeroPayableStatutoryFiscalIssuanceCommand command)
@@ -377,7 +385,8 @@ public sealed record ZeroPayableStatutoryFiscalIssuanceCommand(
     Guid StatutoryRequestReference,
     long VatExclusiveBasisAmountMinorUnits,
     string VatTreatment,
-    string PolicyResolutionBasis);
+    string PolicyResolutionBasis,
+    string? StatutoryIdNumber = null);
 
 public sealed record ZeroPayableStatutoryFiscalIssuanceResult(
     Guid FiscalIssuanceReferenceId,

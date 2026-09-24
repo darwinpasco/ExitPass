@@ -4,7 +4,7 @@ import { maskStatutoryIdReference } from "./statutoryIdMasking";
 type AutomaticMaskedIdInputProps = {
   value: string;
   disabled?: boolean;
-  onChange: (maskedValue: string) => void;
+  onChange: (authoritativeValue: string) => void;
   onValidityChange?: (valid: boolean) => void;
 };
 
@@ -17,12 +17,12 @@ export function AutomaticMaskedIdInput({ value, disabled = false, onChange, onVa
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!value) {
+    if (!value && !isEditing) {
       setRawValue("");
       setIsEditing(true);
       setError("");
     }
-  }, [value]);
+  }, [isEditing, value]);
 
   function handleChange(event: ChangeEvent<HTMLInputElement>) {
     const nextValue = event.target.value;
@@ -40,6 +40,7 @@ export function AutomaticMaskedIdInput({ value, disabled = false, onChange, onVa
     }
 
     setRawValue(nextValue);
+    onChange(nextValue);
     setError("");
     onValidityChange?.(!nextValue || nextValue.trim().length >= 4);
   }
@@ -59,7 +60,7 @@ export function AutomaticMaskedIdInput({ value, disabled = false, onChange, onVa
       return;
     }
 
-    onChange(result.maskedValue);
+    onChange(result.normalizedValue);
     setIsEditing(false);
     setError("");
     onValidityChange?.(true);
@@ -75,6 +76,8 @@ export function AutomaticMaskedIdInput({ value, disabled = false, onChange, onVa
   }
 
   const describedBy = error ? `${descriptionId} ${errorId}` : descriptionId;
+  const displayResult = value ? maskStatutoryIdReference(value) : null;
+  const displayValue = displayResult?.ok ? displayResult.maskedValue : "";
 
   return (
     <div className="field automatic-mask-field">
@@ -83,8 +86,8 @@ export function AutomaticMaskedIdInput({ value, disabled = false, onChange, onVa
         <input
           ref={inputRef}
           id="statutory-id-reference"
-          name="maskedIdReference"
-          value={isEditing ? rawValue : value}
+          name="idControlReference"
+          value={isEditing ? rawValue : displayValue}
           onChange={handleChange}
           onBlur={maskCurrentValue}
           placeholder="ID No. / Control No."

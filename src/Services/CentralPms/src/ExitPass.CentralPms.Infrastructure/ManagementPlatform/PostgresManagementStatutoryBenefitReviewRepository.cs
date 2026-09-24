@@ -232,10 +232,13 @@ public sealed class PostgresManagementStatutoryBenefitReviewRepository : IManage
     {
         const string sql = """
             SELECT r.site_id, s.site_code, s.site_name, reviewer.display_name,
-                   r.xmin::text::bigint AS version
+                   r.xmin::text::bigint AS version,
+                   COALESCE(validation.id_control_reference, r.id_control_reference) AS id_control_reference
             FROM operator_console.statutory_discount_service_channel_reviews r
             JOIN sites.sites s ON s.site_id = r.site_id
             LEFT JOIN identity.users reviewer ON reviewer.user_id = r.reviewer_user_id
+            LEFT JOIN discounts.statutory_discount_validations validation
+              ON validation.statutory_discount_validation_id = r.statutory_discount_validation_id
             WHERE r.statutory_discount_decision_command_id = @reference;
             """;
 
@@ -246,7 +249,8 @@ public sealed class PostgresManagementStatutoryBenefitReviewRepository : IManage
         await using var reader = await command.ExecuteReaderAsync(System.Data.CommandBehavior.SingleRow, cancellationToken);
         return await reader.ReadAsync(cancellationToken)
             ? new ManagementStatutoryBenefitReviewMetadata(
-                reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetInt64(4))
+                reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetInt64(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5))
             : null;
     }
 

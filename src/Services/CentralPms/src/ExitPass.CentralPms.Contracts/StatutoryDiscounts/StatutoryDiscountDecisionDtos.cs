@@ -30,7 +30,14 @@ public sealed record StatutoryDiscountDecisionRequest(
     bool ReviewerAttestation,
     bool ApplyPayableBasis,
     Guid? OriginalTariffSnapshotId,
-    bool? BeneficiaryResidencySatisfied = null);
+    bool? BeneficiaryResidencySatisfied = null)
+{
+    /// <summary>
+    /// Complete statutory ID/control value accepted on authorized intake writes only.
+    /// Public decision readback deliberately omits this value.
+    /// </summary>
+    public string? IdControlReference { get; init; }
+}
 
 /// <summary>
 /// Channel-safe statutory parking local-ordinance availability request.

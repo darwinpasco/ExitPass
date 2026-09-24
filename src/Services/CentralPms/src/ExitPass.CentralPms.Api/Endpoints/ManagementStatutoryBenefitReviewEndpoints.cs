@@ -109,6 +109,10 @@ public static class ManagementStatutoryBenefitReviewEndpoints
                 body.RejectionReason,
                 body.ExpectedVersion,
                 body.IdempotencyKey,
+                body.IdDocumentType,
+                body.IssuingAuthority,
+                body.ExpiryDate,
+                body.IdControlReference,
                 correlationId), cancellationToken));
         }
         catch (Exception exception)
@@ -286,6 +290,10 @@ public sealed record ManagementStatutoryBenefitDecisionRequest(
     string Decision,
     string? RejectionReason,
     long ExpectedVersion,
-    string IdempotencyKey);
+    string IdempotencyKey,
+    string? IdDocumentType,
+    string? IssuingAuthority,
+    DateOnly? ExpiryDate,
+    string? IdControlReference);
 
 public sealed record ManagementStatutoryBenefitEvidencePreviewRequest(Guid EvidenceItemReference);
