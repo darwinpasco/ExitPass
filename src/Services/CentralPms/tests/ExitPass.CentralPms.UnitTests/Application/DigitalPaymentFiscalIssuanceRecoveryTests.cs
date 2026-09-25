@@ -248,6 +248,35 @@ public sealed class DigitalPaymentFiscalIssuanceRecoveryTests
         await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
     }
 
+    [Fact]
+    public async Task LegacyRetryWithoutPersistedCustomerSnapshot_FailsBeforePosContact()
+    {
+        var contextReader = Substitute.For<IDigitalPaymentFiscalContextReader>();
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        references.FindByPaymentConfirmationIdAsync(ConfirmationId, Arg.Any<CancellationToken>())
+            .Returns(Reference(
+                FiscalIssuanceIntegrationState.FiscalIssuanceFailedService,
+                FiscalIssuanceErrorPosture.RetryAfterServiceRecovery) with
+            {
+                InvoiceCustomerInformationSnapshot = null
+            });
+        contextReader.ReadAsync(AttemptId, ConfirmationId, SessionId, Arg.Any<CancellationToken>())
+            .Returns(Context());
+        var sut = new DigitalPaymentFiscalIssuanceService(contextReader, references, orchestration, posServer);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => sut.IssueOrReadAsync(Command(), CancellationToken.None));
+
+        Assert.Equal("FISCAL_INVOICE_CUSTOMER_INFORMATION_SNAPSHOT_REQUIRED", error.Message);
+        await posServer.DidNotReceiveWithAnyArgs().TryIssueFiscalDocumentViaPosServerAsync(
+            default,
+            default!,
+            default!,
+            default);
+    }
+
     private static DigitalPaymentFiscalIssuanceCommand Command() =>
         new(AttemptId, ConfirmationId, SessionId, "IST-PROVIDER-RECOVERY", Guid.NewGuid(), null);
 
@@ -292,5 +321,12 @@ public sealed class DigitalPaymentFiscalIssuanceRecoveryTests
             LastUpdatedAt: DateTimeOffset.Parse("2026-08-24T01:00:01Z"),
             RecordedByServiceIdentityId: null,
             FiscalDocumentTypeCodeId: Guid.Parse("75000000-0000-4000-8000-000000000008"),
-            FiscalDocumentTypeCodeKey: "sales_invoice");
+            FiscalDocumentTypeCodeKey: "sales_invoice",
+            InvoiceCustomerInformationSnapshot: new FiscalInvoiceCustomerInformationSnapshot(
+                CustomerName: null,
+                Address: null,
+                Tin: null,
+                BusinessStyle: null,
+                SourceRowVersion: null,
+                CapturedAt: DateTimeOffset.Parse("2026-08-24T01:00:00Z")));
 }

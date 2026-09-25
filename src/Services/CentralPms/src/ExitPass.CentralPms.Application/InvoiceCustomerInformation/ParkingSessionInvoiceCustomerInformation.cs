@@ -64,7 +64,7 @@ public enum InvoiceCustomerInformationSaveStatus
     Updated,
     Unchanged,
     VersionConflict,
-    FiscalFinality,
+    FiscalSnapshotLocked,
     ParkingSessionNotFound,
     Invalid,
     SourceUnavailable

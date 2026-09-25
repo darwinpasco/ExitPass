@@ -127,7 +127,7 @@ public static class OperatorConsoleInvoiceCustomerInformationEndpoints
             InvoiceCustomerInformationSaveStatus.Invalid => Error(StatusCodes.Status400BadRequest, "CUSTOMER_INFORMATION_INVALID", "Sales Invoice customer information is invalid.", identity.CorrelationId, details: new Dictionary<string, object?> { ["validationErrors"] = result.ValidationErrors }),
             InvoiceCustomerInformationSaveStatus.ParkingSessionNotFound => Error(StatusCodes.Status404NotFound, "PARKING_SESSION_NOT_FOUND", "The parking session is unavailable in the current Site scope.", identity.CorrelationId),
             InvoiceCustomerInformationSaveStatus.VersionConflict => Conflict(identity.CorrelationId, result.Record),
-            InvoiceCustomerInformationSaveStatus.FiscalFinality => Error(StatusCodes.Status409Conflict, "CUSTOMER_INFORMATION_FISCAL_FINALITY", "Sales Invoice customer information cannot be changed after fiscal issuance.", identity.CorrelationId),
+            InvoiceCustomerInformationSaveStatus.FiscalSnapshotLocked => Error(StatusCodes.Status409Conflict, "CUSTOMER_INFORMATION_FISCAL_SNAPSHOT_LOCKED", "Sales Invoice customer information cannot be changed after its fiscal issuance basis has been captured.", identity.CorrelationId),
             _ => Error(StatusCodes.Status503ServiceUnavailable, "CUSTOMER_INFORMATION_SOURCE_UNAVAILABLE", "Sales Invoice customer information is temporarily unavailable.", identity.CorrelationId, true)
         };
     }

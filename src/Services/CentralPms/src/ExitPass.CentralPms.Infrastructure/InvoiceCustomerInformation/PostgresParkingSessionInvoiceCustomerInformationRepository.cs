@@ -72,11 +72,11 @@ public sealed class PostgresParkingSessionInvoiceCustomerInformationRepository(s
                 return Result(InvoiceCustomerInformationSaveStatus.ParkingSessionNotFound);
             }
 
-            if (await HasFiscalFinalityAsync(connection, transaction, request.ParkingSessionId, cancellationToken))
+            if (await HasFiscalSnapshotLockAsync(connection, transaction, request.ParkingSessionId, cancellationToken))
             {
-                await RecordAuditAsync(connection, transaction, request, "FINALITY_REJECTION", "REJECTED", "CUSTOMER_INFORMATION_FISCAL_FINALITY", [], cancellationToken);
+                await RecordAuditAsync(connection, transaction, request, "SNAPSHOT_LOCK_REJECTION", "REJECTED", "CUSTOMER_INFORMATION_FISCAL_SNAPSHOT_LOCKED", [], cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
-                return Result(InvoiceCustomerInformationSaveStatus.FiscalFinality);
+                return Result(InvoiceCustomerInformationSaveStatus.FiscalSnapshotLocked);
             }
 
             var current = await ReadRecordAsync(connection, transaction, request.ParkingSessionId, cancellationToken);
@@ -154,7 +154,7 @@ public sealed class PostgresParkingSessionInvoiceCustomerInformationRepository(s
         return await command.ExecuteScalarAsync(cancellationToken) is not null;
     }
 
-    private static async Task<bool> HasFiscalFinalityAsync(
+    private static async Task<bool> HasFiscalSnapshotLockAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Guid parkingSessionId,
@@ -167,18 +167,21 @@ public sealed class PostgresParkingSessionInvoiceCustomerInformationRepository(s
                 WHERE parking_session_id = @parking_session_id
                   AND is_active = true
                   AND is_superseded = false
-                  AND fiscal_issuance_state IN (
-                      'FISCAL_ISSUANCE_RECORDED',
-                      'FISCAL_ISSUANCE_REPLAYED',
-                      'FISCAL_ISSUANCE_RECONCILED')
-                  AND pos_server_fiscal_document_id IS NOT NULL
-                  AND fiscal_identity_id IS NOT NULL
-                  AND fiscal_sequence_policy_id IS NOT NULL
-                  AND fiscal_sequence_value IS NOT NULL
-                  AND fiscal_document_number IS NOT NULL
-                  AND fiscal_number_assigned_at IS NOT NULL
-                  AND fiscal_issuance_evidence_status = 'FISCAL_DOCUMENT_NUMBER_ASSIGNED'
-                  AND fiscal_number_assignment_state = 'ASSIGNED');
+                  AND (
+                      invoice_customer_information_snapshot_captured_at IS NOT NULL
+                      OR (
+                          fiscal_issuance_state IN (
+                              'FISCAL_ISSUANCE_RECORDED',
+                              'FISCAL_ISSUANCE_REPLAYED',
+                              'FISCAL_ISSUANCE_RECONCILED')
+                          AND pos_server_fiscal_document_id IS NOT NULL
+                          AND fiscal_identity_id IS NOT NULL
+                          AND fiscal_sequence_policy_id IS NOT NULL
+                          AND fiscal_sequence_value IS NOT NULL
+                          AND fiscal_document_number IS NOT NULL
+                          AND fiscal_number_assigned_at IS NOT NULL
+                          AND fiscal_issuance_evidence_status = 'FISCAL_DOCUMENT_NUMBER_ASSIGNED'
+                          AND fiscal_number_assignment_state = 'ASSIGNED')));
             """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;

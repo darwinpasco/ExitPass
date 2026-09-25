@@ -1,3 +1,4 @@
+using System.Data;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using Npgsql;
@@ -48,6 +49,12 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 fiscal_document_type_code_key,
                 payable_basis_ref,
                 upstream_finality_reference,
+                invoice_customer_name,
+                invoice_customer_address,
+                invoice_customer_tin,
+                invoice_business_style,
+                invoice_customer_information_row_version,
+                invoice_customer_information_snapshot_captured_at,
                 pos_server_fiscal_document_id,
                 fiscal_identity_id,
                 fiscal_sequence_policy_id,
@@ -96,6 +103,12 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 @fiscal_document_type_code_key,
                 @payable_basis_ref,
                 @upstream_finality_reference,
+                @invoice_customer_name,
+                @invoice_customer_address,
+                @invoice_customer_tin,
+                @invoice_business_style,
+                @invoice_customer_information_row_version,
+                current_timestamp,
                 @pos_server_fiscal_document_id,
                 @fiscal_identity_id,
                 @fiscal_sequence_policy_id,
@@ -168,26 +181,49 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_decision_command_id,
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
-                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id;
+                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id,
+                invoice_customer_name,
+                invoice_customer_address,
+                invoice_customer_tin,
+                invoice_business_style,
+                invoice_customer_information_row_version,
+                invoice_customer_information_snapshot_captured_at;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        await using var command = new NpgsqlCommand(sql, connection)
+        await using var transaction = await connection.BeginTransactionAsync(
+            IsolationLevel.ReadCommitted,
+            cancellationToken);
+        await LockParkingSessionAsync(connection, transaction, request, cancellationToken);
+        var invoiceCustomerInformation = await ReadAuthoritativeInvoiceCustomerInformationAsync(
+            connection,
+            transaction,
+            request.ParkingSessionId,
+            cancellationToken);
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction)
         {
             CommandTimeout = 30
         };
 
         AddCreateParameters(command, request);
+        AddInvoiceCustomerInformationParameters(command, invoiceCustomerInformation);
 
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
+        FiscalIssuanceReferenceRecord record;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
         {
-            throw new InvalidOperationException("Fiscal issuance reference insert returned no rows.");
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                throw new InvalidOperationException("Fiscal issuance reference insert returned no rows.");
+            }
+
+            record = MapReference(reader);
         }
 
-        return MapReference(reader);
+        await transaction.CommitAsync(cancellationToken);
+        return record;
     }
 
     public async Task<FiscalIssuanceReferenceRecord> UpdateStateAsync(
@@ -285,7 +321,13 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_decision_command_id,
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
-                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id;
+                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id,
+                invoice_customer_name,
+                invoice_customer_address,
+                invoice_customer_tin,
+                invoice_business_style,
+                invoice_customer_information_row_version,
+                invoice_customer_information_snapshot_captured_at;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -401,7 +443,13 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_decision_command_id,
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
-                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id;
+                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id,
+                invoice_customer_name,
+                invoice_customer_address,
+                invoice_customer_tin,
+                invoice_business_style,
+                invoice_customer_information_row_version,
+                invoice_customer_information_snapshot_captured_at;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -626,7 +674,13 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_decision_command_id,
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
-                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id
+                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id,
+                invoice_customer_name,
+                invoice_customer_address,
+                invoice_customer_tin,
+                invoice_business_style,
+                invoice_customer_information_row_version,
+                invoice_customer_information_snapshot_captured_at
             FROM core.fiscal_issuance_references
             {whereClause}
             ORDER BY first_recorded_at DESC
@@ -704,7 +758,13 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_decision_command_id,
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
-                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id
+                COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id,
+                invoice_customer_name,
+                invoice_customer_address,
+                invoice_customer_tin,
+                invoice_business_style,
+                invoice_customer_information_row_version,
+                invoice_customer_information_snapshot_captured_at
             FROM core.fiscal_issuance_references
             {whereClause};
             """;
@@ -773,6 +833,80 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
         AddNullable(command, "correlation_id", request.CorrelationId);
         AddNullable(command, "pos_server_response_timestamp", request.PosServerResponseTimestamp);
         AddNullable(command, "recorded_by_service_identity_id", request.RecordedByServiceIdentityId);
+    }
+
+    private static async Task LockParkingSessionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CreateFiscalIssuanceReferenceRequest request,
+        CancellationToken cancellationToken) =>
+        await LockParkingSessionAsync(
+            connection,
+            transaction,
+            request.ParkingSessionId,
+            request.SiteId,
+            cancellationToken);
+
+    private static async Task LockParkingSessionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid parkingSessionId,
+        Guid? expectedSiteId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT site_id
+            FROM core.parking_sessions
+            WHERE parking_session_id = @parking_session_id
+            FOR UPDATE;
+            """;
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+        var siteId = await command.ExecuteScalarAsync(cancellationToken);
+        if (siteId is not Guid canonicalSiteId)
+        {
+            throw new InvalidOperationException("FISCAL_PARKING_SESSION_NOT_FOUND");
+        }
+
+        if (expectedSiteId.HasValue && expectedSiteId.Value != canonicalSiteId)
+        {
+            throw new InvalidOperationException("FISCAL_PARKING_SESSION_SITE_MISMATCH");
+        }
+    }
+
+    private static async Task<AuthoritativeInvoiceCustomerInformation?> ReadAuthoritativeInvoiceCustomerInformationAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid parkingSessionId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT customer_name, customer_address, customer_tin, business_style, row_version
+            FROM core.parking_session_invoice_customer_information
+            WHERE parking_session_id = @parking_session_id;
+            """;
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new AuthoritativeInvoiceCustomerInformation(
+                GetNullableString(reader, "customer_name"),
+                GetNullableString(reader, "customer_address"),
+                GetNullableString(reader, "customer_tin"),
+                GetNullableString(reader, "business_style"),
+                reader.GetInt64(reader.GetOrdinal("row_version")))
+            : null;
+    }
+
+    private static void AddInvoiceCustomerInformationParameters(
+        NpgsqlCommand command,
+        AuthoritativeInvoiceCustomerInformation? snapshot)
+    {
+        AddNullable(command, "invoice_customer_name", snapshot?.CustomerName);
+        AddNullable(command, "invoice_customer_address", snapshot?.Address);
+        AddNullable(command, "invoice_customer_tin", snapshot?.Tin);
+        AddNullable(command, "invoice_business_style", snapshot?.BusinessStyle);
+        AddNullable(command, "invoice_customer_information_row_version", snapshot?.RowVersion);
     }
 
     private static void AddTransitionParameters(NpgsqlCommand command, FiscalIssuanceStateTransitionRequest request)
@@ -851,7 +985,25 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             StatutoryDiscountPayableBasisApplicationCommandId: GetNullableGuid(reader, "statutory_discount_payable_basis_application_command_id"),
             StatutoryDiscountValidationId: GetNullableGuid(reader, "statutory_discount_validation_id"),
             AppliedPolicyReferenceId: GetNullableGuid(reader, "applied_policy_reference_id"),
-            ElectronicJournalEventReference: GetNullableString(reader, "electronic_journal_event_reference"));
+            ElectronicJournalEventReference: GetNullableString(reader, "electronic_journal_event_reference"),
+            InvoiceCustomerInformationSnapshot: MapInvoiceCustomerInformationSnapshot(reader));
+
+    private static FiscalInvoiceCustomerInformationSnapshot? MapInvoiceCustomerInformationSnapshot(
+        NpgsqlDataReader reader)
+    {
+        var capturedAt = GetNullableDateTimeOffset(
+            reader,
+            "invoice_customer_information_snapshot_captured_at");
+        return capturedAt.HasValue
+            ? new FiscalInvoiceCustomerInformationSnapshot(
+                GetNullableString(reader, "invoice_customer_name"),
+                GetNullableString(reader, "invoice_customer_address"),
+                GetNullableString(reader, "invoice_customer_tin"),
+                GetNullableString(reader, "invoice_business_style"),
+                GetNullableLong(reader, "invoice_customer_information_row_version"),
+                capturedAt.Value)
+            : null;
+    }
 
     private static void AddNullable<T>(NpgsqlCommand command, string name, T? value)
     {
@@ -1097,4 +1249,11 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             char.ToUpperInvariant(part[0]),
             part[1..].ToLowerInvariant())));
     }
+
+    private sealed record AuthoritativeInvoiceCustomerInformation(
+        string? CustomerName,
+        string? Address,
+        string? Tin,
+        string? BusinessStyle,
+        long RowVersion);
 }

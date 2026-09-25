@@ -31,6 +31,9 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
         Assert.True(await TableExistsAsync("core.fiscal_issuance_semantic_hash_backfill_mutation_preparations"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_semantic_hash_backfill_workflow_requests"));
         Assert.True(await ColumnExistsAsync("core", "fiscal_issuance_references", "semantic_request_hash_value"));
+        Assert.True(await ColumnExistsAsync("core", "fiscal_issuance_references", "invoice_customer_name"));
+        Assert.True(await ColumnExistsAsync("core", "fiscal_issuance_references", "invoice_customer_information_row_version"));
+        Assert.True(await ColumnExistsAsync("core", "fiscal_issuance_references", "invoice_customer_information_snapshot_captured_at"));
     }
 
     [Fact]
@@ -84,6 +87,8 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
             Assert.Equal(FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned, created.FiscalIssuanceEvidenceStatus);
             Assert.Equal(FiscalNumberAssignmentState.Assigned, created.FiscalNumberAssignmentState);
             Assert.Equal(FiscalIssuanceResultClassification.NewlyCreated, created.ResultClassification);
+            Assert.NotNull(created.InvoiceCustomerInformationSnapshot);
+            Assert.Null(created.InvoiceCustomerInformationSnapshot!.SourceRowVersion);
             Assert.Equal(created.FiscalIssuanceReferenceId, byReferenceId?.FiscalIssuanceReferenceId);
             Assert.Equal(created.FiscalIssuanceReferenceId, byConfirmation?.FiscalIssuanceReferenceId);
             Assert.Equal(created.FiscalIssuanceReferenceId, byPaymentAttempt?.FiscalIssuanceReferenceId);
