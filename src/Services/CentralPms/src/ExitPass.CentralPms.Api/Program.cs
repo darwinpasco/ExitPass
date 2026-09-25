@@ -30,6 +30,7 @@ using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.FiscalReporting;
 using ExitPass.CentralPms.Application.Gates;
 using ExitPass.CentralPms.Application.HumanAuthentication;
+using ExitPass.CentralPms.Application.SalesInvoiceCustomerInformation;
 using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.OperatorConsole;
@@ -55,6 +56,7 @@ using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 using ExitPass.CentralPms.Infrastructure.FiscalReporting;
 using ExitPass.CentralPms.Infrastructure.Gates;
 using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
+using ExitPass.CentralPms.Infrastructure.SalesInvoiceCustomerInformation;
 using ExitPass.CentralPms.Infrastructure.ManagementPlatform;
 using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.Payments;
@@ -170,6 +172,7 @@ app.MapOperatorConsoleAccessEvaluationEndpoints();
 app.MapOperatorConsoleAccessReadinessEndpoints();
 app.MapOperatorConsoleDeviceBindingEndpoints();
 app.MapOperatorConsoleSessionLookupEndpoints();
+app.MapOperatorConsoleInvoiceCustomerInformationEndpoints();
 app.MapOperatorConsoleFiscalIssuanceStatusEndpoints();
 app.MapFiscalReportingEndpoints();
 app.MapOperatorConsoleFiscalStatusViewAuditReportEndpoints();
@@ -765,6 +768,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleSessionLookupReadRepository>(_ =>
         new OperatorConsoleSessionLookupReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleSessionLookupService, OperatorConsoleSessionLookupService>();
+    builder.Services.AddScoped<IParkingSessionInvoiceCustomerInformationRepository>(_ =>
+        new PostgresParkingSessionInvoiceCustomerInformationRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IParkingSessionInvoiceCustomerInformationService, ParkingSessionInvoiceCustomerInformationService>();
     builder.Services.AddScoped<IOperatorConsoleFiscalIssuanceStatusService, OperatorConsoleFiscalIssuanceStatusService>();
     builder.Services.AddScoped<IOperatorConsoleFiscalStatusViewAuditReportRepository>(_ =>
         new OperatorConsoleFiscalStatusViewAuditReportRepository(mainDatabaseConnectionString));

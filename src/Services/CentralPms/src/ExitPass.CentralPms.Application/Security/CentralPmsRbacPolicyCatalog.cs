@@ -101,6 +101,14 @@ public static class CentralPmsRbacPolicyCatalog
             ["FiscalReportingXGenerate"] = ["fiscal-reporting.x.generate"],
             ["FiscalReportingZRead"] = ["fiscal-reporting.z.read"],
             ["FiscalReportingZGenerate"] = ["fiscal-reporting.z.generate"],
+            ["SalesInvoiceCustomerInformationRead"] =
+            [
+                "sales-invoice-customer-information.read"
+            ],
+            ["SalesInvoiceCustomerInformationManage"] =
+            [
+                "sales-invoice-customer-information.manage"
+            ],
             ["ManagementPlatformStatutoryBenefitReviewList"] =
             [
                 "statutory-discounts.review.queue.read"
