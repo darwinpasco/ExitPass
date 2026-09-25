@@ -76,8 +76,51 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal(321, tax.TaxAmountMinorUnits);
         Assert.Equal(0, Assert.Single(mapped.Totals).AmountMinorUnits);
         Assert.NotNull(mapped.InvoiceCustomerInformation);
+        Assert.Equal("Juan Dela Cruz", mapped.InvoiceCustomerInformation.CustomerName);
+        Assert.Equal("100 Sample Street", mapped.InvoiceCustomerInformation.Address);
+        Assert.Equal("123-456-789", mapped.InvoiceCustomerInformation.Tin);
+        Assert.Equal("Sample Trading", mapped.InvoiceCustomerInformation.BusinessStyle);
         Assert.Equal("12345678", mapped.InvoiceCustomerInformation.StatutoryIdNumber);
         Assert.False(result.FiscalPrerequisiteSatisfied);
+    }
+
+    [Fact]
+    public async Task IssueOrReadAsync_CapturedEmptyCustomerInformation_PreservesStatutoryIdWithoutPaymentArtifacts()
+    {
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        CentralPmsFiscalDocumentMappingContext? mapped = null;
+        PrepareFiscalIssuanceCommand? prepared = null;
+        references.FindByStatutoryApplicationCommandIdAsync(ApplicationId, Arg.Any<CancellationToken>())
+            .Returns((FiscalIssuanceReferenceRecord?)null);
+        orchestration.PreparePendingAsync(
+                Arg.Do<PrepareFiscalIssuanceCommand>(value => prepared = value),
+                Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.PendingFiscalIssuance) with
+            {
+                InvoiceCustomerInformationSnapshot = new FiscalInvoiceCustomerInformationSnapshot(
+                    null, null, null, null, null, AppliedAt)
+            });
+        posServer.TryIssueFiscalDocumentViaPosServerAsync(
+                FiscalReferenceId,
+                Arg.Do<CentralPmsFiscalDocumentMappingContext>(value => mapped = value),
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(["test_stop_after_mapping"]));
+
+        await CreateService(references, orchestration, posServer)
+            .IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.NotNull(prepared);
+        Assert.Null(prepared.PaymentAttemptId);
+        Assert.Null(prepared.PaymentConfirmationId);
+        Assert.NotNull(mapped?.InvoiceCustomerInformation);
+        Assert.Null(mapped.InvoiceCustomerInformation.CustomerName);
+        Assert.Null(mapped.InvoiceCustomerInformation.Address);
+        Assert.Null(mapped.InvoiceCustomerInformation.Tin);
+        Assert.Null(mapped.InvoiceCustomerInformation.BusinessStyle);
+        Assert.Equal("12345678", mapped.InvoiceCustomerInformation.StatutoryIdNumber);
     }
 
     [Fact]
@@ -97,6 +140,30 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal("EJ:a1000000-0000-4000-8000-00000000000c", result.ElectronicJournalEventReference);
         Assert.Equal(FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality, result.CompletionBasis);
         await posServer.DidNotReceiveWithAnyArgs().TryIssueFiscalDocumentViaPosServerAsync(default, default!, default!, default);
+    }
+
+    [Fact]
+    public async Task IssueOrReadAsync_LegacyReferenceWithoutPersistedCustomerSnapshot_FailsBeforePosContact()
+    {
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        references.FindByStatutoryApplicationCommandIdAsync(ApplicationId, Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.PendingFiscalIssuance) with
+            {
+                InvoiceCustomerInformationSnapshot = null
+            });
+        var sut = CreateService(references, orchestration, posServer);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => sut.IssueOrReadAsync(Command(), CancellationToken.None));
+
+        Assert.Equal("FISCAL_INVOICE_CUSTOMER_INFORMATION_SNAPSHOT_REQUIRED", error.Message);
+        await posServer.DidNotReceiveWithAnyArgs().TryIssueFiscalDocumentViaPosServerAsync(
+            default,
+            default!,
+            default!,
+            default);
     }
 
     [Fact]
@@ -229,7 +296,14 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
             StatutoryDiscountPayableBasisApplicationCommandId: ApplicationId,
             StatutoryDiscountValidationId: ValidationId,
             AppliedPolicyReferenceId: PolicyId,
-            ElectronicJournalEventReference: completed ? "EJ:a1000000-0000-4000-8000-00000000000c" : null);
+            ElectronicJournalEventReference: completed ? "EJ:a1000000-0000-4000-8000-00000000000c" : null,
+            InvoiceCustomerInformationSnapshot: new FiscalInvoiceCustomerInformationSnapshot(
+                "Juan Dela Cruz",
+                "100 Sample Street",
+                "123-456-789",
+                "Sample Trading",
+                3,
+                AppliedAt));
 
     private static FiscalIssuancePosServerIntegrationOptions Options() =>
         new()

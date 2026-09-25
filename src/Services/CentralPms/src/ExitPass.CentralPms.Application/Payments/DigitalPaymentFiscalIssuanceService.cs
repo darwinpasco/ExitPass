@@ -97,6 +97,11 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
         {
             EnsureExistingReferenceMatches(existing, command, context, upstreamReference);
             reference = existing;
+            if (reference.InvoiceCustomerInformationSnapshot is null)
+            {
+                throw new InvalidOperationException(
+                    "FISCAL_INVOICE_CUSTOMER_INFORMATION_SNAPSHOT_REQUIRED");
+            }
         }
 
         var mapping = BuildMapping(reference, context, command, upstreamReference);
@@ -211,15 +216,26 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             null,
             BuildAppliedStatutoryFiscalFacts(context, statutory),
             SiteId: context.SiteId,
-            InvoiceCustomerInformation: context.InvoiceCustomerInformation is null && string.IsNullOrWhiteSpace(statutory?.IdControlReference)
+            InvoiceCustomerInformation: HasNoInvoiceCustomerInformation(
+                reference.InvoiceCustomerInformationSnapshot,
+                statutory?.IdControlReference)
                 ? null
                 : new CentralPmsInvoiceCustomerInformationContext(
-                    context.InvoiceCustomerInformation?.CustomerName,
-                    context.InvoiceCustomerInformation?.Address,
-                    context.InvoiceCustomerInformation?.Tin,
-                    context.InvoiceCustomerInformation?.BusinessStyle,
+                    reference.InvoiceCustomerInformationSnapshot?.CustomerName,
+                    reference.InvoiceCustomerInformationSnapshot?.Address,
+                    reference.InvoiceCustomerInformationSnapshot?.Tin,
+                    reference.InvoiceCustomerInformationSnapshot?.BusinessStyle,
                     statutory?.IdControlReference));
     }
+
+    private static bool HasNoInvoiceCustomerInformation(
+        FiscalInvoiceCustomerInformationSnapshot? snapshot,
+        string? statutoryIdNumber) =>
+        string.IsNullOrWhiteSpace(snapshot?.CustomerName) &&
+        string.IsNullOrWhiteSpace(snapshot?.Address) &&
+        string.IsNullOrWhiteSpace(snapshot?.Tin) &&
+        string.IsNullOrWhiteSpace(snapshot?.BusinessStyle) &&
+        string.IsNullOrWhiteSpace(statutoryIdNumber);
 
     private static void EnsureStatutoryContextMatches(
         DigitalPaymentFiscalContext context,

@@ -79,6 +79,37 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
     }
 
     [Fact]
+    public async Task OrdinaryDigitalPayment_CapturedEmptyCustomerInformation_RemainsValid()
+    {
+        var context = Context() with
+        {
+            AppliedStatutoryFiscalContext = null,
+            InvoiceCustomerInformation = new InvoiceCustomerInformation(
+                "Stale PaymentAttempt Name",
+                "Stale Address",
+                "000",
+                "Stale Style",
+                null)
+        };
+        var capturedEmpty = Reference(context) with
+        {
+            InvoiceCustomerInformationSnapshot = new FiscalInvoiceCustomerInformationSnapshot(
+                null,
+                null,
+                null,
+                null,
+                null,
+                DateTimeOffset.Parse("2026-08-24T01:59:00Z"))
+        };
+        var fixture = CreateFixture(context, capturedEmpty);
+
+        await fixture.Sut.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.NotNull(fixture.CapturedMapping);
+        Assert.Null(fixture.CapturedMapping.InvoiceCustomerInformation);
+    }
+
+    [Fact]
     public async Task ApprovedPositiveAdjustment_MapsAuthoritativeWebPayFactsAndExactFiscalEconomics()
     {
         var fixture = CreateFixture(Context());
@@ -136,6 +167,31 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         Assert.DoesNotContain("ocr", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("reviewer", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("evidenceUrl", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task FiscalMapping_UsesFiscalReferenceSnapshotInsteadOfPaymentAttemptSnapshot()
+    {
+        var fixture = CreateFixture(Context() with
+        {
+            InvoiceCustomerInformation = new InvoiceCustomerInformation(
+                "Stale PaymentAttempt Name",
+                "Stale Address",
+                "000-000-000",
+                "Stale Style",
+                null)
+        });
+
+        await fixture.Sut.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        var customer = new PosServerFiscalDocumentRequestMapper()
+            .Map(fixture.CapturedMapping!)
+            .InvoiceCustomerInformation;
+        Assert.NotNull(customer);
+        Assert.Equal("Juan Dela Cruz", customer.CustomerName);
+        Assert.Equal("100 Sample Street", customer.Address);
+        Assert.Equal("123-456-789", customer.Tin);
+        Assert.Equal("Sample Trading", customer.BusinessStyle);
     }
 
     [Theory]
@@ -298,13 +354,15 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         await posServer.DidNotReceiveWithAnyArgs().TryIssueFiscalDocumentViaPosServerAsync(default, default!, default!, default);
     }
 
-    private static Fixture CreateFixture(DigitalPaymentFiscalContext context)
+    private static Fixture CreateFixture(
+        DigitalPaymentFiscalContext context,
+        FiscalIssuanceReferenceRecord? preparedReference = null)
     {
         var contextReader = Substitute.For<IDigitalPaymentFiscalContextReader>();
         var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
         var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
         var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
-        var reference = Reference(context);
+        var reference = preparedReference ?? Reference(context);
         contextReader.ReadAsync(AttemptId, ConfirmationId, SessionId, Arg.Any<CancellationToken>()).Returns(context);
         references.FindByPaymentConfirmationIdAsync(ConfirmationId, Arg.Any<CancellationToken>()).Returns((FiscalIssuanceReferenceRecord?)null);
         orchestration.PreparePendingAsync(Arg.Any<PrepareFiscalIssuanceCommand>(), Arg.Any<CancellationToken>()).Returns(reference);
@@ -402,7 +460,14 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
             LastUpdatedAt: DateTimeOffset.Parse("2026-08-24T02:00:00Z"),
             RecordedByServiceIdentityId: null,
             FiscalDocumentTypeCodeId: Guid.Parse("76000000-0000-4000-8000-000000000015"),
-            FiscalDocumentTypeCodeKey: "sales_invoice");
+            FiscalDocumentTypeCodeKey: "sales_invoice",
+            InvoiceCustomerInformationSnapshot: new FiscalInvoiceCustomerInformationSnapshot(
+                "Juan Dela Cruz",
+                "100 Sample Street",
+                "123-456-789",
+                "Sample Trading",
+                3,
+                DateTimeOffset.Parse("2026-08-24T01:59:00Z")));
 
     private sealed record Fixture(
         DigitalPaymentFiscalIssuanceService Sut,

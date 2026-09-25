@@ -71,16 +71,16 @@ public sealed class OperatorConsoleInvoiceCustomerInformationApiTests
     }
 
     [Fact]
-    public async Task Put_FiscalFinality_ReturnsControlledConflict()
+    public async Task Put_FiscalSnapshotLock_ReturnsControlledConflict()
     {
-        var fake = new FakeService { SaveResult = new(InvoiceCustomerInformationSaveStatus.FiscalFinality, null, []) };
+        var fake = new FakeService { SaveResult = new(InvoiceCustomerInformationSaveStatus.FiscalSnapshotLocked, null, []) };
         using var factory = Factory(fake);
         using var client = Client(factory, "sales-invoice-customer-information.manage");
 
         var response = await client.PutAsJsonAsync(Route, new SaveOperatorConsoleInvoiceCustomerInformationRequest("Name", null, null, null, 1));
 
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
-        (await response.Content.ReadFromJsonAsync<ErrorResponse>())!.ErrorCode.Should().Be("CUSTOMER_INFORMATION_FISCAL_FINALITY");
+        (await response.Content.ReadFromJsonAsync<ErrorResponse>())!.ErrorCode.Should().Be("CUSTOMER_INFORMATION_FISCAL_SNAPSHOT_LOCKED");
     }
 
     [Theory]

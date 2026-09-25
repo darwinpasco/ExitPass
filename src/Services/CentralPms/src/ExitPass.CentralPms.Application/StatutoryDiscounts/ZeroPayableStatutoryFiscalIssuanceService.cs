@@ -103,6 +103,12 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 AppliedPolicyReferenceId: finality.AppliedPolicyReferenceId),
             cancellationToken).ConfigureAwait(false);
 
+        if (existing is not null && reference.InvoiceCustomerInformationSnapshot is null)
+        {
+            throw new InvalidOperationException(
+                "FISCAL_INVOICE_CUSTOMER_INFORMATION_SNAPSHOT_REQUIRED");
+        }
+
         var issue = await _posServer.TryIssueFiscalDocumentViaPosServerAsync(
             reference.FiscalIssuanceReferenceId,
             BuildMapping(reference, command, upstreamReference),
@@ -278,15 +284,28 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
             SiteId: finality.SiteId,
             CompletionBasis: FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality,
             CompletionAuthorityRef: applicationRef,
-            InvoiceCustomerInformation: string.IsNullOrWhiteSpace(command.StatutoryIdNumber)
+            InvoiceCustomerInformation: HasNoInvoiceCustomerInformation(
+                reference.InvoiceCustomerInformationSnapshot,
+                command.StatutoryIdNumber)
                 ? null
                 : new CentralPmsInvoiceCustomerInformationContext(
-                    CustomerName: null,
-                    Address: null,
-                    Tin: null,
-                    BusinessStyle: null,
-                    StatutoryIdNumber: command.StatutoryIdNumber.Trim()));
+                    CustomerName: reference.InvoiceCustomerInformationSnapshot?.CustomerName,
+                    Address: reference.InvoiceCustomerInformationSnapshot?.Address,
+                    Tin: reference.InvoiceCustomerInformationSnapshot?.Tin,
+                    BusinessStyle: reference.InvoiceCustomerInformationSnapshot?.BusinessStyle,
+                    StatutoryIdNumber: string.IsNullOrWhiteSpace(command.StatutoryIdNumber)
+                        ? null
+                        : command.StatutoryIdNumber.Trim()));
     }
+
+    private static bool HasNoInvoiceCustomerInformation(
+        FiscalInvoiceCustomerInformationSnapshot? snapshot,
+        string? statutoryIdNumber) =>
+        string.IsNullOrWhiteSpace(snapshot?.CustomerName) &&
+        string.IsNullOrWhiteSpace(snapshot?.Address) &&
+        string.IsNullOrWhiteSpace(snapshot?.Tin) &&
+        string.IsNullOrWhiteSpace(snapshot?.BusinessStyle) &&
+        string.IsNullOrWhiteSpace(statutoryIdNumber);
 
     private static void Validate(ZeroPayableStatutoryFiscalIssuanceCommand command)
     {

@@ -51,7 +51,16 @@ public sealed record FiscalIssuanceReferenceRecord(
     Guid? StatutoryDiscountPayableBasisApplicationCommandId = null,
     Guid? StatutoryDiscountValidationId = null,
     Guid? AppliedPolicyReferenceId = null,
-    string? ElectronicJournalEventReference = null);
+    string? ElectronicJournalEventReference = null,
+    FiscalInvoiceCustomerInformationSnapshot? InvoiceCustomerInformationSnapshot = null);
+
+public sealed record FiscalInvoiceCustomerInformationSnapshot(
+    string? CustomerName,
+    string? Address,
+    string? Tin,
+    string? BusinessStyle,
+    long? SourceRowVersion,
+    DateTimeOffset CapturedAt);
 
 public sealed record CreateFiscalIssuanceReferenceRequest(
     Guid? PaymentConfirmationId,
