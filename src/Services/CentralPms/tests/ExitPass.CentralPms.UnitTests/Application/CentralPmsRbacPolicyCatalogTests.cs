@@ -50,6 +50,8 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("AptStatutoryOrdinanceAvailabilityRead", "statutory-discounts.ordinance-availability.read.apt")]
     [InlineData("ShiftManagementView", "shift-management.view")]
     [InlineData("ShiftManagementManage", "shift-management.manage")]
+    [InlineData("SalesInvoiceCustomerInformationRead", "sales-invoice-customer-information.read")]
+    [InlineData("SalesInvoiceCustomerInformationManage", "sales-invoice-customer-information.manage")]
     [InlineData("CentralPmsStatutoryEvidenceCaptureMetadata", "statutory-discounts.evidence.capture")]
     [InlineData("CentralPmsStatutoryEvidenceViewMetadata", "statutory-discounts.evidence.view")]
     [InlineData("CentralPmsStatutoryEvidenceHoldManage", "statutory-discounts.evidence.hold")]
@@ -59,6 +61,25 @@ public sealed class CentralPmsRbacPolicyCatalogTests
         var permissions = CentralPmsRbacPolicyCatalog.ResolvePermissions(policyName);
 
         permissions.Should().Contain(expectedPermission);
+    }
+
+    [Fact]
+    public void InvoiceCustomerInformationPolicies_DoNotGrantUnrelatedOperatorAuthority()
+    {
+        var permissions = new[]
+        {
+            "SalesInvoiceCustomerInformationRead",
+            "SalesInvoiceCustomerInformationManage"
+        }.SelectMany(CentralPmsRbacPolicyCatalog.ResolvePermissions).ToArray();
+
+        permissions.Should().BeEquivalentTo([
+            "sales-invoice-customer-information.read",
+            "sales-invoice-customer-information.manage"]);
+        permissions.Should().NotContain(permission =>
+            permission.Contains("approve", StringComparison.OrdinalIgnoreCase) ||
+            permission.Contains("reject", StringComparison.OrdinalIgnoreCase) ||
+            permission.Contains("reconciliation", StringComparison.OrdinalIgnoreCase) ||
+            permission.Contains("fiscal-reporting.z", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
