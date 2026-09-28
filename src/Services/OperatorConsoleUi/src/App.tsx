@@ -138,8 +138,9 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
   const readiness = readinessState.status === "loaded" ? readinessState.data : null;
   const readinessBlockReason = readiness && !readiness.accessAllowed ? readinessBlockedActionReason(readiness) : null;
   const permissions = session?.permissions ?? [];
-  const navigationItems = visibleOperatorConsoleNavigation(permissions);
-  const routeAuthorized = canAccessOperatorConsolePath(path, permissions);
+  const roleCodes = session?.roleCodes ?? [];
+  const navigationItems = visibleOperatorConsoleNavigation(permissions, roleCodes);
+  const routeAuthorized = canAccessOperatorConsolePath(path, permissions, roleCodes);
   const supervisorStatutoryWorkspace = hasStatutorySupervisorWorkspace(permissions);
 
   return (

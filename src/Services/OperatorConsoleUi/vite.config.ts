@@ -14,7 +14,11 @@ export function createOperatorConsoleViteConfig(
     server: {
       port: 5175,
       strictPort: true,
-      allowedHosts: [".ngrok-free.app", ".ngrok-free.dev"],
+      allowedHosts: [
+        ".ngrok-free.app",
+        ".ngrok-free.dev",
+        "operator-console-exitpass.ngrok.dev"
+      ],
       proxy: {
         "/v1": {
           target: trimmedApiProxyTarget,

@@ -29,6 +29,7 @@ export interface OperatorConsoleHumanSession {
   idleExpiresAt: string;
   absoluteExpiresAt: string;
   permissions: string[];
+  roleCodes?: string[];
   siteReferences: string[];
   siteGroupReferences: string[];
   hasGlobalScope: boolean;
@@ -239,6 +240,7 @@ function requireAuthenticatedSession(dto: AuthenticationResponseDto): OperatorCo
     !isString(session.idleExpiresAt) ||
     !isString(session.absoluteExpiresAt) ||
     !isStringArray(session.permissions) ||
+    (session.roleCodes !== undefined && !isStringArray(session.roleCodes)) ||
     !isStringArray(session.siteReferences) ||
     !isStringArray(session.siteGroupReferences) ||
     !isBoolean(session.hasGlobalScope) ||
@@ -270,6 +272,7 @@ function requireAuthenticatedSession(dto: AuthenticationResponseDto): OperatorCo
     idleExpiresAt: session.idleExpiresAt,
     absoluteExpiresAt: session.absoluteExpiresAt,
     permissions: [...session.permissions],
+    roleCodes: isStringArray(session.roleCodes) ? [...session.roleCodes] : [],
     siteReferences: [...session.siteReferences],
     siteGroupReferences: [...session.siteGroupReferences],
     hasGlobalScope: session.hasGlobalScope,

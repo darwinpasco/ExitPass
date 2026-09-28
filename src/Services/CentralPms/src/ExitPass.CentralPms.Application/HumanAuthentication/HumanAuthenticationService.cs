@@ -658,7 +658,8 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
                         site.DisplayName,
                         site.SiteGroupId,
                         site.SiteGroupDisplayName))
-                    .ToArray());
+                    .ToArray(),
+            RoleCodes: restricted ? [] : authorization.EffectiveRoleCodes ?? []);
         return new HumanAuthenticationResult(200, new HumanAuthenticationResponse(outcome, true, dto,
             record.Audience == HumanSessionAudiences.Apt ? credential.SerializedToken : null, null, false, correlationId), credential, record.HumanSessionId);
     }

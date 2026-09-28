@@ -18,7 +18,6 @@ const navigationLabels = [
 const siteOperatorNavigationLabels = [
   "Overview",
   "Ticket Lookup",
-  "Fiscal Status",
   "Statutory Discounts"
 ];
 
@@ -41,8 +40,11 @@ test.describe("Operator Console active navigation accessibility", () => {
     await navigation.getByRole("button", { name: "Ticket Lookup" }).click();
     await expect(page.getByRole("heading", { name: "Ticket exit readiness" })).toBeVisible();
 
-    await navigation.getByRole("button", { name: "Fiscal Status" }).click();
-    await expect(page.getByRole("heading", { name: "Fiscal issuance status" })).toBeVisible();
+    await expect(navigation.getByRole("button", { name: "Fiscal Status" })).toHaveCount(0);
+    await page.goto("/operator-console/fiscal-issuance-status");
+    await expect(page.getByRole("heading", { name: "Function unavailable" })).toBeVisible();
+
+    await page.goto("/operator-console/statutory-discounts");
 
     await navigation.getByRole("button", { name: "Statutory Discounts" }).click();
     await expect(page.getByRole("heading", { name: "Work queue" })).toBeVisible();

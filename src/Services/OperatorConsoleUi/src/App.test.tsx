@@ -53,7 +53,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
           "statutory-discounts.evidence.view",
           "statutory-discounts.evidence.capture",
           "statutory-discounts.policy.resolve"
-        ])}
+        ], ["SITE_OPERATOR"])}
       />
     );
 
@@ -62,7 +62,6 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(navigationItems.map((item) => item.textContent)).toEqual([
       "Overview",
       "Ticket Lookup",
-      "Fiscal Status",
       "Statutory Discounts"
     ]);
     expect(navigationItems.every((item) => !item.hasAttribute("disabled"))).toBe(true);
@@ -2381,6 +2380,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
           onVendorSessionProjectionHealthTargetDetail: onDetail
         })}
         initialPath="/operator-console/vendor-session-projections/health"
+        session={operatorSession("system.administrator", ["projection-health.view"], ["SYSTEM_ADMINISTRATOR"])}
       />
     );
 
@@ -2411,6 +2411,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       <App
         apiClient={createMockOperatorConsoleApiClient({ readiness: blockedReadiness() })}
         initialPath="/operator-console/vendor-session-projections/health"
+        session={operatorSession("system.administrator", ["projection-health.view"], ["SYSTEM_ADMINISTRATOR"])}
       />
     );
 
@@ -2427,6 +2428,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       <App
         apiClient={createMockOperatorConsoleApiClient()}
         initialPath="/operator-console/vendor-session-projections/health"
+        session={operatorSession("system.administrator", ["projection-health.view"], ["SYSTEM_ADMINISTRATOR"])}
       />
     );
 
@@ -3329,7 +3331,8 @@ function operatorSession(
     "vendor-acknowledgments.view",
     "projection-health.view",
     "operator-console.policy-import-review.manage"
-  ]
+  ],
+  roleCodes: readonly string[] = ["OPERATIONS_SUPERVISOR"]
 ): OperatorConsoleHumanSession {
   return {
     sessionReference: "11000000-0000-0000-0000-000000000001",
@@ -3347,6 +3350,7 @@ function operatorSession(
     idleExpiresAt: "2099-08-08T08:35:00+08:00",
     absoluteExpiresAt: "2099-08-08T16:00:00+08:00",
     permissions: [...permissions],
+    roleCodes: [...roleCodes],
     siteReferences: ["13000000-0000-0000-0000-000000000001"],
     siteGroupReferences: ["14000000-0000-0000-0000-000000000001"],
     hasGlobalScope: false,

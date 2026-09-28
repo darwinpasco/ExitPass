@@ -165,6 +165,7 @@ function sessionResponse(overrides = {}) {
       idleExpiresAt: "2099-08-08T08:35:00+08:00",
       absoluteExpiresAt: "2099-08-08T16:00:00+08:00",
       permissions: restricted ? [] : (overrides.permissions ?? fixturePermissions),
+      roleCodes: restricted ? [] : (overrides.roleCodes ?? ["OPERATIONS_SUPERVISOR", "SYSTEM_ADMINISTRATOR"]),
       siteReferences: restricted ? [] : ["73000000-0000-0000-0000-000000000001"],
       siteGroupReferences: restricted ? [] : ["74000000-0000-0000-0000-000000000001"],
       hasGlobalScope: false,
@@ -192,7 +193,8 @@ function fixtureSessionResponse(mode) {
     return sessionResponse({
       username: "JuanDC04-equivalent",
       displayName: "PITX Site Operator",
-      permissions: siteOperatorPermissions
+      permissions: siteOperatorPermissions,
+      roleCodes: ["SITE_OPERATOR"]
     });
   }
   return sessionResponse();

@@ -23,9 +23,61 @@ describe("Operator Console permission-driven routes", () => {
     expect(visibleOperatorConsoleNavigation(siteOperatorPermissions).map((item) => item.label)).toEqual([
       "Overview",
       "Ticket Lookup",
-      "Fiscal Status",
       "Statutory Discounts"
     ]);
+  });
+
+  it("does not expose fiscal reporting to a Site Operator even when stale fiscal permissions remain", () => {
+    const staleSiteOperatorFiscalPermissions = [
+      ...siteOperatorPermissions,
+      "fiscal-reporting.ej.read",
+      "fiscal-reporting.x.read",
+      "fiscal-reporting.z.read"
+    ];
+
+    expect(visibleOperatorConsoleNavigation(staleSiteOperatorFiscalPermissions, ["SITE_OPERATOR"])
+      .map((item) => item.label)).not.toContain("Fiscal Reporting / EJ / X / Z");
+    expect(canAccessOperatorConsolePath(
+      routes.fiscalReporting,
+      staleSiteOperatorFiscalPermissions,
+      ["SITE_OPERATOR"]
+    )).toBe(false);
+  });
+
+  it("exposes fiscal status and reporting only to an Operations Supervisor with permissions", () => {
+    const permissions = [
+      "fiscal-issuance.status.read",
+      "fiscal-reporting.ej.read",
+      "fiscal-reporting.x.read",
+      "fiscal-reporting.x.generate",
+      "fiscal-reporting.z.read"
+    ];
+    const navigation = visibleOperatorConsoleNavigation(permissions, ["OPERATIONS_SUPERVISOR"])
+      .map((item) => item.label);
+
+    expect(navigation).toContain("Fiscal Status");
+    expect(navigation).toContain("Fiscal Reporting / EJ / X / Z");
+    expect(canAccessOperatorConsolePath(routes.fiscalReporting, permissions, ["OPERATIONS_SUPERVISOR"])).toBe(true);
+  });
+
+  it("shows Vendor Acknowledgements only to an authorized Operations Supervisor", () => {
+    expect(visibleOperatorConsoleNavigation(
+      ["vendor-acknowledgments.view"],
+      ["OPERATIONS_SUPERVISOR"]
+    ).map((item) => item.label)).toContain("Vendor Acknowledgments");
+    expect(visibleOperatorConsoleNavigation(
+      ["vendor-acknowledgments.view"],
+      ["SITE_OPERATOR"]
+    ).map((item) => item.label)).not.toContain("Vendor Acknowledgments");
+  });
+
+  it("keeps Projection Health in the technical support and administrator audience", () => {
+    expect(visibleOperatorConsoleNavigation(["projection-health.view"], ["SYSTEM_ADMINISTRATOR"])
+      .map((item) => item.label)).toContain("Projection Health");
+    expect(visibleOperatorConsoleNavigation(
+      ["projection-health.view"],
+      ["OPERATIONS_SUPERVISOR"]
+    ).map((item) => item.label)).not.toContain("Projection Health");
   });
 
   it("denies protected direct routes that are absent from the permission set", () => {

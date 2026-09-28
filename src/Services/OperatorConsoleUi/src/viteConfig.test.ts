@@ -9,7 +9,11 @@ describe("Operator Console Vite dev server config", () => {
 
     expect(config.server?.port).toBe(5175);
     expect(config.server?.strictPort).toBe(true);
-    expect(config.server?.allowedHosts).toEqual([".ngrok-free.app", ".ngrok-free.dev"]);
+    expect(config.server?.allowedHosts).toEqual([
+      ".ngrok-free.app",
+      ".ngrok-free.dev",
+      "operator-console-exitpass.ngrok.dev"
+    ]);
     expect(config.server?.allowedHosts).not.toBe(true);
     expect(config.server?.proxy?.["/v1"]).toMatchObject({
       target: "https://localhost:56064",
