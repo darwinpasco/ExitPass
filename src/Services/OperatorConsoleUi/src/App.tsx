@@ -2686,7 +2686,7 @@ function SubmittedStatutoryRequestSummary({
         </div>
         <span className={`statusPill ${statusClassForOperationalState(detail.status)}`}>{detail.status}</span>
       </div>
-      <dl className="detailGrid">
+      <dl className="detailGrid submittedRequestDetails">
         <dt>Entitlement</dt><dd>{plainEntitlementLabel(detail.entitlementType)}</dd>
         <dt>ID document type</dt><dd>{statutoryDocumentTypeLabel(detail.idDocumentType, detail.entitlementType)}</dd>
         <dt>Issuing authority</dt><dd>{displayValue(detail.issuingAuthority)}</dd>

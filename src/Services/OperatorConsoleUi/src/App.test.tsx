@@ -1469,6 +1469,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(await screen.findByText("ABC1102")).toBeInTheDocument();
     const summary = await screen.findByRole("region", { name: "Senior Citizen" });
+    expect(summary.querySelector("dl.submittedRequestDetails")).not.toBeNull();
     expect(within(summary).getAllByText("Senior Citizen").length).toBeGreaterThanOrEqual(2);
     expect(within(summary).getByText("OSCA")).toBeInTheDocument();
     expect(within(summary).getByText("12****")).toBeInTheDocument();

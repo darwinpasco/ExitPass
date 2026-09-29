@@ -618,6 +618,19 @@ button.auditDetailsToggle:focus-visible:not(:disabled) {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.submittedRequestDetails {
+  align-items: start;
+  column-gap: 24px;
+  grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
+  margin: 0;
+  row-gap: 12px;
+}
+
+.submittedRequestDetails dt,
+.submittedRequestDetails dd {
+  min-width: 0;
+}
+
 .projectionMetricGrid {
   display: grid;
   gap: 12px;
@@ -1635,6 +1648,20 @@ dd {
 
   .shiftLayout {
     grid-template-columns: 1fr;
+  }
+
+  .submittedRequestDetails {
+    column-gap: 0;
+    grid-template-columns: 1fr;
+    row-gap: 4px;
+  }
+
+  .submittedRequestDetails dd {
+    margin-bottom: 12px;
+  }
+
+  .submittedRequestDetails dd:last-of-type {
+    margin-bottom: 0;
   }
 
   .shiftDetail {
