@@ -32,6 +32,11 @@ import type {
   VendorSessionProjectionHealthSummary
 } from "./types";
 import type { OperatorConsoleHumanSession } from "./humanAuthentication";
+import QRCode from "qrcode";
+
+vi.mock("qrcode", () => ({
+  default: { toDataURL: vi.fn(async () => "data:image/png;base64,canonical-customer-url") }
+}));
 
 const firstDraftId = "47000000-0000-0000-0000-000000000008";
 const verifiedLocalDraftId = "47000000-0000-0000-0000-000000000009";
@@ -140,6 +145,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       lookupSessionByTicket: vi.fn(),
       getFiscalIssuanceStatus: vi.fn(),
       lookupFiscalIssuanceStatus: vi.fn(),
+      getDigitalSalesInvoice: vi.fn(),
       listFiscalVoidActionAuditReport: vi.fn(),
       listFiscalStatusViewAuditReport: vi.fn(),
       listAuditReport: vi.fn(),
@@ -1233,8 +1239,37 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(await screen.findByRole("heading", { name: "Issued" })).toBeInTheDocument();
     expect(screen.getByText("SI-00000001-UAT")).toBeInTheDocument();
-    expect(screen.getByText("Sales Invoice number")).toBeInTheDocument();
-    expect(screen.getByText("POS Server Sales Invoice ID")).toBeInTheDocument();
+    expect(screen.getByText("SI Number")).toBeInTheDocument();
+    expect(screen.queryByText("POS Server Sales Invoice ID")).not.toBeInTheDocument();
+  });
+
+  it("FiscalStatusViewer_ViewsCanonicalInvoicePrintsInBrowserAndQrEncodesOnlyCustomerUrl", async () => {
+    const client = createMockOperatorConsoleApiClient({
+      fiscalStatuses: [fiscalStatus({
+        posServerFiscalDocumentReadStatus: "AVAILABLE",
+        ticketNumber: "MOCK-USABILITY-20260924-01",
+        plateNumber: "TEST 0101"
+      })]
+    });
+    const getDigitalSalesInvoice = vi.spyOn(client, "getDigitalSalesInvoice");
+    const print = vi.spyOn(window, "print").mockImplementation(() => undefined);
+    render(<App apiClient={client} initialPath="/operator-console/fiscal-issuance-status" />);
+
+    await lookupFiscalStatus("SI-00000001-UAT");
+    await userEvent.click(await screen.findByRole("button", { name: "View Sales Invoice" }));
+
+    const digitalSalesInvoice = await screen.findByRole("article", { name: "Canonical Digital Sales Invoice" });
+    expect(digitalSalesInvoice).toBeInTheDocument();
+    expect(digitalSalesInvoice).toHaveTextContent("MOCK-USABILITY-20260924-01");
+    await waitFor(() => expect(QRCode.toDataURL).toHaveBeenCalledOnce());
+    const encodedValue = vi.mocked(QRCode.toDataURL).mock.calls[0][0];
+    expect(encodedValue).toContain("/webpay/sales-invoice#access=fixture-opaque-capability");
+    expect(encodedValue).not.toContain("MOCK-USABILITY-20260924-01");
+    expect(encodedValue).not.toContain("documentTitle");
+    expect(getDigitalSalesInvoice).toHaveBeenCalledWith(fiscalReferenceId);
+
+    await userEvent.click(screen.getByRole("button", { name: "Print Sales Invoice" }));
+    expect(print).toHaveBeenCalledOnce();
   });
 
   it("TicketLookup_FinalPaymentAndIssuedExitAuthorizationDisablesNewStatutoryRequest", async () => {
@@ -1683,15 +1718,15 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Fiscal issuance status" })).toBeInTheDocument();
-    expect(screen.getByLabelText(/search by Sales Invoice number or reference ID/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/SI-00000001-UAT or Sales Invoice reference ID/i)).toBeInTheDocument();
-    expect(screen.getByText(/Operators can search by Sales Invoice number/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Ticket, Plate or SI Number/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/Ticket, plate, or SI number/i)).toBeInTheDocument();
+    expect(screen.getByText(/Exact matches only/i)).toBeInTheDocument();
     expect(screen.getByText("Read only")).toBeInTheDocument();
     expect(screen.queryByText("Read-only fiscal issuance status by Central PMS fiscal issuance reference.")).not.toBeInTheDocument();
     expect(screen.getByText(/This view is read-only\./)).toBeInTheDocument();
   });
 
-  it("FiscalStatusViewer_SearchesByFiscalDocumentNumberAndDisplaysResolvedReferenceInDetails", async () => {
+  it("FiscalStatusViewer_SearchesByFiscalDocumentNumberWithoutExposingInternalReferences", async () => {
     const onFiscalStatusLookup = vi.fn();
     render(
       <App
@@ -1705,12 +1740,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     await lookupFiscalStatus("SI-OCVOID-0001-UAT");
 
-    await screen.findByText("Requested reference");
+    await screen.findByText("SI Number");
     expect(screen.getAllByText("SI-OCVOID-0001-UAT").length).toBeGreaterThan(0);
     expect(onFiscalStatusLookup).toHaveBeenCalledWith("SI-OCVOID-0001-UAT");
-    expect(screen.getByText("Requested reference")).toBeInTheDocument();
-    expect(screen.getByText("Sales Invoice reference ID")).toBeInTheDocument();
-    expect(screen.getByText(fiscalReferenceId)).toBeInTheDocument();
+    expect(screen.queryByText("Requested reference")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sales Invoice reference ID")).not.toBeInTheDocument();
+    expect(screen.queryByText(fiscalReferenceId)).not.toBeInTheDocument();
   });
 
   it("FiscalStatusViewer_GuidLookupStillWorksThroughFriendlyLookup", async () => {
@@ -1780,7 +1815,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(await screen.findByRole("heading", { name: "Issued" })).toBeInTheDocument();
     expect(screen.getByText(/This view is read-only\./)).toBeInTheDocument();
     const fiscalStatusRegion = screen.getByRole("region", { name: "Fiscal issuance status" });
-    expect(within(fiscalStatusRegion).getAllByRole("button").map((button) => button.textContent)).toEqual(["View status"]);
+    expect(within(fiscalStatusRegion).getAllByRole("button").map((button) => button.textContent)).toEqual(["View status", "View Sales Invoice"]);
   });
 
   it("FiscalStatusViewer_RecordedWithoutFiscalDocumentNumberDoesNotShowIssued", async () => {
@@ -1797,7 +1832,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(await screen.findByRole("heading", { name: "Recorded - number not available" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Issued" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Sales Invoice number")).not.toBeInTheDocument();
+    expect(screen.getByText("SI Number")).toBeInTheDocument();
+    expect(screen.getAllByText("Not available").length).toBeGreaterThan(0);
   });
 
   it("FiscalStatusViewer_ReplayedShowsExistingIssuanceReused", async () => {
@@ -1843,7 +1879,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(await screen.findByRole("heading", { name: "Fiscal issuance conflict" })).toBeInTheDocument();
     expect(screen.getByText(/escalate for review; do not retry without corrected request details/i)).toBeInTheDocument();
-    expect(screen.getByText("fiscal_document_idempotency_conflict")).toBeInTheDocument();
+    expect(screen.queryByText("fiscal_document_idempotency_conflict")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
   });
 
@@ -1888,7 +1924,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     await lookupFiscalStatus(fiscalReferenceId);
 
-    expect(await screen.findByRole("heading", { name: "Sales Invoice reference not found" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Fiscal record not found" })).toBeInTheDocument();
     expect(screen.queryByText(/unpaid|authorized to exit|voided|reversed/i)).not.toBeInTheDocument();
   });
 
@@ -3240,8 +3276,8 @@ function createApprovedDraft(): StatutoryDiscountDraftDetail {
 }
 
 async function lookupFiscalStatus(referenceId: string) {
-  await userEvent.clear(await screen.findByLabelText(/search by Sales Invoice number or reference ID/i));
-  await userEvent.type(screen.getByLabelText(/search by Sales Invoice number or reference ID/i), referenceId);
+  await userEvent.clear(await screen.findByLabelText(/Ticket, Plate or SI Number/i));
+  await userEvent.type(screen.getByLabelText(/Ticket, Plate or SI Number/i), referenceId);
   await userEvent.click(screen.getByRole("button", { name: "View status" }));
 }
 

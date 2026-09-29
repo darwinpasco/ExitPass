@@ -11,6 +11,7 @@ import type {
   DraftStatus,
   EntitlementType,
   FiscalIssuanceStatus,
+  OperatorDigitalSalesInvoice,
   FiscalVoidActionAuditReportQuery,
   FiscalVoidActionAuditReportResponse,
   FiscalStatusViewAuditReportQuery,
@@ -80,6 +81,7 @@ export interface OperatorConsoleApiClient {
   ): Promise<InvoiceCustomerInformation>;
   getFiscalIssuanceStatus(fiscalIssuanceReferenceId: string): Promise<FiscalIssuanceStatus>;
   lookupFiscalIssuanceStatus(query: string): Promise<FiscalIssuanceStatus>;
+  getDigitalSalesInvoice(fiscalIssuanceReferenceId: string): Promise<OperatorDigitalSalesInvoice>;
   listFiscalVoidActionAuditReport(input?: FiscalVoidActionAuditReportQuery): Promise<FiscalVoidActionAuditReportResponse>;
   listFiscalStatusViewAuditReport(input?: FiscalStatusViewAuditReportQuery): Promise<FiscalStatusViewAuditReportResponse>;
   listAuditReport(input?: AuditReportQuery): Promise<AuditReportResponse>;
@@ -811,6 +813,16 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
       );
 
       return parseResponse<FiscalIssuanceStatus>(response);
+    },
+
+    async getDigitalSalesInvoice(fiscalIssuanceReferenceId) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/fiscal-issuance/references/${encodeURIComponent(fiscalIssuanceReferenceId)}/digital-sales-invoice`,
+        { headers: operatorConsoleHeaders(correlationId) }
+      );
+
+      return parseResponse<OperatorDigitalSalesInvoice>(response);
     },
 
     async listFiscalVoidActionAuditReport(input = {}) {
@@ -1584,6 +1596,43 @@ export function createMockOperatorConsoleApiClient(
       }
 
       return { ...match };
+    },
+
+    async getDigitalSalesInvoice(fiscalIssuanceReferenceId) {
+      await delay();
+      const match = fiscalStatuses.find((item) => item.fiscalIssuanceReferenceId === fiscalIssuanceReferenceId);
+      if (!match?.fiscalDocumentNumber) {
+        throw {
+          status: "not-found",
+          message: "Digital Sales Invoice was not found.",
+          errorCode: "DIGITAL_SALES_INVOICE_NOT_FOUND"
+        } satisfies OperatorConsoleApiError;
+      }
+
+      return {
+        presentation: {
+          documentTitle: "Sales Invoice",
+          presentationVersion: "digital-sales-invoice-presentation-json-v1",
+          sourceTemplateContractVersion: "digital-sales-invoice-json-v1",
+          renderFormat: "application/json",
+          sections: [
+            {
+              name: "document_identity",
+              label: "Sales Invoice",
+              sortOrder: 1,
+              posture: "visible",
+              rows: [
+                { key: "sales_invoice_number", label: "SI Number", valueKind: "text", posture: "visible", displayValue: match.fiscalDocumentNumber },
+                { key: "ticket_number", label: "Ticket Number", valueKind: "text", posture: "visible", displayValue: match.ticketNumber ?? "Not available" }
+              ]
+            }
+          ],
+          notices: []
+        },
+        canonicalText: "SALES INVOICE\nSI No: SI-00000049\nTicket Number: MOCK-USABILITY-20260924-01\nPlate Number: USR2401",
+        customerDigitalSalesInvoicePath: "/webpay/sales-invoice#access=fixture-opaque-capability",
+        capabilityExpiresAt: "2026-09-27T00:00:00Z"
+      };
     },
 
     async getInvoiceCustomerInformation(parkingSessionId) {

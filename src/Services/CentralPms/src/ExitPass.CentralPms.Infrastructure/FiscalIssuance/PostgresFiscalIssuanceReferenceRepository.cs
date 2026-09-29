@@ -201,6 +201,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             connection,
             transaction,
             request.ParkingSessionId,
+            request.PaymentAttemptId,
             cancellationToken);
 
         await using var command = new NpgsqlCommand(sql, connection, transaction)
@@ -579,6 +580,77 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             cancellationToken);
     }
 
+    public async Task<IReadOnlyList<FiscalIssuanceOperatorLookupMatch>> FindByOperatorIdentifierAsync(
+        string identifier,
+        Guid? siteId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+        {
+            return Array.Empty<FiscalIssuanceOperatorLookupMatch>();
+        }
+
+        const string sql = """
+            SELECT
+                fir.fiscal_issuance_reference_id,
+                COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS ticket_number,
+                ps.plate_number_masked
+            FROM core.fiscal_issuance_references AS fir
+            INNER JOIN core.parking_sessions AS ps
+                ON ps.parking_session_id = fir.parking_session_id
+            WHERE fir.is_active = true
+              AND (@site_id IS NULL OR fir.site_id = @site_id)
+              AND (
+                    UPPER(BTRIM(fir.fiscal_document_number)) = @normalized_identifier
+                 OR ps.ticket_number_hash = @identifier_hash
+                 OR ps.plate_number_hash = @identifier_hash
+                 OR UPPER(BTRIM(ps.vendor_session_ref)) = @normalized_identifier
+                 OR UPPER(BTRIM(ps.ticket_number_masked)) = @normalized_identifier
+                 OR UPPER(BTRIM(ps.plate_number_masked)) = @normalized_identifier
+              )
+            ORDER BY fir.first_recorded_at DESC, fir.fiscal_issuance_reference_id DESC
+            LIMIT 2;
+            """;
+
+        var trimmed = identifier.Trim();
+        var normalized = trimmed.ToUpperInvariant();
+        var hashBytes = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(normalized));
+        var hash = Convert.ToHexString(hashBytes).ToLowerInvariant();
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 30 };
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = siteId.HasValue ? siteId.Value : DBNull.Value;
+        command.Parameters.Add("normalized_identifier", NpgsqlDbType.Text).Value = normalized;
+        command.Parameters.Add("identifier_hash", NpgsqlDbType.Text).Value = hash;
+
+        var identifiers = new List<(Guid Id, string? Ticket, string? Plate)>(2);
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                identifiers.Add((
+                    reader.GetGuid(0),
+                    reader.IsDBNull(1) ? null : reader.GetString(1),
+                    reader.IsDBNull(2) ? null : reader.GetString(2)));
+            }
+        }
+
+        var matches = new List<FiscalIssuanceOperatorLookupMatch>(identifiers.Count);
+        foreach (var match in identifiers)
+        {
+            var reference = await FindByFiscalIssuanceReferenceIdAsync(match.Id, cancellationToken)
+                .ConfigureAwait(false);
+            if (reference is not null)
+            {
+                matches.Add(new FiscalIssuanceOperatorLookupMatch(reference, match.Ticket, match.Plate));
+            }
+        }
+
+        return matches;
+    }
+
     public Task<FiscalIssuanceReferenceRecord?> FindFiscalExceptionReferenceAsync(
         Guid fiscalIssuanceReferenceId,
         CancellationToken cancellationToken) =>
@@ -675,13 +747,13 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
                 COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id,
-                invoice_customer_name,
-                invoice_customer_address,
-                invoice_customer_tin,
-                invoice_business_style,
-                invoice_customer_information_row_version,
-                invoice_customer_information_snapshot_captured_at
-            FROM core.fiscal_issuance_references
+                NULLIF(to_jsonb(fir)->>'invoice_customer_name', '') AS invoice_customer_name,
+                NULLIF(to_jsonb(fir)->>'invoice_customer_address', '') AS invoice_customer_address,
+                NULLIF(to_jsonb(fir)->>'invoice_customer_tin', '') AS invoice_customer_tin,
+                NULLIF(to_jsonb(fir)->>'invoice_business_style', '') AS invoice_business_style,
+                NULLIF(to_jsonb(fir)->>'invoice_customer_information_row_version', '')::bigint AS invoice_customer_information_row_version,
+                NULLIF(to_jsonb(fir)->>'invoice_customer_information_snapshot_captured_at', '')::timestamptz AS invoice_customer_information_snapshot_captured_at
+            FROM core.fiscal_issuance_references AS fir
             {whereClause}
             ORDER BY first_recorded_at DESC
             LIMIT 1;
@@ -759,13 +831,13 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 statutory_discount_payable_basis_application_command_id,
                 statutory_discount_validation_id,
                 COALESCE(statutory_discount_policy_version_id, applied_policy_reference_id) AS applied_policy_reference_id,
-                invoice_customer_name,
-                invoice_customer_address,
-                invoice_customer_tin,
-                invoice_business_style,
-                invoice_customer_information_row_version,
-                invoice_customer_information_snapshot_captured_at
-            FROM core.fiscal_issuance_references
+                NULLIF(to_jsonb(fir)->>'invoice_customer_name', '') AS invoice_customer_name,
+                NULLIF(to_jsonb(fir)->>'invoice_customer_address', '') AS invoice_customer_address,
+                NULLIF(to_jsonb(fir)->>'invoice_customer_tin', '') AS invoice_customer_tin,
+                NULLIF(to_jsonb(fir)->>'invoice_business_style', '') AS invoice_business_style,
+                NULLIF(to_jsonb(fir)->>'invoice_customer_information_row_version', '')::bigint AS invoice_customer_information_row_version,
+                NULLIF(to_jsonb(fir)->>'invoice_customer_information_snapshot_captured_at', '')::timestamptz AS invoice_customer_information_snapshot_captured_at
+            FROM core.fiscal_issuance_references AS fir
             {whereClause};
             """;
 
@@ -878,15 +950,41 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Guid parkingSessionId,
+        Guid? paymentAttemptId,
         CancellationToken cancellationToken)
     {
         const string sql = """
             SELECT customer_name, customer_address, customer_tin, business_style, row_version
-            FROM core.parking_session_invoice_customer_information
-            WHERE parking_session_id = @parking_session_id;
+            FROM (
+                SELECT
+                    customer_name,
+                    customer_address,
+                    customer_tin,
+                    business_style,
+                    row_version,
+                    1 AS source_priority
+                FROM core.parking_session_invoice_customer_information
+                WHERE parking_session_id = @parking_session_id
+
+                UNION ALL
+
+                SELECT
+                    customer_name,
+                    customer_address,
+                    customer_tin,
+                    business_style,
+                    NULL::bigint AS row_version,
+                    2 AS source_priority
+                FROM core.payment_attempt_invoice_customer_information
+                WHERE payment_attempt_id = @payment_attempt_id
+                  AND parking_session_id = @parking_session_id
+            ) candidate
+            ORDER BY source_priority
+            LIMIT 1;
             """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+        AddNullable(command, "payment_attempt_id", paymentAttemptId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
             ? new AuthoritativeInvoiceCustomerInformation(
@@ -894,7 +992,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 GetNullableString(reader, "customer_address"),
                 GetNullableString(reader, "customer_tin"),
                 GetNullableString(reader, "business_style"),
-                reader.GetInt64(reader.GetOrdinal("row_version")))
+                GetNullableLong(reader, "row_version"))
             : null;
     }
 
@@ -1255,5 +1353,5 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
         string? Address,
         string? Tin,
         string? BusinessStyle,
-        long RowVersion);
+        long? RowVersion);
 }

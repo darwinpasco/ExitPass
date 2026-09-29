@@ -15,3 +15,7 @@ Password and TOTP values remain in component memory only and are never placed in
 Access uses six independent permissions: `fiscal-reporting.ej.read`, `fiscal-reporting.ej.export`, `fiscal-reporting.x.read`, `fiscal-reporting.x.generate`, `fiscal-reporting.z.read`, and `fiscal-reporting.z.generate`. Z generation is separately privileged and requires an explicit close confirmation.
 
 For local visual validation only, append `operatorFiscalReportingScenario=ready`. The fixture is guarded by `import.meta.env.DEV` and is absent from production behavior.
+
+## Customer Digital Sales Invoice links
+
+Set `VITE_WEBPAY_PUBLIC_BASE_URL` to the public HTTPS WebPay origin used by customers. Operator Console combines that governed origin with the server-issued opaque capability path; it never places fiscal identifiers, customer data, or an internal POS Server address in the URL or QR code. The local runtime script defaults to `http://localhost:5174` and also honors the existing `WEBPAY_PUBLIC_BASE_URL` override for a phone-reachable HTTPS tunnel.

@@ -20,6 +20,27 @@ describe("Operator Console Vite dev server config", () => {
       changeOrigin: true,
       secure: false
     });
+    expect(config.server?.proxy?.["/webpay"]).toMatchObject({
+      target: "http://127.0.0.1:5174",
+      changeOrigin: true
+    });
+    const webPayProxy = config.server?.proxy?.["/webpay"];
+    expect(typeof webPayProxy).toBe("object");
+    expect(typeof webPayProxy === "object" && webPayProxy?.rewrite?.("/webpay/sales-invoice")).toBe(
+      "/webpay-app/webpay/sales-invoice"
+    );
+    expect(config.server?.proxy?.["/webpay-app"]).toMatchObject({
+      target: "http://127.0.0.1:5174",
+      changeOrigin: true
+    });
+  });
+
+  it("OperatorConsoleDevServer_WhenWebPayTargetIsProvided_UsesItOnlyForCustomerPageRoutes", () => {
+    const config = createOperatorConsoleViteConfig("http://localhost:19082", "http://localhost:19084/");
+
+    expect(config.server?.proxy?.["/webpay"]).toMatchObject({ target: "http://localhost:19084" });
+    expect(config.server?.proxy?.["/webpay-app"]).toMatchObject({ target: "http://localhost:19084" });
+    expect(config.server?.proxy?.["/v1"]).toMatchObject({ target: "http://localhost:19082" });
   });
 
   it("OperatorConsoleDevServer_WhenProxyTargetEnvIsProvided_UsesConfiguredTarget", () => {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import QRCode from "qrcode";
 import {
   createOperatorConsoleApiClient,
   defaultDevModeContext,
@@ -13,6 +14,7 @@ import type {
   AuditReportQuery,
   AuditReportResponse,
   FiscalIssuanceStatus,
+  OperatorDigitalSalesInvoice,
   FiscalVoidActionAuditReportItem,
   FiscalVoidActionAuditReportQuery,
   FiscalVoidActionAuditReportResponse,
@@ -1123,7 +1125,6 @@ function displayBool(value: boolean | undefined) {
 
 function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient }) {
   const [lookupQuery, setLookupQuery] = useState("");
-  const [submittedLookupQuery, setSubmittedLookupQuery] = useState("");
   const [statusState, setStatusState] = useState<LoadState<FiscalIssuanceStatus>>({ status: "idle" });
 
   function loadFiscalStatus(query: string, showLoading = true) {
@@ -1153,11 +1154,10 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
     event.preventDefault();
     const trimmed = lookupQuery.trim();
     if (!trimmed) {
-      setStatusState({ status: "error", message: "Sales Invoice number or Sales Invoice reference ID is required." });
+      setStatusState({ status: "error", message: "Ticket, Plate or SI Number is required." });
       return;
     }
 
-    setSubmittedLookupQuery(trimmed);
     loadFiscalStatus(trimmed);
   }
 
@@ -1168,7 +1168,7 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
           <p className="eyebrow">Fiscal visibility</p>
           <h2 id="fiscal-status-title">Fiscal issuance status</h2>
           <p className="panelCopy">
-            Search by Sales Invoice number or Sales Invoice reference ID. This view is read-only.
+            Search by an exact Ticket Number, Plate Number, or SI Number. This view is read-only.
           </p>
         </div>
         <span className="statusPill">Read only</span>
@@ -1176,78 +1176,58 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
 
       <form className="filterForm" onSubmit={submitLookup}>
         <label>
-          Search by Sales Invoice number or reference ID
+          Ticket, Plate or SI Number
           <input
             className="wideLookupInput"
             value={lookupQuery}
-            placeholder="SI-00000001-UAT or Sales Invoice reference ID"
+            placeholder="Ticket, plate, or SI number"
             onChange={(event) => setLookupQuery(event.target.value)}
           />
         </label>
         <button type="submit">View status</button>
       </form>
       <p className="helperText">
-        Operators can search by Sales Invoice number. Sales Invoice reference ID remains available for support.
+        Exact matches only. Results are limited to your authorized Site.
       </p>
 
       {statusState.status === "idle" && (
-        <StateMessage title="No Sales Invoice status selected" message="Enter a Sales Invoice number or Sales Invoice reference ID to view safe status fields." />
+        <StateMessage title="No fiscal status selected" message="Enter a Ticket Number, Plate Number, or SI Number to view status." />
       )}
       {statusState.status === "loading" && (
         <StateMessage title="Loading fiscal status" message="Retrieving fiscal issuance status through the Operator Console facade." />
       )}
       {statusState.status === "not-found" && (
         <StateMessage
-          title="Sales Invoice reference not found"
-          message="The Sales Invoice status lookup did not match a Sales Invoice reference. Verify the Sales Invoice number or support reference."
+          title="Fiscal record not found"
+          message="The exact identifier did not match a fiscal record in your authorized Site."
         />
       )}
       {statusState.status === "access-denied" && <StateMessage title="Access denied" message={statusState.message} />}
       {statusState.status === "error" && <StateMessage title="Unable to load fiscal status" message={statusState.message} />}
       {statusState.status === "loaded" && (
-        <FiscalIssuanceStatusPanel status={statusState.data} requestedReferenceId={submittedLookupQuery} />
+        <FiscalIssuanceStatusPanel status={statusState.data} client={client} />
       )}
     </section>
   );
 }
 
-function FiscalIssuanceStatusPanel({ status, requestedReferenceId }: {
+function FiscalIssuanceStatusPanel({ status, client }: {
   status: FiscalIssuanceStatus;
-  requestedReferenceId: string;
+  client: OperatorConsoleApiClient;
 }) {
   const presentation = fiscalStatusPresentation(status);
-  const mainItems: Array<[string, string]> = [
-    ["Fiscal state", status.fiscalIssuanceState],
-    ["Result classification", displayValue(status.resultClassification)],
-    ["Evidence status", displayValue(status.fiscalIssuanceEvidenceStatus)],
-    ["Number assignment", status.fiscalNumberAssignmentState],
-    ["First recorded", formatDateTime(status.firstRecordedAt)],
-    ["Last updated", formatDateTime(status.lastUpdatedAt)]
+  const operationalItems: Array<[string, string]> = [
+    ["Ticket Number", displayValue(status.ticketNumber)],
+    ["Plate Number", displayValue(status.plateNumber)],
+    ["SI Number", displayValue(status.fiscalDocumentNumber)],
+    ["Sales Invoice status", displayStatusValue(status.posServerFiscalDocumentStatusCodeKey)],
+    ["Site POS Server ref", displayValue(status.sitePosServerRef)],
+    ["Fiscal sequence value", formatOptionalNumber(status.fiscalSequenceValue)],
+    ["POS Server document read status", displayStatusValue(status.posServerFiscalDocumentReadStatus)],
+    ["Void status", displayStatusValue(status.posServerVoidStatus)],
+    ["Void reason code", status.posServerVoidReasonCode ? displayStatusValue(status.posServerVoidReasonCode) : "Not available"],
+    ["Date Printed", "Not available"]
   ];
-
-  if (status.fiscalDocumentNumber) {
-    mainItems.splice(1, 0, ["Sales Invoice number", status.fiscalDocumentNumber]);
-  }
-
-  if (status.posServerFiscalDocumentReadStatus) {
-    mainItems.push(["POS Server document read status", displayStatusValue(status.posServerFiscalDocumentReadStatus)]);
-  }
-
-  if (status.posServerFiscalDocumentStatusCodeKey) {
-    mainItems.push(["Sales Invoice status", displayStatusValue(status.posServerFiscalDocumentStatusCodeKey)]);
-  }
-
-  if (status.posServerVoidStatus) {
-    mainItems.push(["Void status", displayStatusValue(status.posServerVoidStatus)]);
-  }
-
-  if (status.latestErrorCode || status.latestErrorPosture || status.latestExceptionReason) {
-    mainItems.push(
-      ["Safe error code", displayValue(status.latestErrorCode)],
-      ["Error posture", displayValue(status.latestErrorPosture)],
-      ["Exception reason", displayValue(status.latestExceptionReason)]
-    );
-  }
 
   return (
     <section aria-labelledby="fiscal-status-result-title">
@@ -1260,45 +1240,10 @@ function FiscalIssuanceStatusPanel({ status, requestedReferenceId }: {
         <span className={`statusPill ${presentation.className}`}>{presentation.badge}</span>
       </div>
 
-      <DescriptionList items={mainItems} />
-
-      <details className="diagnosticsPanel">
-        <summary>Support/audit details</summary>
-        <DescriptionList
-          items={[
-            ["Requested reference", requestedReferenceId],
-            ["Sales Invoice reference ID", status.fiscalIssuanceReferenceId],
-            ["Upstream finality reference", status.upstreamFinalityReference],
-            ["Payment confirmation ID", status.paymentConfirmationId],
-            ["Payment attempt ID", status.paymentAttemptId],
-            ["Parking session ID", status.parkingSessionId],
-            ["Site ID", displayValue(status.siteId)],
-            ["Site POS Server ID", displayValue(status.sitePosServerId)],
-            ["Site POS Server ref", displayValue(status.sitePosServerRef)],
-            ["POS Server Sales Invoice ID", displayValue(status.posServerFiscalDocumentId)],
-            ["Sales Invoice type", displayValue(status.fiscalDocumentTypeCodeKey)],
-            ["Fiscal identity ID", displayValue(status.fiscalIdentityId)],
-            ["Fiscal sequence policy ID", displayValue(status.fiscalSequencePolicyId)],
-            ["Fiscal sequence value", formatOptionalNumber(status.fiscalSequenceValue)],
-            ["Fiscal series", displayValue(status.fiscalSeries)],
-            ["Fiscal number prefix", displayValue(status.fiscalNumberPrefixText)],
-            ["Fiscal number suffix", displayValue(status.fiscalNumberSuffixText)],
-            ["Fiscal number assigned at", formatOptionalDateTime(status.fiscalNumberAssignedAt)],
-            ["Fiscal number assigned by", displayValue(status.fiscalNumberAssignedByRef)],
-            ["POS Server document read status", displayValue(status.posServerFiscalDocumentReadStatus)],
-            ["Sales Invoice status", displayValue(status.posServerFiscalDocumentStatusCodeKey)],
-            ["Void status", displayValue(status.posServerVoidStatus)],
-            ["Void reason code", displayValue(status.posServerVoidReasonCode)],
-            ["Voided at", formatOptionalDateTime(status.posServerVoidedAt)],
-            ["Semantic request hash", displayValue(status.semanticRequestHashValue)],
-            ["Semantic request hash version", displayValue(status.semanticRequestHashVersion)],
-            ["Semantic request hash status", displayValue(status.semanticRequestHashStatus)],
-            ["Semantic request hash algorithm", displayValue(status.semanticRequestHashAlgorithm)],
-            ["Semantic request hash fact count", formatOptionalNumber(status.semanticRequestHashSourceFactCount)],
-            ["Correlation ID", displayValue(status.correlationId)]
-          ]}
-        />
-      </details>
+      <DescriptionList items={operationalItems} />
+      {status.posServerFiscalDocumentReadStatus === "AVAILABLE" && status.fiscalDocumentNumber && (
+        <SalesInvoiceActions client={client} status={status} />
+      )}
     </section>
   );
 }
@@ -2798,6 +2743,63 @@ function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult })
       />
     </section>
   );
+}
+
+function SalesInvoiceActions({ status, client }: {
+  status: FiscalIssuanceStatus;
+  client: OperatorConsoleApiClient;
+}) {
+  const [invoice, setInvoice] = useState<OperatorDigitalSalesInvoice>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [qrDataUrl, setQrDataUrl] = useState("");
+  const customerUrl = invoice ? customerDigitalSalesInvoiceUrl(invoice.customerDigitalSalesInvoicePath) : "";
+
+  useEffect(() => {
+    let active = true;
+    setQrDataUrl("");
+    if (!customerUrl) return () => { active = false; };
+    void QRCode.toDataURL(customerUrl, { errorCorrectionLevel: "M", margin: 1, width: 280 })
+      .then((value) => { if (active) setQrDataUrl(value); })
+      .catch(() => { if (active) setError("The customer Sales Invoice QR code could not be generated."); });
+    return () => { active = false; };
+  }, [customerUrl]);
+
+  async function viewInvoice() {
+    setLoading(true);
+    setError("");
+    try {
+      setInvoice(await client.getDigitalSalesInvoice(status.fiscalIssuanceReferenceId));
+    } catch (cause) {
+      const mapped = mapApiError(cause);
+      setError(mapped.message || "Digital Sales Invoice is unavailable.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return <section className="digitalSalesInvoice" aria-labelledby="digital-sales-invoice-title">
+    <div className="salesInvoiceActions">
+      <button type="button" onClick={viewInvoice} disabled={loading}>
+        {loading ? "Retrieving Sales Invoice..." : "View Sales Invoice"}
+      </button>
+      {invoice && <button type="button" onClick={() => window.print()}>Print Sales Invoice</button>}
+    </div>
+    {error && <p className="errorMessage" role="alert">{error}</p>}
+    {invoice && <article className="canonicalSalesInvoice" aria-label="Canonical Digital Sales Invoice">
+      <h3 id="digital-sales-invoice-title">{invoice.presentation.documentTitle ?? "Sales Invoice"}</h3>
+      <pre className="canonicalSalesInvoiceText">{invoice.canonicalText}</pre>
+      {qrDataUrl && <figure className="customerInvoiceQr">
+        <img src={qrDataUrl} alt="QR code for the customer Digital Sales Invoice URL" />
+        <figcaption>Scan to view or download this Sales Invoice. Access expires in 24 hours.</figcaption>
+      </figure>}
+    </article>}
+  </section>;
+}
+
+function customerDigitalSalesInvoiceUrl(path: string) {
+  const configuredBase = import.meta.env.VITE_WEBPAY_PUBLIC_BASE_URL?.trim();
+  return new URL(path, configuredBase || window.location.origin).toString();
 }
 
 function isCompletedTransaction(result: OperatorTicketLookupResult) {

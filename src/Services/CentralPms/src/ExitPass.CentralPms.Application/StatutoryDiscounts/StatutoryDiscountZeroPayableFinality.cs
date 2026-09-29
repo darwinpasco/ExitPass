@@ -29,6 +29,10 @@ public sealed record StatutoryDiscountZeroPayableFinality(
     string FinalityState = StatutoryDiscountFinalityStates.ZeroPayableStatutoryFinality)
 {
     public string? IdControlReference { get; init; }
+    public string? TicketNumber { get; init; }
+    public string? PlateNumber { get; init; }
+    public string? SiteName { get; init; }
+    public DateTimeOffset? EntryTime { get; init; }
 }
 
 public sealed record StatutoryDiscountZeroPayableDecisionAnchor(
@@ -113,7 +117,11 @@ public sealed record StatutoryDiscountZeroPayablePolicyAnchor(
 public sealed record StatutoryDiscountZeroPayableParkingAnchor(
     Guid? ParkingSessionId,
     Guid? SiteId,
-    Guid? SiteGroupId);
+    Guid? SiteGroupId,
+    string? TicketNumber = null,
+    string? PlateNumber = null,
+    string? SiteName = null,
+    DateTimeOffset? EntryTime = null);
 
 public sealed record StatutoryDiscountZeroPayableTariffAnchor(
     Guid? TariffSnapshotId,
@@ -264,7 +272,11 @@ public static class StatutoryDiscountZeroPayableFinalityResolver
                 application.AppliedAt!.Value,
                 application.CorrelationId!.Value)
             {
-                IdControlReference = validation.IdControlReference
+                IdControlReference = validation.IdControlReference,
+                TicketNumber = parkingSession.TicketNumber,
+                PlateNumber = parkingSession.PlateNumber,
+                SiteName = parkingSession.SiteName,
+                EntryTime = parkingSession.EntryTime
             },
             RejectionCode: null);
     }

@@ -1703,6 +1703,16 @@ dd {
 .zConfirmation { border: 2px solid #a11b1b; background: #fff1f1; padding: 1rem; border-radius: .6rem; }
 .dangerButton { background: #a11b1b; color: white; }
 .primaryButton { display: inline-flex; align-items: center; padding: .6rem .8rem; background: #173f6b; color: #fff; border-radius: .35rem; text-decoration: none; }
+.digitalSalesInvoice { border-top: 1px solid #d9e3e8; margin-top: 1.5rem; padding-top: 1rem; }
+.salesInvoiceActions { display: flex; flex-wrap: wrap; gap: .75rem; }
+.canonicalSalesInvoice { background: #fff; border: 1px solid #cbd5e1; border-radius: .6rem; margin-top: 1rem; max-width: 720px; padding: 1.25rem; }
+.canonicalSalesInvoice section { border-top: 1px solid #e2e8f0; padding-top: .75rem; }
+.canonicalSalesInvoice dl div { display: grid; gap: .5rem; grid-template-columns: minmax(10rem, .8fr) minmax(0, 1.2fr); padding: .35rem 0; }
+.canonicalSalesInvoice dd { margin: 0; overflow-wrap: anywhere; }
+.canonicalSalesInvoiceText { font: inherit; line-height: 1.35; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.customerInvoiceQr { display: grid; justify-items: center; margin: 1rem auto 0; max-width: 320px; text-align: center; }
+.customerInvoiceQr img { height: auto; max-width: 280px; width: 100%; }
 .submittedEvidencePreview { border-top: 1px solid #d9e3e8; margin-top: 1rem; padding-top: 1rem; }
 .submittedEvidenceImage { display: block; height: auto; max-height: 32rem; max-width: 100%; object-fit: contain; }
+@media print { body * { visibility: hidden; } .canonicalSalesInvoice, .canonicalSalesInvoice * { visibility: visible; } .canonicalSalesInvoice { border: 0; left: 0; margin: 0; max-width: none; position: absolute; top: 0; width: 100%; } .customerInvoiceQr, .salesInvoiceActions { display: none !important; } }
 @media (max-width: 720px) { .periodCard { grid-template-columns: 1fr; } .readingTitle, .fiscalReporting .reportFilters { display: grid; } .fiscalReporting .reportFilters label { min-width: 0; } }

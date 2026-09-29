@@ -425,6 +425,44 @@ export interface FiscalIssuanceStatus {
   posServerVoidStatus?: string;
   posServerVoidReasonCode?: string;
   posServerVoidedAt?: string;
+  ticketNumber?: string;
+  plateNumber?: string;
+}
+
+export interface DigitalSalesInvoicePresentationRow {
+  key?: string;
+  label?: string;
+  valueKind?: string;
+  posture?: string;
+  displayValue?: string | number | null;
+  rawValue?: unknown;
+}
+
+export interface DigitalSalesInvoicePresentationSection {
+  name?: string;
+  title?: string;
+  label?: string;
+  sortOrder?: number;
+  posture?: string;
+  rows?: DigitalSalesInvoicePresentationRow[];
+}
+
+export interface DigitalSalesInvoicePresentation {
+  documentTitle?: string;
+  presentationVersion?: string;
+  sourceTemplateContractVersion?: string;
+  fiscalTemplateFamily?: string;
+  renderFormat?: string;
+  numberingState?: string;
+  sections?: DigitalSalesInvoicePresentationSection[];
+  notices?: Array<{ code?: string; severity?: string; message?: string }>;
+}
+
+export interface OperatorDigitalSalesInvoice {
+  presentation: DigitalSalesInvoicePresentation;
+  canonicalText: string;
+  customerDigitalSalesInvoicePath: string;
+  capabilityExpiresAt: string;
 }
 
 export interface AccessReadinessClientContext {

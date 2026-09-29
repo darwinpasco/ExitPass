@@ -75,6 +75,22 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
             var byFiscalDocumentNumber = await repository.FindByFiscalDocumentNumberAsync(
                 request.FiscalDocumentNumber!,
                 CancellationToken.None);
+            var byOperatorSiNumber = await repository.FindByOperatorIdentifierAsync(
+                request.FiscalDocumentNumber!,
+                context.SiteId,
+                CancellationToken.None);
+            var byOperatorTicketNumber = await repository.FindByOperatorIdentifierAsync(
+                $"RACE-VSESSION-{context.ParkingSessionId:N}",
+                context.SiteId,
+                CancellationToken.None);
+            var byOperatorPlateNumber = await repository.FindByOperatorIdentifierAsync(
+                "ABC1234",
+                context.SiteId,
+                CancellationToken.None);
+            var crossSiteLookup = await repository.FindByOperatorIdentifierAsync(
+                request.FiscalDocumentNumber!,
+                Guid.NewGuid(),
+                CancellationToken.None);
 
             Assert.NotEqual(Guid.Empty, created.FiscalIssuanceReferenceId);
             Assert.Equal(confirmation.PaymentConfirmationId, created.PaymentConfirmationId);
@@ -96,6 +112,10 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
             Assert.Equal(created.FiscalIssuanceReferenceId, byPosDocument?.FiscalIssuanceReferenceId);
             Assert.Single(byFiscalDocumentNumber);
             Assert.Equal(created.FiscalIssuanceReferenceId, byFiscalDocumentNumber[0].FiscalIssuanceReferenceId);
+            Assert.All(
+                new[] { byOperatorSiNumber, byOperatorTicketNumber, byOperatorPlateNumber },
+                matches => Assert.Equal(created.FiscalIssuanceReferenceId, Assert.Single(matches).Reference.FiscalIssuanceReferenceId));
+            Assert.Empty(crossSiteLookup);
         }
         finally
         {

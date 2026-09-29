@@ -170,35 +170,18 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
 
         const string sql = """
             SELECT
-                terminal_cash_payment_command_id,
-                terminal_cash_tender_id,
-                payment_attempt_id,
-                cash_custody_session_id,
-                parking_session_id,
-                tariff_snapshot_id,
-                terminal_id,
-                site_id,
-                site_group_id,
-                pos_server_id,
-                cashier_id,
-                cashier_shift_id,
-                currency_code,
-                amount_due_minor_units,
-                amount_tendered_minor_units,
-                change_due_minor_units,
-                canonical_payment_status,
-                payment_confirmation_id,
-                result_classification,
-                idempotency_scope,
-                semantic_hash_source_version,
-                created_at,
-                confirmed_at,
-                last_updated_at,
-                original_correlation_id,
-                fiscal_status
-            FROM core.terminal_cash_payment_commands
-            WHERE terminal_cash_tender_id = @terminal_cash_tender_id
-            ORDER BY created_at DESC
+                cash_command.*,
+                COALESCE(parking.ticket_number_masked, parking.vendor_session_ref) AS ticket_number,
+                parking.plate_number_masked,
+                site.site_name,
+                COALESCE(parking.entry_at, parking.created_at) AS entry_time
+            FROM core.terminal_cash_payment_commands AS cash_command
+            INNER JOIN core.parking_sessions AS parking
+                ON parking.parking_session_id = cash_command.parking_session_id
+            INNER JOIN sites.sites AS site
+                ON site.site_id = parking.site_id
+            WHERE cash_command.terminal_cash_tender_id = @terminal_cash_tender_id
+            ORDER BY cash_command.created_at DESC
             LIMIT 1;
             """;
 
@@ -769,6 +752,12 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
             reader.GetString(reader.GetOrdinal("fiscal_status")));
     }
 
+    private static string? OptionalString(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    }
+
     private static TerminalCashPaymentReadback ReadReadback(NpgsqlDataReader reader)
     {
         return new TerminalCashPaymentReadback(
@@ -797,7 +786,13 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("confirmed_at")),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("last_updated_at")),
             reader.GetGuid(reader.GetOrdinal("original_correlation_id")),
-            reader.GetString(reader.GetOrdinal("fiscal_status")));
+            reader.GetString(reader.GetOrdinal("fiscal_status")),
+            OptionalString(reader, "ticket_number"),
+            OptionalString(reader, "plate_number_masked"),
+            OptionalString(reader, "site_name"),
+            reader.IsDBNull(reader.GetOrdinal("entry_time"))
+                ? null
+                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("entry_time")));
     }
 
     private static TerminalCashPaymentResult ToCreatedResult(TerminalCashPaymentRecord record) =>

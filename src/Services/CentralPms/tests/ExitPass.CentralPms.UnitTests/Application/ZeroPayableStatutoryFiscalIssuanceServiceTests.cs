@@ -81,6 +81,10 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal("123-456-789", mapped.InvoiceCustomerInformation.Tin);
         Assert.Equal("Sample Trading", mapped.InvoiceCustomerInformation.BusinessStyle);
         Assert.Equal("12345678", mapped.InvoiceCustomerInformation.StatutoryIdNumber);
+        Assert.Equal("ZERO-TICKET-001", mapped.ReferenceContext["ticket_number"]);
+        Assert.Equal("ZERO 1001", mapped.ReferenceContext["plate_number"]);
+        Assert.Equal("PITX Level 3", mapped.ReferenceContext["branch_site"]);
+        Assert.Equal("37 minutes", mapped.ReferenceContext["parking_duration"]);
         Assert.False(result.FiscalPrerequisiteSatisfied);
     }
 
@@ -232,7 +236,13 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
             "WEBPAY",
             AppliedAt.AddMinutes(-1),
             AppliedAt,
-            Guid.Parse("a1000000-0000-4000-8000-00000000000e"));
+            Guid.Parse("a1000000-0000-4000-8000-00000000000e"))
+        {
+            TicketNumber = "ZERO-TICKET-001",
+            PlateNumber = "ZERO 1001",
+            SiteName = "PITX Level 3",
+            EntryTime = AppliedAt.AddMinutes(-37)
+        };
 
     private static CompletionAuthority Authority() =>
         new(

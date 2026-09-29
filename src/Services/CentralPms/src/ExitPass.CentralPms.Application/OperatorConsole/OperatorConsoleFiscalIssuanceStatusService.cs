@@ -170,7 +170,7 @@ public sealed class OperatorConsoleFiscalIssuanceStatusService : IOperatorConsol
 
         try
         {
-            var lookup = await _statusReadService.LookupAsync(query.Query, cancellationToken)
+            var lookup = await _statusReadService.LookupAsync(query.Query, query.SiteId, cancellationToken)
                 .ConfigureAwait(false);
             var status = lookup.Status;
             if (status is not null && status.SiteId != query.SiteId)
@@ -203,14 +203,14 @@ public sealed class OperatorConsoleFiscalIssuanceStatusService : IOperatorConsol
             {
                 FiscalIssuanceStatusLookupOutcome.Found => null,
                 FiscalIssuanceStatusLookupOutcome.NotFound => "FISCAL_ISSUANCE_LOOKUP_NOT_FOUND",
-                FiscalIssuanceStatusLookupOutcome.Ambiguous => "FISCAL_DOCUMENT_NUMBER_LOOKUP_AMBIGUOUS",
+                FiscalIssuanceStatusLookupOutcome.Ambiguous => "FISCAL_IDENTIFIER_LOOKUP_AMBIGUOUS",
                 _ => "INVALID_OPERATOR_CONSOLE_FISCAL_STATUS_LOOKUP"
             };
             var safeErrorPosture = lookup.Outcome switch
             {
                 FiscalIssuanceStatusLookupOutcome.Found => null,
                 FiscalIssuanceStatusLookupOutcome.NotFound => "Fiscal status lookup did not match a fiscal issuance reference.",
-                FiscalIssuanceStatusLookupOutcome.Ambiguous => "Fiscal document number lookup matched multiple fiscal issuance references.",
+                FiscalIssuanceStatusLookupOutcome.Ambiguous => "The identifier matched multiple fiscal issuance references.",
                 _ => "Fiscal status lookup was invalid."
             };
 
