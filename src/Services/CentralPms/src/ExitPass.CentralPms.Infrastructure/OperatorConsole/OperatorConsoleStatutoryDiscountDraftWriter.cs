@@ -36,6 +36,23 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
     }
 
     /// <inheritdoc />
+    public async Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult?> FindReusableAsync(
+        Guid parkingSessionId,
+        string entitlementType,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        return await FindReusableDraftAsync(
+            connection,
+            transaction: null,
+            parkingSessionId,
+            entitlementType,
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult> PersistAsync(
         OperatorConsoleStatutoryDiscountDraftPersistenceCommand command,
         CancellationToken cancellationToken)
@@ -48,7 +65,12 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
 
         try
         {
-            var existing = await FindReusableDraftAsync(connection, transaction, command, cancellationToken);
+            var existing = await FindReusableDraftAsync(
+                connection,
+                transaction,
+                command.ParkingSessionId,
+                command.EntitlementType,
+                cancellationToken);
             if (existing is not null)
             {
                 existing = await EnsureEvidenceMetadataAsync(connection, transaction, command, existing, cancellationToken);
@@ -81,7 +103,12 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         await connection.OpenAsync(cancellationToken);
 
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        var existing = await FindReusableDraftAsync(connection, transaction, command, cancellationToken);
+        var existing = await FindReusableDraftAsync(
+            connection,
+            transaction,
+            command.ParkingSessionId,
+            command.EntitlementType,
+            cancellationToken);
         if (existing is not null)
         {
             existing = await EnsureEvidenceMetadataAsync(connection, transaction, command, existing, cancellationToken);
@@ -98,7 +125,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
     private static async Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult?> FindReusableDraftAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction? transaction,
-        OperatorConsoleStatutoryDiscountDraftPersistenceCommand command,
+        Guid parkingSessionId,
+        string entitlementType,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -159,7 +187,15 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                     'stackingPolicy', 'STATUTORY_FIRST',
                     'requiresEvidence', p.requires_evidence_capture,
                     'resolvedAt', sdv.requested_at
-                )::text AS resolved_policy_snapshot_json
+                )::text AS resolved_policy_snapshot_json,
+                (
+                    SELECT der.discount_evidence_reference_id
+                    FROM discounts.discount_evidence_references AS der
+                    WHERE der.statutory_discount_validation_id = sdv.statutory_discount_validation_id
+                      AND der.purged_at IS NULL
+                    ORDER BY der.created_at DESC, der.discount_evidence_reference_id DESC
+                    LIMIT 1
+                ) AS evidence_reference_id
             FROM discounts.statutory_discount_validations AS sdv
             JOIN core.parking_sessions AS ps
               ON ps.parking_session_id = sdv.parking_session_id
@@ -181,8 +217,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             """;
 
         await using var npgsqlCommand = new NpgsqlCommand(sql, connection, transaction);
-        npgsqlCommand.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = command.ParkingSessionId;
-        npgsqlCommand.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = command.EntitlementType;
+        npgsqlCommand.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+        npgsqlCommand.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = entitlementType;
 
         await using var reader = await npgsqlCommand.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -197,8 +233,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             ReusedExistingDraft: true,
             EvidenceRequired: reader.GetBoolean(2),
             EvidenceReferenceCreated: false,
-            EvidenceReferenceId: null,
-            Policy: command.Policy);
+            EvidenceReferenceId: reader.IsDBNull(38) ? null : reader.GetGuid(38),
+            Policy: ReadPolicy(reader, startOrdinal: 3));
     }
 
     private static async Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult> InsertDraftAsync(
@@ -260,7 +296,14 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 @correlation_id,
                 @created_by_user_id
             )
-            RETURNING statutory_discount_validation_id, validation_status::text;
+            RETURNING
+                statutory_discount_validation_id,
+                validation_status::text,
+                jsonb_set(
+                    @resolved_policy_snapshot_json,
+                    '{resolvedAt}',
+                    to_jsonb(requested_at),
+                    true)::text AS resolved_policy_snapshot_json;
             """;
 
         await using var npgsqlCommand = new NpgsqlCommand(sql, connection, transaction);
@@ -280,6 +323,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             DbValue(policyAuthorityIds.LegacyPolicyReferenceId);
         npgsqlCommand.Parameters.Add("policy_version_id", NpgsqlDbType.Uuid).Value =
             DbValue(policyAuthorityIds.PolicyVersionId);
+        npgsqlCommand.Parameters.Add("resolved_policy_snapshot_json", NpgsqlDbType.Jsonb).Value =
+            command.Policy.PolicySnapshot.GetRawText();
         npgsqlCommand.Parameters.Add("requested_by_user_id", NpgsqlDbType.Uuid).Value = command.RequestedByUserId;
         npgsqlCommand.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = command.CorrelationId;
         npgsqlCommand.Parameters.Add("created_by_user_id", NpgsqlDbType.Uuid).Value = command.RequestedByUserId;
@@ -298,7 +343,10 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             EvidenceRequired: command.EvidenceRequired,
             EvidenceReferenceCreated: false,
             EvidenceReferenceId: null,
-            Policy: command.Policy);
+            Policy: command.Policy with
+            {
+                PolicySnapshot = JsonDocument.Parse(reader.GetString(2)).RootElement.Clone()
+            });
     }
 
     private static async Task<(Guid? LegacyPolicyReferenceId, Guid? PolicyVersionId)> ResolvePersistencePolicyAuthorityIdsAsync(

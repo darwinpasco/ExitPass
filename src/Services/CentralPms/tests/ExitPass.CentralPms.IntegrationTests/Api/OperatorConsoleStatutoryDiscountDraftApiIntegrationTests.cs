@@ -396,10 +396,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     [Fact]
     public async Task Draft_WhenDuplicateReplay_PreservesStoredPolicySnapshot()
     {
-        if (!await CanOpenDatabaseAsync())
-        {
-            return;
-        }
+        (await CanOpenDatabaseAsync()).Should().BeTrue(
+            "the duplicate-replay regression requires the assembly-owned disposable PostgreSQL database");
 
         await SeedManualFixtureAsync();
         await PrepareDraftPolicyFixtureAsync();
@@ -409,11 +407,15 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         var request = ManualFixtureRequest(evidenceCaptureRequested: false);
 
         using var firstResponse = await client.PostAsJsonAsync(Endpoint, request);
+        firstResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var first = await firstResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
         first.Should().NotBeNull();
         var firstStored = await ReadDraftPolicyContextAsync(first!.DraftId!.Value);
+        first.PolicySnapshot!.Value.GetProperty("resolvedAt").GetString()
+            .Should().Be(firstStored!.Snapshot.GetProperty("resolvedAt").GetString());
 
         using var secondResponse = await client.PostAsJsonAsync(Endpoint, request);
+        secondResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var second = await secondResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
         second.Should().NotBeNull();
         second!.ReusedExistingDraft.Should().BeTrue();
@@ -426,6 +428,13 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             .Should().Be(firstStored.Snapshot.GetProperty("resolvedAt").GetString());
         second.PolicySnapshot!.Value.GetProperty("policyCode").GetString()
             .Should().Be(firstStored.Snapshot.GetProperty("policyCode").GetString());
+        second.StatutoryDiscountPolicyId.Should().Be(first.StatutoryDiscountPolicyId);
+        second.PolicyResolutionBasis.Should().Be(first.PolicyResolutionBasis);
+
+        var activeDraftCount = await CountActiveDraftsAsync(request.ParkingSessionId, request.EntitlementType);
+        activeDraftCount.Should().Be(1);
+        var evidenceReferenceCount = await CountEvidenceReferencesAsync(first.DraftId.Value, "SENIOR_CITIZEN_ID");
+        evidenceReferenceCount.Should().Be(1);
     }
 
     /// <summary>

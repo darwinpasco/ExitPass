@@ -121,6 +121,34 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
         }
 
         var effectiveDate = DateOnly.FromDateTime(_clock.UtcNow.UtcDateTime);
+        var reusableDraft = await _draftWriter.FindReusableAsync(
+            command.ParkingSessionId,
+            entitlementType,
+            cancellationToken);
+
+        if (reusableDraft is not null)
+        {
+            var persistedPolicyReadiness = OperatorConsolePolicyReadinessClassifier.Evaluate(
+                new OperatorConsoleStatutoryDiscountPolicyResolutionReadResult(
+                    Resolved: reusableDraft.Policy is not null,
+                    reusableDraft.Policy,
+                    session.SiteId,
+                    session.SiteGroupId,
+                    reusableDraft.Policy?.JurisdictionId,
+                    IneligibilityReason: null,
+                    ErrorCode: null),
+                _environment,
+                effectiveDate,
+                evidenceRequiredByWorkflow: true);
+
+            return AcceptedResult(
+                command,
+                persistedEvaluation,
+                entitlementType,
+                reusableDraft,
+                persistedPolicyReadiness);
+        }
+
         var policyResolution = await _policyRepository.ResolveAsync(
             new OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest(
                 session.SiteId,
@@ -168,7 +196,21 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
                 command.EvidenceSizeBytes),
             cancellationToken);
 
-        return new OperatorConsoleStatutoryDiscountDraftResult(
+        return AcceptedResult(
+            command,
+            persistedEvaluation,
+            entitlementType,
+            draft,
+            readiness);
+    }
+
+    private static OperatorConsoleStatutoryDiscountDraftResult AcceptedResult(
+        OperatorConsoleStatutoryDiscountDraftCommand command,
+        OperatorConsoleAccessEvaluationResult persistedEvaluation,
+        string entitlementType,
+        OperatorConsoleStatutoryDiscountDraftPersistenceResult draft,
+        OperatorConsolePolicyReadinessEvaluation readiness) =>
+        new(
             persistedEvaluation.EvaluationId,
             AccessAllowed: true,
             persistedEvaluation.Decision,
@@ -193,7 +235,6 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             readiness.RequiresManualReview,
             readiness.IneligibilityReason,
             readiness.OperatorMessage);
-    }
 
     private static OperatorConsoleStatutoryDiscountDraftResult DeniedResult(
         OperatorConsoleStatutoryDiscountDraftCommand command,

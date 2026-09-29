@@ -166,8 +166,19 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
             .Returns(Session("ACTIVE"));
 
+        var persistedResolvedAt = "2026-05-29T08:00:00+00:00";
+        var persistedPolicy = Policy() with
+        {
+            PolicySnapshot = JsonSerializer.SerializeToElement(new
+            {
+                statutoryDiscountPolicyId = PolicyId,
+                policyCode = "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+                policyResolutionBasis = "NATIONAL_LAW_FALLBACK",
+                resolvedAt = persistedResolvedAt
+            })
+        };
         var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
-        writer.PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(), Arg.Any<CancellationToken>())
+        writer.FindReusableAsync(ParkingSessionId, "SENIOR_CITIZEN", Arg.Any<CancellationToken>())
             .Returns(new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
                 DraftId,
                 "REQUESTED",
@@ -176,9 +187,10 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
                 EvidenceRequired: true,
                 EvidenceReferenceCreated: false,
                 EvidenceReferenceId,
-                Policy()));
+                persistedPolicy));
 
-        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
+        var policyRepository = Substitute.For<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>();
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer, policyRepository);
 
         var result = await sut.DraftAsync(Command(), CancellationToken.None);
 
@@ -193,6 +205,13 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         result.EvidenceReferenceId.Should().Be(EvidenceReferenceId);
         result.ReusedExistingDraft.Should().BeTrue();
         result.Policy.Should().NotBeNull();
+        result.Policy!.StatutoryDiscountPolicyId.Should().Be(PolicyId);
+        result.Policy.PolicyCode.Should().Be("PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK");
+        result.Policy.PolicyResolutionBasis.Should().Be("NATIONAL_LAW_FALLBACK");
+        result.Policy.PolicySnapshot.GetProperty("resolvedAt").GetString().Should().Be(persistedResolvedAt);
+
+        await policyRepository.DidNotReceiveWithAnyArgs().ResolveAsync(default!, default);
+        await writer.DidNotReceiveWithAnyArgs().PersistAsync(default!, default);
     }
 
     /// <summary>
