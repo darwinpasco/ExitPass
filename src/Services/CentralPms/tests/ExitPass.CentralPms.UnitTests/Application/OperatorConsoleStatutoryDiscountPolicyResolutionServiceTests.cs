@@ -101,7 +101,7 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionServiceTests
         result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.SandboxOnly);
         result.RequiresManualReview.Should().BeTrue();
         result.PolicyReadinessReason.Should().Be(OperatorConsolePolicyReadinessClassifications.SandboxOnly);
-        result.OperatorMessage.Should().Contain("sandbox");
+        result.OperatorMessage.Should().Be("This statutory entitlement is not available for this Site.");
     }
 
     /// <summary>

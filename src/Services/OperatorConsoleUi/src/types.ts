@@ -70,12 +70,16 @@ export interface StatutoryDiscountDraftDetail extends StatutoryDiscountQueueItem
   originalTariffAmount: string;
   payableBasisPreview: string;
   currentPaymentStatus: string;
+  idDocumentType?: string;
   maskedIdReference: string;
   issuingAuthority: string;
   evidenceCaptured: boolean;
   evidenceRequiredSatisfied: boolean;
   evidenceCount: number;
+  latestEvidenceId?: string;
   latestEvidenceStatus?: string;
+  validatedAt?: string;
+  validatedByUserId?: string;
   requiredEvidenceTypes: string[];
   originalTariffSnapshotId?: string;
   payableBasisApplicationId?: string;
@@ -146,7 +150,9 @@ export interface CanonicalStatutoryReviewQueueItem {
   sourceChannel: string;
   siteId?: string;
   siteGroupId?: string;
+  siteName?: string;
   ticketReference?: string;
+  plateNumber?: string;
   entitlementType: string;
   commandStatus: string;
   decisionResultStatus: string;
@@ -300,6 +306,8 @@ export interface OperatorTicketLookupResult {
   plateLicense?: string;
   parkingInTime?: string;
   parkingDurationSeconds?: number;
+  salesInvoiceNumber?: string;
+  exitAuthorizationStatus?: string;
   feeMinorUnits?: number;
   currencyCode?: string;
   feeRuleType?: string;
@@ -308,6 +316,8 @@ export interface OperatorTicketLookupResult {
   paymentAttemptStatus?: string;
   paymentStatus?: string;
   paymentConfirmationStatus?: string;
+  amountPaidMinorUnits?: number;
+  paymentMethod?: string;
   vendorSystemCode?: string;
   vendorConfirmationCode?: string;
   vendorConfirmationStatus?: string | null;
@@ -322,6 +332,26 @@ export interface OperatorTicketLookupResult {
   message?: string;
 }
 
+export interface InvoiceCustomerInformation {
+  parkingSessionId: string;
+  hasCustomerInformation: boolean;
+  customerName?: string;
+  address?: string;
+  tin?: string;
+  businessStyle?: string;
+  rowVersion?: number;
+  updatedAt?: string;
+  fiscalSnapshotLocked: boolean;
+}
+
+export interface SaveInvoiceCustomerInformationInput {
+  customerName?: string;
+  address?: string;
+  tin?: string;
+  businessStyle?: string;
+  expectedVersion?: number;
+}
+
 export interface StatutoryDiscountDraftCreateInput {
   parkingSessionId: string;
   ticketReference?: string;
@@ -332,6 +362,7 @@ export interface StatutoryDiscountDraftCreateInput {
   idDocumentType: string;
   issuingAuthority: string;
   maskedIdReference: string;
+  idPhoto: File;
   evidenceCaptureRequested: boolean;
   operatorAttestation: boolean;
   attestationNotes?: string;

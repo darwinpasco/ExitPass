@@ -73,6 +73,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
     [InlineData("/v1/ops/operator-console/statutory-discounts/reviews/{statutoryDiscountDecisionCommandId:guid}", "GET", "OperatorConsoleStatutoryDiscountReviewDetailRead")]
     [InlineData("/v1/ops/operator-console/statutory-discounts/reviews/{statutoryDiscountDecisionCommandId:guid}/decision", "POST", "OperatorConsoleStatutoryDiscountDecisionMutate")]
     [InlineData(DraftEndpoint, "POST", "OperatorConsoleStatutoryDiscountDraftCreate")]
+    [InlineData("/v1/ops/operator-console/statutory-discounts/parking-sessions/{parkingSessionId:guid}/id-photo", "POST", "OperatorConsoleStatutoryDiscountDraftCreate")]
     [InlineData("/v1/ops/operator-console/statutory-discounts/{draftId:guid}/decision", "POST", "OperatorConsoleStatutoryDiscountDecisionMutate")]
     [InlineData("/v1/ops/operator-console/statutory-discounts/{draftId:guid}/evidence", "POST", "OperatorConsoleStatutoryDiscountEvidenceCapture")]
     [InlineData("/v1/ops/operator-console/statutory-discounts/{draftId:guid}/evidence", "GET", "OperatorConsoleStatutoryDiscountEvidenceView")]
@@ -441,11 +442,11 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
             SiteId,
             SiteGroupId,
             ShiftId,
-            "SENIOR_CITIZEN_ID",
-            "OPERATOR_CONFIRMED",
-            FileName: null,
-            ContentType: null,
-            SizeBytes: null,
+            "SUPPORTING_DOCUMENT",
+            "UPLOAD",
+            FileName: "supporting-document.jpg",
+            ContentType: "image/jpeg",
+            SizeBytes: 1024,
             StorageReference: null,
             ReferenceNumber: null,
             Notes: "RBAC contract test.",
@@ -706,7 +707,9 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                         "WEBPAY",
                         SiteId,
                         SiteGroupId,
+                        "RBAC Site",
                         "RBAC-TICKET-001",
+                        null,
                         "SENIOR_CITIZEN",
                         "PENDING_REVIEW",
                         "PENDING_REVIEW",
@@ -842,6 +845,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                         EvidenceRequired: true,
                         EvidenceRequiredSatisfied: false,
                         EvidenceCount: 0,
+                        LatestEvidenceId: null,
                         LatestEvidenceStatus: null,
                         "NATIONAL_LAW_FALLBACK",
                         "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
@@ -851,6 +855,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                         "PHP",
                         DateTimeOffset.Parse("2026-07-12T09:00:00+08:00"),
                         UserId,
+                        "RBAC Operator",
                         BlockedReason: null)
                 ],
                 query.Page,
@@ -884,11 +889,13 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                 EvidenceCaptured: false,
                 EvidenceRequiredSatisfied: false,
                 EvidenceCount: 0,
+                LatestEvidenceId: null,
                 LatestEvidenceStatus: null,
                 ["SENIOR_CITIZEN_ID"],
                 DateTimeOffset.Parse("2026-07-12T09:00:00+08:00"),
                 ValidatedAt: null,
                 UserId,
+                RequestedByDisplayName: "RBAC Operator",
                 ValidatedByUserId: null,
                 DecisionReasonCode: null,
                 FailureReasonCode: null,
@@ -921,6 +928,11 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                 "PHP",
                 ["Draft requested."]));
         }
+
+        public Task<OperatorConsoleStatutoryDiscountDraftDetailResult?> GetCurrentDraftAsync(
+            OperatorConsoleCurrentStatutoryDiscountDraftQuery query,
+            CancellationToken cancellationToken) =>
+            GetDraftAsync(new OperatorConsoleStatutoryDiscountDraftDetailQuery(DraftId, query.CorrelationId), cancellationToken);
 
         public Task<OperatorConsoleStatutoryDiscountAuditReportResult> ListAuditReportAsync(
             OperatorConsoleStatutoryDiscountAuditReportQuery query,

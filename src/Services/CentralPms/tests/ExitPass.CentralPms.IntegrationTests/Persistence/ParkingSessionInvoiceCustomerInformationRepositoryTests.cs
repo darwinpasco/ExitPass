@@ -257,6 +257,34 @@ public sealed class ParkingSessionInvoiceCustomerInformationRepositoryTests(
     }
 
     [Fact]
+    public async Task PaymentAttemptSnapshot_IsCapturedWhenParkingSessionCustomerInformationWasNotSupplied()
+    {
+        var context = PaymentTestContext.Create(nameof(PaymentAttemptSnapshot_IsCapturedWhenParkingSessionCustomerInformationWasNotSupplied));
+        var userId = Guid.NewGuid();
+        await SeedAsync(context, userId);
+        try
+        {
+            var attempt = await CreateAttemptAsync(database.ConnectionString, context, $"attempt-{Guid.NewGuid():N}", "invoice-information-test");
+            var confirmation = await RecordPaymentConfirmationAsync(database.ConnectionString, attempt.PaymentAttemptId, $"confirmation-{Guid.NewGuid():N}", "invoice-information-test", context.CorrelationId);
+            await InsertPaymentAttemptSnapshotAsync(context, attempt.PaymentAttemptId);
+
+            var reference = await new PostgresFiscalIssuanceReferenceRepository(database.ConnectionString).CreateAsync(
+                PendingFiscalRequest(context, attempt, confirmation!), CancellationToken.None);
+
+            reference.InvoiceCustomerInformationSnapshot.Should().NotBeNull();
+            reference.InvoiceCustomerInformationSnapshot!.SourceRowVersion.Should().BeNull();
+            reference.InvoiceCustomerInformationSnapshot.CustomerName.Should().Be("Stale PaymentAttempt Name");
+            reference.InvoiceCustomerInformationSnapshot.Address.Should().Be("Stale Address");
+            reference.InvoiceCustomerInformationSnapshot.Tin.Should().Be("000");
+            reference.InvoiceCustomerInformationSnapshot.BusinessStyle.Should().Be("Stale Style");
+        }
+        finally
+        {
+            await CleanupAsync(context, userId);
+        }
+    }
+
+    [Fact]
     public async Task PaymentAttemptSnapshot_DoesNotOverrideParkingSessionFiscalSnapshot()
     {
         var context = PaymentTestContext.Create(nameof(PaymentAttemptSnapshot_DoesNotOverrideParkingSessionFiscalSnapshot));

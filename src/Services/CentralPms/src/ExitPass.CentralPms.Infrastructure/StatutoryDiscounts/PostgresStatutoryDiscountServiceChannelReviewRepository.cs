@@ -116,7 +116,9 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 r.source_channel,
                 r.site_id,
                 r.site_group_id,
+                site.site_name,
                 r.ticket_reference,
+                r.plate_number,
                 r.entitlement_type,
                 d.command_status,
                 d.decision_result_status,
@@ -138,6 +140,8 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             FROM operator_console.statutory_discount_service_channel_reviews AS r
             JOIN discounts.statutory_discount_decision_commands AS d
               ON d.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
+            LEFT JOIN sites.sites AS site
+              ON site.site_id = r.site_id
             LEFT JOIN discounts.statutory_discount_decision_policy_authorities AS dpa
               ON dpa.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
             WHERE r.source_channel IN ('WEBPAY', 'ASSISTED_PAYMENT_TERMINAL')
@@ -600,7 +604,9 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             reader.GetString(reader.GetOrdinal("source_channel")),
             GetNullableGuid(reader, "site_id"),
             GetNullableGuid(reader, "site_group_id"),
+            GetNullableString(reader, "site_name"),
             GetNullableString(reader, "ticket_reference"),
+            GetNullableString(reader, "plate_number"),
             reader.GetString(reader.GetOrdinal("entitlement_type")),
             reader.GetString(reader.GetOrdinal("command_status")),
             reader.GetString(reader.GetOrdinal("decision_result_status")),

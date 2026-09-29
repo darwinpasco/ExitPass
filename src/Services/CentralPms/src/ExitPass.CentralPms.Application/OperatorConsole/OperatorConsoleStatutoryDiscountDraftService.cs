@@ -100,6 +100,17 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
                 "SESSION_NOT_FOUND");
         }
 
+        if (string.Equals(session.PaymentConfirmationStatus, "RECORDED", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(session.ExitAuthorizationStatus, "ISSUED", StringComparison.OrdinalIgnoreCase))
+        {
+            return NotAcceptedResult(
+                command,
+                persistedEvaluation,
+                "PAYMENT_COMPLETED_AND_EXIT_AUTHORIZATION_ISSUED",
+                "STATUTORY_DISCOUNT_REQUEST_COMPLETED_TRANSACTION",
+                operatorMessage: "Statutory discount request is no longer available because payment has been completed and exit authorization has been issued.");
+        }
+
         if (!string.Equals(session.SessionStatus, "ACTIVE", StringComparison.Ordinal))
         {
             return NotAcceptedResult(
@@ -150,7 +161,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
                 NormalizeOptional(command.AttestationNotes),
                 command.UserId,
                 command.CorrelationId,
-                readiness.Policy),
+                readiness.Policy,
+                command.EvidenceStorageReference,
+                command.EvidenceHash,
+                command.EvidenceContentType,
+                command.EvidenceSizeBytes),
             cancellationToken);
 
         return new OperatorConsoleStatutoryDiscountDraftResult(
@@ -214,7 +229,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
         OperatorConsoleAccessEvaluationResult persistedEvaluation,
         string ineligibilityReason,
         string errorCode,
-        OperatorConsolePolicyReadinessEvaluation? readiness = null) =>
+        OperatorConsolePolicyReadinessEvaluation? readiness = null,
+        string? operatorMessage = null) =>
         new(
             persistedEvaluation.EvaluationId,
             AccessAllowed: true,
@@ -239,7 +255,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             readiness?.Classification ?? OperatorConsolePolicyReadinessClassifications.NotReady,
             readiness?.RequiresManualReview ?? false,
             readiness?.IneligibilityReason ?? ineligibilityReason,
-            readiness?.OperatorMessage ?? "The statutory discount draft request was not accepted.");
+            operatorMessage ?? readiness?.OperatorMessage ?? "The statutory discount draft request was not accepted.");
 
     private static string Validate(OperatorConsoleStatutoryDiscountDraftCommand command)
     {

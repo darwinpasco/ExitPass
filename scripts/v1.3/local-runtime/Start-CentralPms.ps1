@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch] $SmokeTest,
+    [switch] $SkipEvidenceGovernanceInitialization,
     [string] $OperatorConsolePublicOrigin = 'https://operator-console-exitpass.ngrok.dev'
 )
 
@@ -185,10 +186,15 @@ if ($null -eq $evidenceRuntime -or
     -not (Test-Path -LiteralPath $evidenceRuntime.MinioRootCertificatePath -PathType Leaf)) {
     throw 'Persistent PITX statutory evidence services did not provide the required private Central PMS configuration.'
 }
-& $evidenceGovernanceInitializerPath `
-    -DatabaseContainer $databaseContainer `
-    -DatabaseName $databaseName `
-    -DatabaseUser $databaseUser
+if ($SkipEvidenceGovernanceInitialization) {
+    Write-Host 'Statutory evidence governance initialization: SKIPPED by explicit runtime option'
+}
+else {
+    & $evidenceGovernanceInitializerPath `
+        -DatabaseContainer $databaseContainer `
+        -DatabaseName $databaseName `
+        -DatabaseUser $databaseUser
+}
 
 try {
     Invoke-CheckedCommand docker.exe @(

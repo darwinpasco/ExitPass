@@ -104,6 +104,7 @@ ConfigureOpenTelemetry(builder, otlpEndpoint, serviceVersion);
 ConfigureHealthChecks(builder);
 ConfigureInternalSecurity(builder);
 ConfigureHumanAuthentication(builder, mainDatabaseConnectionString);
+ConfigureOperatorConsoleStatutoryIdPhoto(builder);
 ConfigureApplicationServices(builder, mainDatabaseConnectionString);
 builder.Services.AddCentralPmsAuditEventClient(builder.Configuration);
 ConfigureOperatorConsoleLocalCors(builder);
@@ -418,6 +419,15 @@ static void ConfigureHumanAuthentication(WebApplicationBuilder builder, string m
         services => new HumanAuthenticationHealthCheck(mainDatabaseConnectionString, services.GetRequiredService<ITotpSecretProtector>()),
         failureStatus: HealthStatus.Unhealthy,
         tags: ["ready"]));
+}
+
+static void ConfigureOperatorConsoleStatutoryIdPhoto(WebApplicationBuilder builder)
+{
+    builder.Services.AddOptions<OperatorConsoleStatutoryIdPhotoOptions>()
+        .Bind(builder.Configuration.GetSection(OperatorConsoleStatutoryIdPhotoOptions.SectionName))
+        .Validate(options => options.ReceiptLifetimeMinutes is > 0 and <= 60, "Operator Console statutory ID photo receipt lifetime must be between 1 and 60 minutes.")
+        .ValidateOnStart();
+    builder.Services.AddScoped<IOperatorConsoleStatutoryIdPhotoService, OperatorConsoleStatutoryIdPhotoService>();
 }
 
 static void ConfigureApplicationServices(

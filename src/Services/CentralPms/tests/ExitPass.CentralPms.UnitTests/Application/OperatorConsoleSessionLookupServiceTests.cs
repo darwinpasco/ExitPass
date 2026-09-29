@@ -1,4 +1,6 @@
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Domain.Sessions;
 using FluentAssertions;
 using NSubstitute;
 using Xunit;
@@ -18,6 +20,7 @@ public sealed class OperatorConsoleSessionLookupServiceTests
     private static readonly Guid ShiftId = Guid.Parse("45000000-0000-0000-0000-000000000006");
     private static readonly Guid ParkingSessionId = Guid.Parse("45000000-0000-0000-0000-000000000007");
     private static readonly Guid CorrelationId = Guid.Parse("45000000-0000-0000-0000-000000000008");
+    private static readonly Guid VendorSystemId = Guid.Parse("45000000-0000-0000-0000-000000000010");
     private static readonly DateTimeOffset EntryTime = DateTimeOffset.Parse("2026-05-29T04:00:00Z");
 
     /// <summary>
@@ -96,6 +99,61 @@ public sealed class OperatorConsoleSessionLookupServiceTests
         result.Alerts.Should().ContainSingle().Which.Should().Be("VENDOR_PROJECTION_ONLY");
     }
 
+    [Fact]
+    public async Task LookupAsync_WhenProjectionCanBeResolved_BindsCanonicalParkingSessionInternally()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var request = call.Arg<OperatorConsoleSessionLookupReadRequest>();
+                return request.LookupMode == "PARKING_SESSION_ID" ? Session("ACTIVE") : ProjectionSession(VendorSystemId);
+            });
+        var resolver = Substitute.For<IResolveVendorParkingUseCase>();
+        var canonical = ParkingSession.Rehydrate(
+            ParkingSessionId,
+            SiteGroupId.ToString("D"),
+            SiteId.ToString("D"),
+            "HIKCENTRAL",
+            "VENDOR-SESSION-001",
+            "TICKET",
+            "ABC-1234",
+            "TICKET-001",
+            EntryTime,
+            ParkingSessionStatus.PaymentRequired);
+        resolver.ExecuteAsync(Arg.Any<ResolveVendorParkingCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new ResolveVendorParkingResult(
+                ResolveVendorParkingOutcome.Resolved,
+                canonical,
+                TariffSnapshot: null,
+                ErrorCode: null,
+                Retryable: false,
+                CorrelationId: CorrelationId,
+                VendorSystemId: VendorSystemId.ToString("D"),
+                SiteGroupName: "PITX",
+                SiteName: "PITX Level 3",
+                PaymentStatus: "UNPAID",
+                EffectivePayableBasis: null,
+                ProjectionFallback: null));
+
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, resolver);
+
+        var result = await sut.LookupAsync(
+            Command(parkingSessionId: null, lookupMode: "TICKET_REFERENCE"),
+            CancellationToken.None);
+
+        result.Session.Should().NotBeNull();
+        result.Session!.ParkingSessionId.Should().Be(ParkingSessionId);
+        result.Session.SessionSource.Should().Be("CORE_PARKING_SESSION");
+        result.SessionEligible.Should().BeTrue();
+        await resolver.Received(1).ExecuteAsync(
+            Arg.Is<ResolveVendorParkingCommand>(command =>
+                command.SiteId == SiteId.ToString("D") &&
+                command.VendorSystemId == VendorSystemId.ToString("D") &&
+                command.TicketReference == "TICKET-001"),
+            Arg.Any<CancellationToken>());
+    }
+
     /// <summary>
     /// Verifies not-found lookup returns a deterministic non-eligible result.
     /// </summary>
@@ -168,7 +226,8 @@ public sealed class OperatorConsoleSessionLookupServiceTests
 
     private static OperatorConsoleSessionLookupService CreateSut(
         OperatorConsoleAccessEvaluationResult accessResult,
-        IOperatorConsoleSessionLookupReadRepository sessionRepository)
+        IOperatorConsoleSessionLookupReadRepository sessionRepository,
+        IResolveVendorParkingUseCase? vendorParkingResolver = null)
     {
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
@@ -178,7 +237,7 @@ public sealed class OperatorConsoleSessionLookupServiceTests
         writer.PersistAsync(Arg.Any<OperatorConsoleAccessEvaluationResult>(), Arg.Any<CancellationToken>())
             .Returns(accessResult with { EvaluationId = EvaluationId, Persisted = true });
 
-        return new OperatorConsoleSessionLookupService(accessService, writer, sessionRepository);
+        return new OperatorConsoleSessionLookupService(accessService, writer, sessionRepository, vendorParkingResolver);
     }
 
     private static OperatorConsoleSessionLookupCommand Command(
@@ -255,7 +314,7 @@ public sealed class OperatorConsoleSessionLookupServiceTests
             DiscountStatus: "NOT_APPLIED",
             ExitAuthorizationStatus: null);
 
-    private static OperatorConsoleSessionReadModel ProjectionSession() =>
+    private static OperatorConsoleSessionReadModel ProjectionSession(Guid? vendorSystemId = null) =>
         new(
             ParkingSessionId: null,
             "TICKET-001",
@@ -274,5 +333,6 @@ public sealed class OperatorConsoleSessionLookupServiceTests
             VendorSystemCode: "HIKCENTRAL",
             ProjectionStatus: "ACTIVE",
             ProjectionSourceEventAt: EntryTime,
-            ProjectionLastRefreshedAt: EntryTime.AddMinutes(1));
+            ProjectionLastRefreshedAt: EntryTime.AddMinutes(1),
+            VendorSystemId: vendorSystemId);
 }

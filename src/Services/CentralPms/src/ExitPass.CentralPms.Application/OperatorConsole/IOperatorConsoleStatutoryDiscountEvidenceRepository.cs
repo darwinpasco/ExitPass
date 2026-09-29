@@ -26,5 +26,11 @@ public interface IOperatorConsoleStatutoryDiscountEvidenceRepository
         Guid draftId,
         Guid correlationId,
         CancellationToken cancellationToken);
+
+    /// <summary>Gets one restricted object target without returning its locator to the browser.</summary>
+    Task<OperatorConsoleStatutoryDiscountEvidencePreviewTarget?> GetPreviewTargetAsync(
+        Guid draftId,
+        Guid evidenceId,
+        CancellationToken cancellationToken);
 }
 

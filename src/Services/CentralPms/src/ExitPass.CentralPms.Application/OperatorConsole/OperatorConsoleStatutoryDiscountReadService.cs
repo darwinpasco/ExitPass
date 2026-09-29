@@ -65,6 +65,20 @@ public sealed class OperatorConsoleStatutoryDiscountReadService : IOperatorConso
     }
 
     /// <inheritdoc />
+    public Task<OperatorConsoleStatutoryDiscountDraftDetailResult?> GetCurrentDraftAsync(
+        OperatorConsoleCurrentStatutoryDiscountDraftQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        if (query.ParkingSessionId == Guid.Empty)
+        {
+            throw new ArgumentException("ParkingSessionId is required.", nameof(query.ParkingSessionId));
+        }
+
+        return _repository.GetCurrentDraftAsync(query, cancellationToken);
+    }
+
+    /// <inheritdoc />
     public Task<OperatorConsoleStatutoryDiscountAuditReportResult> ListAuditReportAsync(
         OperatorConsoleStatutoryDiscountAuditReportQuery query,
         CancellationToken cancellationToken)

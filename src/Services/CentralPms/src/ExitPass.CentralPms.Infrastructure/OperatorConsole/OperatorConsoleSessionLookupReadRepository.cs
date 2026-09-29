@@ -77,7 +77,19 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                     WHEN active_tariff.statutory_discount_amount > 0 OR active_tariff.coupon_discount_amount > 0 THEN 'APPLIED'
                     ELSE 'NOT_APPLIED'
                 END AS discount_status,
-                latest_attempt.attempt_status::text AS payment_status,
+                latest_attempt.attempt_status::text AS payment_attempt_status,
+                CASE
+                    WHEN latest_confirmation.confirmation_status::text = 'RECORDED' THEN 'Paid'
+                    WHEN latest_attempt.attempt_status IS NULL THEN 'Not Started'
+                    ELSE latest_attempt.attempt_status::text
+                END AS payment_status,
+                COALESCE(latest_confirmation.payment_method_code, latest_attempt.payment_method_code) AS payment_method_code,
+                latest_confirmation.confirmation_status::text AS payment_confirmation_status,
+                ROUND(latest_confirmation.confirmed_amount * 100)::bigint AS amount_paid_minor_units,
+                latest_fiscal.fiscal_document_number,
+                GREATEST(0, EXTRACT(EPOCH FROM (
+                    COALESCE(latest_confirmation.confirmed_at, now()) - COALESCE(ps.entry_at, ps.created_at)
+                )))::bigint AS parking_duration_seconds,
                 latest_exit.authorization_status::text AS exit_authorization_status,
                 vendor.vendor_code AS vendor_system_code
             FROM core.parking_sessions AS ps
@@ -97,12 +109,34 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                 LIMIT 1
             ) AS active_tariff ON TRUE
             LEFT JOIN LATERAL (
-                SELECT attempt_status
+                SELECT payment_attempt_id, attempt_status, payment_method_code
                 FROM core.payment_attempts
                 WHERE parking_session_id = ps.parking_session_id
                 ORDER BY requested_at DESC, payment_attempt_id DESC
                 LIMIT 1
             ) AS latest_attempt ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT confirmation.confirmation_status,
+                       confirmation.confirmed_amount,
+                       confirmation.confirmed_at,
+                       confirmed_attempt.payment_method_code
+                FROM core.payment_confirmations AS confirmation
+                INNER JOIN core.payment_attempts AS confirmed_attempt
+                    ON confirmed_attempt.payment_attempt_id = confirmation.payment_attempt_id
+                WHERE confirmed_attempt.parking_session_id = ps.parking_session_id
+                  AND confirmation.confirmation_status::text = 'RECORDED'
+                ORDER BY confirmation.confirmed_at DESC, confirmation.payment_confirmation_id DESC
+                LIMIT 1
+            ) AS latest_confirmation ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT fiscal_document_number
+                FROM core.fiscal_issuance_references
+                WHERE parking_session_id = ps.parking_session_id
+                  AND is_active = true
+                  AND fiscal_document_number IS NOT NULL
+                ORDER BY first_recorded_at DESC, fiscal_issuance_reference_id DESC
+                LIMIT 1
+            ) AS latest_fiscal ON TRUE
             LEFT JOIN LATERAL (
                 SELECT authorization_status
                 FROM core.exit_authorizations
@@ -157,7 +191,13 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
             GetNullableString(reader, "exit_authorization_status"),
             reader.GetString("site_name"),
             SessionSource: "CORE_PARKING_SESSION",
-            VendorSystemCode: GetNullableString(reader, "vendor_system_code"));
+            VendorSystemCode: GetNullableString(reader, "vendor_system_code"),
+            SalesInvoiceNumber: GetNullableString(reader, "fiscal_document_number"),
+            ParkingDurationSeconds: GetNullableInt64(reader, "parking_duration_seconds"),
+            PaymentAttemptStatus: GetNullableString(reader, "payment_attempt_status"),
+            PaymentConfirmationStatus: GetNullableString(reader, "payment_confirmation_status"),
+            AmountPaidMinorUnits: GetNullableInt64(reader, "amount_paid_minor_units"),
+            PaymentMethod: GetNullableString(reader, "payment_method_code"));
     }
 
     private static async Task<OperatorConsoleSessionReadModel?> FindProjectionAsync(
@@ -175,6 +215,7 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                 COALESCE(projection.enter_time, projection.first_seen_at) AS entry_time,
                 projection.projection_status,
                 vendor.vendor_code AS vendor_system_code,
+                projection.vendor_system_id,
                 projection.source_event_at,
                 projection.last_refreshed_at
             FROM sessions.vendor_session_projections AS projection
@@ -231,6 +272,7 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
             SiteName: reader.GetString("site_name"),
             SessionSource: "VENDOR_SESSION_PROJECTION",
             VendorSystemCode: reader.GetString("vendor_system_code"),
+            VendorSystemId: reader.GetGuid("vendor_system_id"),
             ProjectionStatus: reader.GetString("projection_status"),
             ProjectionSourceEventAt: GetNullableTimestamp(reader, "source_event_at"),
             ProjectionLastRefreshedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("last_refreshed_at")));
@@ -274,6 +316,12 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
     {
         var ordinal = reader.GetOrdinal(columnName);
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    }
+
+    private static long? GetNullableInt64(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal) ? null : reader.GetInt64(ordinal);
     }
 
     private static DateTimeOffset? GetNullableTimestamp(NpgsqlDataReader reader, string columnName)

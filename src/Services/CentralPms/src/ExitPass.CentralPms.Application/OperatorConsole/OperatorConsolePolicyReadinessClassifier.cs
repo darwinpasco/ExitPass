@@ -104,7 +104,7 @@ public static class OperatorConsolePolicyReadinessClassifier
             return OperatorConsolePolicyReadinessClassifications.MissingSiteMapping;
         }
 
-        if (HasDevelopmentPlaceholderReference(policy) || MissingRequiredLegalReference(policy))
+        if (HasDevelopmentPlaceholderReference(policy))
         {
             return OperatorConsolePolicyReadinessClassifications.ConfiguredButUnverified;
         }
@@ -189,22 +189,6 @@ public static class OperatorConsolePolicyReadinessClassifier
         !string.IsNullOrWhiteSpace(value) &&
         value.Trim().StartsWith("DEV_PLACEHOLDER", StringComparison.OrdinalIgnoreCase);
 
-    private static bool MissingRequiredLegalReference(OperatorConsoleResolvedStatutoryDiscountPolicy policy)
-    {
-        if (string.Equals(policy.PolicyLevel, "NATIONAL_LAW", StringComparison.Ordinal))
-        {
-            return policy.EntitlementType switch
-            {
-                "SENIOR_CITIZEN" => !string.Equals(policy.NationalLawReference, "RA 9994", StringComparison.OrdinalIgnoreCase),
-                "PWD" => !string.Equals(policy.NationalLawReference, "RA 10754", StringComparison.OrdinalIgnoreCase),
-                _ => true
-            };
-        }
-
-        return string.IsNullOrWhiteSpace(policy.OrdinanceReference) &&
-               string.IsNullOrWhiteSpace(policy.LegalBasisReference);
-    }
-
     private static bool RequiresScopedMapping(OperatorConsoleResolvedStatutoryDiscountPolicy policy) =>
         policy.PolicyLevel is "LOCAL_ORDINANCE" or "SITE_POLICY" or "OPERATIONAL_POLICY";
 
@@ -218,7 +202,8 @@ public static class OperatorConsolePolicyReadinessClassifier
         return verificationStatus.Trim().ToUpperInvariant() switch
         {
             "ACTIVE" => VerificationReadiness.CompatibilityActive,
-            "ACTIVE_APPROVED" or "VERIFIED_OFFICIAL" => VerificationReadiness.VerifiedProduction,
+            "ACTIVE_APPROVED" or "VERIFIED_OFFICIAL" or "VERIFIED_ACTIVE_OPERATIONAL" =>
+                VerificationReadiness.VerifiedProduction,
             "APPROVED_FOR_PILOT" => VerificationReadiness.PilotApproved,
             "VERIFIED_SECONDARY" or "LEAD_UNVERIFIED" or "PROPOSED_ONLY" or "REJECTED" =>
                 VerificationReadiness.Unverified,
@@ -268,21 +253,21 @@ public static class OperatorConsolePolicyReadinessClassifier
         classification switch
         {
             OperatorConsolePolicyReadinessClassifications.ReadyVerified =>
-                "The statutory discount policy is verified for production use.",
+                "This statutory entitlement is available for this Site.",
             OperatorConsolePolicyReadinessClassifications.ReadyWithManualReview =>
-                "The statutory discount policy can be used only with manual review until production verification metadata is complete.",
+                "This statutory entitlement requires supervisor review.",
             OperatorConsolePolicyReadinessClassifications.ConfiguredButUnverified =>
-                "The statutory discount policy is configured but not verified for production use.",
+                "This statutory entitlement is not available for this Site.",
             OperatorConsolePolicyReadinessClassifications.MissingRequiredPolicy =>
-                "No required statutory discount production policy is configured for this entitlement.",
+                "This statutory entitlement is not available for this Site.",
             OperatorConsolePolicyReadinessClassifications.MissingSiteMapping =>
-                "The statutory discount policy cannot be mapped to the site or jurisdiction.",
+                "This statutory entitlement is not available for this Site.",
             OperatorConsolePolicyReadinessClassifications.MissingEvidenceRule =>
-                "The statutory discount policy is missing the evidence rule required by the Operator Console workflow.",
+                "This statutory entitlement is not available for this Site.",
             OperatorConsolePolicyReadinessClassifications.ExpiredOrInactive =>
-                "The statutory discount policy is inactive, expired, or not yet effective.",
+                "This statutory entitlement is not available for this Site.",
             OperatorConsolePolicyReadinessClassifications.SandboxOnly =>
-                "The statutory discount policy is sandbox or development only and cannot be used as production authority.",
-            _ => "The statutory discount policy is not ready for production use."
+                "This statutory entitlement is not available for this Site.",
+            _ => "This statutory entitlement is not available for this Site."
         };
 }

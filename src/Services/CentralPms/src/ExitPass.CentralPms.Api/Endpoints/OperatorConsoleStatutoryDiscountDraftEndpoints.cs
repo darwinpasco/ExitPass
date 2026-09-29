@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Security.Claims;
 using ExitPass.CentralPms.Api.Security;
+using ExitPass.CentralPms.Api.Services;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.Application.StatutoryEvidence;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
@@ -18,7 +20,7 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 ///
 /// ExitPass v1.3 Invariants Enforced:
 /// - This endpoint persists Operator Console access evaluation evidence before draft creation.
-/// - This endpoint may persist a privacy-minimized statutory discount validation draft and metadata-only evidence reference.
+/// - This endpoint may persist a privacy-minimized statutory discount validation draft and a restricted evidence reference/hash.
 /// - This endpoint may persist a review decision status transition on an existing validation draft.
 /// - This endpoint never mutates PaymentAttempt, PaymentConfirmation,
 ///   ExitAuthorization, provider outcome, gate consume, coupon application, settlement truth,
@@ -73,6 +75,18 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
             .WithSummary("Get Operator Console statutory discount validation draft detail")
             .WithDescription("Returns read-only detail for one Operator Console statutory discount validation draft using the stored policy snapshot and payable-basis metadata. This endpoint does not resolve policies, apply discounts, upload evidence, or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
+
+        group.MapGet("/statutory-discounts/parking-sessions/{parkingSessionId:guid}/current", GetCurrentDraftAsync)
+            .WithName("GetCurrentOperatorConsoleStatutoryDiscountDraft")
+            .WithTags("OperatorConsole")
+            .Produces<OperatorConsoleStatutoryDiscountDraftDetailResponse>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata("OperatorConsoleStatutoryDiscountSessionLookup"))
+            .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
+            .WithSummary("Get the current statutory request for a parking session")
+            .WithDescription("Returns the current Site-scoped statutory request for the resolved parking session, if one exists. It exposes only masked request facts and never returns raw statutory identifiers or evidence bytes.");
 
         group.MapGet("/audit/statutory-discounts", ListAuditReportAsync)
             .WithName("ListOperatorConsoleStatutoryDiscountAuditReport")
@@ -134,8 +148,25 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithMetadata(new ReconciliationPolicyMetadata(DraftCreatePolicy))
+            .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
             .WithSummary("Draft Operator Console statutory discount validation")
-            .WithDescription("Validates and drafts a privacy-minimized statutory discount validation request after evaluating and persisting Operator Console access. When evidence is requested, this endpoint may persist metadata-only evidence reference records without image upload or raw evidence storage. This endpoint does not apply the discount or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
+            .WithDescription("Validates and drafts a privacy-minimized statutory discount validation request after evaluating and persisting Operator Console access. Senior Citizen and PWD requests require a short-lived protected ID-photo upload receipt. Raw image bytes remain in restricted evidence storage and never enter transactional JSON or PostgreSQL. This endpoint does not apply the discount or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
+
+        group.MapPost("/statutory-discounts/parking-sessions/{parkingSessionId:guid}/id-photo", UploadStatutoryIdPhotoAsync)
+            .DisableAntiforgery()
+            .WithName("UploadOperatorConsoleStatutoryIdPhoto")
+            .WithTags("OperatorConsole")
+            .Accepts<Stream>("image/jpeg", "image/png")
+            .Produces<OperatorConsoleStatutoryIdPhotoUploadResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+            .Produces<ErrorResponse>(StatusCodes.Status503ServiceUnavailable)
+            .WithMetadata(new ReconciliationPolicyMetadata(DraftCreatePolicy))
+            .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
+            .WithSummary("Upload required Operator Console statutory ID photo")
+            .WithDescription("Streams one bounded JPEG or PNG to the existing restricted evidence store and returns a short-lived protected receipt. Image bytes, object keys, hashes, and the receipt are not logged or placed in URLs.");
 
         group.MapPost("/statutory-discounts/{draftId:guid}/decision", DecideAsync)
             .WithName("DecideOperatorConsoleStatutoryDiscount")
@@ -159,8 +190,8 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithMetadata(new ReconciliationPolicyMetadata(EvidenceCapturePolicy))
-            .WithSummary("Capture Operator Console statutory discount evidence metadata")
-            .WithDescription("Captures metadata-only statutory discount evidence for an existing Operator Console validation draft. This endpoint stores no raw evidence bytes, performs no OCR or automated ID verification, and only updates evidence metadata and evidence satisfaction state.");
+            .WithSummary("Capture non-ID Operator Console statutory discount evidence metadata")
+            .WithDescription("Captures metadata-only non-ID statutory discount evidence for an existing Operator Console validation draft. Senior Citizen and PWD ID evidence must use the protected photo-upload flow. This endpoint stores no raw evidence bytes, performs no OCR or automated ID verification, and only updates evidence metadata and evidence satisfaction state.");
 
         group.MapGet("/statutory-discounts/{draftId:guid}/evidence", ListEvidenceAsync)
             .WithName("ListOperatorConsoleStatutoryDiscountEvidence")
@@ -173,6 +204,21 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
             .WithSummary("List Operator Console statutory discount evidence metadata")
             .WithDescription("Lists metadata-only statutory discount evidence records for an Operator Console validation draft. This endpoint does not return raw evidence, OCR data, raw ID numbers, or document verification results.");
+
+        group.MapPost("/statutory-discounts/{draftId:guid}/evidence/preview", PreviewSubmittedEvidenceAsync)
+            .WithName("PreviewSubmittedOperatorConsoleStatutoryEvidence")
+            .WithTags("OperatorConsole")
+            .Accepts<OperatorConsoleSubmittedEvidencePreviewRequest>("application/json")
+            .Produces(StatusCodes.Status200OK, contentType: "image/jpeg", additionalContentTypes: ["image/png"])
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+            .Produces<ErrorResponse>(StatusCodes.Status503ServiceUnavailable)
+            .WithMetadata(new ReconciliationPolicyMetadata("OperatorConsoleStatutoryDiscountSessionLookup"))
+            .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
+            .WithSummary("Preview the submitted statutory ID image")
+            .WithDescription("Reauthorizes the request creator or an authorized statutory reviewer and streams the current restricted JPEG or PNG inline. Object-store locators, credentials, checksums, and permanent URLs are never returned.");
 
         return app;
     }
@@ -329,6 +375,63 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         }
     }
 
+    private static async Task<IResult> GetCurrentDraftAsync(
+        Guid parkingSessionId,
+        Guid? correlationId,
+        HttpRequest httpRequest,
+        IOperatorConsoleStatutoryDiscountReadService service,
+        IOperatorConsoleAccessEvaluationService accessEvaluationService,
+        IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
+        ILoggerFactory loggerFactory)
+    {
+        var effectiveCorrelationId = correlationId.GetValueOrDefault(Guid.NewGuid());
+        using var activity = ReadActivitySource.StartActivity("HTTP GetCurrentOperatorConsoleStatutoryDiscountDraft", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraftEndpoints");
+
+        try
+        {
+            var identity = OperatorConsoleIdentityContext.Resolve(httpRequest, fallbackCorrelationId: effectiveCorrelationId);
+            effectiveCorrelationId = identity.CorrelationId;
+            var access = await EvaluateAndPersistAccessAsync(
+                identity,
+                OperatorConsoleActionCodes.SessionLookup,
+                parkingSessionId,
+                $"operator-console-current-statutory-request-{parkingSessionId:N}-{effectiveCorrelationId:N}",
+                accessEvaluationService,
+                accessEvaluationWriter,
+                httpRequest);
+            if (!access.Allowed)
+            {
+                return AccessDenied(access, effectiveCorrelationId);
+            }
+
+            var result = await service.GetCurrentDraftAsync(
+                new OperatorConsoleCurrentStatutoryDiscountDraftQuery(parkingSessionId, effectiveCorrelationId),
+                httpRequest.HttpContext.RequestAborted);
+            if (result is null || (access.SiteContext.SiteId.HasValue && access.SiteContext.SiteId != result.SiteId))
+            {
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                return Results.NoContent();
+            }
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return Results.Ok(ToContract(result));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_READ_REQUEST", ex.Message, effectiveCorrelationId));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            logger.LogError(ex, "Current Operator Console statutory request read failed.");
+            return Results.Json(
+                BuildError("OPERATOR_CONSOLE_STATUTORY_DISCOUNT_READ_FAILED", "The statutory discount request could not be loaded.", effectiveCorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
     private static async Task<IResult> ListAuditReportAsync(
         Guid? siteId,
         Guid? siteGroupId,
@@ -424,6 +527,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         OperatorConsoleStatutoryDiscountDraftRequest request,
         HttpRequest httpRequest,
         IOperatorConsoleStatutoryDiscountDraftService service,
+        IOperatorConsoleStatutoryIdPhotoService idPhotoService,
         ILoggerFactory loggerFactory)
     {
         using var activity = ActivitySource.StartActivity("HTTP DraftOperatorConsoleStatutoryDiscount", ActivityKind.Server);
@@ -445,6 +549,28 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 request.SiteId,
                 request.SiteGroupId,
                 request.CorrelationId);
+
+            if (!identity.SiteId.HasValue)
+            {
+                return Results.BadRequest(BuildError(
+                    "STATUTORY_ID_PHOTO_REQUIRED",
+                    "A successfully uploaded statutory ID photo is required before submitting the request.",
+                    identity.CorrelationId));
+            }
+
+            var photo = idPhotoService.ResolveReceipt(
+                request.EvidenceUploadReceipt,
+                identity.UserId,
+                identity.SiteId.Value,
+                request.ParkingSessionId,
+                request.EntitlementType);
+            if (photo is null)
+            {
+                return Results.BadRequest(BuildError(
+                    "STATUTORY_ID_PHOTO_REQUIRED",
+                    "A successfully uploaded statutory ID photo is required before submitting the request.",
+                    identity.CorrelationId));
+            }
 
             var result = await service.DraftAsync(
                 new OperatorConsoleStatutoryDiscountDraftCommand(
@@ -468,7 +594,11 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                     request.AttestationNotes,
                     request.ReasonCode,
                     request.IdempotencyKey,
-                    identity.CorrelationId),
+                    identity.CorrelationId,
+                    photo.StorageReference,
+                    photo.ChecksumSha256,
+                    photo.ContentType,
+                    photo.ContentLength),
                 httpRequest.HttpContext.RequestAborted);
 
             activity?.SetTag("operator_access_evaluation_id", result.AccessEvaluationId);
@@ -486,6 +616,10 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 result.DraftPersisted);
 
             var response = ToContract(result);
+            if (result.ErrorCode == "STATUTORY_DISCOUNT_REQUEST_COMPLETED_TRANSACTION")
+            {
+                return Results.Json(response, statusCode: StatusCodes.Status409Conflict);
+            }
             return result.AccessAllowed && result.ErrorCode == "SESSION_NOT_FOUND"
                 ? Results.NotFound(response)
                 : Results.Ok(response);
@@ -527,6 +661,64 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         }
     }
 
+    private static async Task<IResult> UploadStatutoryIdPhotoAsync(
+        Guid parkingSessionId,
+        HttpRequest httpRequest,
+        IOperatorConsoleStatutoryIdPhotoService service)
+    {
+        var correlationId = Guid.TryParse(httpRequest.Headers["X-Correlation-Id"].FirstOrDefault(), out var parsed)
+            ? parsed
+            : Guid.NewGuid();
+
+        try
+        {
+            var identity = OperatorConsoleIdentityContext.Resolve(httpRequest, fallbackCorrelationId: correlationId);
+            var entitlementType = httpRequest.Headers["X-ExitPass-Statutory-Entitlement"].FirstOrDefault() ?? string.Empty;
+            var outcome = await service.UploadAsync(
+                new OperatorConsoleStatutoryIdPhotoUploadCommand(
+                    identity.UserId,
+                    identity.OperatorDeviceBindingId,
+                    identity.SiteId,
+                    identity.SiteGroupId,
+                    identity.OperatorShiftId,
+                    parkingSessionId,
+                    entitlementType,
+                    httpRequest.ContentType ?? string.Empty,
+                    httpRequest.ContentLength,
+                    identity.CorrelationId),
+                httpRequest.Body,
+                httpRequest.HttpContext.RequestAborted);
+
+            if (outcome.Accepted)
+            {
+                return Results.Ok(new OperatorConsoleStatutoryIdPhotoUploadResponse(
+                    true,
+                    outcome.UploadReceipt,
+                    outcome.ExpiresAt,
+                    null,
+                    outcome.Message,
+                    false,
+                    outcome.CorrelationId));
+            }
+
+            var statusCode = outcome.ErrorCode switch
+            {
+                "ACCESS_DENIED" => StatusCodes.Status403Forbidden,
+                "SESSION_NOT_FOUND" => StatusCodes.Status404NotFound,
+                "STATUTORY_DISCOUNT_REQUEST_COMPLETED_TRANSACTION" => StatusCodes.Status409Conflict,
+                "STATUTORY_ID_IMAGE_STORAGE_UNAVAILABLE" => StatusCodes.Status503ServiceUnavailable,
+                _ => StatusCodes.Status400BadRequest
+            };
+            return Results.Json(
+                BuildError(outcome.ErrorCode ?? "STATUTORY_ID_PHOTO_UPLOAD_FAILED", outcome.Message, outcome.CorrelationId),
+                statusCode: statusCode);
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_STATUTORY_ID_PHOTO_REQUEST", ex.Message, correlationId));
+        }
+    }
+
     private static ErrorResponse BuildError(string errorCode, string message, Guid correlationId) =>
         new()
         {
@@ -551,6 +743,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 item.EvidenceRequired,
                 item.EvidenceRequiredSatisfied,
                 item.EvidenceCount,
+                item.LatestEvidenceId,
                 item.LatestEvidenceStatus,
                 item.PolicyResolutionBasis,
                 item.PolicyCode,
@@ -563,6 +756,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                     item.PayableAmountMinorUnits),
                 item.RequestedAt,
                 item.RequestedByUserId,
+                item.RequestedByDisplayName,
                 item.BlockedReason)).ToArray(),
             result.Page,
             result.PageSize,
@@ -581,15 +775,20 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.SiteGroupId,
             result.EntitlementType,
             result.ValidationStatus,
+            result.IdDocumentType,
+            result.IssuingAuthority,
+            result.MaskedIdReference,
             result.EvidenceRequired,
             result.EvidenceCaptured,
             result.EvidenceRequiredSatisfied,
             result.EvidenceCount,
+            result.LatestEvidenceId,
             result.LatestEvidenceStatus,
             result.RequiredEvidenceTypes,
             result.RequestedAt,
             result.ValidatedAt,
             result.RequestedByUserId,
+            result.RequestedByDisplayName,
             result.ValidatedByUserId,
             result.DecisionReasonCode,
             result.FailureReasonCode,
@@ -939,7 +1138,9 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 item.SourceChannel,
                 item.SiteId,
                 item.SiteGroupId,
+                item.SiteName,
                 item.TicketReference,
+                item.PlateNumber,
                 item.EntitlementType,
                 item.CommandStatus,
                 item.DecisionResultStatus,
@@ -1254,6 +1455,15 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 
         try
         {
+            if (string.Equals(request.EvidenceType, "SENIOR_CITIZEN_ID", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(request.EvidenceType, "PWD_ID", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.BadRequest(BuildError(
+                    "STATUTORY_ID_PHOTO_REQUIRED",
+                    "Senior Citizen and PWD evidence must be supplied through the protected ID photo upload.",
+                    request.CorrelationId));
+            }
+
             var identity = OperatorConsoleIdentityContext.Resolve(
                 httpRequest,
                 request.UserId,
@@ -1420,6 +1630,113 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 item.VerificationStatus,
                 item.CorrelationId)).ToArray(),
             result.CorrelationId);
+
+    private static async Task<IResult> PreviewSubmittedEvidenceAsync(
+        Guid draftId,
+        OperatorConsoleSubmittedEvidencePreviewRequest body,
+        HttpRequest httpRequest,
+        IOperatorConsoleStatutoryDiscountEvidenceRepository repository,
+        IOperatorConsoleAccessEvaluationService accessEvaluationService,
+        IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
+        IStatutoryEvidenceProtectedObjectStorageAdapter storage,
+        IOptions<StatutoryEvidenceUploadOptions> uploadOptions,
+        IOptions<CentralPmsRbacOptions> rbacOptions,
+        IAntiforgery antiforgery)
+    {
+        var correlationId = Guid.TryParse(httpRequest.Headers["X-Correlation-Id"].FirstOrDefault(), out var parsed)
+            ? parsed
+            : Guid.NewGuid();
+        try
+        {
+            if (string.Equals(httpRequest.HttpContext.User.Identity?.AuthenticationType, HumanSessionAuthenticationHandler.SchemeName, StringComparison.Ordinal))
+            {
+                await antiforgery.ValidateRequestAsync(httpRequest.HttpContext).ConfigureAwait(false);
+            }
+
+            var identity = OperatorConsoleIdentityContext.Resolve(httpRequest, fallbackCorrelationId: correlationId);
+            correlationId = identity.CorrelationId;
+            var target = await repository.GetPreviewTargetAsync(draftId, body.EvidenceId, httpRequest.HttpContext.RequestAborted).ConfigureAwait(false);
+            if (target is null)
+            {
+                return Results.NotFound(BuildError("STATUTORY_EVIDENCE_PREVIEW_NOT_FOUND", "The submitted ID image was not found.", correlationId));
+            }
+
+            var creator = target.RequestedByUserId == identity.UserId;
+            var reviewer = ReadPermissions(httpRequest.HttpContext, rbacOptions.Value)
+                .Contains("statutory-discounts.evidence.review.view");
+            if (!creator && !reviewer)
+            {
+                return Results.Json(
+                    BuildError("STATUTORY_EVIDENCE_PREVIEW_FORBIDDEN", "The submitted ID image is not available for your current access.", correlationId),
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            var actionCode = creator
+                ? OperatorConsoleActionCodes.CreateStatutoryDiscountDraft
+                : OperatorConsoleActionCodes.ReviewEvidence;
+            var access = await EvaluateAndPersistAccessAsync(
+                identity,
+                actionCode,
+                target.ParkingSessionId,
+                $"operator-console-submitted-evidence-preview-{draftId:N}-{body.EvidenceId:N}-{correlationId:N}",
+                accessEvaluationService,
+                accessEvaluationWriter,
+                httpRequest,
+                target.SiteId);
+            if (!access.Allowed || access.SiteContext.SiteId != target.SiteId)
+            {
+                return Results.Json(
+                    BuildError("STATUTORY_EVIDENCE_PREVIEW_FORBIDDEN", "The submitted ID image is not available for your current access.", correlationId),
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            var options = uploadOptions.Value;
+            if (string.IsNullOrWhiteSpace(options.BucketName) || options.MaxContentLengthBytes <= 0)
+            {
+                return Results.Json(
+                    BuildError("STATUTORY_EVIDENCE_PREVIEW_UNAVAILABLE", "The submitted ID image is temporarily unavailable.", correlationId),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            var content = await storage.OpenObjectContentStreamAsync(
+                new StatutoryEvidenceObjectContentRequest(options.BucketName, target.StorageReference, options.MaxContentLengthBytes),
+                httpRequest.HttpContext.RequestAborted).ConfigureAwait(false);
+            var valid = string.Equals(target.CaptureStatus, "CAPTURED", StringComparison.Ordinal) &&
+                StatutoryEvidenceUploadConstants.SupportedContentTypes.Contains(content.ContentType) &&
+                !string.IsNullOrWhiteSpace(content.ChecksumSha256) &&
+                string.Equals(target.ChecksumSha256, content.ChecksumSha256, StringComparison.OrdinalIgnoreCase);
+            if (!valid)
+            {
+                await content.DisposeAsync().ConfigureAwait(false);
+                return Results.Json(
+                    BuildError("STATUTORY_EVIDENCE_PREVIEW_STALE", "The submitted ID image is not available for preview.", correlationId),
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+
+            var response = httpRequest.HttpContext.Response;
+            response.Headers.CacheControl = "no-store, private, max-age=0";
+            response.Headers.Pragma = "no-cache";
+            response.Headers.ContentDisposition = "inline";
+            response.Headers.XContentTypeOptions = "nosniff";
+            response.Headers["Referrer-Policy"] = "no-referrer";
+            response.RegisterForDisposeAsync(content);
+            return Results.Stream(content.Content, content.ContentType, enableRangeProcessing: false);
+        }
+        catch (AntiforgeryValidationException)
+        {
+            return Results.BadRequest(BuildError("CSRF_VALIDATION_FAILED", "The secure evidence-preview request could not be validated.", correlationId));
+        }
+        catch (InvalidOperationException)
+        {
+            return Results.Json(
+                BuildError("STATUTORY_EVIDENCE_PREVIEW_UNAVAILABLE", "The submitted ID image is temporarily unavailable.", correlationId),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(BuildError("INVALID_STATUTORY_EVIDENCE_PREVIEW_REQUEST", ex.Message, correlationId));
+        }
+    }
 
     private static async Task<OperatorConsoleAccessEvaluationResult> EvaluateAndPersistAccessAsync(
         OperatorConsoleIdentityContext identity,

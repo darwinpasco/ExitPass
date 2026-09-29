@@ -1023,8 +1023,29 @@ dd {
 }
 
 .draftStartForm .checkboxField,
-.draftStartForm .actionBar {
+.draftStartForm .actionBar,
+.draftStartForm .statutoryIdPhotoField {
   grid-column: 1 / -1;
+}
+
+.statutoryIdPhotoField {
+  display: grid;
+  gap: 8px;
+}
+
+.statutoryIdPhotoPreview {
+  align-items: start;
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.statutoryIdPhotoPreview img {
+  border: 1px solid #ccd7df;
+  border-radius: 8px;
+  max-height: 180px;
+  max-width: min(100%, 280px);
+  object-fit: contain;
 }
 
 .lookupGuardrail {
@@ -1682,4 +1703,6 @@ dd {
 .zConfirmation { border: 2px solid #a11b1b; background: #fff1f1; padding: 1rem; border-radius: .6rem; }
 .dangerButton { background: #a11b1b; color: white; }
 .primaryButton { display: inline-flex; align-items: center; padding: .6rem .8rem; background: #173f6b; color: #fff; border-radius: .35rem; text-decoration: none; }
+.submittedEvidencePreview { border-top: 1px solid #d9e3e8; margin-top: 1rem; padding-top: 1rem; }
+.submittedEvidenceImage { display: block; height: auto; max-height: 32rem; max-width: 100%; object-fit: contain; }
 @media (max-width: 720px) { .periodCard { grid-template-columns: 1fr; } .readingTitle, .fiscalReporting .reportFilters { display: grid; } .fiscalReporting .reportFilters label { min-width: 0; } }

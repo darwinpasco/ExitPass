@@ -68,6 +68,11 @@ public static class ApprovedIdentityRoleCatalog
         "statutory-discounts.decision.reject"
     };
 
+    private static readonly HashSet<string> OperatorConsoleStatutorySupervisorPermissions = new(CodeComparer)
+    {
+        "statutory-discounts.evidence.review.view"
+    };
+
     public static IReadOnlyList<ApprovedIdentityRolePolicy> Policies { get; } =
         PolicyByCode.Values.ToArray();
 
@@ -102,13 +107,16 @@ public static class ApprovedIdentityRoleCatalog
         policy!.AllowedAssignmentScopes.Contains(scopeType, CodeComparer);
 
     /// <summary>
-    /// Returns false for statutory supervisor permissions on every audience except Management Platform.
+    /// Returns false for statutory supervisor permissions outside their explicitly approved application audience.
+    /// Evidence review is the single narrow permission shared with Operator Console for Site-scoped supervisor review.
     /// Other permissions are outside this narrow surface-boundary rule and are left to their policy mapping.
     /// </summary>
     public static bool IsPermissionEligibleForApplication(string? permissionCode, string? audience) =>
         permissionCode is not null &&
         (!ManagementPlatformOnlyStatutorySupervisorPermissions.Contains(permissionCode) ||
-         string.Equals(audience, ManagementPlatformAudience, StringComparison.Ordinal));
+         string.Equals(audience, ManagementPlatformAudience, StringComparison.Ordinal) ||
+         (string.Equals(audience, OperatorConsoleAudience, StringComparison.Ordinal) &&
+          OperatorConsoleStatutorySupervisorPermissions.Contains(permissionCode)));
 
     public static bool IsManagementPlatformStatutoryReviewPermission(string? permissionCode) =>
         permissionCode is not null && ManagementPlatformStatutoryReviewPermissions.Contains(permissionCode);

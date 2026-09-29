@@ -233,6 +233,15 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionReadReposito
                     p.site_id = @site_id
                     OR p.site_group_id = @site_group_id
                     OR p.jurisdiction_code = @lgu_code
+                    OR EXISTS (
+                        SELECT 1
+                        FROM discounts.statutory_parking_site_policy_coverage AS coverage
+                        WHERE coverage.site_id = @site_id
+                          AND coverage.entitlement_type = p.entitlement_type
+                          AND coverage.statutory_discount_policy_registry_id = p.statutory_discount_policy_registry_id
+                          AND coverage.coverage_available
+                          AND coverage.policy_status = 'ACTIVE'::discounts.discount_policy_status_enum
+                    )
                   )
               AND p.entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
               AND p.policy_status = 'ACTIVE'::discounts.discount_policy_status_enum

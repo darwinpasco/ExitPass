@@ -61,6 +61,29 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewServiceTests
     }
 
     [Fact]
+    public async Task ReadAsync_AuthorizedDirectSiteReviewerWithoutDeviceShiftOrSiteGroup_ReturnsEvidence()
+    {
+        var fixture = CreateFixture(Record(), access: AccessResult() with
+        {
+            DeviceTrust = new OperatorConsoleDeviceTrustResult(null, "NOT_FOUND", "UNKNOWN", false),
+            ShiftContext = new OperatorConsoleShiftContextResult(null, "NOT_FOUND", false),
+            SiteContext = new OperatorConsoleSiteContextResult(SiteId, null, Assigned: true)
+        });
+        var context = AccessContext() with
+        {
+            OperatorDeviceBindingId = null,
+            OperatorShiftId = null,
+            SiteGroupId = null
+        };
+
+        var result = await fixture.Sut.ReadAsync(DecisionId, context, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Items.Should().ContainSingle(item => item.PreviewPermitted);
+        await fixture.Repository.Received(1).ReadAsync(DecisionId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task ReadAsync_CrossSite_IsAntiEnumeratedAndAuditedWithoutTargetIds()
     {
         var fixture = CreateFixture(Record() with { SiteId = Guid.NewGuid() });

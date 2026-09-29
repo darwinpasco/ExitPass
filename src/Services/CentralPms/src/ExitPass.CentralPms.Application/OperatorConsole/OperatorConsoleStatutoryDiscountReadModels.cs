@@ -13,7 +13,8 @@ public sealed record OperatorConsoleStatutoryDiscountDraftQueueQuery(
     DateTimeOffset? CreatedTo,
     int Page,
     int PageSize,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    Guid? ParkingSessionId = null);
 
 /// <summary>
 /// Queue result for Operator Console statutory discount validation drafts.
@@ -40,6 +41,7 @@ public sealed record OperatorConsoleStatutoryDiscountDraftQueueItemResult(
     bool EvidenceRequired,
     bool EvidenceRequiredSatisfied,
     int EvidenceCount,
+    Guid? LatestEvidenceId,
     string? LatestEvidenceStatus,
     string? PolicyResolutionBasis,
     string? PolicyCode,
@@ -49,12 +51,18 @@ public sealed record OperatorConsoleStatutoryDiscountDraftQueueItemResult(
     string? CurrencyCode,
     DateTimeOffset RequestedAt,
     Guid? RequestedByUserId,
+    string? RequestedByDisplayName,
     string? BlockedReason);
 
 /// <summary>
 /// Query for a single Operator Console statutory discount validation draft.
 /// </summary>
 public sealed record OperatorConsoleStatutoryDiscountDraftDetailQuery(Guid DraftId, Guid CorrelationId);
+
+/// <summary>
+/// Query for the current Operator Console statutory request associated with one parking session.
+/// </summary>
+public sealed record OperatorConsoleCurrentStatutoryDiscountDraftQuery(Guid ParkingSessionId, Guid CorrelationId);
 
 /// <summary>
 /// Detail result for an Operator Console statutory discount validation draft.
@@ -80,11 +88,13 @@ public sealed record OperatorConsoleStatutoryDiscountDraftDetailResult(
     bool EvidenceCaptured,
     bool EvidenceRequiredSatisfied,
     int EvidenceCount,
+    Guid? LatestEvidenceId,
     string? LatestEvidenceStatus,
     IReadOnlyList<string> RequiredEvidenceTypes,
     DateTimeOffset RequestedAt,
     DateTimeOffset? ValidatedAt,
     Guid? RequestedByUserId,
+    string? RequestedByDisplayName,
     Guid? ValidatedByUserId,
     string? DecisionReasonCode,
     string? FailureReasonCode,

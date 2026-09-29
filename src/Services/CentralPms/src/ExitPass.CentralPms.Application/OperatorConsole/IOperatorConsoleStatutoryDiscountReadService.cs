@@ -20,6 +20,13 @@ public interface IOperatorConsoleStatutoryDiscountReadService
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Gets the newest current statutory request for one parking session.
+    /// </summary>
+    Task<OperatorConsoleStatutoryDiscountDraftDetailResult?> GetCurrentDraftAsync(
+        OperatorConsoleCurrentStatutoryDiscountDraftQuery query,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Lists read-only audit/reporting rows for statutory discount validation.
     /// </summary>
     Task<OperatorConsoleStatutoryDiscountAuditReportResult> ListAuditReportAsync(

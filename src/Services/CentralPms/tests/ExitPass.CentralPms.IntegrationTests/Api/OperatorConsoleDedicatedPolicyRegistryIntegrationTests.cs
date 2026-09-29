@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
+using ExitPass.CentralPms.Api.Services;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.Infrastructure.OperatorConsole;
@@ -23,6 +24,7 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
 {
     private const string ResolveEndpoint = "/v1/ops/operator-console/statutory-discounts/resolve-policy";
     private const string DraftEndpoint = "/v1/ops/operator-console/statutory-discounts/draft";
+    private const string ProtectedPhotoReceipt = "dedicated-policy-protected-photo-receipt";
     private const string FixtureLguCode = "PH-INT-DR-258";
     private static readonly Guid FixtureUserId = Guid.Parse("77000000-0000-0000-0000-000000000010");
     private static readonly Guid FixtureDeviceBindingId = Guid.Parse("77000000-0000-0000-0000-000000000030");
@@ -463,7 +465,8 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
             AttestationNotes: "Dedicated registry integration test attestation.",
             ReasonCode: "DEDICATED_REGISTRY_TEST",
             $"operator-console-dedicated-draft-{Guid.NewGuid():N}",
-            Guid.NewGuid());
+            Guid.NewGuid(),
+            EvidenceUploadReceipt: ProtectedPhotoReceipt);
 
     private static CustomWebApplicationFactory CreateProductionFactory() =>
         new CustomWebApplicationFactory()
@@ -471,7 +474,36 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
             {
                 services.RemoveAll<OperatorConsolePolicyReadinessEnvironment>();
                 services.AddSingleton(new OperatorConsolePolicyReadinessEnvironment("Production"));
+                services.RemoveAll<IOperatorConsoleStatutoryIdPhotoService>();
+                services.AddSingleton<IOperatorConsoleStatutoryIdPhotoService>(new FakeStatutoryIdPhotoService());
             });
+
+    private sealed class FakeStatutoryIdPhotoService : IOperatorConsoleStatutoryIdPhotoService
+    {
+        public Task<OperatorConsoleStatutoryIdPhotoUploadOutcome> UploadAsync(
+            OperatorConsoleStatutoryIdPhotoUploadCommand command,
+            Stream content,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The policy integration test consumes an already-issued protected receipt.");
+
+        public OperatorConsoleStatutoryIdPhotoReceipt? ResolveReceipt(
+            string? receipt,
+            Guid expectedUserId,
+            Guid expectedSiteId,
+            Guid expectedParkingSessionId,
+            string expectedEntitlementType) =>
+            receipt == ProtectedPhotoReceipt
+                ? new OperatorConsoleStatutoryIdPhotoReceipt(
+                    expectedUserId,
+                    expectedSiteId,
+                    expectedParkingSessionId,
+                    expectedEntitlementType,
+                    $"test/operator-console/statutory-id/{expectedSiteId:N}/{expectedParkingSessionId:N}/photo.jpg",
+                    new string('A', 64),
+                    "image/jpeg",
+                    1024)
+                : null;
+    }
 
     private static async Task PrepareBaseFixtureAsync()
     {

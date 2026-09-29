@@ -87,7 +87,6 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [Theory]
     [InlineData("statutory-discounts.review.queue.read")]
     [InlineData("statutory-discounts.review.detail.read")]
-    [InlineData("statutory-discounts.evidence.review.view")]
     [InlineData("statutory-discounts.decision.review")]
     [InlineData("statutory-discounts.decision.approve")]
     [InlineData("statutory-discounts.decision.reject")]
@@ -96,6 +95,16 @@ public sealed class ApprovedIdentityRoleCatalogTests
     {
         ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "MANAGEMENT_PLATFORM").Should().BeTrue();
         ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "OPERATOR_CONSOLE").Should().BeFalse();
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "APT").Should().BeFalse();
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "NATIVE_PARKING_APP").Should().BeFalse();
+    }
+
+    [Fact]
+    public void EvidenceReviewPermission_IsLimitedToManagementPlatformAndOperatorConsole()
+    {
+        const string permission = "statutory-discounts.evidence.review.view";
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "MANAGEMENT_PLATFORM").Should().BeTrue();
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "OPERATOR_CONSOLE").Should().BeTrue();
         ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "APT").Should().BeFalse();
         ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "NATIVE_PARKING_APP").Should().BeFalse();
     }

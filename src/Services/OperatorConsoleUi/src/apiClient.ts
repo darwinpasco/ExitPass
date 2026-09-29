@@ -15,9 +15,11 @@ import type {
   FiscalVoidActionAuditReportResponse,
   FiscalStatusViewAuditReportQuery,
   FiscalStatusViewAuditReportResponse,
+  InvoiceCustomerInformation,
   OperatorConsoleApiError,
   OperatorTicketLookupInput,
   OperatorTicketLookupResult,
+  SaveInvoiceCustomerInformationInput,
   ProductionPolicyImportDryRunInput,
   ProductionPolicyImportDryRunResult,
   ProductionPolicyImportReviewDecisionInput,
@@ -71,6 +73,11 @@ export interface OperatorConsoleApiClient {
   canManageShifts(): boolean;
   evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
   lookupSessionByTicket(input: OperatorTicketLookupInput): Promise<OperatorTicketLookupResult>;
+  getInvoiceCustomerInformation?(parkingSessionId: string): Promise<InvoiceCustomerInformation>;
+  saveInvoiceCustomerInformation?(
+    parkingSessionId: string,
+    input: SaveInvoiceCustomerInformationInput
+  ): Promise<InvoiceCustomerInformation>;
   getFiscalIssuanceStatus(fiscalIssuanceReferenceId: string): Promise<FiscalIssuanceStatus>;
   lookupFiscalIssuanceStatus(query: string): Promise<FiscalIssuanceStatus>;
   listFiscalVoidActionAuditReport(input?: FiscalVoidActionAuditReportQuery): Promise<FiscalVoidActionAuditReportResponse>;
@@ -82,7 +89,13 @@ export interface OperatorConsoleApiClient {
   getCanonicalStatutoryReview(decisionId: string, signal?: AbortSignal): Promise<CanonicalStatutoryReviewDetail>;
   submitCanonicalStatutoryReviewDecision(input: CanonicalStatutoryReviewDecisionInput): Promise<CanonicalStatutoryReviewDecisionResult>;
   getStatutoryDiscountDraft(draftId: string): Promise<StatutoryDiscountDraftDetail>;
+  getCurrentStatutoryDiscountDraft(parkingSessionId: string): Promise<StatutoryDiscountDraftDetail | null>;
   listStatutoryDiscountEvidence(draftId: string): Promise<StatutoryDiscountEvidenceList>;
+  getSubmittedStatutoryEvidencePreview(
+    draftId: string,
+    evidenceId: string,
+    signal?: AbortSignal
+  ): Promise<StatutoryEvidencePreview>;
   getStatutoryEvidenceReview(decisionId: string, signal?: AbortSignal): Promise<StatutoryEvidenceReview>;
   getStatutoryEvidencePreview(
     decisionId: string,
@@ -123,6 +136,7 @@ interface QueueItemDto {
   evidenceRequired: boolean;
   evidenceRequiredSatisfied?: boolean | null;
   evidenceCount?: number | null;
+  latestEvidenceId?: string | null;
   latestEvidenceStatus?: string | null;
   registrySource?: string | null;
   policyResolutionBasis?: string | null;
@@ -141,12 +155,16 @@ interface QueueItemDto {
   currencyCode?: string | null;
   requestedAt: string;
   requestedByUserId?: string | null;
+  requestedByDisplayName?: string | null;
   blockedReason?: string | null;
 }
 
 interface DetailDto extends QueueItemDto {
   statutoryDiscountDecisionCommandId?: string | null;
   siteGroupId: string;
+  idDocumentType?: string | null;
+  issuingAuthority?: string | null;
+  maskedIdReference?: string | null;
   evidenceCaptured: boolean;
   requiredEvidenceTypes?: string[] | null;
   validatedAt?: string | null;
@@ -321,6 +339,16 @@ interface EvidenceCaptureResponseDto {
   errorCode?: string | null;
 }
 
+interface StatutoryIdPhotoUploadResponseDto {
+  accepted: boolean;
+  uploadReceipt?: string | null;
+  expiresAt?: string | null;
+  errorCode?: string | null;
+  message: string;
+  retryable: boolean;
+  correlationId: string;
+}
+
 interface AuditReportItemDto {
   statutoryDiscountValidationId: string;
   draftId: string;
@@ -460,6 +488,7 @@ interface OperatorTicketLookupResponseDto {
   currentPayableAmountMinorUnits?: number | null;
   parkingInTime?: string | null;
   parkingDurationSeconds?: number | null;
+  salesInvoiceNumber?: string | null;
   feeMinorUnits?: number | null;
   currencyCode?: string | null;
   feeRuleType?: string | null;
@@ -468,6 +497,8 @@ interface OperatorTicketLookupResponseDto {
   paymentAttemptStatus?: string | null;
   paymentStatus?: string | null;
   paymentConfirmationStatus?: string | null;
+  amountPaidMinorUnits?: number | null;
+  paymentMethod?: string | null;
   discountStatus?: string | null;
   exitAuthorizationStatus?: string | null;
   alerts?: string[] | null;
@@ -716,6 +747,50 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
       return parseTicketLookupResponse(response);
     },
 
+    async getInvoiceCustomerInformation(parkingSessionId) {
+      const read = async () => {
+        const response = await fetch(
+          `${baseUrl}/v1/ops/operator-console/sessions/${encodeURIComponent(parkingSessionId)}/invoice-customer-information`,
+          {
+            cache: "no-store",
+            headers: operatorConsoleHeaders(newCorrelationId())
+          }
+        );
+        return parseInvoiceCustomerInformationResponse(response, parkingSessionId);
+      };
+
+      try {
+        return await read();
+      } catch (error) {
+        if (isApiError(error) && error.errorCode !== "CUSTOMER_INFORMATION_RESPONSE_INVALID") {
+          throw error;
+        }
+        return read();
+      }
+    },
+
+    async saveInvoiceCustomerInformation(parkingSessionId, input) {
+      const csrfToken = requireCsrfToken(options.csrfToken);
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/sessions/${encodeURIComponent(parkingSessionId)}/invoice-customer-information`,
+        {
+          method: "PUT",
+          headers: {
+            ...operatorConsoleHeaders(newCorrelationId(), { json: true }),
+            "X-CSRF-Token": csrfToken
+          },
+          body: JSON.stringify({
+            customerName: input.customerName ?? null,
+            address: input.address ?? null,
+            tin: input.tin ?? null,
+            businessStyle: input.businessStyle ?? null,
+            expectedVersion: input.expectedVersion ?? null
+          })
+        }
+      );
+      return parseInvoiceCustomerInformationResponse(response, parkingSessionId);
+    },
+
     async getFiscalIssuanceStatus(fiscalIssuanceReferenceId) {
       const correlationId = newCorrelationId();
       const response = await fetch(
@@ -805,6 +880,23 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
 
     async createStatutoryDiscountDraft(input) {
       const correlationId = newCorrelationId();
+      const photoResponse = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/parking-sessions/${encodeURIComponent(input.parkingSessionId)}/id-photo`,
+        {
+          method: "POST",
+          headers: {
+            ...operatorConsoleHeaders(correlationId),
+            "Content-Type": input.idPhoto.type,
+            "X-ExitPass-Statutory-Entitlement": input.entitlementType
+          },
+          body: input.idPhoto
+        }
+      );
+      const uploadedPhoto = await parseResponse<StatutoryIdPhotoUploadResponseDto>(photoResponse);
+      if (!uploadedPhoto.accepted || !uploadedPhoto.uploadReceipt) {
+        throw new Error(uploadedPhoto.message || "The required ID photo could not be uploaded.");
+      }
+
       const response = await fetch(`${baseUrl}/v1/ops/operator-console/statutory-discounts/draft`, {
         method: "POST",
         headers: operatorConsoleHeaders(correlationId, { json: true }),
@@ -819,12 +911,13 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
           maskedIdReference: input.maskedIdReference,
           entitlementFingerprint: null,
           evidenceCaptureRequested: input.evidenceCaptureRequested,
-          evidenceAccessIntent: "METADATA_ONLY",
+          evidenceAccessIntent: "RESTRICTED_ID_PHOTO",
           operatorAttestation: input.operatorAttestation,
           attestationNotes: input.attestationNotes ?? null,
           reasonCode: input.reasonCode ?? "OPERATOR_UAT_SMOKE",
           idempotencyKey: `operator-console-ui-statutory-discount-draft-${input.parkingSessionId}-${input.entitlementType}`,
-          correlationId
+          correlationId,
+          evidenceUploadReceipt: uploadedPhoto.uploadReceipt
         })
       });
       return toDraftCreateResult(await parseResponse<DraftCreateResponseDto>(response));
@@ -847,6 +940,15 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
         { headers: operatorConsoleHeaders(correlationId) }
       );
       return toDraftDetail(await parseResponse<DetailDto>(response));
+    },
+
+    async getCurrentStatutoryDiscountDraft(parkingSessionId) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/parking-sessions/${encodeURIComponent(parkingSessionId)}/current?correlationId=${correlationId}`,
+        { headers: operatorConsoleHeaders(correlationId), cache: "no-store" }
+      );
+      return response.status === 204 ? null : toDraftDetail(await parseResponse<DetailDto>(response));
     },
 
     async listCanonicalStatutoryReviews(input, signal) {
@@ -958,6 +1060,26 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
         );
       }
 
+      return { blob: await response.blob(), contentType };
+    },
+
+    async getSubmittedStatutoryEvidencePreview(draftId, evidenceId, signal) {
+      const csrfToken = requireCsrfToken(options.csrfToken);
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/${encodeURIComponent(draftId)}/evidence/preview`,
+        {
+          method: "POST",
+          headers: { ...operatorConsoleHeaders(newCorrelationId(), { json: true }), "X-CSRF-Token": csrfToken },
+          cache: "no-store",
+          body: JSON.stringify({ evidenceId }),
+          signal
+        }
+      );
+      if (!response.ok) throw await toStatutoryEvidenceSafeError(response);
+      const contentType = response.headers.get("Content-Type")?.split(";", 1)[0].trim().toLowerCase();
+      if (contentType !== "image/jpeg" && contentType !== "image/png") {
+        throw safeStatutoryEvidenceError("error", "STATUTORY_EVIDENCE_PREVIEW_UNSUPPORTED_MEDIA", "This file type cannot be previewed.");
+      }
       return { blob: await response.blob(), contentType };
     },
 
@@ -1386,15 +1508,28 @@ export function createMockOperatorConsoleApiClient(
         siteId: input.siteId ?? mockSiteId,
         siteGroupId: input.siteGroupId ?? mockSiteGroupId,
         entitlementType: input.entitlementType === "PWD" ? "PWD" : "Senior Citizen",
+        idDocumentType: input.idDocumentType,
         status: "Requested" as DraftStatus,
+        requestedBy: "Juan Dela Cruz",
         maskedIdReference: input.maskedIdReference,
         issuingAuthority: input.issuingAuthority,
-        evidenceCaptured: false,
-        evidenceRequiredSatisfied: false,
-        evidenceCount: 0,
+        evidenceCaptured: true,
+        evidenceRequiredSatisfied: true,
+        evidenceCount: 1,
+        latestEvidenceId: "4ea0743e-c2a9-41d2-aee2-3f3ddedb838f",
         governingPolicy: mockDrafts[0].governingPolicy ? { ...mockDrafts[0].governingPolicy } : undefined
       };
       drafts.unshift(created);
+      evidence.set(created.draftId, [{
+        evidenceId: created.latestEvidenceId!,
+        draftId: created.draftId,
+        evidenceType: input.entitlementType === "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID",
+        captureMethod: "UPLOAD",
+        capturedByUserId: mockOperatorUserId,
+        capturedAt: created.requestedAt,
+        redactionStatus: "NOT_REDACTED",
+        verificationStatus: "CAPTURED"
+      }]);
       return {
         accepted: true,
         persisted: true,
@@ -1449,6 +1584,30 @@ export function createMockOperatorConsoleApiClient(
       }
 
       return { ...match };
+    },
+
+    async getInvoiceCustomerInformation(parkingSessionId) {
+      await delay();
+      return {
+        parkingSessionId,
+        hasCustomerInformation: false,
+        fiscalSnapshotLocked: false
+      };
+    },
+
+    async saveInvoiceCustomerInformation(parkingSessionId, input) {
+      await delay();
+      return {
+        parkingSessionId,
+        hasCustomerInformation: true,
+        customerName: input.customerName,
+        address: input.address,
+        tin: input.tin,
+        businessStyle: input.businessStyle,
+        rowVersion: (input.expectedVersion ?? 0) + 1,
+        updatedAt: new Date().toISOString(),
+        fiscalSnapshotLocked: false
+      };
     },
 
     async listFiscalVoidActionAuditReport(input = {}) {
@@ -1569,6 +1728,11 @@ export function createMockOperatorConsoleApiClient(
       return draft;
     },
 
+    async getCurrentStatutoryDiscountDraft(parkingSessionId) {
+      await delay();
+      return drafts.find((item) => item.parkingSessionId === parkingSessionId) ?? null;
+    },
+
     async listStatutoryDiscountEvidence(draftId) {
       await delay();
       if (options.evidenceError) {
@@ -1615,6 +1779,16 @@ export function createMockOperatorConsoleApiClient(
       if (options.statutoryEvidencePreviewError) {
         throw options.statutoryEvidencePreviewError;
       }
+      return options.statutoryEvidencePreview ?? {
+        blob: new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" }),
+        contentType: "image/png"
+      };
+    },
+
+    async getSubmittedStatutoryEvidencePreview(_draftId, _evidenceId, signal) {
+      await delay();
+      if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+      if (options.statutoryEvidencePreviewError) throw options.statutoryEvidencePreviewError;
       return options.statutoryEvidencePreview ?? {
         blob: new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" }),
         contentType: "image/png"
@@ -1953,6 +2127,52 @@ async function parseResponse<T>(response: Response): Promise<T> {
   } satisfies OperatorConsoleApiError;
 }
 
+async function parseInvoiceCustomerInformationResponse(
+  response: Response,
+  expectedParkingSessionId: string
+): Promise<InvoiceCustomerInformation> {
+  let body: unknown;
+  try {
+    body = await parseResponse<unknown>(response);
+  } catch (error) {
+    if (isApiError(error)) {
+      throw error;
+    }
+    throw invalidCustomerInformationResponse();
+  }
+
+  if (!isRecord(body) ||
+      body.parkingSessionId !== expectedParkingSessionId ||
+      typeof body.hasCustomerInformation !== "boolean" ||
+      typeof body.fiscalSnapshotLocked !== "boolean" ||
+      !isOptionalString(body.customerName) ||
+      !isOptionalString(body.address) ||
+      !isOptionalString(body.tin) ||
+      !isOptionalString(body.businessStyle) ||
+      !isOptionalNumber(body.rowVersion) ||
+      !isOptionalString(body.updatedAt)) {
+    throw invalidCustomerInformationResponse();
+  }
+
+  return body as unknown as InvoiceCustomerInformation;
+}
+
+function invalidCustomerInformationResponse(): OperatorConsoleApiError {
+  return {
+    status: "error",
+    errorCode: "CUSTOMER_INFORMATION_RESPONSE_INVALID",
+    message: "Customer information is temporarily unavailable. Try again."
+  };
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+function isOptionalNumber(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === "number";
+}
+
 async function parseCanonicalStatutoryReviewDecisionResponse(
   response: Response
 ): Promise<CanonicalStatutoryReviewDecisionResult> {
@@ -2048,6 +2268,8 @@ function toTicketLookupResult(body: OperatorTicketLookupResponseDto): OperatorTi
     plateLicense: body.plateNumber ?? body.plateLicense ?? undefined,
     parkingInTime: body.entryTime ?? body.parkingInTime ?? undefined,
     parkingDurationSeconds: body.parkingDurationSeconds ?? undefined,
+    salesInvoiceNumber: body.salesInvoiceNumber ?? undefined,
+    exitAuthorizationStatus: body.exitAuthorizationStatus ?? undefined,
     feeMinorUnits,
     currencyCode,
     feeRuleType: body.feeRuleType ?? undefined,
@@ -2056,6 +2278,8 @@ function toTicketLookupResult(body: OperatorTicketLookupResponseDto): OperatorTi
     paymentAttemptStatus: body.paymentAttemptStatus ?? undefined,
     paymentStatus: body.paymentStatus ?? undefined,
     paymentConfirmationStatus: body.paymentConfirmationStatus ?? undefined,
+    amountPaidMinorUnits: body.amountPaidMinorUnits ?? undefined,
+    paymentMethod: body.paymentMethod ?? undefined,
     vendorSystemCode: body.vendorSystemCode ?? undefined,
     vendorConfirmationCode: body.vendorConfirmationCode ?? undefined,
     vendorConfirmationStatus: body.vendorConfirmationStatus ?? undefined,
@@ -2185,7 +2409,7 @@ function toQueueItem(item: QueueItemDto): StatutoryDiscountQueueItem {
     entitlementType: mapEntitlement(item.entitlementType),
     status: mapStatus(item.validationStatus),
     requestedAt: item.requestedAt,
-    requestedBy: item.requestedByUserId ?? "Unknown operator",
+    requestedBy: item.requestedByDisplayName?.trim() || "Legacy Operator Console request",
     policyContext,
     evidenceRequiredSatisfied: item.evidenceRequiredSatisfied ?? false,
     evidenceCount: item.evidenceCount ?? 0,
@@ -2207,12 +2431,16 @@ function toDraftDetail(item: DetailDto): StatutoryDiscountDraftDetail {
     originalTariffAmount: formatPhpMoney(item.originalAmountMinorUnits, item.currencyCode),
     payableBasisPreview: payableBasisPreview(item),
     currentPaymentStatus: "Read-only in this module",
-    maskedIdReference: "Evidence metadata only",
-    issuingAuthority: "Not available",
+    idDocumentType: item.idDocumentType?.trim() || mapEntitlement(item.entitlementType),
+    maskedIdReference: item.maskedIdReference?.trim() || "Not available",
+    issuingAuthority: item.issuingAuthority?.trim() || "Not available",
     evidenceCaptured: item.evidenceCaptured,
     evidenceRequiredSatisfied: item.evidenceRequiredSatisfied ?? item.evidenceCaptured,
     evidenceCount: item.evidenceCount ?? 0,
+    latestEvidenceId: item.latestEvidenceId ?? undefined,
     latestEvidenceStatus: item.latestEvidenceStatus ?? undefined,
+    validatedAt: item.validatedAt ?? undefined,
+    validatedByUserId: item.validatedByUserId ?? undefined,
     requiredEvidenceTypes: item.requiredEvidenceTypes ?? [],
     originalTariffSnapshotId: item.originalTariffSnapshotId ?? undefined,
     payableBasisApplicationId: item.payableBasisApplicationId ?? undefined,
@@ -2650,7 +2878,11 @@ function inferPolicyReadiness(
     return "MISSING_REQUIRED_POLICY";
   }
 
-  if (verificationStatus === "ACTIVE_APPROVED" || verificationStatus === "VERIFIED_OFFICIAL") {
+  if (
+    verificationStatus === "ACTIVE_APPROVED" ||
+    verificationStatus === "VERIFIED_OFFICIAL" ||
+    verificationStatus === "VERIFIED_ACTIVE_OPERATIONAL"
+  ) {
     return "READY_VERIFIED";
   }
 
@@ -2677,18 +2909,18 @@ function inferRegistrySource(policyResolutionBasis?: string | null) {
 
 function policyReadinessMessage(classification: string) {
   const messages: Record<string, string> = {
-    READY_VERIFIED: "Policy is verified. Policy readiness is not payment approval.",
-    READY_WITH_MANUAL_REVIEW: "Manual review is required before automatic production application.",
-    CONFIGURED_BUT_UNVERIFIED: "Policy is configured but is not verified for production auto-application.",
-    MISSING_REQUIRED_POLICY: "Required production policy is missing.",
-    MISSING_SITE_MAPPING: "Policy scope or site mapping is missing.",
-    MISSING_EVIDENCE_RULE: "Evidence rule is missing or inconsistent.",
-    EXPIRED_OR_INACTIVE: "Policy is expired or inactive.",
-    SANDBOX_ONLY: "Sandbox/test policies are not production-ready.",
-    NOT_READY: "Policy is not production-ready."
+    READY_VERIFIED: "This statutory entitlement is available for this Site.",
+    READY_WITH_MANUAL_REVIEW: "This statutory entitlement requires supervisor review.",
+    CONFIGURED_BUT_UNVERIFIED: "This statutory entitlement is not available for this Site.",
+    MISSING_REQUIRED_POLICY: "This statutory entitlement is not available for this Site.",
+    MISSING_SITE_MAPPING: "This statutory entitlement is not available for this Site.",
+    MISSING_EVIDENCE_RULE: "This statutory entitlement is not available for this Site.",
+    EXPIRED_OR_INACTIVE: "This statutory entitlement is not available for this Site.",
+    SANDBOX_ONLY: "This statutory entitlement is not available for this Site.",
+    NOT_READY: "This statutory entitlement is not available for this Site."
   };
 
-  return messages[classification] ?? "Policy readiness could not be confirmed.";
+  return messages[classification] ?? "This statutory entitlement is not available for this Site.";
 }
 
 function payableBasisPreview(item: DetailDto) {
@@ -3112,7 +3344,9 @@ function toMockCanonicalQueueItem(draft: StatutoryDiscountDraftDetail) {
     sourceChannel: "WEBPAY",
     siteId: draft.siteId,
     siteGroupId: draft.siteGroupId,
+    siteName: draft.siteName,
     ticketReference: draft.ticketReference,
+    plateNumber: draft.plateNumber,
     entitlementType: draft.entitlementType,
     commandStatus: draft.status === "Approved" || draft.status === "Rejected" ? "COMPLETED" : "AWAITING_REVIEW",
     decisionResultStatus: draft.status === "Approved" ? "APPROVED" : draft.status === "Rejected" ? "REJECTED" : "NOT_DECIDED",
