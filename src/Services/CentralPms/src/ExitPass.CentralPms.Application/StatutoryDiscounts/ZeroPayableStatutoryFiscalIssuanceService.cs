@@ -172,6 +172,19 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
             ["appliedTariffSnapshotId"] = appliedTariffRef,
             ["entitlementType"] = finality.EntitlementType
         };
+        var referenceContext = new Dictionary<string, string>(statutoryContext)
+        {
+            ["site_id"] = finality.SiteId.ToString("D"),
+            ["site_group_id"] = finality.SiteGroupId.ToString("D"),
+            ["fiscal_issuance_reference_id"] = reference.FiscalIssuanceReferenceId.ToString("D"),
+            ["monetaryPaymentReceived"] = "false"
+        };
+        AddDisplayFact(referenceContext, "ticket_number", finality.TicketNumber);
+        AddDisplayFact(referenceContext, "plate_number", finality.PlateNumber);
+        AddDisplayFact(referenceContext, "branch_site", finality.SiteName);
+        AddDisplayFact(referenceContext, "entry_time", finality.EntryTime?.ToString("O"));
+        AddDisplayFact(referenceContext, "payment_time", finality.AppliedAt.ToString("O"));
+        AddDisplayFact(referenceContext, "parking_duration", FormatDuration(finality.EntryTime, finality.AppliedAt));
 
         return new CentralPmsFiscalDocumentMappingContext(
             SitePosServerId: reference.SitePosServerId,
@@ -248,13 +261,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 0,
                 currency,
                 new Dictionary<string, string> { ["kind"] = "final_statutory_payable" })],
-            ReferenceContext: new Dictionary<string, string>(statutoryContext)
-            {
-                ["site_id"] = finality.SiteId.ToString("D"),
-                ["site_group_id"] = finality.SiteGroupId.ToString("D"),
-                ["fiscal_issuance_reference_id"] = reference.FiscalIssuanceReferenceId.ToString("D"),
-                ["monetaryPaymentReceived"] = "false"
-            },
+            ReferenceContext: referenceContext,
             PaymentFinalityRef: null,
             VendorAckRef: null,
             AppliedStatutoryFiscalFacts: new CentralPmsAppliedStatutoryFiscalFactsContext(
@@ -296,6 +303,23 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                     StatutoryIdNumber: string.IsNullOrWhiteSpace(command.StatutoryIdNumber)
                         ? null
                         : command.StatutoryIdNumber.Trim()));
+    }
+
+    private static void AddDisplayFact(IDictionary<string, string> context, string key, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value)) context[key] = value.Trim();
+    }
+
+    private static string? FormatDuration(DateTimeOffset? entryTime, DateTimeOffset completedAt)
+    {
+        if (!entryTime.HasValue || completedAt < entryTime.Value) return null;
+        var totalMinutes = (long)Math.Floor((completedAt - entryTime.Value).TotalMinutes);
+        var hours = totalMinutes / 60;
+        var minutes = totalMinutes % 60;
+        if (hours == 0) return $"{minutes} minute{(minutes == 1 ? string.Empty : "s")}";
+        return minutes == 0
+            ? $"{hours} hour{(hours == 1 ? string.Empty : "s")}"
+            : $"{hours} hour{(hours == 1 ? string.Empty : "s")} {minutes:00} minutes";
     }
 
     private static bool HasNoInvoiceCustomerInformation(

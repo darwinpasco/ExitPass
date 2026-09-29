@@ -43,6 +43,15 @@ if ($PreflightOnly) {
     exit 0
 }
 
+if ([string]::IsNullOrWhiteSpace($env:VITE_WEBPAY_PUBLIC_BASE_URL)) {
+    $env:VITE_WEBPAY_PUBLIC_BASE_URL = if ([string]::IsNullOrWhiteSpace($env:WEBPAY_PUBLIC_BASE_URL)) {
+        "https://operator-console-exitpass.ngrok.dev"
+    } else {
+        $env:WEBPAY_PUBLIC_BASE_URL.TrimEnd("/")
+    }
+}
+Write-Host "Customer Digital Sales Invoice origin: $($env:VITE_WEBPAY_PUBLIC_BASE_URL)"
+
 Push-Location $uiRoot
 try {
     & npm.cmd run dev -- --host 127.0.0.1 --port 5175 --strictPort

@@ -103,6 +103,59 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task DraftAsync_WhenPaymentIsFinalAndExitAuthorizationIssued_RejectsWithoutPersistence()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE") with
+            {
+                PaymentStatus = "Paid",
+                PaymentConfirmationStatus = "RECORDED",
+                ExitAuthorizationStatus = "ISSUED"
+            });
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
+
+        var result = await sut.DraftAsync(Command(), CancellationToken.None);
+
+        result.DraftAccepted.Should().BeFalse();
+        result.DraftPersisted.Should().BeFalse();
+        result.ErrorCode.Should().Be("STATUTORY_DISCOUNT_REQUEST_COMPLETED_TRANSACTION");
+        result.OperatorMessage.Should().Be("Statutory discount request is no longer available because payment has been completed and exit authorization has been issued.");
+        await writer.DidNotReceiveWithAnyArgs().PersistAsync(default!, default);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("REQUESTED")]
+    [InlineData("FAILED")]
+    [InlineData("EXPIRED")]
+    [InlineData("CANCELLED")]
+    public async Task DraftAsync_WhenPaymentIsNotFinal_AttemptStateAloneDoesNotBlock(string? attemptStatus)
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE") with
+            {
+                PaymentAttemptStatus = attemptStatus,
+                PaymentConfirmationStatus = null,
+                ExitAuthorizationStatus = "ISSUED"
+            });
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
+                DraftId, "REQUESTED", true, false, true, true, EvidenceReferenceId, Policy()));
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
+
+        var result = await sut.DraftAsync(Command(), CancellationToken.None);
+
+        result.DraftAccepted.Should().BeTrue();
+        await writer.Received(1).PersistAsync(
+            Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(),
+            Arg.Any<CancellationToken>());
+    }
+
     /// <summary>
     /// Verifies duplicate active drafts return the existing draft deterministically.
     /// </summary>
@@ -113,8 +166,19 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
             .Returns(Session("ACTIVE"));
 
+        var persistedResolvedAt = "2026-05-29T08:00:00+00:00";
+        var persistedPolicy = Policy() with
+        {
+            PolicySnapshot = JsonSerializer.SerializeToElement(new
+            {
+                statutoryDiscountPolicyId = PolicyId,
+                policyCode = "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+                policyResolutionBasis = "NATIONAL_LAW_FALLBACK",
+                resolvedAt = persistedResolvedAt
+            })
+        };
         var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
-        writer.PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(), Arg.Any<CancellationToken>())
+        writer.FindReusableAsync(ParkingSessionId, "SENIOR_CITIZEN", Arg.Any<CancellationToken>())
             .Returns(new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
                 DraftId,
                 "REQUESTED",
@@ -123,9 +187,10 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
                 EvidenceRequired: true,
                 EvidenceReferenceCreated: false,
                 EvidenceReferenceId,
-                Policy()));
+                persistedPolicy));
 
-        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
+        var policyRepository = Substitute.For<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>();
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer, policyRepository);
 
         var result = await sut.DraftAsync(Command(), CancellationToken.None);
 
@@ -140,6 +205,13 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         result.EvidenceReferenceId.Should().Be(EvidenceReferenceId);
         result.ReusedExistingDraft.Should().BeTrue();
         result.Policy.Should().NotBeNull();
+        result.Policy!.StatutoryDiscountPolicyId.Should().Be(PolicyId);
+        result.Policy.PolicyCode.Should().Be("PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK");
+        result.Policy.PolicyResolutionBasis.Should().Be("NATIONAL_LAW_FALLBACK");
+        result.Policy.PolicySnapshot.GetProperty("resolvedAt").GetString().Should().Be(persistedResolvedAt);
+
+        await policyRepository.DidNotReceiveWithAnyArgs().ResolveAsync(default!, default);
+        await writer.DidNotReceiveWithAnyArgs().PersistAsync(default!, default);
     }
 
     /// <summary>
@@ -447,6 +519,73 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.SandboxOnly);
         result.RequiresManualReview.Should().BeTrue();
         await writer.DidNotReceiveWithAnyArgs().PersistAsync(default!, default);
+    }
+
+    /// <summary>
+    /// Verifies an operationally confirmed Site entitlement does not require an ordinance document
+    /// before the Site Operator can create the pre-payment statutory request.
+    /// </summary>
+    [Fact]
+    public async Task DraftAsync_WhenSiteEntitlementIsOperationallyConfirmedWithoutOrdinanceDocument_CreatesDraft()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE"));
+
+        var supportedPolicy = Policy(
+            policyCode: "PH_PARANAQUE_SENIOR_FREE_PARKING",
+            policyName: "Parañaque Senior Citizen Free Parking",
+            policyResolutionBasis: "LOCAL_ORDINANCE_APPLIED",
+            policyLevel: "LOCAL_ORDINANCE",
+            policyType: "LOCAL_ORDINANCE",
+            nationalLawReference: null,
+            verificationStatus: "VERIFIED_ACTIVE_OPERATIONAL",
+            sourceReference: "Approved Site-entitlement configuration.") with
+        {
+            LegalBasisReference = null,
+            OrdinanceReference = null,
+            NationalLawReference = null
+        };
+        var policyRepository = Substitute.For<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>();
+        policyRepository.ResolveAsync(Arg.Any<OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountPolicyResolutionReadResult(
+                Resolved: true,
+                supportedPolicy,
+                SiteId,
+                SiteGroupId,
+                JurisdictionId,
+                IneligibilityReason: null,
+                ErrorCode: null));
+
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
+                DraftId,
+                "REQUESTED",
+                Persisted: true,
+                ReusedExistingDraft: false,
+                EvidenceRequired: true,
+                EvidenceReferenceCreated: true,
+                EvidenceReferenceId,
+                supportedPolicy));
+
+        var sut = CreateSut(
+            AccessResult(allowed: true, []),
+            repository,
+            writer,
+            policyRepository,
+            environmentName: "Production");
+
+        var result = await sut.DraftAsync(Command(), CancellationToken.None);
+
+        result.DraftAccepted.Should().BeTrue();
+        result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.ReadyVerified);
+        result.OperatorMessage.Should().NotContain("policy is configured");
+        await writer.Received(1).PersistAsync(
+            Arg.Is<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(request =>
+                request.ParkingSessionId == ParkingSessionId &&
+                request.EntitlementType == "SENIOR_CITIZEN"),
+            Arg.Any<CancellationToken>());
     }
 
     /// <summary>

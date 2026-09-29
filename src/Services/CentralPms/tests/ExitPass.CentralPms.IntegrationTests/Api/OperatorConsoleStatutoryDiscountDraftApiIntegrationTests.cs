@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using ExitPass.CentralPms.Api.Services;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
@@ -36,6 +37,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     private static readonly Guid ManualFixtureParkingSessionId = Guid.Parse("77000000-0000-0000-0000-000000000090");
     private static readonly Guid DraftPolicyJurisdictionId = Guid.Parse("6f000000-0000-0000-0000-000000000001");
     private const string DraftPolicyLguCode = "PH-INT-DRAFT-195";
+    private const string ProtectedPhotoReceipt = "integration-protected-photo-receipt";
     private static readonly Guid DraftVerifiedLocalPolicyId = Guid.Parse("6f000000-0000-0000-0000-000000000002");
     private static readonly Guid DraftUnverifiedLocalPolicyId = Guid.Parse("6f000000-0000-0000-0000-000000000003");
 
@@ -45,7 +47,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     [Fact]
     public void EndpointRouteExists()
     {
-        using var factory = new CustomWebApplicationFactory();
+        using var factory = CreatePhotoReceiptFactory();
 
         var endpoints = factory.Services.GetRequiredService<EndpointDataSource>()
             .Endpoints
@@ -64,7 +66,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     [Fact]
     public async Task EndpointAppearsInSwagger()
     {
-        using var factory = new CustomWebApplicationFactory();
+        using var factory = CreatePhotoReceiptFactory();
         using var client = factory.CreateClient();
 
         var swaggerJson = await client.GetStringAsync("/swagger/v1/swagger.json");
@@ -126,6 +128,20 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         body.NationalLawReference.Should().Be("RA 9994");
     }
 
+    [Fact]
+    public async Task Draft_WhenRequiredIdPhotoReceiptIsMissing_ReturnsDeterministicBadRequest()
+    {
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(Endpoint, Request() with { EvidenceUploadReceipt = null });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be("STATUTORY_ID_PHOTO_REQUIRED");
+    }
+
     /// <summary>
     /// Verifies replaying the same valid draft request reuses the active draft instead of returning a generic failure.
     /// </summary>
@@ -139,7 +155,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
         await SeedManualFixtureAsync();
 
-        using var factory = new CustomWebApplicationFactory();
+        using var factory = CreatePhotoReceiptFactory();
         using var client = factory.CreateClient();
         var request = ManualFixtureRequest();
 
@@ -166,10 +182,10 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     }
 
     /// <summary>
-    /// Verifies evidence-requested drafts persist one metadata-only evidence reference and replay reuses it.
+    /// Verifies mandatory ID photos persist one restricted object reference and replay reuses it.
     /// </summary>
     [Fact]
-    public async Task Draft_WhenEvidenceRequested_PersistsMetadataOnlyEvidenceReferenceAndReplayDoesNotDuplicate()
+    public async Task Draft_WhenIdPhotoReceiptIsValid_PersistsRestrictedEvidenceReferenceAndReplayDoesNotDuplicate()
     {
         if (!await CanOpenDatabaseAsync())
         {
@@ -178,7 +194,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
         await SeedManualFixtureAsync();
 
-        using var factory = new CustomWebApplicationFactory();
+        using var factory = CreatePhotoReceiptFactory();
         using var client = factory.CreateClient();
         var request = ManualFixtureRequest(evidenceCaptureRequested: true);
 
@@ -195,13 +211,13 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         var firstEvidence = await ReadEvidenceReferenceAsync(first.DraftId!.Value, "SENIOR_CITIZEN_ID");
         firstEvidence.Should().NotBeNull();
         firstEvidence!.EvidenceReferenceId.Should().Be(first.EvidenceReferenceId!.Value);
-        firstEvidence.EvidenceStorageType.Should().Be("EXTERNAL_REFERENCE");
-        firstEvidence.EvidenceStorageRef.Should().BeNull();
-        firstEvidence.EvidenceHash.Should().BeNull();
-        firstEvidence.EvidenceCaptureStatus.Should().Be("REFERENCED");
+        firstEvidence.EvidenceStorageType.Should().Be("OBJECT_STORAGE");
+        firstEvidence.EvidenceStorageRef.Should().Be($"test/operator-console/statutory-id/{ManualFixtureSiteId:N}/{ManualFixtureParkingSessionId:N}/photo.jpg");
+        firstEvidence.EvidenceHash.Should().Be(new string('A', 64));
+        firstEvidence.EvidenceCaptureStatus.Should().Be("CAPTURED");
         firstEvidence.AccessClassification.Should().Be("RESTRICTED");
         firstEvidence.RedactionStatus.Should().Be("NOT_REDACTED");
-        firstEvidence.EvidenceCaptured.Should().BeFalse();
+        firstEvidence.EvidenceCaptured.Should().BeTrue();
 
         using var secondResponse = await client.PostAsJsonAsync(Endpoint, request);
         secondResponse.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -232,7 +248,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         await SeedManualFixtureAsync();
         await PrepareDraftPolicyFixtureAsync();
 
-        using var factory = new CustomWebApplicationFactory();
+        using var factory = CreatePhotoReceiptFactory();
         using var client = factory.CreateClient();
 
         using var response = await client.PostAsJsonAsync(Endpoint, ManualFixtureRequest(evidenceCaptureRequested: false));
@@ -270,7 +286,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         await SeedManualFixtureAsync();
         await PrepareDraftPolicyFixtureAsync();
 
-        using var factory = new CustomWebApplicationFactory();
+        using var factory = CreatePhotoReceiptFactory();
         using var client = factory.CreateClient();
 
         using var response = await client.PostAsJsonAsync(Endpoint, ManualFixtureRequest(entitlementType: "PWD", evidenceCaptureRequested: false));
@@ -307,7 +323,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
         try
         {
-            using var factory = new CustomWebApplicationFactory();
+            using var factory = CreatePhotoReceiptFactory();
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsJsonAsync(Endpoint, ManualFixtureRequest(evidenceCaptureRequested: false));
@@ -352,7 +368,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
         try
         {
-            using var factory = new CustomWebApplicationFactory();
+            using var factory = CreatePhotoReceiptFactory();
             using var client = factory.CreateClient();
 
             using var response = await client.PostAsJsonAsync(Endpoint, ManualFixtureRequest(evidenceCaptureRequested: false));
@@ -380,24 +396,26 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     [Fact]
     public async Task Draft_WhenDuplicateReplay_PreservesStoredPolicySnapshot()
     {
-        if (!await CanOpenDatabaseAsync())
-        {
-            return;
-        }
+        (await CanOpenDatabaseAsync()).Should().BeTrue(
+            "the duplicate-replay regression requires the assembly-owned disposable PostgreSQL database");
 
         await SeedManualFixtureAsync();
         await PrepareDraftPolicyFixtureAsync();
 
-        using var factory = new CustomWebApplicationFactory();
+        using var factory = CreatePhotoReceiptFactory();
         using var client = factory.CreateClient();
         var request = ManualFixtureRequest(evidenceCaptureRequested: false);
 
         using var firstResponse = await client.PostAsJsonAsync(Endpoint, request);
+        firstResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var first = await firstResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
         first.Should().NotBeNull();
         var firstStored = await ReadDraftPolicyContextAsync(first!.DraftId!.Value);
+        first.PolicySnapshot!.Value.GetProperty("resolvedAt").GetString()
+            .Should().Be(firstStored!.Snapshot.GetProperty("resolvedAt").GetString());
 
         using var secondResponse = await client.PostAsJsonAsync(Endpoint, request);
+        secondResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var second = await secondResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
         second.Should().NotBeNull();
         second!.ReusedExistingDraft.Should().BeTrue();
@@ -410,6 +428,13 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             .Should().Be(firstStored.Snapshot.GetProperty("resolvedAt").GetString());
         second.PolicySnapshot!.Value.GetProperty("policyCode").GetString()
             .Should().Be(firstStored.Snapshot.GetProperty("policyCode").GetString());
+        second.StatutoryDiscountPolicyId.Should().Be(first.StatutoryDiscountPolicyId);
+        second.PolicyResolutionBasis.Should().Be(first.PolicyResolutionBasis);
+
+        var activeDraftCount = await CountActiveDraftsAsync(request.ParkingSessionId, request.EntitlementType);
+        activeDraftCount.Should().Be(1);
+        var evidenceReferenceCount = await CountEvidenceReferencesAsync(first.DraftId.Value, "SENIOR_CITIZEN_ID");
+        evidenceReferenceCount.Should().Be(1);
     }
 
     /// <summary>
@@ -456,9 +481,19 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         new CustomWebApplicationFactory()
             .WithServiceOverrides(services =>
             {
+                services.RemoveAll<IOperatorConsoleStatutoryIdPhotoService>();
+                services.AddSingleton<IOperatorConsoleStatutoryIdPhotoService>(new FakeStatutoryIdPhotoService());
                 services.RemoveAll<IOperatorConsoleStatutoryDiscountDraftService>();
                 services.AddSingleton<IOperatorConsoleStatutoryDiscountDraftService>(
                     new FakeStatutoryDiscountDraftService(result, throwValidation));
+            });
+
+    private static CustomWebApplicationFactory CreatePhotoReceiptFactory() =>
+        new CustomWebApplicationFactory()
+            .WithServiceOverrides(services =>
+            {
+                services.RemoveAll<IOperatorConsoleStatutoryIdPhotoService>();
+                services.AddSingleton<IOperatorConsoleStatutoryIdPhotoService>(new FakeStatutoryIdPhotoService());
             });
 
     private static OperatorConsoleStatutoryDiscountDraftRequest Request() =>
@@ -483,7 +518,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             AttestationNotes: "Manual operator attestation.",
             ReasonCode: "OPERATOR_DRAFT_REQUESTED",
             "operator-console-statutory-discount-draft-api-test",
-            CorrelationId);
+            CorrelationId,
+            EvidenceUploadReceipt: ProtectedPhotoReceipt);
 
     private static OperatorConsoleStatutoryDiscountDraftRequest ManualFixtureRequest(
         bool evidenceCaptureRequested = false,
@@ -503,13 +539,14 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             ExpiryDate: null,
             entitlementType == "PWD" ? "PWD-UAT-****-0001" : "SC-UAT-****-0001",
             EntitlementFingerprint: null,
-            EvidenceCaptureRequested: evidenceCaptureRequested,
-            EvidenceAccessIntent: null,
+            EvidenceCaptureRequested: true,
+            EvidenceAccessIntent: "RESTRICTED_ID_PHOTO",
             OperatorAttestation: true,
             AttestationNotes: "Integration replay test draft only.",
             ReasonCode: "INTEGRATION_DUPLICATE_REPLAY",
             "operator-console-statutory-discount-draft-replay-test",
-            Guid.NewGuid());
+            Guid.NewGuid(),
+            EvidenceUploadReceipt: ProtectedPhotoReceipt);
 
     private static OperatorConsoleStatutoryDiscountDraftResult DeniedResult() =>
         new(
@@ -604,6 +641,33 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
             return Task.FromResult(_result);
         }
+    }
+
+    private sealed class FakeStatutoryIdPhotoService : IOperatorConsoleStatutoryIdPhotoService
+    {
+        public Task<OperatorConsoleStatutoryIdPhotoUploadOutcome> UploadAsync(
+            OperatorConsoleStatutoryIdPhotoUploadCommand command,
+            Stream content,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The draft endpoint test consumes an already-issued protected receipt.");
+
+        public OperatorConsoleStatutoryIdPhotoReceipt? ResolveReceipt(
+            string? receipt,
+            Guid expectedUserId,
+            Guid expectedSiteId,
+            Guid expectedParkingSessionId,
+            string expectedEntitlementType) =>
+            receipt == ProtectedPhotoReceipt
+                ? new OperatorConsoleStatutoryIdPhotoReceipt(
+                    expectedUserId,
+                    expectedSiteId,
+                    expectedParkingSessionId,
+                    expectedEntitlementType,
+                    $"test/operator-console/statutory-id/{expectedSiteId:N}/{expectedParkingSessionId:N}/photo.jpg",
+                    new string('A', 64),
+                    "image/jpeg",
+                    1024)
+                : null;
     }
 
     private static async Task SeedManualFixtureAsync()

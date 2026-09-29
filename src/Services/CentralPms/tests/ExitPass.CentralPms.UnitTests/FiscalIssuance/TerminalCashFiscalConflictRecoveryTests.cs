@@ -44,7 +44,11 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             ReferenceId,
             Arg.Is<CentralPmsFiscalDocumentMappingContext>(value =>
                 value.SiteId == SiteId &&
-                value.SitePosServerId == PosId),
+                value.SitePosServerId == PosId &&
+                value.ReferenceContext["ticket_number"] == "CASH-TICKET-001" &&
+                value.ReferenceContext["plate_number"] == "CASH 1001" &&
+                value.ReferenceContext["branch_site"] == "PITX Level 3" &&
+                value.ReferenceContext["payment_method"] == "CASH"),
             Arg.Is<PosServerCreateResultRecordingContext>(value =>
                 value.CorrelationId == FiscalCorrelation && value.ServiceIdentityId == ActorId),
             Arg.Any<CancellationToken>());
@@ -724,7 +728,8 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             AmountMinorUnits, AmountMinorUnits, 0, "CONFIRMED", ConfirmationId, "CREATED",
             "terminal-cash-payment:test", "terminal-cash-payment:sha256:v1",
             DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(-4),
-            DateTimeOffset.UtcNow.AddMinutes(-3), TransactionCorrelation, "NOT_STARTED_IN_THIS_SLICE");
+            DateTimeOffset.UtcNow.AddMinutes(-3), TransactionCorrelation, "NOT_STARTED_IN_THIS_SLICE",
+            "CASH-TICKET-001", "CASH 1001", "PITX Level 3", DateTimeOffset.UtcNow.AddHours(-1));
 
     private static FiscalIssuanceReferenceRecord Reference() =>
         new(

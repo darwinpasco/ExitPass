@@ -48,6 +48,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 sdv.evidence_required,
                 sdv.evidence_captured AS evidence_required_satisfied,
                 COALESCE(evidence_summary.evidence_count, 0)::int AS evidence_count,
+                evidence_summary.latest_evidence_id,
                 evidence_summary.latest_evidence_status,
                 sdv.policy_resolution_basis::text,
                 p.policy_code,
@@ -60,6 +61,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 COALESCE(sdv.currency_code, latest_application.currency_code, active_tariff.currency_code) AS currency_code,
                 sdv.requested_at,
                 sdv.requested_by_user_id,
+                requester.display_name AS requested_by_display_name,
                 COALESCE(sdv.failure_reason_code, sdv.decision_reason_code) AS blocked_reason,
                 COUNT(*) OVER() AS total_count
             FROM discounts.statutory_discount_validations AS sdv
@@ -67,6 +69,8 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
               ON ps.parking_session_id = sdv.parking_session_id
             LEFT JOIN sites.sites AS s
               ON s.site_id = ps.site_id
+            LEFT JOIN identity.users AS requester
+              ON requester.user_id = sdv.requested_by_user_id
             LEFT JOIN discounts.discount_policy_references AS p
               ON p.discount_policy_reference_id = COALESCE(
                     sdv.applied_policy_reference_id,
@@ -93,6 +97,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             LEFT JOIN LATERAL (
                 SELECT
                     COUNT(*)::int AS evidence_count,
+                    (ARRAY_AGG(discount_evidence_reference_id ORDER BY captured_at DESC, discount_evidence_reference_id DESC))[1] AS latest_evidence_id,
                     (ARRAY_AGG(evidence_capture_status::text ORDER BY captured_at DESC, discount_evidence_reference_id DESC))[1] AS latest_evidence_status
                 FROM discounts.discount_evidence_references
                 WHERE statutory_discount_validation_id = sdv.statutory_discount_validation_id
@@ -104,6 +109,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
               AND (@site_id IS NULL OR ps.site_id = @site_id)
               AND (@created_from IS NULL OR sdv.requested_at >= @created_from)
               AND (@created_to IS NULL OR sdv.requested_at <= @created_to)
+              AND (@parking_session_id IS NULL OR sdv.parking_session_id = @parking_session_id)
             ORDER BY sdv.requested_at DESC, sdv.statutory_discount_validation_id DESC
             LIMIT @limit
             OFFSET @offset;
@@ -167,10 +173,12 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 sdv.evidence_captured,
                 sdv.evidence_captured AS evidence_required_satisfied,
                 COALESCE(evidence_summary.evidence_count, 0)::int AS evidence_count,
+                evidence_summary.latest_evidence_id,
                 evidence_summary.latest_evidence_status,
                 sdv.requested_at,
                 sdv.validated_at,
                 sdv.requested_by_user_id,
+                requester.display_name AS requested_by_display_name,
                 sdv.validated_by_user_id,
                 sdv.decision_reason_code,
                 sdv.failure_reason_code,
@@ -230,6 +238,8 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
               ON ps.parking_session_id = sdv.parking_session_id
             LEFT JOIN sites.sites AS s
               ON s.site_id = ps.site_id
+            LEFT JOIN identity.users AS requester
+              ON requester.user_id = sdv.requested_by_user_id
             LEFT JOIN discounts.discount_policy_references AS p
               ON p.discount_policy_reference_id = COALESCE(
                     sdv.applied_policy_reference_id,
@@ -279,6 +289,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             LEFT JOIN LATERAL (
                 SELECT
                     COUNT(*)::int AS evidence_count,
+                    (ARRAY_AGG(discount_evidence_reference_id ORDER BY captured_at DESC, discount_evidence_reference_id DESC))[1] AS latest_evidence_id,
                     (ARRAY_AGG(evidence_capture_status::text ORDER BY captured_at DESC, discount_evidence_reference_id DESC))[1] AS latest_evidence_status
                 FROM discounts.discount_evidence_references
                 WHERE statutory_discount_validation_id = sdv.statutory_discount_validation_id
@@ -301,6 +312,34 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
         }
 
         return ReadDetail(reader);
+    }
+
+    /// <inheritdoc />
+    public async Task<OperatorConsoleStatutoryDiscountDraftDetailResult?> GetCurrentDraftAsync(
+        OperatorConsoleCurrentStatutoryDiscountDraftQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var queue = await ListDraftsAsync(
+            new OperatorConsoleStatutoryDiscountDraftQueueQuery(
+                Status: null,
+                EntitlementType: null,
+                SiteId: null,
+                CreatedFrom: null,
+                CreatedTo: null,
+                Page: 1,
+                PageSize: 1,
+                query.CorrelationId,
+                query.ParkingSessionId),
+            cancellationToken).ConfigureAwait(false);
+
+        var current = queue.Items.FirstOrDefault();
+        return current is null
+            ? null
+            : await GetDraftAsync(
+                new OperatorConsoleStatutoryDiscountDraftDetailQuery(current.DraftId, query.CorrelationId),
+                cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -449,6 +488,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = DbValue(query.SiteId);
         command.Parameters.Add("created_from", NpgsqlDbType.TimestampTz).Value = DbValue(query.CreatedFrom);
         command.Parameters.Add("created_to", NpgsqlDbType.TimestampTz).Value = DbValue(query.CreatedTo);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = DbValue(query.ParkingSessionId);
         command.Parameters.Add("limit", NpgsqlDbType.Integer).Value = limit;
         command.Parameters.Add("offset", NpgsqlDbType.Integer).Value = offset;
     }
@@ -483,6 +523,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             reader.GetBoolean(reader.GetOrdinal("evidence_required")),
             reader.GetBoolean(reader.GetOrdinal("evidence_required_satisfied")),
             reader.GetInt32(reader.GetOrdinal("evidence_count")),
+            GetNullableGuid(reader, "latest_evidence_id"),
             GetNullableString(reader, "latest_evidence_status"),
             GetNullableString(reader, "policy_resolution_basis"),
             GetNullableString(reader, "policy_code"),
@@ -492,6 +533,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             GetNullableString(reader, "currency_code"),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("requested_at")),
             GetNullableGuid(reader, "requested_by_user_id"),
+            GetNullableString(reader, "requested_by_display_name"),
             GetNullableString(reader, "blocked_reason"));
 
     private static OperatorConsoleStatutoryDiscountAuditReportItemResult ReadAuditReportItem(NpgsqlDataReader reader) =>
@@ -532,6 +574,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
         var evidenceCaptured = reader.GetBoolean(reader.GetOrdinal("evidence_captured"));
         var evidenceRequiredSatisfied = reader.GetBoolean(reader.GetOrdinal("evidence_required_satisfied"));
         var evidenceCount = reader.GetInt32(reader.GetOrdinal("evidence_count"));
+        var latestEvidenceId = GetNullableGuid(reader, "latest_evidence_id");
         var latestEvidenceStatus = GetNullableString(reader, "latest_evidence_status");
         var requestedAt = reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("requested_at"));
         var validatedAt = GetNullableDateTimeOffset(reader, "validated_at");
@@ -558,6 +601,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             evidenceCaptured,
             evidenceRequiredSatisfied,
             evidenceCount,
+            latestEvidenceId,
             latestEvidenceStatus,
             OperatorConsoleStatutoryDiscountEvidenceService.RequiredEvidenceTypes(
                 GetNullableString(reader, "entitlement_type") ?? string.Empty,
@@ -565,6 +609,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             requestedAt,
             validatedAt,
             GetNullableGuid(reader, "requested_by_user_id"),
+            GetNullableString(reader, "requested_by_display_name"),
             GetNullableGuid(reader, "validated_by_user_id"),
             GetNullableString(reader, "decision_reason_code"),
             GetNullableString(reader, "failure_reason_code"),

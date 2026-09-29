@@ -29,7 +29,8 @@ public sealed class HumanAuthenticationServiceTests
             Guid.NewGuid(), Guid.NewGuid(), "operator", "Operator", HumanSessionAudiences.OperatorConsole,
             "PASSWORD", false, false, false, false, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow.AddMinutes(30), DateTimeOffset.UtcNow.AddHours(8), [], [siteId], [groupId],
-            false, null, Guid.NewGuid(), deviceId, shiftId, siteId, groupId, 3, 5);
+            false, null, Guid.NewGuid(), deviceId, shiftId, siteId, groupId, 3, 5,
+            RoleCodes: [ApprovedIdentityRoleCatalog.OperationsSupervisor]);
 
         var principal = HumanSessionAuthenticationHandler.CreatePrincipal(session, Guid.NewGuid());
 
@@ -39,6 +40,7 @@ public sealed class HumanAuthenticationServiceTests
         principal.FindFirst("operator_effective_site_group_id")!.Value.Should().Be(groupId.ToString("D"));
         principal.FindFirst("authorization_epoch")!.Value.Should().Be("3");
         principal.FindFirst("credential_version")!.Value.Should().Be("5");
+        principal.IsInRole(ApprovedIdentityRoleCatalog.OperationsSupervisor).Should().BeTrue();
     }
 
     [Fact]
@@ -101,6 +103,28 @@ public sealed class HumanAuthenticationServiceTests
 
         result.HttpStatusCode.Should().Be(403);
         result.Response.ErrorCode.Should().Be("APPLICATION_AUDIENCE_POLICY_UNKNOWN");
+    }
+
+    [Fact]
+    public async Task Governed_fiscal_closer_additive_role_allows_fresh_operator_console_session()
+    {
+        var fixture = new Fixture
+        {
+            EffectiveRoleCodes =
+            [
+                ApprovedIdentityRoleCatalog.OperationsSupervisor,
+                ApprovedIdentityRoleCatalog.FiscalZReadingCloser
+            ]
+        };
+        fixture.Login = fixture.CreateLogin(privileged: true);
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.OperatorConsole);
+
+        result.HttpStatusCode.Should().Be(200);
+        result.Response.Authenticated.Should().BeTrue();
+        result.Response.Session!.RoleCodes.Should().BeEquivalentTo(
+            ApprovedIdentityRoleCatalog.OperationsSupervisor,
+            ApprovedIdentityRoleCatalog.FiscalZReadingCloser);
     }
 
     [Fact]
@@ -178,6 +202,7 @@ public sealed class HumanAuthenticationServiceTests
         result.Response.Session.Permissions.Should().NotContain("statutory-discounts.decision.approve");
         result.Response.Session.SiteReferences.Should().Equal(fixture.SiteId);
         result.Response.Session.HasGlobalScope.Should().BeFalse();
+        result.Response.Session.RoleCodes.Should().Equal(ApprovedIdentityRoleCatalog.OperationsSupervisor);
     }
 
     [Fact]

@@ -186,10 +186,10 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         var operatorLogin = await LoginWebAsync(operatorClient, seed, HumanSessionAudiences.OperatorConsole);
         operatorLogin.Session!.SiteReferences.Should().ContainSingle().Which.Should().Be(seed.SiteId);
         operatorLogin.Session.HasGlobalScope.Should().BeFalse();
+        operatorLogin.Session.Permissions.Should().Contain("statutory-discounts.evidence.review.view");
         operatorLogin.Session.Permissions.Should().NotContain([
             "statutory-discounts.review.queue.read",
             "statutory-discounts.review.detail.read",
-            "statutory-discounts.evidence.review.view",
             "statutory-discounts.decision.approve",
             "statutory-discounts.decision.reject"
         ]);

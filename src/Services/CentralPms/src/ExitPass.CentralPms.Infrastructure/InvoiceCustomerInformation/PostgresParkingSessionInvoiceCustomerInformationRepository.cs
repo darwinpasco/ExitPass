@@ -22,7 +22,28 @@ public sealed class PostgresParkingSessionInvoiceCustomerInformationRepository(s
     {
         const string sql = """
             SELECT ps.parking_session_id, ci.customer_name, ci.customer_address, ci.customer_tin,
-                   ci.business_style, ci.row_version, ci.created_at, ci.updated_at
+                   ci.business_style, ci.row_version, ci.created_at, ci.updated_at,
+                   EXISTS (
+                       SELECT 1
+                       FROM core.fiscal_issuance_references fir
+                       WHERE fir.parking_session_id = ps.parking_session_id
+                         AND fir.is_active = true
+                         AND fir.is_superseded = false
+                         AND (
+                             NULLIF(to_jsonb(fir)->>'invoice_customer_information_snapshot_captured_at', '') IS NOT NULL
+                             OR (
+                                 fir.fiscal_issuance_state IN (
+                                     'FISCAL_ISSUANCE_RECORDED',
+                                     'FISCAL_ISSUANCE_REPLAYED',
+                                     'FISCAL_ISSUANCE_RECONCILED')
+                                 AND fir.pos_server_fiscal_document_id IS NOT NULL
+                                 AND fir.fiscal_identity_id IS NOT NULL
+                                 AND fir.fiscal_sequence_policy_id IS NOT NULL
+                                 AND fir.fiscal_sequence_value IS NOT NULL
+                                 AND fir.fiscal_document_number IS NOT NULL
+                                 AND fir.fiscal_number_assigned_at IS NOT NULL
+                                 AND fir.fiscal_issuance_evidence_status = 'FISCAL_DOCUMENT_NUMBER_ASSIGNED'
+                                 AND fir.fiscal_number_assignment_state = 'ASSIGNED'))) AS fiscal_snapshot_locked
             FROM core.parking_sessions ps
             LEFT JOIN core.parking_session_invoice_customer_information ci
               ON ci.parking_session_id = ps.parking_session_id
@@ -43,12 +64,13 @@ public sealed class PostgresParkingSessionInvoiceCustomerInformationRepository(s
                 return new(InvoiceCustomerInformationReadStatus.ParkingSessionNotFound, null);
             }
 
+            var locked = reader.GetBoolean(reader.GetOrdinal("fiscal_snapshot_locked"));
             if (reader.IsDBNull(reader.GetOrdinal("row_version")))
             {
-                return new(InvoiceCustomerInformationReadStatus.NotSupplied, null);
+                return new(InvoiceCustomerInformationReadStatus.NotSupplied, null, locked);
             }
 
-            return new(InvoiceCustomerInformationReadStatus.Found, MapRecord(reader));
+            return new(InvoiceCustomerInformationReadStatus.Found, MapRecord(reader), locked);
         }
         catch (NpgsqlException)
         {
@@ -163,25 +185,25 @@ public sealed class PostgresParkingSessionInvoiceCustomerInformationRepository(s
         const string sql = """
             SELECT EXISTS (
                 SELECT 1
-                FROM core.fiscal_issuance_references
-                WHERE parking_session_id = @parking_session_id
-                  AND is_active = true
-                  AND is_superseded = false
+                FROM core.fiscal_issuance_references fir
+                WHERE fir.parking_session_id = @parking_session_id
+                  AND fir.is_active = true
+                  AND fir.is_superseded = false
                   AND (
-                      invoice_customer_information_snapshot_captured_at IS NOT NULL
+                      NULLIF(to_jsonb(fir)->>'invoice_customer_information_snapshot_captured_at', '') IS NOT NULL
                       OR (
-                          fiscal_issuance_state IN (
+                          fir.fiscal_issuance_state IN (
                               'FISCAL_ISSUANCE_RECORDED',
                               'FISCAL_ISSUANCE_REPLAYED',
                               'FISCAL_ISSUANCE_RECONCILED')
-                          AND pos_server_fiscal_document_id IS NOT NULL
-                          AND fiscal_identity_id IS NOT NULL
-                          AND fiscal_sequence_policy_id IS NOT NULL
-                          AND fiscal_sequence_value IS NOT NULL
-                          AND fiscal_document_number IS NOT NULL
-                          AND fiscal_number_assigned_at IS NOT NULL
-                          AND fiscal_issuance_evidence_status = 'FISCAL_DOCUMENT_NUMBER_ASSIGNED'
-                          AND fiscal_number_assignment_state = 'ASSIGNED')));
+                          AND fir.pos_server_fiscal_document_id IS NOT NULL
+                          AND fir.fiscal_identity_id IS NOT NULL
+                          AND fir.fiscal_sequence_policy_id IS NOT NULL
+                          AND fir.fiscal_sequence_value IS NOT NULL
+                          AND fir.fiscal_document_number IS NOT NULL
+                          AND fir.fiscal_number_assigned_at IS NOT NULL
+                          AND fir.fiscal_issuance_evidence_status = 'FISCAL_DOCUMENT_NUMBER_ASSIGNED'
+                          AND fir.fiscal_number_assignment_state = 'ASSIGNED')));
             """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;

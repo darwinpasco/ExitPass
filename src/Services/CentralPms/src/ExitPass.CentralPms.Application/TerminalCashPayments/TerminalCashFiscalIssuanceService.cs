@@ -906,6 +906,13 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             ["cashCustodySessionId"] = cashPayment.CashCustodySessionId.ToString("D"),
             ["fiscalIssuanceReferenceId"] = reference.FiscalIssuanceReferenceId.ToString("D")
         };
+        AddIfPresent(context, "ticket_number", cashPayment.TicketNumber);
+        AddIfPresent(context, "plate_number", cashPayment.PlateNumber);
+        AddIfPresent(context, "branch_site", cashPayment.SiteName);
+        AddIfPresent(context, "entry_time", cashPayment.EntryTime?.ToString("O"));
+        AddIfPresent(context, "payment_time", cashPayment.ConfirmedAt.ToString("O"));
+        AddIfPresent(context, "parking_duration", FormatDuration(cashPayment.EntryTime, cashPayment.ConfirmedAt));
+        context["payment_method"] = "CASH";
 
         if (statutoryContext is null)
         {
@@ -929,6 +936,18 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         {
             context[key] = value.Trim();
         }
+    }
+
+    private static string? FormatDuration(DateTimeOffset? entryTime, DateTimeOffset completedAt)
+    {
+        if (!entryTime.HasValue || completedAt < entryTime.Value) return null;
+        var totalMinutes = (long)Math.Floor((completedAt - entryTime.Value).TotalMinutes);
+        var hours = totalMinutes / 60;
+        var minutes = totalMinutes % 60;
+        if (hours == 0) return $"{minutes} minute{(minutes == 1 ? string.Empty : "s")}";
+        return minutes == 0
+            ? $"{hours} hour{(hours == 1 ? string.Empty : "s")}"
+            : $"{hours} hour{(hours == 1 ? string.Empty : "s")} {minutes:00} minutes";
     }
 
     private static void EnsureExistingReferenceMatchesTerminalCashPayment(

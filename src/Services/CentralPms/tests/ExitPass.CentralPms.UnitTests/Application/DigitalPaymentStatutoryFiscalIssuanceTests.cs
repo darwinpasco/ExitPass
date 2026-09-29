@@ -54,6 +54,12 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         Assert.Null(request.AppliedStatutoryFiscalFacts);
         Assert.Equal("Juan Dela Cruz", request.InvoiceCustomerInformation?.CustomerName);
         Assert.Null(request.InvoiceCustomerInformation?.StatutoryIdNumber);
+        Assert.Equal("DIGITAL-TICKET-001", request.ReferenceContext["ticket_number"]);
+        Assert.Equal("TEST 1001", request.ReferenceContext["plate_number"]);
+        Assert.Equal("PITX Level 3", request.ReferenceContext["branch_site"]);
+        Assert.Equal("2026-08-24T00:36:00.0000000+00:00", request.ReferenceContext["entry_time"]);
+        Assert.Equal("1 hour 24 minutes", request.ReferenceContext["parking_duration"]);
+        Assert.Equal("GCASH", request.ReferenceContext["payment_method"]);
 
         var line = Assert.Single(request.DocumentLines);
         Assert.Equal(expectedVatableSalesMinorUnits, line.UnitAmountMinorUnits);
@@ -396,7 +402,12 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
                 "100 Sample Street",
                 "123-456-789",
                 "Sample Trading",
-                "OSCA-12345"));
+                "OSCA-12345"),
+            "DIGITAL-TICKET-001",
+            "TEST 1001",
+            "PITX Level 3",
+            DateTimeOffset.Parse("2026-08-24T00:36:00Z"),
+            "GCASH");
 
     private static TerminalCashStatutoryFiscalLinkageContext Statutory() =>
         new(

@@ -20,6 +20,7 @@ export type OperatorConsoleNavigationItem = {
   route: string;
   label: string;
   requiredAnyPermissions: readonly string[];
+  requiredAnyRoles?: readonly string[];
   matches?: (path: string) => boolean;
 };
 
@@ -53,7 +54,8 @@ export const operatorConsoleNavigation: readonly OperatorConsoleNavigationItem[]
   {
     route: routes.fiscalStatus,
     label: "Fiscal Status",
-    requiredAnyPermissions: ["fiscal-issuance.status.read"]
+    requiredAnyPermissions: ["fiscal-issuance.status.read"],
+    requiredAnyRoles: ["OPERATIONS_SUPERVISOR"]
   },
   {
     route: routes.queue,
@@ -69,7 +71,8 @@ export const operatorConsoleNavigation: readonly OperatorConsoleNavigationItem[]
   {
     route: routes.fiscalReporting,
     label: "Fiscal Reporting / EJ / X / Z",
-    requiredAnyPermissions: Object.values(fiscalReportingPermissions)
+    requiredAnyPermissions: Object.values(fiscalReportingPermissions),
+    requiredAnyRoles: ["OPERATIONS_SUPERVISOR"]
   },
   {
     route: routes.audit,
@@ -89,7 +92,8 @@ export const operatorConsoleNavigation: readonly OperatorConsoleNavigationItem[]
   {
     route: routes.vendorAcknowledgments,
     label: "Vendor Acknowledgments",
-    requiredAnyPermissions: ["vendor-acknowledgments.view"]
+    requiredAnyPermissions: ["vendor-acknowledgments.view"],
+    requiredAnyRoles: ["OPERATIONS_SUPERVISOR"]
   },
   {
     route: routes.vendorProjectionHealth,
@@ -98,7 +102,8 @@ export const operatorConsoleNavigation: readonly OperatorConsoleNavigationItem[]
       "projection-health.view",
       "ops.vendor-session-projection-health.view",
       "operator-console.vendor-projection-health.view"
-    ]
+    ],
+    requiredAnyRoles: ["SYSTEM_ADMINISTRATOR"]
   },
   {
     route: routes.policyImportReview,
@@ -126,16 +131,31 @@ export function hasAnyPermission(
 }
 
 export function visibleOperatorConsoleNavigation(
-  permissions: readonly string[]
+  permissions: readonly string[],
+  roleCodes: readonly string[] = []
 ): readonly OperatorConsoleNavigationItem[] {
-  return operatorConsoleNavigation.filter((item) => hasAnyPermission(permissions, item.requiredAnyPermissions));
+  return operatorConsoleNavigation.filter((item) =>
+    hasAnyPermission(permissions, item.requiredAnyPermissions) && hasRequiredRole(roleCodes, item.requiredAnyRoles)
+  );
 }
 
-export function canAccessOperatorConsolePath(path: string, permissions: readonly string[]): boolean {
+export function canAccessOperatorConsolePath(
+  path: string,
+  permissions: readonly string[],
+  roleCodes: readonly string[] = []
+): boolean {
   const item = operatorConsoleNavigation.find((candidate) =>
     candidate.matches ? candidate.matches(path) : candidate.route === path
   );
-  return item ? hasAnyPermission(permissions, item.requiredAnyPermissions) : true;
+  return item
+    ? hasAnyPermission(permissions, item.requiredAnyPermissions) && hasRequiredRole(roleCodes, item.requiredAnyRoles)
+    : true;
+}
+
+function hasRequiredRole(roleCodes: readonly string[], requiredAnyRoles?: readonly string[]): boolean {
+  if (!requiredAnyRoles?.length) return true;
+  const available = new Set(roleCodes);
+  return requiredAnyRoles.some((roleCode) => available.has(roleCode));
 }
 
 export function hasStatutorySupervisorWorkspace(permissions: readonly string[]): boolean {

@@ -18,7 +18,8 @@ test.describe("Operator Console canonical Central PMS statutory review", () => {
 
       await page.goto("/operator-console/statutory-discounts");
       await expect(page.getByRole("heading", { name: "Review queue" })).toBeVisible();
-      await expect(page.getByText(requestReference.slice(0, 8), { exact: false })).toBeVisible();
+      await expect(page.getByRole("cell", { name: /TICKET-1001/ })).toBeVisible();
+      await expect(page.getByText(requestReference, { exact: false })).toHaveCount(0);
       await expect(page.getByRole("cell", { name: "WebPay" })).toBeVisible();
       await expect(page.getByText("ABC-1234")).toHaveCount(0);
 

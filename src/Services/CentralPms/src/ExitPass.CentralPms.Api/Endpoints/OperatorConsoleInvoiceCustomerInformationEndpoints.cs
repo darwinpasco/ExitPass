@@ -19,12 +19,14 @@ public static class OperatorConsoleInvoiceCustomerInformationEndpoints
 
         group.MapGet(string.Empty, ReadAsync)
             .WithMetadata(new ReconciliationPolicyMetadata(ReadPolicy))
+            .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
             .Produces<OperatorConsoleInvoiceCustomerInformationResponse>()
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status503ServiceUnavailable);
 
         group.MapPut(string.Empty, SaveAsync)
             .WithMetadata(new ReconciliationPolicyMetadata(ManagePolicy))
+            .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
             .Accepts<SaveOperatorConsoleInvoiceCustomerInformationRequest>("application/json")
             .Produces<OperatorConsoleInvoiceCustomerInformationResponse>()
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
@@ -64,8 +66,8 @@ public static class OperatorConsoleInvoiceCustomerInformationEndpoints
 
         return result.Status switch
         {
-            InvoiceCustomerInformationReadStatus.Found => Results.Ok(ToResponse(parkingSessionId, result.Record, identity.CorrelationId)),
-            InvoiceCustomerInformationReadStatus.NotSupplied => Results.Ok(ToResponse(parkingSessionId, null, identity.CorrelationId)),
+            InvoiceCustomerInformationReadStatus.Found => Results.Ok(ToResponse(parkingSessionId, result.Record, identity.CorrelationId, result.FiscalSnapshotLocked)),
+            InvoiceCustomerInformationReadStatus.NotSupplied => Results.Ok(ToResponse(parkingSessionId, null, identity.CorrelationId, result.FiscalSnapshotLocked)),
             InvoiceCustomerInformationReadStatus.ParkingSessionNotFound => Error(StatusCodes.Status404NotFound, "PARKING_SESSION_NOT_FOUND", "The parking session is unavailable in the current Site scope.", identity.CorrelationId),
             _ => Error(StatusCodes.Status503ServiceUnavailable, "CUSTOMER_INFORMATION_SOURCE_UNAVAILABLE", "Sales Invoice customer information is temporarily unavailable.", identity.CorrelationId, true)
         };
@@ -146,7 +148,8 @@ public static class OperatorConsoleInvoiceCustomerInformationEndpoints
     private static OperatorConsoleInvoiceCustomerInformationResponse ToResponse(
         Guid parkingSessionId,
         ParkingSessionInvoiceCustomerInformationRecord? record,
-        Guid correlationId) =>
+        Guid correlationId,
+        bool fiscalSnapshotLocked = false) =>
         new(
             parkingSessionId,
             record is not null,
@@ -156,7 +159,8 @@ public static class OperatorConsoleInvoiceCustomerInformationEndpoints
             record?.BusinessStyle,
             record?.RowVersion,
             record?.UpdatedAt,
-            correlationId);
+            correlationId,
+            fiscalSnapshotLocked);
 
     private static IResult Error(
         int statusCode,

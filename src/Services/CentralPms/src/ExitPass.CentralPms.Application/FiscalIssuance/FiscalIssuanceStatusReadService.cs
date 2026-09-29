@@ -31,6 +31,11 @@ public interface IFiscalIssuanceStatusReadService
             ? FiscalIssuanceStatusLookupResult.NotFound("fiscal_issuance_reference_not_found")
             : FiscalIssuanceStatusLookupResult.Found(status);
     }
+
+    Task<FiscalIssuanceStatusLookupResult> LookupAsync(
+        string query,
+        Guid? siteId,
+        CancellationToken cancellationToken) => LookupAsync(query, cancellationToken);
 }
 
 public sealed class FiscalIssuanceStatusReadService : IFiscalIssuanceStatusReadService
@@ -77,6 +82,12 @@ public sealed class FiscalIssuanceStatusReadService : IFiscalIssuanceStatusReadS
     public async Task<FiscalIssuanceStatusLookupResult> LookupAsync(
         string query,
         CancellationToken cancellationToken)
+        => await LookupAsync(query, siteId: null, cancellationToken).ConfigureAwait(false);
+
+    public async Task<FiscalIssuanceStatusLookupResult> LookupAsync(
+        string query,
+        Guid? siteId,
+        CancellationToken cancellationToken)
     {
         var trimmed = query.Trim();
         if (string.IsNullOrWhiteSpace(trimmed))
@@ -88,28 +99,31 @@ public sealed class FiscalIssuanceStatusReadService : IFiscalIssuanceStatusReadS
         {
             var status = await GetByReferenceIdAsync(fiscalIssuanceReferenceId, cancellationToken)
                 .ConfigureAwait(false);
-
-            return status is null
-                ? FiscalIssuanceStatusLookupResult.NotFound("fiscal_issuance_reference_not_found")
+            return status is null || (siteId.HasValue && status.SiteId != siteId)
+                ? FiscalIssuanceStatusLookupResult.NotFound("fiscal_identifier_not_found")
                 : FiscalIssuanceStatusLookupResult.Found(status);
         }
 
-        var matches = await _repository.FindByFiscalDocumentNumberAsync(trimmed, cancellationToken)
+        var matches = await _repository.FindByOperatorIdentifierAsync(trimmed, siteId, cancellationToken)
             .ConfigureAwait(false);
 
         if (matches.Count == 0)
         {
-            return FiscalIssuanceStatusLookupResult.NotFound("fiscal_document_number_not_found");
+            return FiscalIssuanceStatusLookupResult.NotFound("fiscal_identifier_not_found");
         }
 
         if (matches.Count > 1)
         {
-            return FiscalIssuanceStatusLookupResult.Ambiguous("fiscal_document_number_ambiguous");
+            return FiscalIssuanceStatusLookupResult.Ambiguous("fiscal_identifier_ambiguous");
         }
 
-        var reference = matches[0];
-        var readModel = FromReference(reference);
-        var enriched = await EnrichWithPosServerReadAsync(readModel, reference, cancellationToken)
+        var match = matches[0];
+        var readModel = FromReference(match.Reference) with
+        {
+            TicketNumber = match.TicketNumber,
+            PlateNumber = match.PlateNumber
+        };
+        var enriched = await EnrichWithPosServerReadAsync(readModel, match.Reference, cancellationToken)
             .ConfigureAwait(false);
 
         return FiscalIssuanceStatusLookupResult.Found(enriched);
@@ -336,7 +350,9 @@ public sealed record FiscalIssuanceStatusReadModel(
     DateTimeOffset? PosServerVoidedAt = null,
     string CompletionBasis = FiscalCompletionBasisCodes.PaymentFinality,
     Guid? CompletionAuthorityReferenceId = null,
-    string? ElectronicJournalEventReference = null);
+    string? ElectronicJournalEventReference = null,
+    string? TicketNumber = null,
+    string? PlateNumber = null);
 
 public sealed record FiscalIssuanceStatusLookupResult(
     FiscalIssuanceStatusLookupOutcome Outcome,

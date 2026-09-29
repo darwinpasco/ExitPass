@@ -100,6 +100,44 @@ public sealed class CentralPmsRbacRepository : ICentralPmsRbacRepository
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
 
+    public async Task<bool> UserHasAnyRoleAsync(
+        Guid userId,
+        IReadOnlyCollection<string> roleCodes,
+        CancellationToken cancellationToken)
+    {
+        if (roleCodes.Count == 0)
+        {
+            return false;
+        }
+
+        const string sql = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM identity.users u
+                JOIN identity.user_roles ur ON ur.user_id = u.user_id
+                JOIN identity.roles r ON r.role_id = ur.role_id
+                WHERE u.user_id = @user_id
+                  AND u.user_status = 'ACTIVE'
+                  AND u.effective_from <= now()
+                  AND (u.effective_to IS NULL OR u.effective_to > now())
+                  AND ur.assignment_status = 'ACTIVE'
+                  AND ur.effective_from <= now()
+                  AND (ur.effective_to IS NULL OR ur.effective_to > now())
+                  AND ur.revoked_at IS NULL
+                  AND r.role_status = 'ACTIVE'
+                  AND r.effective_from <= now()
+                  AND (r.effective_to IS NULL OR r.effective_to > now())
+                  AND r.role_code = ANY(@role_codes)
+            );
+            """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("user_id", userId);
+        command.Parameters.AddWithValue("role_codes", roleCodes.ToArray());
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
     public async Task<CentralPmsServicePrincipalAuthenticationRecord?> GetServicePrincipalAuthenticationAsync(
         string credentialReference,
         CancellationToken cancellationToken)

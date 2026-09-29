@@ -26,6 +26,16 @@ public sealed record OperatorConsoleStatutoryDiscountDraftRequest(
     string? AttestationNotes,
     string? ReasonCode,
     string IdempotencyKey,
+    Guid CorrelationId,
+    string? EvidenceUploadReceipt = null);
+
+public sealed record OperatorConsoleStatutoryIdPhotoUploadResponse(
+    bool Accepted,
+    string? UploadReceipt,
+    DateTimeOffset? ExpiresAt,
+    string? ErrorCode,
+    string Message,
+    bool Retryable,
     Guid CorrelationId);
 
 /// <summary>

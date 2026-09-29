@@ -153,6 +153,13 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             ["payment_channel"] = "DIGITAL",
             ["fiscal_issuance_reference_id"] = reference.FiscalIssuanceReferenceId.ToString("D")
         };
+        AddDisplayFact(referenceContext, "ticket_number", context.TicketNumber);
+        AddDisplayFact(referenceContext, "plate_number", context.PlateNumber);
+        AddDisplayFact(referenceContext, "branch_site", context.SiteName);
+        AddDisplayFact(referenceContext, "entry_time", context.EntryTime?.ToString("O"));
+        AddDisplayFact(referenceContext, "payment_time", context.ConfirmedAt.ToString("O"));
+        AddDisplayFact(referenceContext, "parking_duration", FormatDuration(context.EntryTime, context.ConfirmedAt));
+        AddDisplayFact(referenceContext, "payment_method", context.PaymentMethod);
         if (statutory is not null)
         {
             AddStatutoryReferences(payableBasisContext, statutory);
@@ -226,6 +233,23 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
                     reference.InvoiceCustomerInformationSnapshot?.Tin,
                     reference.InvoiceCustomerInformationSnapshot?.BusinessStyle,
                     statutory?.IdControlReference));
+    }
+
+    private static void AddDisplayFact(IDictionary<string, string> context, string key, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value)) context[key] = value.Trim();
+    }
+
+    private static string? FormatDuration(DateTimeOffset? entryTime, DateTimeOffset completedAt)
+    {
+        if (!entryTime.HasValue || completedAt < entryTime.Value) return null;
+        var totalMinutes = (long)Math.Floor((completedAt - entryTime.Value).TotalMinutes);
+        var hours = totalMinutes / 60;
+        var minutes = totalMinutes % 60;
+        if (hours == 0) return $"{minutes} minute{(minutes == 1 ? string.Empty : "s")}";
+        return minutes == 0
+            ? $"{hours} hour{(hours == 1 ? string.Empty : "s")}"
+            : $"{hours} hour{(hours == 1 ? string.Empty : "s")} {minutes:00} minutes";
     }
 
     private static bool HasNoInvoiceCustomerInformation(
@@ -521,7 +545,12 @@ public sealed record DigitalPaymentFiscalContext(
     Guid SitePosServerId,
     string SitePosServerRef,
     TerminalCashStatutoryFiscalLinkageContext? AppliedStatutoryFiscalContext = null,
-    InvoiceCustomerInformation? InvoiceCustomerInformation = null);
+    InvoiceCustomerInformation? InvoiceCustomerInformation = null,
+    string? TicketNumber = null,
+    string? PlateNumber = null,
+    string? SiteName = null,
+    DateTimeOffset? EntryTime = null,
+    string? PaymentMethod = null);
 
 public sealed record DigitalPaymentFiscalIssuanceResult(
     Guid FiscalIssuanceReferenceId,

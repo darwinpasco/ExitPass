@@ -130,7 +130,11 @@ public sealed record TerminalCashPaymentReadback(
     DateTimeOffset ConfirmedAt,
     DateTimeOffset LastUpdatedAt,
     Guid CorrelationId,
-    string FiscalStatus);
+    string FiscalStatus,
+    string? TicketNumber = null,
+    string? PlateNumber = null,
+    string? SiteName = null,
+    DateTimeOffset? EntryTime = null);
 
 /// <summary>
 /// Controlled terminal cash payment rejection.

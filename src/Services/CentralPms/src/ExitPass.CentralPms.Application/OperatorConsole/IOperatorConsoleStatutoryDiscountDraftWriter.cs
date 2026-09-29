@@ -6,6 +6,14 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 public interface IOperatorConsoleStatutoryDiscountDraftWriter
 {
     /// <summary>
+    /// Finds an existing reusable statutory discount validation draft and its persisted policy snapshot.
+    /// </summary>
+    Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult?> FindReusableAsync(
+        Guid parkingSessionId,
+        string entitlementType,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Persists one draft statutory discount validation row.
     /// </summary>
     Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult> PersistAsync(

@@ -47,6 +47,19 @@ public sealed record OperatorConsoleStatutoryDiscountEvidenceDraftContext(
     bool EvidenceRequired,
     bool EvidenceCaptured);
 
+/// <summary>Restricted evidence object lookup used only after current-user authorization.</summary>
+public sealed record OperatorConsoleStatutoryDiscountEvidencePreviewTarget(
+    Guid EvidenceId,
+    Guid DraftId,
+    Guid ParkingSessionId,
+    Guid SiteId,
+    Guid SiteGroupId,
+    Guid? RequestedByUserId,
+    string EvidenceType,
+    string StorageReference,
+    string ChecksumSha256,
+    string CaptureStatus);
+
 /// <summary>
 /// Persistence command for statutory discount evidence metadata capture.
 /// </summary>

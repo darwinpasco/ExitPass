@@ -19,4 +19,5 @@ public sealed record OperatorConsoleInvoiceCustomerInformationResponse(
     string? BusinessStyle,
     long? RowVersion,
     DateTimeOffset? UpdatedAt,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    bool FiscalSnapshotLocked = false);

@@ -42,13 +42,19 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
         "BROWSER_KEY_AND_MTLS"
     };
 
-    private static readonly HashSet<string> SiteScopedReadOnlyActions = new(StringComparer.Ordinal)
+    private static readonly HashSet<string> DirectSiteScopedActions = new(StringComparer.Ordinal)
     {
         OperatorConsoleActionCodes.SessionLookup,
         OperatorConsoleActionCodes.ViewStatutoryDiscountDraft,
         OperatorConsoleActionCodes.ViewEvidence,
         OperatorConsoleActionCodes.ViewPolicyResolution,
         OperatorConsoleActionCodes.ViewFiscalIssuanceStatus
+    };
+
+    private static readonly HashSet<string> DirectSiteOrOperatingContextActions = new(StringComparer.Ordinal)
+    {
+        OperatorConsoleActionCodes.CreateStatutoryDiscountDraft,
+        OperatorConsoleActionCodes.ReviewEvidence
     };
 
     private readonly IOperatorConsoleAccessEvaluationReadRepository _repository;
@@ -111,8 +117,14 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
         }
 
         EvaluateHrIdentityMapping(context, evaluatedAt, reasons);
-        var siteScopedReadOnly = SiteScopedReadOnlyActions.Contains(actionCode);
-        if (siteScopedReadOnly)
+        var directSiteScoped = DirectSiteScopedActions.Contains(actionCode);
+        var mayUseDirectSiteScope = DirectSiteOrOperatingContextActions.Contains(actionCode);
+        var usesDirectSiteScope = directSiteScoped ||
+            (mayUseDirectSiteScope &&
+             command.SiteId.HasValue &&
+             command.SiteId.Value != Guid.Empty &&
+             context.HasEffectiveDirectSiteScope);
+        if (usesDirectSiteScope)
         {
             EvaluateDirectSiteScope(command, context, reasons);
         }
@@ -133,7 +145,7 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
             EffectiveRole: allowed ? "OPERATOR" : null,
             DeviceTrust: ToDeviceTrust(context),
             ShiftContext: ToShiftContext(context, command.UserId, evaluatedAt),
-            SiteContext: ToSiteContext(context, siteScopedReadOnly),
+            SiteContext: ToSiteContext(context, usesDirectSiteScope),
             EvaluatedAt: evaluatedAt,
             Persisted: false,
             CorrelationId: command.CorrelationId,
@@ -333,13 +345,13 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
 
     private static OperatorConsoleSiteContextResult ToSiteContext(
         OperatorConsoleAccessEvaluationReadContext context,
-        bool siteScopedReadOnly)
+        bool directSiteScoped)
     {
         var assignment = context.DeviceAssignment;
         return new OperatorConsoleSiteContextResult(
             assignment?.SiteId ?? context.Request.SiteId,
             assignment?.SiteGroupId ?? context.Request.SiteGroupId,
-            siteScopedReadOnly
+            directSiteScoped
                 ? context.HasEffectiveDirectSiteScope
                 : assignment is not null &&
                     IsActive(assignment.AssignmentStatusCode) &&

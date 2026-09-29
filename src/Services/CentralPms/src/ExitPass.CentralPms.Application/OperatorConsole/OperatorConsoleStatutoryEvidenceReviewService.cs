@@ -289,8 +289,7 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
     private static bool HasDurableScope(OperatorConsoleAccessEvaluationResult access) =>
         access.Allowed &&
         access.SiteContext.Assigned &&
-        access.SiteContext.SiteId.HasValue &&
-        access.SiteContext.SiteGroupId.HasValue;
+        access.SiteContext.SiteId.HasValue;
 
     private static bool ScopeMatches(
         OperatorConsoleStatutoryEvidenceReviewRecord record,
@@ -302,7 +301,7 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewService : IOperatorCon
         OperatorConsoleStatutoryEvidenceReviewRecord record,
         StatutoryEvidenceAuthorizedReviewContext context) =>
         context.SiteId == record.SiteId &&
-        context.SiteGroupId == record.SiteGroupId &&
+        (!context.SiteGroupId.HasValue || context.SiteGroupId == record.SiteGroupId) &&
         (string.IsNullOrWhiteSpace(context.ExpectedDecisionSourceChannel) ||
          string.Equals(context.ExpectedDecisionSourceChannel, record.SourceChannel, StringComparison.Ordinal));
 

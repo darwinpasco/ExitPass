@@ -368,4 +368,15 @@ public interface IFiscalIssuanceReferenceRepository
         string fiscalDocumentNumber,
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<FiscalIssuanceReferenceRecord>>(Array.Empty<FiscalIssuanceReferenceRecord>());
+
+    Task<IReadOnlyList<FiscalIssuanceOperatorLookupMatch>> FindByOperatorIdentifierAsync(
+        string identifier,
+        Guid? siteId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<FiscalIssuanceOperatorLookupMatch>>(Array.Empty<FiscalIssuanceOperatorLookupMatch>());
 }
+
+public sealed record FiscalIssuanceOperatorLookupMatch(
+    FiscalIssuanceReferenceRecord Reference,
+    string? TicketNumber,
+    string? PlateNumber);

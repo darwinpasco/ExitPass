@@ -102,6 +102,10 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
                 parking.parking_session_id AS parking_session_id,
                 parking.site_id AS parking_site_id,
                 parking.site_group_id AS parking_site_group_id,
+                COALESCE(parking.ticket_number_masked, parking.vendor_session_ref) AS parking_ticket_number,
+                parking.plate_number_masked AS parking_plate_number,
+                COALESCE(parking.entry_at, parking.created_at) AS parking_entry_time,
+                parking_site.site_name AS parking_site_name,
 
                 original_tariff.tariff_snapshot_id AS original_tariff_id,
                 original_tariff.parking_session_id AS original_tariff_parking_session_id,
@@ -140,6 +144,8 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
               ON policy.statutory_discount_policy_version_id = authority.statutory_discount_policy_version_id
             LEFT JOIN core.parking_sessions AS parking
               ON parking.parking_session_id = decision.parking_session_id
+            LEFT JOIN sites.sites AS parking_site
+              ON parking_site.site_id = parking.site_id
             LEFT JOIN core.tariff_snapshots AS original_tariff
               ON original_tariff.tariff_snapshot_id = command.original_tariff_snapshot_id
             LEFT JOIN core.tariff_snapshots AS applied_tariff
@@ -234,7 +240,11 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
             new StatutoryDiscountZeroPayableParkingAnchor(
                 NullableGuid(reader, "parking_session_id"),
                 NullableGuid(reader, "parking_site_id"),
-                NullableGuid(reader, "parking_site_group_id")),
+                NullableGuid(reader, "parking_site_group_id"),
+                NullableString(reader, "parking_ticket_number"),
+                NullableString(reader, "parking_plate_number"),
+                NullableString(reader, "parking_site_name"),
+                NullableTimestamp(reader, "parking_entry_time")),
             ReadTariff(reader, "original_tariff"),
             ReadTariff(reader, "applied_tariff"),
             reader.GetBoolean(reader.GetOrdinal("has_conflicting_payment_attempt")));

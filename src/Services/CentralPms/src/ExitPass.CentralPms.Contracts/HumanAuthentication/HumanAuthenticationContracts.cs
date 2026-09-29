@@ -71,7 +71,8 @@ public sealed record HumanSessionDto(
     [property: JsonIgnore] Guid? EffectiveSiteGroupReference = null,
     [property: JsonIgnore] long? AuthorizationEpoch = null,
     [property: JsonIgnore] long? CredentialVersion = null,
-    IReadOnlyList<HumanAuthorizedSiteDto>? AuthorizedSites = null);
+    IReadOnlyList<HumanAuthorizedSiteDto>? AuthorizedSites = null,
+    IReadOnlyList<string>? RoleCodes = null);
 
 public sealed record HumanAuthorizedSiteDto(
     Guid SiteReference,

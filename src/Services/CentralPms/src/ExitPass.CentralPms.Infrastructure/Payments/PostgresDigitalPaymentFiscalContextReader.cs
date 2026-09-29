@@ -43,12 +43,19 @@ public sealed class PostgresDigitalPaymentFiscalContextReader :
                 ici.customer_address,
                 ici.customer_tin,
                 ici.business_style,
-                ici.statutory_id_number
+                ici.statutory_id_number,
+                COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS ticket_number,
+                ps.plate_number_masked,
+                COALESCE(ps.entry_at, ps.created_at) AS entry_time,
+                site.site_name,
+                pa.payment_method_code
             FROM core.payment_attempts pa
             INNER JOIN core.payment_confirmations pc
                 ON pc.payment_attempt_id = pa.payment_attempt_id
             INNER JOIN core.parking_sessions ps
                 ON ps.parking_session_id = pa.parking_session_id
+            INNER JOIN sites.sites site
+                ON site.site_id = ps.site_id
             INNER JOIN core.tariff_snapshots ts
                 ON ts.tariff_snapshot_id = pa.tariff_snapshot_id
                AND ts.parking_session_id = pa.parking_session_id
@@ -139,7 +146,12 @@ public sealed class PostgresDigitalPaymentFiscalContextReader :
             endpoint.SitePosServerId,
             endpoint.SitePosServerRef!.Trim(),
             statutoryContext,
-            customerInformation);
+            customerInformation,
+            ReadOptionalString(reader, "ticket_number"),
+            ReadOptionalString(reader, "plate_number_masked"),
+            ReadOptionalString(reader, "site_name"),
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("entry_time")),
+            ReadOptionalString(reader, "payment_method_code"));
     }
 
     private static string? ReadOptionalString(NpgsqlDataReader reader, string column)

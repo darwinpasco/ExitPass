@@ -65,7 +65,7 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
     public async Task LookupAsync_WhenFiscalDocumentNumberResolves_PersistsResolvedReferenceAuditAndReturnsStatus()
     {
         var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
-        statusReadService.LookupAsync("SI-00000024", Arg.Any<CancellationToken>())
+        statusReadService.LookupAsync("SI-00000024", SiteId, Arg.Any<CancellationToken>())
             .Returns(FiscalIssuanceStatusLookupResult.Found(Status(fiscalDocumentNumber: "SI-00000024")));
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
@@ -98,7 +98,7 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
     {
         var otherSiteId = Guid.Parse("4f000000-0000-0000-0000-000000000099");
         var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
-        statusReadService.LookupAsync("SI-00000024", Arg.Any<CancellationToken>())
+        statusReadService.LookupAsync("SI-00000024", SiteId, Arg.Any<CancellationToken>())
             .Returns(FiscalIssuanceStatusLookupResult.Found(Status(otherSiteId, "SI-00000024")));
         var sut = CreateSut(AccessResult(allowed: true, []), statusReadService);
 
@@ -113,8 +113,8 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
     public async Task LookupAsync_WhenFiscalDocumentNumberMissing_PersistsNotFoundWithoutStatus()
     {
         var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
-        statusReadService.LookupAsync("SI-MISSING-UAT", Arg.Any<CancellationToken>())
-            .Returns(FiscalIssuanceStatusLookupResult.NotFound("fiscal_document_number_not_found"));
+        statusReadService.LookupAsync("SI-MISSING-UAT", SiteId, Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuanceStatusLookupResult.NotFound("fiscal_identifier_not_found"));
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
             .Returns(AccessResult(allowed: true, []) with { EvaluationId = Guid.Empty, Persisted = false });
@@ -143,8 +143,8 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
     public async Task LookupAsync_WhenFiscalDocumentNumberAmbiguous_PersistsFailedSafely()
     {
         var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
-        statusReadService.LookupAsync("SI-DUP-UAT", Arg.Any<CancellationToken>())
-            .Returns(FiscalIssuanceStatusLookupResult.Ambiguous("fiscal_document_number_ambiguous"));
+        statusReadService.LookupAsync("SI-DUP-UAT", SiteId, Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuanceStatusLookupResult.Ambiguous("fiscal_identifier_ambiguous"));
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
             .Returns(AccessResult(allowed: true, []) with { EvaluationId = Guid.Empty, Persisted = false });
@@ -161,11 +161,11 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
 
         result.Status.Should().BeNull();
         result.LookupAmbiguous.Should().BeTrue();
-        result.SafeErrorCode.Should().Be("FISCAL_DOCUMENT_NUMBER_LOOKUP_AMBIGUOUS");
+        result.SafeErrorCode.Should().Be("FISCAL_IDENTIFIER_LOOKUP_AMBIGUOUS");
         await writer.Received(1).PersistAsync(
             Arg.Is<OperatorConsoleAccessEvaluationResult>(persisted =>
                 persisted.PersistenceContext.ResultClass == "FAILED_SAFELY" &&
-                persisted.PersistenceContext.SafeErrorCode == "FISCAL_DOCUMENT_NUMBER_LOOKUP_AMBIGUOUS"),
+                persisted.PersistenceContext.SafeErrorCode == "FISCAL_IDENTIFIER_LOOKUP_AMBIGUOUS"),
             Arg.Any<CancellationToken>());
     }
 
