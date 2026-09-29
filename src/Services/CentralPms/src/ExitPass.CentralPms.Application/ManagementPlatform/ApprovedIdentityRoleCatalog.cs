@@ -15,6 +15,7 @@ public static class ApprovedIdentityRoleCatalog
 {
     public const string SystemAdministrator = "SYSTEM_ADMINISTRATOR";
     public const string OperationsSupervisor = "OPERATIONS_SUPERVISOR";
+    public const string FiscalZReadingCloser = "FISCAL_Z_READING_CLOSER";
     public const string StatutoryDiscountProcessor = "STATUTORY_DISCOUNT_PROCESSOR";
     public const string SiteOperator = "SITE_OPERATOR";
     public const string ParkingAttendant = "PARKING_ATTENDANT";
@@ -39,6 +40,7 @@ public static class ApprovedIdentityRoleCatalog
         {
             [SystemAdministrator] = Policy(SystemAdministrator, "System Administrator", [ManagementPlatformAudience], [GlobalScope], GlobalScope),
             [OperationsSupervisor] = Policy(OperationsSupervisor, "Operations Supervisor", [OperatorConsoleAudience, ManagementPlatformAudience], [SiteScope], SiteScope),
+            [FiscalZReadingCloser] = Policy(FiscalZReadingCloser, "Fiscal Z Reading Closer", [OperatorConsoleAudience], [SiteScope], SiteScope),
             [StatutoryDiscountProcessor] = Policy(StatutoryDiscountProcessor, "Statutory Discount Processor", [ManagementPlatformAudience], [GlobalScope], GlobalScope),
             [SiteOperator] = Policy(SiteOperator, "Site Operator", [OperatorConsoleAudience], [SiteScope], SiteScope),
             [ParkingAttendant] = Policy(ParkingAttendant, "Parking Attendant", [NativeParkingAppAudience], [SiteScope], SiteScope),
@@ -77,7 +79,17 @@ public static class ApprovedIdentityRoleCatalog
         PolicyByCode.Values.ToArray();
 
     public static IReadOnlyList<string> AssignableCodes { get; } =
-        PolicyByCode.Keys.ToArray();
+    [
+        SystemAdministrator,
+        OperationsSupervisor,
+        StatutoryDiscountProcessor,
+        SiteOperator,
+        ParkingAttendant,
+        AptCashierOperator,
+        FinanceReconciliationAnalyst,
+        CompliancePolicyAdministrator,
+        ExecutiveManagement
+    ];
 
     public static bool TryGetPolicy(string? roleCode, out ApprovedIdentityRolePolicy? policy)
     {
@@ -91,7 +103,8 @@ public static class ApprovedIdentityRoleCatalog
         return false;
     }
 
-    public static bool IsAssignable(string? roleCode) => TryGetPolicy(roleCode, out _);
+    public static bool IsAssignable(string? roleCode) =>
+        roleCode is not null && AssignableCodes.Contains(roleCode, CodeComparer);
 
     public static bool IsApplicationEligible(string? roleCode, string? audience) =>
         TryGetPolicy(roleCode, out var policy) &&

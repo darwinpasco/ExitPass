@@ -17,6 +17,7 @@ public sealed class ApprovedIdentityRoleCatalogTests
         ApprovedIdentityRoleCatalog.IsAssignable("PLATFORM_ADMINISTRATOR").Should().BeFalse();
         ApprovedIdentityRoleCatalog.IsAssignable("SYSTEM_RBAC_ADMINISTRATOR").Should().BeFalse();
         ApprovedIdentityRoleCatalog.IsAssignable("HEAD_OFFICE_STATUTORY_BENEFIT_REVIEWER").Should().BeFalse();
+        ApprovedIdentityRoleCatalog.IsAssignable(ApprovedIdentityRoleCatalog.FiscalZReadingCloser).Should().BeFalse();
     }
 
     [Theory]
@@ -26,6 +27,8 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [InlineData("SYSTEM_ADMINISTRATOR", "NATIVE_PARKING_APP", false)]
     [InlineData("OPERATIONS_SUPERVISOR", "MANAGEMENT_PLATFORM", true)]
     [InlineData("OPERATIONS_SUPERVISOR", "OPERATOR_CONSOLE", true)]
+    [InlineData("FISCAL_Z_READING_CLOSER", "OPERATOR_CONSOLE", true)]
+    [InlineData("FISCAL_Z_READING_CLOSER", "MANAGEMENT_PLATFORM", false)]
     [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "MANAGEMENT_PLATFORM", true)]
     [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "OPERATOR_CONSOLE", false)]
     [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "APT", false)]
@@ -61,6 +64,8 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [InlineData("OPERATIONS_SUPERVISOR", "SITE", true)]
     [InlineData("OPERATIONS_SUPERVISOR", "SITE_GROUP", false)]
     [InlineData("OPERATIONS_SUPERVISOR", "GLOBAL", false)]
+    [InlineData("FISCAL_Z_READING_CLOSER", "SITE", true)]
+    [InlineData("FISCAL_Z_READING_CLOSER", "GLOBAL", false)]
     [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "GLOBAL", true)]
     [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "SITE", false)]
     [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "SITE_GROUP", false)]
@@ -112,7 +117,7 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [Fact]
     public void Policies_ExposeTheCanonicalMetadataForH2()
     {
-        ApprovedIdentityRoleCatalog.Policies.Should().HaveCount(9);
+        ApprovedIdentityRoleCatalog.Policies.Should().HaveCount(10);
         ApprovedIdentityRoleCatalog.TryGetPolicy("EXECUTIVE_MANAGEMENT", out var executive).Should().BeTrue();
         executive!.DefaultAssignmentScope.Should().Be("GLOBAL");
         executive.AllowedAssignmentScopes.Should().Equal("GLOBAL");

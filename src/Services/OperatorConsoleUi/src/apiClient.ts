@@ -2163,7 +2163,7 @@ export function mapApiError(error: unknown): OperatorConsoleApiError {
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
-  const text = await response.text();
+  const text = (await response.text()).replace(/^\uFEFF/, "");
   const body = text ? JSON.parse(text) : {};
   if (response.ok) {
     return body as T;
