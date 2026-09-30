@@ -343,38 +343,38 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
     }
 
     /// <summary>
-    /// Verifies masked ID reference is required.
+    /// Verifies the authoritative ID reference is required.
     /// </summary>
     [Fact]
-    public async Task DraftAsync_WhenMaskedIdReferenceMissing_ThrowsValidationError()
+    public async Task DraftAsync_WhenIdControlReferenceMissing_ThrowsValidationError()
     {
         var sut = CreateSut(AccessResult(allowed: true, []));
 
-        var action = () => sut.DraftAsync(Command(maskedIdReference: ""), CancellationToken.None);
+        var action = () => sut.DraftAsync(Command(idControlReference: ""), CancellationToken.None);
 
         await action.Should().ThrowAsync<ArgumentException>()
-            .WithMessage("*MaskedIdReference is required*");
+            .WithMessage("*ID reference is required*");
     }
 
     /// <summary>
-    /// Verifies full ID-looking references are rejected.
+    /// Verifies unsupported characters in an authoritative ID reference are rejected.
     /// </summary>
     [Fact]
-    public async Task DraftAsync_WhenMaskedIdReferenceLooksRaw_ThrowsValidationError()
+    public async Task DraftAsync_WhenIdControlReferenceHasUnsupportedCharacters_ThrowsValidationError()
     {
         var sut = CreateSut(AccessResult(allowed: true, []));
 
-        var action = () => sut.DraftAsync(Command(maskedIdReference: "123456789012"), CancellationToken.None);
+        var action = () => sut.DraftAsync(Command(idControlReference: "1234/5678"), CancellationToken.None);
 
         await action.Should().ThrowAsync<ArgumentException>()
-            .WithMessage("*masked or last-four style*");
+            .WithMessage("*letters, numbers, or hyphens*");
     }
 
     /// <summary>
-    /// Verifies masked references with non-sensitive prefix/suffix context are accepted.
+    /// Verifies the service derives a last-four-visible mask from the authoritative reference.
     /// </summary>
     [Fact]
-    public async Task DraftAsync_WhenMaskedIdReferenceHasPrefixAndLastFour_AcceptsDraft()
+    public async Task DraftAsync_WhenAuthoritativeIdReferenceIsValid_DerivesPresentationMask()
     {
         var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
         repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
@@ -393,12 +393,14 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
                 Policy(requiresEvidence: true)));
         var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
 
-        var result = await sut.DraftAsync(Command(maskedIdReference: "SC-UAT-****-0001"), CancellationToken.None);
+        var result = await sut.DraftAsync(Command(idControlReference: "SC12345678"), CancellationToken.None);
 
         result.DraftAccepted.Should().BeTrue();
         result.DraftPersisted.Should().BeTrue();
         await writer.Received(1).PersistAsync(
-            Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(),
+            Arg.Is<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(request =>
+                request.IdControlReference == "SC12345678" &&
+                request.MaskedIdReference == "******5678"),
             Arg.Any<CancellationToken>());
     }
 
@@ -727,7 +729,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
     private static OperatorConsoleStatutoryDiscountDraftCommand Command(
         Guid? parkingSessionId = null,
         string entitlementType = "SENIOR_CITIZEN",
-        string maskedIdReference = "****1234",
+        string idControlReference = "12345678",
         bool operatorAttestation = true,
         bool evidenceCaptureRequested = true) =>
         new(
@@ -743,7 +745,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             "OSCA_ID",
             "OSCA",
             ExpiryDate: null,
-            maskedIdReference,
+            MaskedIdReference: string.Empty,
             EntitlementFingerprint: null,
             EvidenceCaptureRequested: evidenceCaptureRequested,
             EvidenceAccessIntent: "SUPERVISOR_REVIEW",
@@ -751,7 +753,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             AttestationNotes: "Manual API test attestation.",
             ReasonCode: "OPERATOR_DRAFT_REQUESTED",
             "operator-console-statutory-discount-draft-test",
-            CorrelationId);
+            CorrelationId)
+        {
+            IdControlReference = idControlReference,
+            BirthDate = new DateOnly(1950, 1, 1)
+        };
 
     private static OperatorConsoleAccessEvaluationResult AccessResult(
         bool allowed,

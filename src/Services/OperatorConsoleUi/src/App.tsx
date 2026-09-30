@@ -2262,6 +2262,8 @@ function TicketLookupPage({
   const [entitlementType, setEntitlementType] = useState<"SENIOR_CITIZEN" | "PWD">("SENIOR_CITIZEN");
   const [issuingAuthority, setIssuingAuthority] = useState("");
   const [idReference, setIdReference] = useState("");
+  const [idReferenceEditing, setIdReferenceEditing] = useState(false);
+  const [birthDate, setBirthDate] = useState("");
   const [operatorAttestation, setOperatorAttestation] = useState(false);
   const [idPhoto, setIdPhoto] = useState<File | null>(null);
   function replaceIdPhoto(file: File | null) {
@@ -2297,6 +2299,10 @@ function TicketLookupPage({
     setCustomerAddress("");
     setCustomerTin("");
     setCustomerBusinessStyle("");
+    setIssuingAuthority("");
+    setIdReference("");
+    setIdReferenceEditing(false);
+    setBirthDate("");
     replaceIdPhoto(null);
     setOperatorAttestation(false);
     try {
@@ -2353,11 +2359,13 @@ function TicketLookupPage({
       return;
     }
 
-    const maskedIdReference = maskStatutoryIdReference(idReference);
-    if (!maskedIdReference) {
+    const normalizedIdReference = idReference.trim();
+    const maskedIdReference = maskStatutoryIdReference(normalizedIdReference);
+    setIdReferenceEditing(false);
+    if (normalizedIdReference.length < 4 || !maskedIdReference) {
       setDraftState({
         status: "error",
-        message: "Enter an ID reference using at least five letters, numbers, or hyphens."
+        message: "Enter an ID reference using 4 to 64 letters, numbers, or hyphens."
       });
       return;
     }
@@ -2383,7 +2391,9 @@ function TicketLookupPage({
         entitlementType,
         idDocumentType: idDocumentTypeForEntitlement(entitlementType),
         issuingAuthority,
+        idControlReference: normalizedIdReference,
         maskedIdReference,
+        birthDate,
         idPhoto,
         evidenceCaptureRequested: true,
         operatorAttestation,
@@ -2552,6 +2562,7 @@ function TicketLookupPage({
                     setEntitlementType(next);
                     setIssuingAuthority("");
                     setIdReference("");
+                    setIdReferenceEditing(false);
                     replaceIdPhoto(null);
                   }}
                 >
@@ -2570,13 +2581,21 @@ function TicketLookupPage({
               <label>
                 ID reference
                 <input
-                  value={idReference}
+                  value={idReferenceEditing
+                    ? idReference
+                    : maskStatutoryIdReference(idReference) ?? ""}
                   onChange={(event) => setIdReference(event.target.value)}
+                  onFocus={() => setIdReferenceEditing(true)}
+                  onBlur={() => setIdReferenceEditing(false)}
                   autoComplete="off"
                 />
               </label>
+              <label>
+                Birth date
+                <input type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} />
+              </label>
               {maskStatutoryIdReference(idReference) && (
-                <p className="fieldHint" role="status">ID reference will be stored as {maskStatutoryIdReference(idReference)}.</p>
+                <p className="fieldHint" role="status">ID reference will be masked when displayed.</p>
               )}
               <PhoneCameraCapture value={idPhoto} onChange={replaceIdPhoto} disabled={draftState.status === "loading"} />
               <label className="checkboxField">
@@ -2594,6 +2613,7 @@ function TicketLookupPage({
                     draftState.status === "loading" ||
                     !issuingAuthority.trim() ||
                     !idReference.trim() ||
+                    !birthDate ||
                     !operatorAttestation ||
                     !idPhoto
                   }
@@ -4447,11 +4467,13 @@ function formatTicketLookupMoney(minorUnits?: number, currencyCode?: string) {
 
 export function maskStatutoryIdReference(value: string) {
   const normalized = value.trim();
-  if (normalized.length <= 4 || normalized.length > 64 || !/^[\p{L}\p{N}-]+$/u.test(normalized)) {
+  if (!normalized || normalized.length > 64 || !/^[\p{L}\p{N}-]+$/u.test(normalized)) {
     return null;
   }
 
-  return `${normalized.slice(0, -4)}****`;
+  return normalized.length <= 4
+    ? normalized
+    : `${"*".repeat(normalized.length - 4)}${normalized.slice(-4)}`;
 }
 
 function idDocumentTypeForEntitlement(entitlementType: "SENIOR_CITIZEN" | "PWD") {

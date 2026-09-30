@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using ExitPass.CentralPms.Api.Services;
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.IntegrationTests.Shared;
@@ -199,8 +200,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         var request = ManualFixtureRequest(evidenceCaptureRequested: true);
 
         using var firstResponse = await client.PostAsJsonAsync(Endpoint, request);
-        firstResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-        var first = await firstResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+        var firstPayload = await firstResponse.Content.ReadAsStringAsync();
+        firstResponse.StatusCode.Should().Be(HttpStatusCode.OK, "the response was {0}", firstPayload);
+        var first = JsonSerializer.Deserialize<OperatorConsoleStatutoryDiscountDraftResponse>(
+            firstPayload,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
         first.Should().NotBeNull();
         first!.DraftAccepted.Should().BeTrue();
         first.DraftPersisted.Should().BeTrue();
@@ -219,6 +223,19 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         firstEvidence.RedactionStatus.Should().Be("NOT_REDACTED");
         firstEvidence.EvidenceCaptured.Should().BeTrue();
 
+        var firstProcessorReview = await ReadProcessorReviewAsync(first.DraftId.Value);
+        firstProcessorReview.Should().NotBeNull();
+        firstProcessorReview!.RequestReference.Should().Be(first.DraftId.Value);
+        firstProcessorReview.ParkingSessionId.Should().Be(request.ParkingSessionId);
+        firstProcessorReview.SourceChannel.Should().Be("OPERATOR_CONSOLE");
+        firstProcessorReview.ReviewStatus.Should().Be("PENDING_REVIEW");
+        firstProcessorReview.IdDocumentType.Should().Be("SENIOR_CITIZEN_ID");
+        firstProcessorReview.IssuingAuthority.Should().Be("OSCA");
+        firstProcessorReview.IdControlReference.Should().Be("SC12345678");
+        firstProcessorReview.MaskedIdReference.Should().Be("******5678");
+        firstProcessorReview.BirthDate.Should().Be(new DateOnly(1950, 1, 1));
+        firstProcessorReview.EvidenceReferenceCount.Should().Be(1);
+
         using var secondResponse = await client.PostAsJsonAsync(Endpoint, request);
         secondResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var second = await secondResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
@@ -232,6 +249,55 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
         var evidenceReferenceCount = await CountEvidenceReferencesAsync(first.DraftId!.Value, "SENIOR_CITIZEN_ID");
         evidenceReferenceCount.Should().Be(1);
+        (await CountProcessorReviewsAsync(first.DraftId.Value)).Should().Be(1);
+    }
+
+    /// <summary>
+    /// Verifies a retry completes only the missing canonical processor projection when the
+    /// validation and restricted evidence association were already persisted by an earlier attempt.
+    /// </summary>
+    [Fact]
+    public async Task Draft_WhenProcessorProjectionIsMissing_CompletesItIdempotentlyWithoutDuplicatingIntake()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+
+        using var factory = CreatePhotoReceiptFactory();
+        var request = ManualFixtureRequest(evidenceCaptureRequested: true);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var draftService = scope.ServiceProvider.GetRequiredService<IOperatorConsoleStatutoryDiscountDraftService>();
+            var partial = await draftService.DraftAsync(ToDirectDraftCommand(request), CancellationToken.None);
+            partial.DraftPersisted.Should().BeTrue();
+            partial.ReusedExistingDraft.Should().BeFalse();
+            partial.DraftId.Should().NotBeNull();
+            (await CountActiveDraftsAsync(request.ParkingSessionId, request.EntitlementType)).Should().Be(1);
+            (await CountEvidenceReferencesAsync(partial.DraftId!.Value, "SENIOR_CITIZEN_ID")).Should().Be(1);
+            (await CountDecisionCommandsAsync(partial.DraftId.Value)).Should().Be(0);
+            (await CountProcessorReviewsAsync(partial.DraftId.Value)).Should().Be(0);
+        }
+
+        using var client = factory.CreateClient();
+        using var firstResponse = await client.PostAsJsonAsync(Endpoint, request);
+        var firstPayload = await firstResponse.Content.ReadAsStringAsync();
+        firstResponse.StatusCode.Should().Be(HttpStatusCode.OK, "the completion response was {0}", firstPayload);
+        var first = JsonSerializer.Deserialize<OperatorConsoleStatutoryDiscountDraftResponse>(
+            firstPayload,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        first.Should().NotBeNull();
+        first!.ReusedExistingDraft.Should().BeTrue();
+
+        using var replayResponse = await client.PostAsJsonAsync(Endpoint, request);
+        replayResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        (await CountActiveDraftsAsync(request.ParkingSessionId, request.EntitlementType)).Should().Be(1);
+        (await CountEvidenceReferencesAsync(first.DraftId!.Value, "SENIOR_CITIZEN_ID")).Should().Be(1);
+        (await CountDecisionCommandsAsync(first.DraftId.Value)).Should().Be(1);
+        (await CountProcessorReviewsAsync(first.DraftId.Value)).Should().Be(1);
     }
 
     /// <summary>
@@ -486,6 +552,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
                 services.RemoveAll<IOperatorConsoleStatutoryDiscountDraftService>();
                 services.AddSingleton<IOperatorConsoleStatutoryDiscountDraftService>(
                     new FakeStatutoryDiscountDraftService(result, throwValidation));
+                services.RemoveAll<IStatutoryDiscountDecisionFacadeService>();
+                services.AddSingleton<IStatutoryDiscountDecisionFacadeService>(new FakeDecisionFacadeService());
             });
 
     private static CustomWebApplicationFactory CreatePhotoReceiptFactory() =>
@@ -519,7 +587,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             ReasonCode: "OPERATOR_DRAFT_REQUESTED",
             "operator-console-statutory-discount-draft-api-test",
             CorrelationId,
-            EvidenceUploadReceipt: ProtectedPhotoReceipt);
+            EvidenceUploadReceipt: ProtectedPhotoReceipt)
+        {
+            IdControlReference = "12345678",
+            BirthDate = new DateOnly(1950, 1, 1)
+        };
 
     private static OperatorConsoleStatutoryDiscountDraftRequest ManualFixtureRequest(
         bool evidenceCaptureRequested = false,
@@ -546,7 +618,44 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             ReasonCode: "INTEGRATION_DUPLICATE_REPLAY",
             "operator-console-statutory-discount-draft-replay-test",
             Guid.NewGuid(),
-            EvidenceUploadReceipt: ProtectedPhotoReceipt);
+            EvidenceUploadReceipt: ProtectedPhotoReceipt)
+        {
+            IdControlReference = entitlementType == "PWD" ? "PWD12345678" : "SC12345678",
+            BirthDate = new DateOnly(1950, 1, 1)
+        };
+
+    private static OperatorConsoleStatutoryDiscountDraftCommand ToDirectDraftCommand(
+        OperatorConsoleStatutoryDiscountDraftRequest request) =>
+        new(
+            request.UserId,
+            request.OperatorDeviceBindingId,
+            request.SiteId,
+            request.SiteGroupId,
+            request.OperatorShiftId,
+            request.ParkingSessionId,
+            request.TicketReference,
+            request.PlateNumber,
+            request.EntitlementType,
+            request.IdDocumentType,
+            request.IssuingAuthority,
+            request.ExpiryDate,
+            request.MaskedIdReference,
+            request.EntitlementFingerprint,
+            request.EvidenceCaptureRequested,
+            request.EvidenceAccessIntent,
+            request.OperatorAttestation,
+            request.AttestationNotes,
+            request.ReasonCode,
+            request.IdempotencyKey,
+            request.CorrelationId,
+            $"test/operator-console/statutory-id/{request.SiteId!.Value:N}/{request.ParkingSessionId:N}/photo.jpg",
+            new string('A', 64),
+            "image/jpeg",
+            1024)
+        {
+            IdControlReference = request.IdControlReference,
+            BirthDate = request.BirthDate
+        };
 
     private static OperatorConsoleStatutoryDiscountDraftResult DeniedResult() =>
         new(
@@ -592,7 +701,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             Policy(),
             IneligibilityReason: null,
             ErrorCode: null,
-            CorrelationId);
+            CorrelationId)
+        {
+            IdControlReference = "12345678",
+            StoredMaskedIdReference = "****5678"
+        };
 
     private static OperatorConsoleStatutoryDiscountDraftResult NotFoundResult() =>
         new(
@@ -670,11 +783,74 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
                 : null;
     }
 
+    private sealed class FakeDecisionFacadeService : IStatutoryDiscountDecisionFacadeService
+    {
+        public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAvailabilityAsync(
+            StatutoryDiscountParkingAvailabilityRequest request,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<StatutoryDiscountDecisionResult> SubmitAsync(
+            StatutoryDiscountDecisionCommand command,
+            CancellationToken cancellationToken) => Task.FromResult(new StatutoryDiscountDecisionResult(
+                Guid.Parse("48000000-0000-0000-0000-000000000012"),
+                command.RequestReference,
+                command.ExistingStatutoryDiscountValidationId,
+                command.ParkingSessionId,
+                command.SourceChannel,
+                command.EntitlementType,
+                "AWAITING_REVIEW",
+                PolicyResolutionBasis: "LOCAL_ORDINANCE_APPLIED",
+                AppliedPolicyReferenceId: null,
+                FallbackPolicyReferenceId: null,
+                LocalOrdinanceApplied: true,
+                GrossAmountMinorUnits: null,
+                StatutoryDiscountAmountMinorUnits: null,
+                NetPayableAmountMinorUnits: null,
+                Currency: "PHP",
+                EvidenceRequired: true,
+                EvidenceRecorded: true,
+                ReasonCode: null,
+                ErrorCode: null,
+                command.CorrelationId,
+                DateTimeOffset.Parse("2026-09-30T04:24:00Z"),
+                DecidedAt: null,
+                AppliedAt: null,
+                OriginalTariffSnapshotId: null,
+                AppliedTariffSnapshotId: null,
+                StatutoryDiscountOneShotResultClassifications.AwaitingReview,
+                StatutoryDiscountDecisionSemanticHash.SourceVersion,
+                DecisionCommandStatus: StatutoryDiscountDecisionCommandStatuses.AwaitingReview,
+                DecisionResultStatus: "PENDING_REVIEW"));
+
+        public Task<StatutoryDiscountDecisionResult?> GetAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid correlationId,
+            CancellationToken cancellationToken) => Task.FromResult<StatutoryDiscountDecisionResult?>(null);
+    }
+
     private static async Task SeedManualFixtureAsync()
     {
         await ClearPayableBasisApplyStateAsync();
         await OperatorConsoleStatutoryDiscountLockedSchemaFixture.SeedAsync(OpenConnectionAsync);
         await PrepareDraftPolicyFixtureAsync();
+        var reviewContext = new PaymentTestContext(
+            ManualFixtureParkingSessionId,
+            Guid.Parse("77000000-0000-0000-0000-000000000005"),
+            CorrelationId,
+            UserId,
+            SiteGroupId: Guid.Parse("77000000-0000-0000-0000-000000000001"),
+            ManualFixtureSiteId,
+            SiteGroupCode: "MANUAL_TEST_OPERATOR_ACCESS_GROUP",
+            SiteCode: "MANUAL_TEST_OPERATOR_ACCESS_SITE",
+            VendorSystemCode: "MANUAL_TEST_VENDOR");
+        var effectiveFrom = DateTimeOffset.Parse("2026-05-28T00:00:00Z");
+        await StatutoryDiscountReviewIntegrationTestSupport.SeedSupportedLocalOrdinancePolicyAsync(
+            reviewContext,
+            effectiveFrom: effectiveFrom);
+        await StatutoryDiscountReviewIntegrationTestSupport.SeedSupportedLocalOrdinancePolicyAsync(
+            reviewContext,
+            entitlementType: "PWD",
+            effectiveFrom: effectiveFrom);
     }
 
     private static async Task ClearPayableBasisApplyStateAsync()
@@ -682,6 +858,22 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         const string sql = """
             BEGIN;
             SET CONSTRAINTS ALL DEFERRED;
+
+            DELETE FROM operator_console.statutory_discount_service_channel_reviews
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_payable_basis_application_commands
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_decision_policy_authorities
+            WHERE statutory_discount_decision_command_id IN (
+                SELECT statutory_discount_decision_command_id
+                FROM discounts.statutory_discount_decision_commands
+                WHERE parking_session_id = @parking_session_id
+            );
+
+            DELETE FROM discounts.statutory_discount_decision_commands
+            WHERE parking_session_id = @parking_session_id;
 
             UPDATE discounts.statutory_discount_validations
                SET tariff_snapshot_id = NULL
@@ -1448,6 +1640,77 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             reader.GetBoolean(7));
     }
 
+    private static async Task<ProcessorReviewRow?> ReadProcessorReviewAsync(Guid draftId)
+    {
+        const string sql = """
+            SELECT
+                request_reference,
+                parking_session_id,
+                source_channel,
+                review_status,
+                id_document_type,
+                issuing_authority,
+                id_control_reference,
+                masked_id_reference,
+                birth_date,
+                jsonb_array_length(evidence_references)
+            FROM operator_console.statutory_discount_service_channel_reviews
+            WHERE statutory_discount_validation_id = @draft_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("draft_id", NpgsqlDbType.Uuid).Value = draftId;
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        var result = new ProcessorReviewRow(
+            reader.GetGuid(0),
+            reader.GetGuid(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetString(4),
+            reader.IsDBNull(5) ? null : reader.GetString(5),
+            reader.IsDBNull(6) ? null : reader.GetString(6),
+            reader.IsDBNull(7) ? null : reader.GetString(7),
+            reader.IsDBNull(8) ? null : reader.GetFieldValue<DateOnly>(8),
+            reader.GetInt32(9));
+        (await reader.ReadAsync()).Should().BeFalse("one Operator Console draft must project exactly one processor request");
+        return result;
+    }
+
+    private static async Task<int> CountProcessorReviewsAsync(Guid draftId)
+    {
+        const string sql = """
+            SELECT COUNT(*)
+            FROM operator_console.statutory_discount_service_channel_reviews
+            WHERE statutory_discount_validation_id = @draft_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("draft_id", NpgsqlDbType.Uuid).Value = draftId;
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private static async Task<int> CountDecisionCommandsAsync(Guid draftId)
+    {
+        const string sql = """
+            SELECT COUNT(*)
+            FROM discounts.statutory_discount_decision_commands
+            WHERE request_reference = @draft_id
+              AND source_channel::text = 'OPERATOR_CONSOLE';
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("draft_id", NpgsqlDbType.Uuid).Value = draftId;
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
     private static async Task<NpgsqlConnection> OpenConnectionAsync()
     {
         var connection = new NpgsqlConnection(CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
@@ -1497,6 +1760,18 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         string AccessClassification,
         string RedactionStatus,
         bool EvidenceCaptured);
+
+    private sealed record ProcessorReviewRow(
+        Guid RequestReference,
+        Guid ParkingSessionId,
+        string SourceChannel,
+        string ReviewStatus,
+        string? IdDocumentType,
+        string? IssuingAuthority,
+        string? IdControlReference,
+        string? MaskedIdReference,
+        DateOnly? BirthDate,
+        int EvidenceReferenceCount);
 
     private sealed record DraftPolicyContextRow(
         Guid? PolicyId,

@@ -361,7 +361,9 @@ export interface StatutoryDiscountDraftCreateInput {
   entitlementType: "SENIOR_CITIZEN" | "PWD";
   idDocumentType: string;
   issuingAuthority: string;
+  idControlReference: string;
   maskedIdReference: string;
+  birthDate: string;
   idPhoto: File;
   evidenceCaptureRequested: boolean;
   operatorAttestation: boolean;

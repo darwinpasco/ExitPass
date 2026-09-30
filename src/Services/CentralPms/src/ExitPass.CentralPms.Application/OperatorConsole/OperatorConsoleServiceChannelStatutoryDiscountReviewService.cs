@@ -430,7 +430,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
 
     private static StatutoryDiscountServiceChannelReviewedDocument ReviewedDocument(
         StatutoryDiscountServiceChannelReviewDetail detail) =>
-        new(detail.IdDocumentType, detail.IssuingAuthority, detail.ExpiryDate, IdControlReference: null);
+        new(detail.IdDocumentType, detail.IssuingAuthority, detail.ExpiryDate, detail.BirthDate, IdControlReference: null);
 
     private async Task<OperatorConsoleAccessEvaluationResult> EvaluateAndPersistAsync(
         OperatorConsoleReviewAccessContext context,

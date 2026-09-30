@@ -28,7 +28,12 @@ public sealed record OperatorConsoleStatutoryDiscountDraftCommand(
     string? EvidenceStorageReference = null,
     string? EvidenceHash = null,
     string? EvidenceContentType = null,
-    long? EvidenceSizeBytes = null);
+    long? EvidenceSizeBytes = null)
+{
+    /// <summary>Full authoritative value retained only in restricted server-side persistence.</summary>
+    public string? IdControlReference { get; init; }
+    public DateOnly? BirthDate { get; init; }
+}
 
 /// <summary>
 /// Result for an access-gated Operator Console statutory discount validation draft.
@@ -57,7 +62,14 @@ public sealed record OperatorConsoleStatutoryDiscountDraftResult(
     string PolicyReadinessClassification = OperatorConsolePolicyReadinessClassifications.NotReady,
     bool RequiresManualReview = false,
     string? PolicyReadinessReason = null,
-    string? OperatorMessage = null);
+    string? OperatorMessage = null)
+{
+    /// <summary>Internal-only authoritative value used to establish canonical processor intake.</summary>
+    public string? IdControlReference { get; init; }
+
+    /// <summary>Internal-only stored masked presentation used to establish canonical processor intake.</summary>
+    public string? StoredMaskedIdReference { get; init; }
+}
 
 /// <summary>
 /// Persistence command for the privacy-minimized statutory discount validation draft row.
@@ -79,7 +91,11 @@ public sealed record OperatorConsoleStatutoryDiscountDraftPersistenceCommand(
     string? EvidenceStorageReference = null,
     string? EvidenceHash = null,
     string? EvidenceContentType = null,
-    long? EvidenceSizeBytes = null);
+    long? EvidenceSizeBytes = null)
+{
+    public string? IdControlReference { get; init; }
+    public DateOnly? BirthDate { get; init; }
+}
 
 /// <summary>
 /// Persistence result for a statutory discount validation draft row.
@@ -92,7 +108,11 @@ public sealed record OperatorConsoleStatutoryDiscountDraftPersistenceResult(
     bool EvidenceRequired,
     bool EvidenceReferenceCreated,
     Guid? EvidenceReferenceId,
-    OperatorConsoleResolvedStatutoryDiscountPolicy? Policy);
+    OperatorConsoleResolvedStatutoryDiscountPolicy? Policy)
+{
+    public string? IdControlReference { get; init; }
+    public string? MaskedIdReference { get; init; }
+}
 
 /// <summary>
 /// Raised when an existing statutory discount validation blocks a new draft but is not reusable as an active draft.

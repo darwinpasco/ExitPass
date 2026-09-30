@@ -1290,6 +1290,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
   });
 
   it("TicketLookup_RequiresAndCanReplaceAStatutoryIdPhotoBeforeSubmission", async () => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:statutory-id-preview") });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
     const phoneCamera = installPhoneCamera();
@@ -1331,8 +1333,18 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByLabelText("ID document type")).toHaveAttribute("readonly");
     await userEvent.type(screen.getByLabelText("Issuing authority"), "OSCA");
     expect(screen.queryByLabelText("Masked ID reference")).not.toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("ID reference"), "123467");
-    expect(screen.getByText("ID reference will be stored as 12****.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Expiry date")).not.toBeInTheDocument();
+    const idReferenceInput = screen.getByLabelText("ID reference");
+    await userEvent.type(idReferenceInput, "123467");
+    expect(idReferenceInput).toHaveValue("123467");
+    await userEvent.tab();
+    expect(idReferenceInput).toHaveValue("**3467");
+    await userEvent.click(idReferenceInput);
+    expect(idReferenceInput).toHaveValue("123467");
+    await userEvent.click(screen.getByLabelText("Birth date"));
+    await userEvent.type(screen.getByLabelText("Birth date"), "1990-01-01");
+    expect(idReferenceInput).toHaveValue("**3467");
+    expect(screen.getByText("ID reference will be masked when displayed.")).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText(/Operator confirms the entitlement information and captured ID photo/i));
     expect(submit).toBeEnabled();
     await userEvent.click(submit);
@@ -1341,17 +1353,69 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       idPhoto: expect.any(File),
       evidenceCaptureRequested: true,
       operatorAttestation: true,
-      maskedIdReference: "12****"
+      idControlReference: "123467",
+      maskedIdReference: "**3467",
+      birthDate: "1990-01-01"
     })));
-    expect(onDraftCreate).not.toHaveBeenCalledWith(expect.objectContaining({ maskedIdReference: "123467" }));
+    expect(onDraftCreate).not.toHaveBeenCalledWith(expect.objectContaining({ idControlReference: "**3467" }));
+    expect(window.localStorage).toHaveLength(0);
+    expect(window.sessionStorage).toHaveLength(0);
     expect(phoneCamera.getUserMedia).toHaveBeenCalledTimes(2);
     expect(phoneCamera.tracks.every((track) => track.stop.mock.calls.length === 1)).toBe(true);
   });
 
+  it("TicketLookup_MasksTheTransientIdReferenceAfterFailedSubmissionAndAllowsCorrection", async () => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:statutory-id-preview") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    installPhoneCamera();
+    const apiClient = createMockOperatorConsoleApiClient({
+      ticketLookupResults: [{
+        ...mockCompletedTicketLookup(),
+        ticketNumber: "PHOTO-FAILURE-001",
+        cardNum: "PHOTO-FAILURE-001",
+        paymentAttemptStatus: undefined,
+        paymentStatus: "UNPAID",
+        paymentConfirmationStatus: "NONE",
+        exitAuthorizationStatus: undefined
+      }]
+    });
+    apiClient.createStatutoryDiscountDraft = vi.fn().mockRejectedValue(new Error("controlled test failure"));
+    render(<App apiClient={apiClient} initialPath="/operator-console/ticket-lookup" />);
+
+    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "PHOTO-FAILURE-001");
+    await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Take ID Photo" }));
+    const livePreview = await screen.findByLabelText("Live rear camera preview");
+    setVideoDimensions(livePreview);
+    await userEvent.click(screen.getByRole("button", { name: "Capture Photo" }));
+    await userEvent.type(screen.getByLabelText("Issuing authority"), "OSCA");
+    const idReferenceInput = screen.getByLabelText("ID reference");
+    await userEvent.type(idReferenceInput, "123467");
+    await userEvent.type(screen.getByLabelText("Birth date"), "1990-01-01");
+    await userEvent.click(screen.getByLabelText(/Operator confirms the entitlement information and captured ID photo/i));
+    await userEvent.click(screen.getByRole("button", { name: "Submit Request" }));
+
+    await waitFor(() => expect(apiClient.createStatutoryDiscountDraft).toHaveBeenCalledWith(expect.objectContaining({
+      idControlReference: "123467",
+      maskedIdReference: "**3467"
+    })));
+    expect(idReferenceInput).toHaveValue("**3467");
+    await userEvent.click(idReferenceInput);
+    expect(idReferenceInput).toHaveValue("123467");
+    expect(window.localStorage).toHaveLength(0);
+    expect(window.sessionStorage).toHaveLength(0);
+  });
+
   it("TicketLookup_MasksTheFinalFourIdReferenceCharactersWithoutExposingBackendTerminology", () => {
-    expect(maskStatutoryIdReference("123467")).toBe("12****");
-    expect(maskStatutoryIdReference("SC12345678")).toBe("SC1234****");
-    expect(maskStatutoryIdReference("1234")).toBeNull();
+    expect(maskStatutoryIdReference("12356")).toBe("*2356");
+    expect(maskStatutoryIdReference("123467")).toBe("**3467");
+    expect(maskStatutoryIdReference("12345678")).toBe("****5678");
+    expect(maskStatutoryIdReference("SC12345678")).toBe("******5678");
+    expect(maskStatutoryIdReference("ABCDEFGH")).toBe("****EFGH");
+    expect(maskStatutoryIdReference("1234")).toBe("1234");
+    expect(maskStatutoryIdReference("123")).toBe("123");
     expect(maskStatutoryIdReference("SC 123467")).toBeNull();
     expect(statutoryDraftErrorMessage(
       "MaskedIdReference must contain only a masked or last-four style reference. (Parameter 'value')"
@@ -2214,7 +2278,9 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       entitlementType: "SENIOR_CITIZEN",
       idDocumentType: "SENIOR_CITIZEN_ID",
       issuingAuthority: "OSCA",
-      maskedIdReference: "SC-UAT-****-0001",
+      idControlReference: "12345678",
+      maskedIdReference: "****5678",
+      birthDate: "1950-01-01",
       idPhoto: new File(["photo"], "senior-id.jpg", { type: "image/jpeg" }),
       evidenceCaptureRequested: true,
       operatorAttestation: true,
@@ -2238,17 +2304,21 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     }));
     const requestOptions = fetchMock.mock.calls[1][1];
     expectOperatorContextHeaders(requestOptions?.headers);
-    expect(JSON.parse(requestOptions?.body as string)).toEqual(expect.objectContaining({
+    const requestBody = JSON.parse(requestOptions?.body as string);
+    expect(requestBody).toEqual(expect.objectContaining({
       parkingSessionId: "23100000-0000-0000-0000-000000000003",
       ticketReference: "E2E-231-SESSION-001",
       entitlementType: "SENIOR_CITIZEN",
       idDocumentType: "SENIOR_CITIZEN_ID",
       issuingAuthority: "OSCA",
-      maskedIdReference: "SC-UAT-****-0001",
+      idControlReference: "12345678",
+      maskedIdReference: "****5678",
+      birthDate: "1950-01-01",
       evidenceAccessIntent: "RESTRICTED_ID_PHOTO",
       operatorAttestation: true,
       evidenceUploadReceipt: "protected-photo-receipt"
     }));
+    expect(requestBody).not.toHaveProperty("expiryDate");
   });
 
   it("OperatorConsoleApi_GetsFiscalStatusThroughFacadeUsingGetHeadersAndEncodedReference", async () => {

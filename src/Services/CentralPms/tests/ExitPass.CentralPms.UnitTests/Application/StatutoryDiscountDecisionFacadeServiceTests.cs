@@ -125,6 +125,54 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
+    public async Task SubmitAsync_WhenOperatorConsoleDraftRequiresProcessorReview_ProjectsAuthoritativeIdentityFacts()
+    {
+        var residencyNotYetReviewed = AvailablePolicy(new StatutoryDiscountParkingAvailabilityRequest(
+            RequestReference,
+            ParkingSessionId,
+            "SENIOR_CITIZEN",
+            BeneficiaryResidencySatisfied: null,
+            CorrelationId)) with
+        {
+            AvailabilityStatus = StatutoryDiscountParkingAvailabilityStatuses.ResidencyRequirementNotSatisfied,
+            StatutoryParkingBenefitAvailable = false,
+            SafeReasonCode = "STATUTORY_DISCOUNT_RESIDENCY_REQUIREMENT_NOT_SATISFIED"
+        };
+        var fixture = CreateFixture(residencyNotYetReviewed);
+        var command = Command(sourceChannel: "OPERATOR_CONSOLE", applyPayableBasis: false) with
+        {
+            Decision = null,
+            DecisionReasonCode = null,
+            ReviewerUserId = null,
+            ReviewerAttestation = false,
+            IdControlReference = "SC12345678",
+            BirthDate = new DateOnly(1950, 1, 1),
+            ExistingStatutoryDiscountValidationId = ValidationId
+        };
+
+        var result = await fixture.Sut.SubmitAsync(command, CancellationToken.None);
+
+        result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+        await fixture.ParkingEligibilityResolver.DidNotReceiveWithAnyArgs()
+            .ResolveAsync(default!, default);
+        await fixture.ServiceChannelReviewRepository.Received(1).UpsertIntakeAsync(
+            Arg.Is<StatutoryDiscountServiceChannelReviewIntakeCommand>(record =>
+                record.StatutoryDiscountDecisionCommandId == result.StatutoryDiscountDecisionCommandId &&
+                record.RequestReference == RequestReference &&
+                record.ParkingSessionId == ParkingSessionId &&
+                record.SourceChannel == StatutoryDiscountSourceChannels.OperatorConsole &&
+                record.IdControlReference == "SC12345678" &&
+                record.MaskedIdReference == "SC-****-1234" &&
+                record.BirthDate == new DateOnly(1950, 1, 1) &&
+                record.ExistingStatutoryDiscountValidationId == ValidationId &&
+                record.SubmittedByUserId == ActorUserId &&
+                record.EvidenceReferences.Count == 1),
+            Arg.Any<CancellationToken>());
+        await fixture.DraftService.DidNotReceive()
+            .DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task ResolveAvailabilityAsync_ReturnsChannelSafeLocalOrdinanceFacts()
     {
         var fixture = CreateFixture();
@@ -169,6 +217,8 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
 
         await action.Should().ThrowAsync<StatutoryDiscountDecisionRejectedException>()
             .Where(ex => ex.ErrorCode == "STATUTORY_DISCOUNT_LOCAL_ORDINANCE_UNAVAILABLE");
+        await fixture.ParkingEligibilityResolver.Received(1)
+            .ResolveAsync(Arg.Any<StatutoryDiscountParkingAvailabilityRequest>(), Arg.Any<CancellationToken>());
         fixture.Repository.LastDecisionCommand.Should().BeNull();
         fixture.Repository.ApplicationCount.Should().Be(0);
         await fixture.ServiceChannelReviewRepository.DidNotReceiveWithAnyArgs().UpsertIntakeAsync(default!, default);
@@ -1030,6 +1080,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             decisionService,
             applyService,
             serviceChannelReviewRepository,
+            parkingEligibilityResolver,
             parkingEligibilityRepository,
             payableBasisRevalidationService,
             sut);
@@ -1321,6 +1372,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         IOperatorConsoleStatutoryDiscountDecisionService DecisionService,
         IOperatorConsoleStatutoryDiscountApplyPayableBasisService ApplyService,
         IStatutoryDiscountServiceChannelReviewRepository ServiceChannelReviewRepository,
+        IStatutoryDiscountParkingEligibilityResolver ParkingEligibilityResolver,
         InMemoryParkingEligibilityRepository ParkingEligibilityRepository,
         IStatutoryDiscountPayableBasisRevalidationService PayableBasisRevalidationService,
         StatutoryDiscountDecisionFacadeService Sut);

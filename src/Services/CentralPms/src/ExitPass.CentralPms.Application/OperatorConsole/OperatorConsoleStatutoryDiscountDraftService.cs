@@ -16,7 +16,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
     private const string WorkflowCode = OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow;
     private const string ControlledActionCode = OperatorConsoleActionCodes.CreateStatutoryDiscountDraft;
     private const string ValidationStatus = "REQUESTED";
-    private static readonly Regex FullIdentifierPattern = new(@"\d{5,}", RegexOptions.Compiled);
+    private static readonly Regex IdControlReferencePattern = new(@"^[\p{L}\p{N}-]{4,64}$", RegexOptions.Compiled);
 
     private static readonly HashSet<string> SupportedEntitlementTypes = new(StringComparer.Ordinal)
     {
@@ -182,7 +182,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
                 Normalize(command.IdDocumentType),
                 Normalize(command.IssuingAuthority),
                 command.ExpiryDate,
-                command.MaskedIdReference.Trim(),
+                MaskIdControlReference(command.IdControlReference!),
                 evidenceRequired,
                 NormalizeOptional(command.ReasonCode),
                 command.OperatorAttestation,
@@ -193,7 +193,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
                 command.EvidenceStorageReference,
                 command.EvidenceHash,
                 command.EvidenceContentType,
-                command.EvidenceSizeBytes),
+                command.EvidenceSizeBytes)
+            {
+                IdControlReference = command.IdControlReference!.Trim(),
+                BirthDate = command.BirthDate
+            },
             cancellationToken);
 
         return AcceptedResult(
@@ -234,7 +238,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             readiness.Classification,
             readiness.RequiresManualReview,
             readiness.IneligibilityReason,
-            readiness.OperatorMessage);
+            readiness.OperatorMessage)
+        {
+            IdControlReference = draft.IdControlReference,
+            StoredMaskedIdReference = draft.MaskedIdReference
+        };
 
     private static OperatorConsoleStatutoryDiscountDraftResult DeniedResult(
         OperatorConsoleStatutoryDiscountDraftCommand command,
@@ -330,7 +338,12 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             throw new ArgumentException("IssuingAuthority is required.", nameof(command.IssuingAuthority));
         }
 
-        ValidateMaskedIdReference(command.MaskedIdReference);
+        ValidateIdControlReference(command.IdControlReference);
+
+        if (!command.BirthDate.HasValue || command.BirthDate.Value >= DateOnly.FromDateTime(DateTime.UtcNow))
+        {
+            throw new ArgumentException("Birth date must be a past date.", nameof(command.BirthDate));
+        }
 
         if (!command.OperatorAttestation)
         {
@@ -340,23 +353,26 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
         return entitlementType;
     }
 
-    private static void ValidateMaskedIdReference(string value)
+    private static void ValidateIdControlReference(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            throw new ArgumentException("MaskedIdReference is required.", nameof(value));
+            throw new ArgumentException("ID reference is required.", nameof(value));
         }
 
         var trimmed = value.Trim();
-        var containsMaskMarker = trimmed.Contains('*', StringComparison.Ordinal) ||
-            trimmed.Contains('x', StringComparison.OrdinalIgnoreCase);
-        var compactLength = trimmed.Count(char.IsLetterOrDigit);
-        if (trimmed.Length > 32 ||
-            FullIdentifierPattern.IsMatch(trimmed) ||
-            (!containsMaskMarker && compactLength > 8))
+        if (!IdControlReferencePattern.IsMatch(trimmed))
         {
-            throw new ArgumentException("MaskedIdReference must contain only a masked or last-four style reference.", nameof(value));
+            throw new ArgumentException("ID reference must contain 4 to 64 letters, numbers, or hyphens.", nameof(value));
         }
+    }
+
+    private static string MaskIdControlReference(string value)
+    {
+        var normalized = value.Trim();
+        return normalized.Length <= 4
+            ? normalized
+            : $"{new string('*', normalized.Length - 4)}{normalized[^4..]}";
     }
 
     private static void ValidateGuid(Guid value, string parameterName)

@@ -112,6 +112,7 @@ public static class ManagementStatutoryBenefitReviewEndpoints
                 body.IdDocumentType,
                 body.IssuingAuthority,
                 body.ExpiryDate,
+                body.BirthDate,
                 body.IdControlReference,
                 correlationId), cancellationToken));
         }
@@ -294,6 +295,7 @@ public sealed record ManagementStatutoryBenefitDecisionRequest(
     string? IdDocumentType,
     string? IssuingAuthority,
     DateOnly? ExpiryDate,
+    DateOnly? BirthDate,
     string? IdControlReference);
 
 public sealed record ManagementStatutoryBenefitEvidencePreviewRequest(Guid EvidenceItemReference);

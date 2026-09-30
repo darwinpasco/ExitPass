@@ -164,6 +164,8 @@ public sealed record StatutoryDiscountDecisionCommand(
     StatutoryDiscountServiceChannelCallerContext? ServiceChannelCaller = null)
 {
     public string? IdControlReference { get; init; }
+    public DateOnly? BirthDate { get; init; }
+    public Guid? ExistingStatutoryDiscountValidationId { get; init; }
 }
 
 /// <summary>
@@ -338,6 +340,7 @@ public static class StatutoryDiscountDecisionSemanticHash
             idDocumentType = Normalize(command.IdDocumentType),
             issuingAuthority = Normalize(command.IssuingAuthority),
             expiryDate = command.ExpiryDate,
+            birthDate = command.BirthDate,
             idControlReference = NormalizeSensitiveOptional(command.IdControlReference),
             maskedIdReference = NormalizeOptional(command.MaskedIdReference),
             evidenceCaptureRequested = command.EvidenceCaptureRequested,
@@ -368,7 +371,8 @@ public static class StatutoryDiscountDecisionSemanticHash
             reviewerAttestation = command.ReviewerAttestation,
             applyPayableBasis = command.ApplyPayableBasis,
             originalTariffSnapshotId = command.OriginalTariffSnapshotId,
-            beneficiaryResidencySatisfied = command.BeneficiaryResidencySatisfied
+            beneficiaryResidencySatisfied = command.BeneficiaryResidencySatisfied,
+            existingStatutoryDiscountValidationId = command.ExistingStatutoryDiscountValidationId
         };
 
         var json = JsonSerializer.Serialize(source, HashJsonOptions);

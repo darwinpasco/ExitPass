@@ -27,7 +27,17 @@ public sealed record OperatorConsoleStatutoryDiscountDraftRequest(
     string? ReasonCode,
     string IdempotencyKey,
     Guid CorrelationId,
-    string? EvidenceUploadReceipt = null);
+    string? EvidenceUploadReceipt = null)
+{
+    /// <summary>
+    /// Full statutory ID/control reference. It is accepted only on the authenticated
+    /// request-creation path and is never returned by ordinary Operator Console readback.
+    /// </summary>
+    public string? IdControlReference { get; init; }
+
+    /// <summary>Birth date required by the existing Operator Console processor projection.</summary>
+    public DateOnly? BirthDate { get; init; }
+}
 
 public sealed record OperatorConsoleStatutoryIdPhotoUploadResponse(
     bool Accepted,

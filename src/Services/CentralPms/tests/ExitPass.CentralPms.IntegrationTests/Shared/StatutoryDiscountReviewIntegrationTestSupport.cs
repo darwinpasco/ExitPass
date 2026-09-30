@@ -797,18 +797,22 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         await command.ExecuteNonQueryAsync();
     }
 
-    private static async Task<SeededPolicyAuthority> SeedSupportedLocalOrdinancePolicyAsync(
+    internal static async Task<SeededPolicyAuthority> SeedSupportedLocalOrdinancePolicyAsync(
         PaymentTestContext context,
         string entitlementType = "SENIOR_CITIZEN",
         string benefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT",
         string discountBaseScope = "VAT_EXCLUSIVE",
-        bool fullFeeExempt = false)
+        bool fullFeeExempt = false,
+        DateTimeOffset? effectiveFrom = null)
     {
         var jurisdictionId = StableGuid(context.ParkingSessionId, "jurisdiction");
         var assignmentId = StableGuid(context.ParkingSessionId, "assignment");
         var registryId = StableGuid(context.ParkingSessionId, $"registry-{entitlementType}");
         var policyVersionId = StableGuid(context.ParkingSessionId, $"policy-version-{entitlementType}");
-        var policyCode = $"POLICY_{context.ParkingSessionId:N}"[..39].ToUpperInvariant();
+        var entitlementSuffix = entitlementType == "PWD" ? "PWD" : "SC";
+        var policyCode =
+            ($"POLICY_{context.ParkingSessionId:N}"[..35] + $"_{entitlementSuffix}")
+            .ToUpperInvariant();
         var sourceReference = PolicySourceReference(context);
         var jurisdictionCode = $"PH_{context.ParkingSessionId:N}"[..18].ToUpperInvariant();
         var displayName = $"Canonical Test City {context.SiteCode}";
@@ -836,7 +840,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
                 'Canonical Test Region',
                 NULL,
                 'ACTIVE'::sites.jurisdiction_status_enum,
-                NOW() - INTERVAL '1 day',
+                @effective_from,
                 @source_reference
             )
             ON CONFLICT (jurisdiction_id) DO NOTHING;
@@ -855,7 +859,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
                 @site_id,
                 @jurisdiction_id,
                 'ACTIVE'::sites.site_jurisdiction_assignment_status_enum,
-                NOW() - INTERVAL '1 day',
+                @effective_from,
                 @source_reference,
                 'canonical-test-approval'
             )
@@ -914,7 +918,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
                 NOW() - INTERVAL '1 hour',
                 'canonical-test-approver',
                 NOW() - INTERVAL '30 minutes',
-                NOW() - INTERVAL '1 day',
+                @effective_from,
                 @correlation_id
             )
             ON CONFLICT (statutory_discount_policy_registry_id) DO NOTHING;
@@ -994,7 +998,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
                 'Canonical test statutory parking policy.',
                 'Review under frozen canonical test policy authority.',
                 @full_fee_exempt,
-                NOW() - INTERVAL '1 day',
+                @effective_from,
                 100,
                 @policy_semantic_hash,
                 'canonical-test-reviewer',
@@ -1037,6 +1041,8 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         command.Parameters.AddWithValue("benefit_type", benefitType);
         command.Parameters.AddWithValue("discount_base_scope", discountBaseScope);
         command.Parameters.Add("full_fee_exempt", NpgsqlDbType.Boolean).Value = fullFeeExempt;
+        command.Parameters.Add("effective_from", NpgsqlDbType.TimestampTz).Value =
+            effectiveFrom ?? DateTimeOffset.UtcNow.AddDays(-1);
         command.Parameters.AddWithValue("source_reference", sourceReference);
         command.Parameters.AddWithValue("policy_semantic_hash", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = context.CorrelationId;
@@ -1120,7 +1126,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         return new Guid(guidBytes);
     }
 
-    private sealed record SeededPolicyAuthority(
+    internal sealed record SeededPolicyAuthority(
         Guid PolicyVersionId,
         Guid JurisdictionId,
         string JurisdictionCode,

@@ -528,6 +528,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         HttpRequest httpRequest,
         IOperatorConsoleStatutoryDiscountDraftService service,
         IOperatorConsoleStatutoryIdPhotoService idPhotoService,
+        IStatutoryDiscountDecisionFacadeService decisionFacade,
         ILoggerFactory loggerFactory)
     {
         using var activity = ActivitySource.StartActivity("HTTP DraftOperatorConsoleStatutoryDiscount", ActivityKind.Server);
@@ -598,8 +599,69 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                     photo.StorageReference,
                     photo.ChecksumSha256,
                     photo.ContentType,
-                    photo.ContentLength),
+                    photo.ContentLength)
+                {
+                    IdControlReference = request.IdControlReference,
+                    BirthDate = request.BirthDate
+                },
                 httpRequest.HttpContext.RequestAborted);
+
+            if (result.DraftAccepted && result.DraftPersisted && result.DraftId.HasValue)
+            {
+                var canonical = await decisionFacade.SubmitAsync(
+                    new StatutoryDiscountDecisionCommand(
+                        result.DraftId.Value,
+                        StatutoryDiscountSourceChannels.OperatorConsole,
+                        request.ParkingSessionId,
+                        identity.SiteId,
+                        identity.SiteGroupId,
+                        request.TicketReference,
+                        request.PlateNumber,
+                        request.EntitlementType,
+                        request.IdDocumentType,
+                        request.IssuingAuthority,
+                        request.ExpiryDate,
+                        result.StoredMaskedIdReference ?? string.Empty,
+                        EvidenceCaptureRequested: true,
+                        EvidenceReferences:
+                        [
+                            new StatutoryDiscountEvidenceReference(
+                                EvidenceTypeForEntitlement(request.EntitlementType),
+                                "OPERATOR_CONSOLE_PHONE_CAMERA",
+                                FileName: null,
+                                photo.ContentType,
+                                photo.ContentLength,
+                                photo.StorageReference,
+                                result.StoredMaskedIdReference,
+                                "CAPTURED")
+                        ],
+                        identity.UserId,
+                        identity.OperatorDeviceBindingId,
+                        identity.OperatorShiftId,
+                        request.OperatorAttestation,
+                        request.AttestationNotes,
+                        request.ReasonCode,
+                        Decision: null,
+                        DecisionReasonCode: null,
+                        ReviewerUserId: null,
+                        ReviewerAttestation: false,
+                        ApplyPayableBasis: false,
+                        OriginalTariffSnapshotId: null,
+                        BeneficiaryResidencySatisfied: null,
+                        $"{request.IdempotencyKey}:processor-review",
+                        identity.CorrelationId)
+                    {
+                        IdControlReference = result.IdControlReference,
+                        BirthDate = request.BirthDate,
+                        ExistingStatutoryDiscountValidationId = result.DraftId
+                    },
+                    httpRequest.HttpContext.RequestAborted);
+
+                if (canonical.DecisionCommandStatus != StatutoryDiscountDecisionCommandStatuses.AwaitingReview)
+                {
+                    throw new InvalidOperationException("Canonical statutory processor request was not established.");
+                }
+            }
 
             activity?.SetTag("operator_access_evaluation_id", result.AccessEvaluationId);
             activity?.SetTag("access_evaluation_allowed", result.AccessAllowed);
@@ -660,6 +722,11 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 statusCode: StatusCodes.Status500InternalServerError);
         }
     }
+
+    private static string EvidenceTypeForEntitlement(string entitlementType) =>
+        string.Equals(entitlementType?.Trim(), "PWD", StringComparison.OrdinalIgnoreCase)
+            ? "PWD_ID"
+            : "SENIOR_CITIZEN_ID";
 
     private static async Task<IResult> UploadStatutoryIdPhotoAsync(
         Guid parkingSessionId,
