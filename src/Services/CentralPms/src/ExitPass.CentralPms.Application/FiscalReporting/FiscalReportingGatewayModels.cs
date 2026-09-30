@@ -8,6 +8,8 @@ public enum FiscalReportingGatewayAction
     XGenerate,
     XDownload,
     ZHistory,
+    ZCloseablePeriods,
+    ZClosePeriod,
     ZGenerate,
     ZDownload
 }
@@ -21,7 +23,9 @@ public sealed record FiscalReportingGatewayRequest(
     DateTimeOffset? PeriodEnd = null,
     string? Search = null,
     string? OperationKey = null,
-    string? ReportReference = null);
+    string? ReportReference = null,
+    Guid? FiscalReportingPeriodId = null,
+    long? ExpectedStateVersion = null);
 
 public sealed record FiscalReportingGatewayResponse(
     int HttpStatusCode,

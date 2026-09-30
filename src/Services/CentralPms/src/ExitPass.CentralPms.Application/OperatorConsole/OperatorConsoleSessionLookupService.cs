@@ -1,12 +1,14 @@
+using ExitPass.CentralPms.Application.VendorParking;
+
 namespace ExitPass.CentralPms.Application.OperatorConsole;
 
 /// <summary>
-/// Access-gated read-only Operator Console parking session lookup service.
+/// Access-gated Operator Console parking session lookup service.
 ///
 /// ExitPass v1.2 Invariants Enforced:
 /// - Access evaluation is persisted before any session details are returned.
 /// - Denied access does not read or return parking session details.
-/// - This service never creates or mutates payment, provider, gate, coupon, statutory discount, settlement, or reconciliation records.
+/// - Projection-only matches are resolved through the existing vendor parking authority so the workflow receives a canonical Central PMS parking session. This service never creates or mutates payment, provider, gate, coupon, statutory discount, settlement, or reconciliation records directly.
 /// </summary>
 public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessionLookupService
 {
@@ -20,6 +22,7 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
     private readonly IOperatorConsoleAccessEvaluationService _accessEvaluationService;
     private readonly IOperatorConsoleAccessEvaluationWriter _accessEvaluationWriter;
     private readonly IOperatorConsoleSessionLookupReadRepository _sessionRepository;
+    private readonly IResolveVendorParkingUseCase? _vendorParkingResolver;
 
     /// <summary>
     /// Creates an Operator Console session lookup service.
@@ -27,11 +30,13 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
     public OperatorConsoleSessionLookupService(
         IOperatorConsoleAccessEvaluationService accessEvaluationService,
         IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
-        IOperatorConsoleSessionLookupReadRepository sessionRepository)
+        IOperatorConsoleSessionLookupReadRepository sessionRepository,
+        IResolveVendorParkingUseCase? vendorParkingResolver = null)
     {
         _accessEvaluationService = accessEvaluationService ?? throw new ArgumentNullException(nameof(accessEvaluationService));
         _accessEvaluationWriter = accessEvaluationWriter ?? throw new ArgumentNullException(nameof(accessEvaluationWriter));
         _sessionRepository = sessionRepository ?? throw new ArgumentNullException(nameof(sessionRepository));
+        _vendorParkingResolver = vendorParkingResolver;
     }
 
     /// <inheritdoc />
@@ -82,6 +87,36 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
                 command.SiteGroupId,
                 lookupMode),
             cancellationToken);
+
+        if (session is not null &&
+            string.Equals(session.SessionSource, VendorSessionProjectionSource, StringComparison.Ordinal) &&
+            session.VendorSystemId.HasValue &&
+            _vendorParkingResolver is not null)
+        {
+            var resolution = await _vendorParkingResolver.ExecuteAsync(
+                new ResolveVendorParkingCommand
+                {
+                    SiteId = session.SiteId.ToString("D"),
+                    SiteGroupId = session.SiteGroupId.ToString("D"),
+                    VendorSystemId = session.VendorSystemId.Value.ToString("D"),
+                    TicketReference = session.TicketReference ?? command.TicketReference,
+                    PlateNumber = null,
+                    CorrelationId = persistedEvaluation.CorrelationId
+                },
+                cancellationToken);
+
+            if (resolution.Outcome == ResolveVendorParkingOutcome.Resolved && resolution.ParkingSession is not null)
+            {
+                session = await _sessionRepository.FindAsync(
+                    new OperatorConsoleSessionLookupReadRequest(
+                        ParkingSessionId: resolution.ParkingSession.ParkingSessionId,
+                        TicketReference: null,
+                        SiteId: session.SiteId,
+                        SiteGroupId: session.SiteGroupId,
+                        LookupMode: LookupModeParkingSessionId),
+                    cancellationToken);
+            }
+        }
 
         if (session is null)
         {

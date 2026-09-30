@@ -338,7 +338,10 @@ public sealed class FiscalIssuanceControlledUatHarnessTests
         new(
             options ?? EnabledOptions(),
             service ?? Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>(),
-            gatingOptions);
+            gatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions
+            {
+                EnableFiscalBeforeExitAuthorizationEnforcement = false
+            });
 
     private static FiscalIssuancePosServerIntegrationOptions EnabledOptions() =>
         new FiscalIssuancePosServerIntegrationOptions

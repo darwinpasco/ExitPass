@@ -80,7 +80,7 @@ public sealed class TerminalCashPaymentApiIntegrationTests
             Assert.Equal(
                 request.CashReceivedAt.ToUnixTimeMilliseconds(),
                 authoritativeReadback!.CashReceivedAt!.Value.ToUnixTimeMilliseconds());
-            Assert.Equal($"TEST-SITE-{context.SiteId:N}", authoritativeReadback.BranchSite);
+            Assert.Equal($"TEST-SITE-{context.SiteId:N}", authoritativeReadback.SiteName);
             Assert.Equal($"TICKET-{context.ParkingSessionId:N}", authoritativeReadback.TicketNumber);
             Assert.Equal("ABC1234", authoritativeReadback.PlateNumber);
             Assert.NotNull(authoritativeReadback.EntryTime);

@@ -19,6 +19,7 @@ describe("Operator Console I-020 authentication client", () => {
 
     expect(session.audience).toBe(operatorConsoleAudience);
     expect(session.mfaRequired).toBe(false);
+    expect(session.roleCodes).toEqual(["OPERATIONS_SUPERVISOR"]);
     expect(fetchMock).toHaveBeenCalledWith(
       humanAuthenticationRoutes.login,
       expect.objectContaining({ method: "POST", credentials: "same-origin", cache: "no-store" })
@@ -177,6 +178,7 @@ function sessionDto() {
     idleExpiresAt: "2099-08-08T08:35:00+08:00",
     absoluteExpiresAt: "2099-08-08T16:00:00+08:00",
     permissions: ["statutory-discounts.decision.approve"],
+    roleCodes: ["OPERATIONS_SUPERVISOR"],
     siteReferences: ["13000000-0000-0000-0000-000000000001"],
     siteGroupReferences: ["14000000-0000-0000-0000-000000000001"],
     hasGlobalScope: false,

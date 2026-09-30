@@ -727,7 +727,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             FiscalStatus: "NOT_STARTED_IN_THIS_SLICE")
         {
             CashReceivedAt = CashReceivedAt,
-            BranchSite = "PITX Level 3",
+            SiteName = "PITX Level 3",
             TicketNumber = "1474119573105",
             PlateNumber = "ABC1105",
             EntryTime = EntryTime

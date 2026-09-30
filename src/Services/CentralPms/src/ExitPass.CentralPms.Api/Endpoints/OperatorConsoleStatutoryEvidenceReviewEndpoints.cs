@@ -17,7 +17,8 @@ public static class OperatorConsoleStatutoryEvidenceReviewEndpoints
         this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/ops/operator-console/statutory-discounts/reviews")
-            .WithTags("OperatorConsole");
+            .WithTags("OperatorConsole")
+            .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired);
 
         group.MapGet("/{statutoryDiscountDecisionCommandId:guid}/evidence", ReadAsync)
             .WithName("ReadOperatorConsoleStatutoryEvidenceReview")
@@ -85,6 +86,11 @@ public static class OperatorConsoleStatutoryEvidenceReviewEndpoints
                 Error("OPERATOR_CONSOLE_STATUTORY_EVIDENCE_REVIEW_FORBIDDEN", "Operator Console statutory evidence review access was denied.", effectiveCorrelationId),
                 statusCode: StatusCodes.Status403Forbidden);
         }
+        catch (OperationCanceledException) when (request.HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            activity?.SetStatus(ActivityStatusCode.Unset);
+            return Results.Empty;
+        }
         catch (Exception exception)
         {
             activity?.SetStatus(ActivityStatusCode.Error);
@@ -150,6 +156,11 @@ public static class OperatorConsoleStatutoryEvidenceReviewEndpoints
             return Results.Json(
                 Error("OPERATOR_CONSOLE_STATUTORY_EVIDENCE_PREVIEW_FORBIDDEN", "Operator Console statutory evidence preview access was denied.", effectiveCorrelationId),
                 statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (OperationCanceledException) when (request.HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            activity?.SetStatus(ActivityStatusCode.Unset);
+            return Results.Empty;
         }
         catch (Exception exception)
         {

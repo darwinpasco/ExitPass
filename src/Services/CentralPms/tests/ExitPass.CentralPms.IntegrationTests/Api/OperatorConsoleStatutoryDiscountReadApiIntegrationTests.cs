@@ -21,6 +21,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
 {
     private const string QueueEndpoint = "/v1/ops/operator-console/statutory-discounts/drafts";
+    private const string CurrentEndpoint = "/v1/ops/operator-console/statutory-discounts/parking-sessions/{parkingSessionId:guid}/current";
     private const string AuditReportEndpoint = "/v1/ops/operator-console/audit/statutory-discounts";
     private static readonly Guid DraftId = Guid.Parse("8c000000-0000-0000-0000-000000000001");
     private static readonly Guid ParkingSessionId = Guid.Parse("8c000000-0000-0000-0000-000000000002");
@@ -31,6 +32,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
     private static readonly Guid UserId = Guid.Parse("8c000000-0000-0000-0000-000000000007");
     private static readonly Guid DeviceBindingId = Guid.Parse("8c000000-0000-0000-0000-000000000008");
     private static readonly Guid ShiftId = Guid.Parse("8c000000-0000-0000-0000-000000000009");
+    private static readonly Guid EvidenceId = Guid.Parse("8c000000-0000-0000-0000-000000000011");
 
     [Fact]
     public void QueueEndpointRouteExists()
@@ -65,6 +67,22 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
         endpoints[0].Metadata.GetMetadata<HttpMethodMetadata>()!
             .HttpMethods.Should().ContainSingle().Which.Should().Be(HttpMethod.Get.Method);
         endpoints[0].Metadata.GetMetadata<OperatorConsoleOperatingContextRequirementMetadata>()
+            .Should().Be(OperatorConsoleOperatingContextRequirementMetadata.NotRequired);
+    }
+
+    [Fact]
+    public void CurrentDraftEndpointRouteExists()
+    {
+        using var factory = new CustomWebApplicationFactory();
+
+        var endpoint = factory.Services.GetRequiredService<EndpointDataSource>()
+            .Endpoints
+            .OfType<RouteEndpoint>()
+            .Single(item => item.RoutePattern.RawText == CurrentEndpoint);
+
+        endpoint.Metadata.GetMetadata<HttpMethodMetadata>()!
+            .HttpMethods.Should().ContainSingle().Which.Should().Be(HttpMethod.Get.Method);
+        endpoint.Metadata.GetMetadata<OperatorConsoleOperatingContextRequirementMetadata>()
             .Should().Be(OperatorConsoleOperatingContextRequirementMetadata.NotRequired);
     }
 
@@ -198,6 +216,31 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
         body.OriginalAmountMinorUnits.Should().Be(18000);
         body.PayableAmountMinorUnits.Should().Be(14400);
         body.Activity.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task CurrentDraft_WhenRequestExists_ReturnsPersistedRequestFactsAndEvidenceLink()
+    {
+        using var factory = CreateFactory(detail: Detail());
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/v1/ops/operator-console/statutory-discounts/parking-sessions/{ParkingSessionId}/current?correlationId={CorrelationId}");
+        AddOperatorHeaders(request);
+
+        using var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftDetailResponse>();
+        body.Should().NotBeNull();
+        body!.ParkingSessionId.Should().Be(ParkingSessionId);
+        body.IdDocumentType.Should().Be("SENIOR CITIZEN");
+        body.IssuingAuthority.Should().Be("OSCA");
+        body.MaskedIdReference.Should().Be("12****");
+        body.LatestEvidenceId.Should().Be(EvidenceId);
+        body.RequestedByDisplayName.Should().Be("Juan Dela Cruz");
+        body.ValidatedAt.Should().BeNull();
+        body.ValidatedByUserId.Should().BeNull();
     }
 
     [Fact]
@@ -339,21 +382,23 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
             "SENIOR_CITIZEN",
             "REQUESTED",
             StatutoryDiscountDecisionCommandId: null,
-            IdDocumentType: null,
-            IssuingAuthority: null,
+            IdDocumentType: "SENIOR CITIZEN",
+            IssuingAuthority: "OSCA",
             ExpiryDate: null,
-            MaskedIdReference: null,
+            MaskedIdReference: "12****",
             RequesterAttestation: null,
             AttestationNotes: null,
             EvidenceRequired: false,
             EvidenceCaptured: false,
             EvidenceRequiredSatisfied: false,
             EvidenceCount: 0,
+            LatestEvidenceId: EvidenceId,
             LatestEvidenceStatus: null,
             RequiredEvidenceTypes: [],
             DateTimeOffset.Parse("2026-06-01T08:15:00+08:00"),
             ValidatedAt: null,
             RequestedByUserId: Guid.Parse("8c000000-0000-0000-0000-000000000007"),
+            RequestedByDisplayName: "Juan Dela Cruz",
             ValidatedByUserId: null,
             DecisionReasonCode: null,
             FailureReasonCode: null,
@@ -417,6 +462,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
                         _detail.EvidenceRequired,
                         _detail.EvidenceRequiredSatisfied,
                         _detail.EvidenceCount,
+                        _detail.LatestEvidenceId,
                         _detail.LatestEvidenceStatus,
                         _detail.PolicyResolutionBasis,
                         _detail.PolicyCode,
@@ -426,6 +472,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
                         _detail.CurrencyCode,
                         _detail.RequestedAt,
                         _detail.RequestedByUserId,
+                        "Test Operator",
                         _detail.FailureReasonCode)
                 ];
 
@@ -441,6 +488,11 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
             OperatorConsoleStatutoryDiscountDraftDetailQuery query,
             CancellationToken cancellationToken) =>
             Task.FromResult(_detail);
+
+        public Task<OperatorConsoleStatutoryDiscountDraftDetailResult?> GetCurrentDraftAsync(
+            OperatorConsoleCurrentStatutoryDiscountDraftQuery query,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(_detail?.ParkingSessionId == query.ParkingSessionId ? _detail : null);
 
         public Task<OperatorConsoleStatutoryDiscountAuditReportResult> ListAuditReportAsync(
             OperatorConsoleStatutoryDiscountAuditReportQuery query,

@@ -163,5 +163,11 @@ public static class OperatorConsoleSessionLookupEndpoints
             result.Session?.VendorSystemCode,
             result.Session?.ProjectionStatus,
             result.Session?.ProjectionSourceEventAt,
-            result.Session?.ProjectionLastRefreshedAt);
+            result.Session?.ProjectionLastRefreshedAt,
+            result.Session?.SalesInvoiceNumber,
+            result.Session?.ParkingDurationSeconds,
+            result.Session?.PaymentAttemptStatus,
+            result.Session?.PaymentConfirmationStatus,
+            result.Session?.AmountPaidMinorUnits,
+            result.Session?.PaymentMethod);
 }

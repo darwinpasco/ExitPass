@@ -56,7 +56,8 @@ public enum InvoiceCustomerInformationReadStatus
 
 public sealed record InvoiceCustomerInformationReadResult(
     InvoiceCustomerInformationReadStatus Status,
-    ParkingSessionInvoiceCustomerInformationRecord? Record);
+    ParkingSessionInvoiceCustomerInformationRecord? Record,
+    bool FiscalSnapshotLocked = false);
 
 public enum InvoiceCustomerInformationSaveStatus
 {

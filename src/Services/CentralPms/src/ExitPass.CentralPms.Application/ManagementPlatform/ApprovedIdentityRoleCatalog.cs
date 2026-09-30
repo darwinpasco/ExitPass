@@ -15,6 +15,7 @@ public static class ApprovedIdentityRoleCatalog
 {
     public const string SystemAdministrator = "SYSTEM_ADMINISTRATOR";
     public const string OperationsSupervisor = "OPERATIONS_SUPERVISOR";
+    public const string FiscalZReadingCloser = "FISCAL_Z_READING_CLOSER";
     public const string StatutoryDiscountProcessor = "STATUTORY_DISCOUNT_PROCESSOR";
     public const string SiteOperator = "SITE_OPERATOR";
     public const string ParkingAttendant = "PARKING_ATTENDANT";
@@ -39,6 +40,7 @@ public static class ApprovedIdentityRoleCatalog
         {
             [SystemAdministrator] = Policy(SystemAdministrator, "System Administrator", [ManagementPlatformAudience], [GlobalScope], GlobalScope),
             [OperationsSupervisor] = Policy(OperationsSupervisor, "Operations Supervisor", [OperatorConsoleAudience, ManagementPlatformAudience], [SiteScope], SiteScope),
+            [FiscalZReadingCloser] = Policy(FiscalZReadingCloser, "Fiscal Z Reading Closer", [OperatorConsoleAudience], [SiteScope], SiteScope),
             [StatutoryDiscountProcessor] = Policy(StatutoryDiscountProcessor, "Statutory Discount Processor", [ManagementPlatformAudience], [GlobalScope], GlobalScope),
             [SiteOperator] = Policy(SiteOperator, "Site Operator", [OperatorConsoleAudience], [SiteScope], SiteScope),
             [ParkingAttendant] = Policy(ParkingAttendant, "Parking Attendant", [NativeParkingAppAudience], [SiteScope], SiteScope),
@@ -68,11 +70,26 @@ public static class ApprovedIdentityRoleCatalog
         "statutory-discounts.decision.reject"
     };
 
+    private static readonly HashSet<string> OperatorConsoleStatutorySupervisorPermissions = new(CodeComparer)
+    {
+        "statutory-discounts.evidence.review.view"
+    };
+
     public static IReadOnlyList<ApprovedIdentityRolePolicy> Policies { get; } =
         PolicyByCode.Values.ToArray();
 
     public static IReadOnlyList<string> AssignableCodes { get; } =
-        PolicyByCode.Keys.ToArray();
+    [
+        SystemAdministrator,
+        OperationsSupervisor,
+        StatutoryDiscountProcessor,
+        SiteOperator,
+        ParkingAttendant,
+        AptCashierOperator,
+        FinanceReconciliationAnalyst,
+        CompliancePolicyAdministrator,
+        ExecutiveManagement
+    ];
 
     public static bool TryGetPolicy(string? roleCode, out ApprovedIdentityRolePolicy? policy)
     {
@@ -86,7 +103,8 @@ public static class ApprovedIdentityRoleCatalog
         return false;
     }
 
-    public static bool IsAssignable(string? roleCode) => TryGetPolicy(roleCode, out _);
+    public static bool IsAssignable(string? roleCode) =>
+        roleCode is not null && AssignableCodes.Contains(roleCode, CodeComparer);
 
     public static bool IsApplicationEligible(string? roleCode, string? audience) =>
         TryGetPolicy(roleCode, out var policy) &&
@@ -102,13 +120,16 @@ public static class ApprovedIdentityRoleCatalog
         policy!.AllowedAssignmentScopes.Contains(scopeType, CodeComparer);
 
     /// <summary>
-    /// Returns false for statutory supervisor permissions on every audience except Management Platform.
+    /// Returns false for statutory supervisor permissions outside their explicitly approved application audience.
+    /// Evidence review is the single narrow permission shared with Operator Console for Site-scoped supervisor review.
     /// Other permissions are outside this narrow surface-boundary rule and are left to their policy mapping.
     /// </summary>
     public static bool IsPermissionEligibleForApplication(string? permissionCode, string? audience) =>
         permissionCode is not null &&
         (!ManagementPlatformOnlyStatutorySupervisorPermissions.Contains(permissionCode) ||
-         string.Equals(audience, ManagementPlatformAudience, StringComparison.Ordinal));
+         string.Equals(audience, ManagementPlatformAudience, StringComparison.Ordinal) ||
+         (string.Equals(audience, OperatorConsoleAudience, StringComparison.Ordinal) &&
+          OperatorConsoleStatutorySupervisorPermissions.Contains(permissionCode)));
 
     public static bool IsManagementPlatformStatutoryReviewPermission(string? permissionCode) =>
         permissionCode is not null && ManagementPlatformStatutoryReviewPermissions.Contains(permissionCode);

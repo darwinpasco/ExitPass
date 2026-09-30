@@ -48,6 +48,7 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
     [InlineData(OperatorConsoleActionCodes.DecideStatutoryDiscount)]
     [InlineData(OperatorConsoleActionCodes.CaptureEvidence)]
     [InlineData(OperatorConsoleActionCodes.ViewEvidence)]
+    [InlineData(OperatorConsoleActionCodes.ReviewEvidence)]
     [InlineData(OperatorConsoleActionCodes.ApplyStatutoryDiscountPayableBasis)]
     [InlineData(OperatorConsoleActionCodes.ViewPolicyResolution)]
     [InlineData(OperatorConsoleActionCodes.ViewAuditReport)]
@@ -82,9 +83,11 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
     [InlineData(OperatorConsoleActionCodes.SessionLookup)]
     [InlineData(OperatorConsoleActionCodes.ViewStatutoryDiscountDraft)]
     [InlineData(OperatorConsoleActionCodes.ViewEvidence)]
+    [InlineData(OperatorConsoleActionCodes.ReviewEvidence)]
     [InlineData(OperatorConsoleActionCodes.ViewPolicyResolution)]
     [InlineData(OperatorConsoleActionCodes.ViewFiscalIssuanceStatus)]
-    public async Task EvaluateAsync_WhenDirectSiteReadHasNoDeviceOrShift_AllowsRead(string actionCode)
+    [InlineData(OperatorConsoleActionCodes.CreateStatutoryDiscountDraft)]
+    public async Task EvaluateAsync_WhenDirectSiteScopedActionHasNoDeviceOrShift_AllowsAction(string actionCode)
     {
         var sut = CreateSut(ReadOnlyContext);
 
@@ -126,7 +129,7 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
         var sut = CreateSut(ReadOnlyContext);
 
         var result = await sut.EvaluateAsync(
-            Command(actionCode: OperatorConsoleActionCodes.CreateStatutoryDiscountDraft),
+            Command(actionCode: OperatorConsoleActionCodes.DecideStatutoryDiscount),
             CancellationToken.None);
 
         result.Allowed.Should().BeFalse();
@@ -161,7 +164,7 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
     {
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)MissingHrMapping, Command(), "HR_IDENTITY_MAPPING_NOT_FOUND"];
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)InactiveHrMapping, Command(), "HR_IDENTITY_MAPPING_INACTIVE"];
-        var controlledWrite = Command(actionCode: OperatorConsoleActionCodes.CreateStatutoryDiscountDraft);
+        var controlledWrite = Command(actionCode: OperatorConsoleActionCodes.DecideStatutoryDiscount);
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)MissingDeviceBinding, controlledWrite, "DEVICE_BINDING_NOT_FOUND"];
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)InactiveDeviceBinding, controlledWrite, "DEVICE_BINDING_INACTIVE"];
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)UntrustedDevice, controlledWrite, "DEVICE_NOT_TRUSTED"];

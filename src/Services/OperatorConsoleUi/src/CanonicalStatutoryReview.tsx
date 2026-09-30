@@ -133,9 +133,9 @@ export function CanonicalStatutoryReviewQueuePage({
         {state.status === "failed" && <ReviewState title="Queue failed" message={state.message} />}
         {state.status === "ready" && <>
           {state.staleMessage && <p className="notice" role="status">{state.staleMessage} Loaded {formatDate(state.loadedAt)}.</p>}
-          <div className="tableScroller"><table><thead><tr><th>Request</th><th>Site</th><th>Origin</th><th>Benefit</th><th>Submitted</th><th>Status</th><th>Parking / ticket</th><th>Action</th></tr></thead>
+          <div className="tableScroller"><table><thead><tr><th>Ticket / Plate</th><th>Site</th><th>Entitlement</th><th>Status</th><th>Requested By</th><th>Requested At</th><th>Action</th></tr></thead>
             <tbody>{state.data.items.map((item) => <tr key={item.statutoryDiscountDecisionCommandId}>
-              <td><code>{shortReference(item.requestReference)}</code></td><td>{siteLabel(item.siteId)}</td><td>{originLabel(item.sourceChannel)}</td><td>{benefitLabel(item.entitlementType)}</td><td>{formatDate(item.submittedAt)}</td><td><span className="statusPill">{statusLabel(item.reviewStatus)}</span></td><td>{item.ticketReference ?? shortReference(item.parkingSessionId)}</td><td><button type="button" onClick={() => onOpen(item.statutoryDiscountDecisionCommandId)}>Review</button></td>
+              <td><strong>{item.ticketReference ?? "Not available"}</strong><span>{item.plateNumber ?? "Not available"}</span></td><td>{item.siteName ?? siteLabel(item.siteId)}</td><td>{benefitLabel(item.entitlementType)}</td><td><span className="statusPill">{statusLabel(item.reviewStatus)}</span></td><td>{originLabel(item.sourceChannel)}</td><td>{formatDate(item.submittedAt)}</td><td><button type="button" onClick={() => onOpen(item.statutoryDiscountDecisionCommandId)}>Review</button></td>
             </tr>)}</tbody></table></div>
           <div className="paginationBar"><button type="button" disabled={filters.page <= 1} onClick={() => onFiltersChange({ ...filters, page: filters.page - 1 })}>Previous</button><span>Page {state.data.page}</span><button type="button" disabled={!state.data.hasMore} onClick={() => onFiltersChange({ ...filters, page: filters.page + 1 })}>Next</button></div>
         </>}

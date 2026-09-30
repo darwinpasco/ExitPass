@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import QRCode from "qrcode";
 import {
   createOperatorConsoleApiClient,
   defaultDevModeContext,
@@ -13,14 +14,15 @@ import type {
   AuditReportQuery,
   AuditReportResponse,
   FiscalIssuanceStatus,
+  OperatorDigitalSalesInvoice,
   FiscalVoidActionAuditReportItem,
   FiscalVoidActionAuditReportQuery,
   FiscalVoidActionAuditReportResponse,
   FiscalStatusViewAuditReportItem,
   FiscalStatusViewAuditReportQuery,
   FiscalStatusViewAuditReportResponse,
+  InvoiceCustomerInformation,
   LoadState,
-  PolicyContextKind,
   ProductionPolicyImportDryRunResult,
   ProductionPolicyImportReviewDecisionAction,
   ProductionPolicyImportReviewListResult,
@@ -43,7 +45,7 @@ import type {
   VendorSessionProjectionHealthTargetDetail,
   VendorSessionProjectionHealthTargetsResponse
 } from "./types";
-import { StatutoryEvidenceReviewPanel } from "./StatutoryEvidenceReviewPanel";
+import { PhoneCameraCapture } from "./PhoneCameraCapture";
 import {
   CanonicalStatutoryReviewDetailPage,
   CanonicalStatutoryReviewQueuePage,
@@ -138,8 +140,9 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
   const readiness = readinessState.status === "loaded" ? readinessState.data : null;
   const readinessBlockReason = readiness && !readiness.accessAllowed ? readinessBlockedActionReason(readiness) : null;
   const permissions = session?.permissions ?? [];
-  const navigationItems = visibleOperatorConsoleNavigation(permissions);
-  const routeAuthorized = canAccessOperatorConsolePath(path, permissions);
+  const roleCodes = session?.roleCodes ?? [];
+  const navigationItems = visibleOperatorConsoleNavigation(permissions, roleCodes);
+  const routeAuthorized = canAccessOperatorConsolePath(path, permissions, roleCodes);
   const supervisorStatutoryWorkspace = hasStatutorySupervisorWorkspace(permissions);
 
   return (
@@ -229,7 +232,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
           ) : path === routes.shiftManagement ? (
             <ShiftManagement client={client} />
           ) : path === routes.ticketLookup ? (
-            <TicketLookupPage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
+            <TicketLookupPage client={client} />
           ) : path === routes.fiscalStatus ? (
             <FiscalIssuanceStatusPage client={client} />
           ) : path === routes.fiscalReporting ? (
@@ -406,7 +409,6 @@ function AuditReportPage({ client }: { client: OperatorConsoleApiClient }) {
                     <th>Ticket Reference</th>
                     <th>Session ID</th>
                     <th>Entitlement</th>
-                    <th>Policy Readiness</th>
                     <th>Validation Status</th>
                     <th>Evidence Status</th>
                     <th>Evidence Satisfied</th>
@@ -427,9 +429,6 @@ function AuditReportPage({ client }: { client: OperatorConsoleApiClient }) {
                       <td>{item.ticketReference ?? "Not available"}</td>
                       <td><code>{shortId(item.parkingSessionId)}</code></td>
                       <td>{item.entitlementType}</td>
-                      <td>
-                        <AuditPolicyReadinessSummary item={item} />
-                      </td>
                       <td><span className={`statusPill ${statusClass(item.validationStatus)}`}>{item.validationStatus}</span></td>
                       <td>{item.latestEvidenceStatus ?? (item.evidenceRequired ? "Pending" : "Not required")}</td>
                       <td>{item.evidenceRequiredSatisfied ? "Yes" : "No"}</td>
@@ -1126,7 +1125,6 @@ function displayBool(value: boolean | undefined) {
 
 function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient }) {
   const [lookupQuery, setLookupQuery] = useState("");
-  const [submittedLookupQuery, setSubmittedLookupQuery] = useState("");
   const [statusState, setStatusState] = useState<LoadState<FiscalIssuanceStatus>>({ status: "idle" });
 
   function loadFiscalStatus(query: string, showLoading = true) {
@@ -1156,11 +1154,10 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
     event.preventDefault();
     const trimmed = lookupQuery.trim();
     if (!trimmed) {
-      setStatusState({ status: "error", message: "Sales Invoice number or Sales Invoice reference ID is required." });
+      setStatusState({ status: "error", message: "Ticket, Plate or SI Number is required." });
       return;
     }
 
-    setSubmittedLookupQuery(trimmed);
     loadFiscalStatus(trimmed);
   }
 
@@ -1171,7 +1168,7 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
           <p className="eyebrow">Fiscal visibility</p>
           <h2 id="fiscal-status-title">Fiscal issuance status</h2>
           <p className="panelCopy">
-            Search by Sales Invoice number or Sales Invoice reference ID. This view is read-only.
+            Search by an exact Ticket Number, Plate Number, or SI Number. This view is read-only.
           </p>
         </div>
         <span className="statusPill">Read only</span>
@@ -1179,78 +1176,58 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
 
       <form className="filterForm" onSubmit={submitLookup}>
         <label>
-          Search by Sales Invoice number or reference ID
+          Ticket, Plate or SI Number
           <input
             className="wideLookupInput"
             value={lookupQuery}
-            placeholder="SI-00000001-UAT or Sales Invoice reference ID"
+            placeholder="Ticket, plate, or SI number"
             onChange={(event) => setLookupQuery(event.target.value)}
           />
         </label>
         <button type="submit">View status</button>
       </form>
       <p className="helperText">
-        Operators can search by Sales Invoice number. Sales Invoice reference ID remains available for support.
+        Exact matches only. Results are limited to your authorized Site.
       </p>
 
       {statusState.status === "idle" && (
-        <StateMessage title="No Sales Invoice status selected" message="Enter a Sales Invoice number or Sales Invoice reference ID to view safe status fields." />
+        <StateMessage title="No fiscal status selected" message="Enter a Ticket Number, Plate Number, or SI Number to view status." />
       )}
       {statusState.status === "loading" && (
         <StateMessage title="Loading fiscal status" message="Retrieving fiscal issuance status through the Operator Console facade." />
       )}
       {statusState.status === "not-found" && (
         <StateMessage
-          title="Sales Invoice reference not found"
-          message="The Sales Invoice status lookup did not match a Sales Invoice reference. Verify the Sales Invoice number or support reference."
+          title="Fiscal record not found"
+          message="The exact identifier did not match a fiscal record in your authorized Site."
         />
       )}
       {statusState.status === "access-denied" && <StateMessage title="Access denied" message={statusState.message} />}
       {statusState.status === "error" && <StateMessage title="Unable to load fiscal status" message={statusState.message} />}
       {statusState.status === "loaded" && (
-        <FiscalIssuanceStatusPanel status={statusState.data} requestedReferenceId={submittedLookupQuery} />
+        <FiscalIssuanceStatusPanel status={statusState.data} client={client} />
       )}
     </section>
   );
 }
 
-function FiscalIssuanceStatusPanel({ status, requestedReferenceId }: {
+function FiscalIssuanceStatusPanel({ status, client }: {
   status: FiscalIssuanceStatus;
-  requestedReferenceId: string;
+  client: OperatorConsoleApiClient;
 }) {
   const presentation = fiscalStatusPresentation(status);
-  const mainItems: Array<[string, string]> = [
-    ["Fiscal state", status.fiscalIssuanceState],
-    ["Result classification", displayValue(status.resultClassification)],
-    ["Evidence status", displayValue(status.fiscalIssuanceEvidenceStatus)],
-    ["Number assignment", status.fiscalNumberAssignmentState],
-    ["First recorded", formatDateTime(status.firstRecordedAt)],
-    ["Last updated", formatDateTime(status.lastUpdatedAt)]
+  const operationalItems: Array<[string, string]> = [
+    ["Ticket Number", displayValue(status.ticketNumber)],
+    ["Plate Number", displayValue(status.plateNumber)],
+    ["SI Number", displayValue(status.fiscalDocumentNumber)],
+    ["Sales Invoice status", displayStatusValue(status.posServerFiscalDocumentStatusCodeKey)],
+    ["Site POS Server ref", displayValue(status.sitePosServerRef)],
+    ["Fiscal sequence value", formatOptionalNumber(status.fiscalSequenceValue)],
+    ["POS Server document read status", displayStatusValue(status.posServerFiscalDocumentReadStatus)],
+    ["Void status", displayStatusValue(status.posServerVoidStatus)],
+    ["Void reason code", status.posServerVoidReasonCode ? displayStatusValue(status.posServerVoidReasonCode) : "Not available"],
+    ["Date Printed", "Not available"]
   ];
-
-  if (status.fiscalDocumentNumber) {
-    mainItems.splice(1, 0, ["Sales Invoice number", status.fiscalDocumentNumber]);
-  }
-
-  if (status.posServerFiscalDocumentReadStatus) {
-    mainItems.push(["POS Server document read status", displayStatusValue(status.posServerFiscalDocumentReadStatus)]);
-  }
-
-  if (status.posServerFiscalDocumentStatusCodeKey) {
-    mainItems.push(["Sales Invoice status", displayStatusValue(status.posServerFiscalDocumentStatusCodeKey)]);
-  }
-
-  if (status.posServerVoidStatus) {
-    mainItems.push(["Void status", displayStatusValue(status.posServerVoidStatus)]);
-  }
-
-  if (status.latestErrorCode || status.latestErrorPosture || status.latestExceptionReason) {
-    mainItems.push(
-      ["Safe error code", displayValue(status.latestErrorCode)],
-      ["Error posture", displayValue(status.latestErrorPosture)],
-      ["Exception reason", displayValue(status.latestExceptionReason)]
-    );
-  }
 
   return (
     <section aria-labelledby="fiscal-status-result-title">
@@ -1263,45 +1240,10 @@ function FiscalIssuanceStatusPanel({ status, requestedReferenceId }: {
         <span className={`statusPill ${presentation.className}`}>{presentation.badge}</span>
       </div>
 
-      <DescriptionList items={mainItems} />
-
-      <details className="diagnosticsPanel">
-        <summary>Support/audit details</summary>
-        <DescriptionList
-          items={[
-            ["Requested reference", requestedReferenceId],
-            ["Sales Invoice reference ID", status.fiscalIssuanceReferenceId],
-            ["Upstream finality reference", status.upstreamFinalityReference],
-            ["Payment confirmation ID", status.paymentConfirmationId],
-            ["Payment attempt ID", status.paymentAttemptId],
-            ["Parking session ID", status.parkingSessionId],
-            ["Site ID", displayValue(status.siteId)],
-            ["Site POS Server ID", displayValue(status.sitePosServerId)],
-            ["Site POS Server ref", displayValue(status.sitePosServerRef)],
-            ["POS Server Sales Invoice ID", displayValue(status.posServerFiscalDocumentId)],
-            ["Sales Invoice type", displayValue(status.fiscalDocumentTypeCodeKey)],
-            ["Fiscal identity ID", displayValue(status.fiscalIdentityId)],
-            ["Fiscal sequence policy ID", displayValue(status.fiscalSequencePolicyId)],
-            ["Fiscal sequence value", formatOptionalNumber(status.fiscalSequenceValue)],
-            ["Fiscal series", displayValue(status.fiscalSeries)],
-            ["Fiscal number prefix", displayValue(status.fiscalNumberPrefixText)],
-            ["Fiscal number suffix", displayValue(status.fiscalNumberSuffixText)],
-            ["Fiscal number assigned at", formatOptionalDateTime(status.fiscalNumberAssignedAt)],
-            ["Fiscal number assigned by", displayValue(status.fiscalNumberAssignedByRef)],
-            ["POS Server document read status", displayValue(status.posServerFiscalDocumentReadStatus)],
-            ["Sales Invoice status", displayValue(status.posServerFiscalDocumentStatusCodeKey)],
-            ["Void status", displayValue(status.posServerVoidStatus)],
-            ["Void reason code", displayValue(status.posServerVoidReasonCode)],
-            ["Voided at", formatOptionalDateTime(status.posServerVoidedAt)],
-            ["Semantic request hash", displayValue(status.semanticRequestHashValue)],
-            ["Semantic request hash version", displayValue(status.semanticRequestHashVersion)],
-            ["Semantic request hash status", displayValue(status.semanticRequestHashStatus)],
-            ["Semantic request hash algorithm", displayValue(status.semanticRequestHashAlgorithm)],
-            ["Semantic request hash fact count", formatOptionalNumber(status.semanticRequestHashSourceFactCount)],
-            ["Correlation ID", displayValue(status.correlationId)]
-          ]}
-        />
-      </details>
+      <DescriptionList items={operationalItems} />
+      {status.posServerFiscalDocumentReadStatus === "AVAILABLE" && status.fiscalDocumentNumber && (
+        <SalesInvoiceActions client={client} status={status} />
+      )}
     </section>
   );
 }
@@ -2303,22 +2245,40 @@ function OperatorConsoleHome({
 }
 
 function TicketLookupPage({
-  client,
-  navigate,
-  readinessBlockReason
+  client
 }: {
   client: OperatorConsoleApiClient;
-  navigate: (path: string) => void;
-  readinessBlockReason: string | null;
 }) {
   const [ticketReference, setTicketReference] = useState("");
   const [lookupState, setLookupState] = useState<LoadState<OperatorTicketLookupResult>>({ status: "idle" });
   const [draftState, setDraftState] = useState<LoadState<string>>({ status: "idle" });
+  const [currentDraftState, setCurrentDraftState] = useState<LoadState<StatutoryDiscountDraftDetail>>({ status: "idle" });
+  const [customerInformationState, setCustomerInformationState] = useState<LoadState<InvoiceCustomerInformation>>({ status: "idle" });
+  const [customerInformationSaveState, setCustomerInformationSaveState] = useState<LoadState<string>>({ status: "idle" });
+  const [customerName, setCustomerName] = useState("");
+  const [customerAddress, setCustomerAddress] = useState("");
+  const [customerTin, setCustomerTin] = useState("");
+  const [customerBusinessStyle, setCustomerBusinessStyle] = useState("");
   const [entitlementType, setEntitlementType] = useState<"SENIOR_CITIZEN" | "PWD">("SENIOR_CITIZEN");
-  const [idDocumentType, setIdDocumentType] = useState("SENIOR_CITIZEN_ID");
-  const [issuingAuthority, setIssuingAuthority] = useState("OSCA");
-  const [maskedIdReference, setMaskedIdReference] = useState("SC-UAT-****-0001");
+  const [issuingAuthority, setIssuingAuthority] = useState("");
+  const [idReference, setIdReference] = useState("");
   const [operatorAttestation, setOperatorAttestation] = useState(false);
+  const [idPhoto, setIdPhoto] = useState<File | null>(null);
+  function replaceIdPhoto(file: File | null) {
+    if (!file) {
+      setIdPhoto(null);
+      return;
+    }
+
+    if (!(["image/jpeg", "image/png"] as const).includes(file.type as "image/jpeg" | "image/png") || file.size <= 0 || file.size > 5 * 1024 * 1024) {
+      setDraftState({ status: "error", message: "Use a JPEG or PNG ID photo smaller than 5 MB." });
+      setIdPhoto(null);
+      return;
+    }
+
+    setDraftState({ status: "idle" });
+    setIdPhoto(file);
+  }
 
   async function submitLookup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2330,9 +2290,47 @@ function TicketLookupPage({
 
     setLookupState({ status: "loading" });
     setDraftState({ status: "idle" });
+    setCurrentDraftState({ status: "idle" });
+    setCustomerInformationState({ status: "idle" });
+    setCustomerInformationSaveState({ status: "idle" });
+    setCustomerName("");
+    setCustomerAddress("");
+    setCustomerTin("");
+    setCustomerBusinessStyle("");
+    replaceIdPhoto(null);
+    setOperatorAttestation(false);
     try {
       const result = await client.lookupSessionByTicket({ ticketNumber: normalizedTicket });
       setLookupState(result.sessionFound ? { status: "loaded", data: result } : { status: "not-found" });
+      if (result.sessionFound && result.parkingSessionId) {
+        setCurrentDraftState({ status: "loading" });
+        try {
+          const currentDraft = await client.getCurrentStatutoryDiscountDraft(result.parkingSessionId);
+          setCurrentDraftState(currentDraft ? { status: "loaded", data: currentDraft } : { status: "empty" });
+        } catch (error) {
+          setCurrentDraftState({ status: "error", message: mapApiError(error).message });
+        }
+      } else if (result.sessionFound) {
+        setCurrentDraftState({ status: "empty" });
+      }
+      if (result.sessionFound && result.parkingSessionId && client.getInvoiceCustomerInformation) {
+        setCustomerInformationState({ status: "loading" });
+        try {
+          const customerInformation = await client.getInvoiceCustomerInformation(result.parkingSessionId);
+          applyCustomerInformation(customerInformation);
+          setCustomerInformationState({ status: "loaded", data: customerInformation });
+        } catch {
+          setCustomerInformationState({
+            status: "error",
+            message: "Unable to load customer information for this ticket."
+          });
+        }
+      } else if (result.sessionFound) {
+        setCustomerInformationState({
+          status: "error",
+          message: "Unable to load customer information for this ticket."
+        });
+      }
     } catch (error) {
       const mapped = mapApiError(error);
       setLookupState(
@@ -2351,12 +2349,26 @@ function TicketLookupPage({
 
     const result = lookupState.data;
     if (!result.parkingSessionId) {
-      setDraftState({ status: "error", message: "Parking session ID is required before starting statutory discount review." });
+      setDraftState({ status: "error", message: "Unable to start the statutory discount request for this ticket." });
+      return;
+    }
+
+    const maskedIdReference = maskStatutoryIdReference(idReference);
+    if (!maskedIdReference) {
+      setDraftState({
+        status: "error",
+        message: "Enter an ID reference using at least five letters, numbers, or hyphens."
+      });
       return;
     }
 
     if (!operatorAttestation) {
       setDraftState({ status: "error", message: "Operator attestation is required before creating the draft." });
+      return;
+    }
+
+    if (!idPhoto) {
+      setDraftState({ status: "error", message: "Take an ID photo before submitting the request." });
       return;
     }
 
@@ -2369,24 +2381,94 @@ function TicketLookupPage({
         siteId: result.siteId,
         siteGroupId: result.siteGroupId,
         entitlementType,
-        idDocumentType,
+        idDocumentType: idDocumentTypeForEntitlement(entitlementType),
         issuingAuthority,
         maskedIdReference,
+        idPhoto,
         evidenceCaptureRequested: true,
         operatorAttestation,
-        attestationNotes: "Metadata-only statutory discount UAT smoke draft.",
-        reasonCode: "CONTROLLED_UAT_STATUTORY_DISCOUNT_SMOKE"
+        attestationNotes: "Operator confirmed the statutory ID photo and entitlement details.",
+        reasonCode: "OPERATOR_ASSISTED_STATUTORY_DISCOUNT_REQUEST"
       });
 
       if (!draft.accepted || !draft.draftId) {
-        setDraftState({ status: "error", message: draft.message });
+        setDraftState({ status: "error", message: statutoryDraftErrorMessage(draft.message) });
         return;
       }
 
       setDraftState({ status: "loaded", data: draft.message });
-      navigate(`${routes.detail}${draft.draftId}`);
+      const currentDraft = await client.getCurrentStatutoryDiscountDraft(result.parkingSessionId);
+      setCurrentDraftState(currentDraft ? { status: "loaded", data: currentDraft } : { status: "error", message: "The submitted statutory request could not be reloaded." });
+      setIdReference("");
+      setOperatorAttestation(false);
+      replaceIdPhoto(null);
     } catch (error) {
-      setDraftState({ status: "error", message: mapApiError(error).message });
+      const mapped = mapApiError(error);
+      setDraftState({
+        status: "error",
+        message: statutoryDraftErrorMessage(mapped.message)
+      });
+    }
+  }
+
+  function applyCustomerInformation(value: InvoiceCustomerInformation) {
+    setCustomerName(value.customerName ?? "");
+    setCustomerAddress(value.address ?? "");
+    setCustomerTin(value.tin ?? "");
+    setCustomerBusinessStyle(value.businessStyle ?? "");
+  }
+
+  async function saveCustomerInformation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (lookupState.status !== "loaded" || !lookupState.data.parkingSessionId || !client.saveInvoiceCustomerInformation) return;
+    const current = customerInformationState.status === "loaded" ? customerInformationState.data : undefined;
+    setCustomerInformationSaveState({ status: "loading" });
+    try {
+      const saved = await client.saveInvoiceCustomerInformation(lookupState.data.parkingSessionId, {
+        customerName: customerName.trim() || undefined,
+        address: customerAddress.trim() || undefined,
+        tin: customerTin.trim() || undefined,
+        businessStyle: customerBusinessStyle.trim() || undefined,
+        expectedVersion: current?.rowVersion
+      });
+      applyCustomerInformation(saved);
+      setCustomerInformationState({ status: "loaded", data: saved });
+      if (client.getInvoiceCustomerInformation) {
+        const verified = await client.getInvoiceCustomerInformation(lookupState.data.parkingSessionId);
+        applyCustomerInformation(verified);
+        setCustomerInformationState({ status: "loaded", data: verified });
+      }
+      setCustomerInformationSaveState({ status: "loaded", data: "Customer information saved." });
+    } catch (error) {
+      const mapped = mapApiError(error);
+      setCustomerInformationSaveState({
+        status: "error",
+        message: mapped.errorCode === "CUSTOMER_INFORMATION_VERSION_CONFLICT"
+          ? "Customer information changed after it was loaded. Reload the authoritative values before saving again."
+          : mapped.errorCode === "CUSTOMER_INFORMATION_FISCAL_SNAPSHOT_LOCKED"
+            ? "Customer information can no longer be changed because the Sales Invoice information has already been finalized."
+            : mapped.message
+      });
+    }
+  }
+
+  async function reloadCustomerInformation() {
+    if (lookupState.status !== "loaded" || !lookupState.data.parkingSessionId || !client.getInvoiceCustomerInformation) return;
+    const previous = customerInformationState.status === "loaded" ? customerInformationState.data : undefined;
+    setCustomerInformationState({ status: "loading" });
+    setCustomerInformationSaveState({ status: "idle" });
+    try {
+      const current = await client.getInvoiceCustomerInformation(lookupState.data.parkingSessionId);
+      applyCustomerInformation(current);
+      setCustomerInformationState({ status: "loaded", data: current });
+    } catch (error) {
+      if (previous) {
+        applyCustomerInformation(previous);
+        setCustomerInformationState({ status: "loaded", data: previous });
+        setCustomerInformationSaveState({ status: "error", message: mapApiError(error).message });
+      } else {
+        setCustomerInformationState({ status: "error", message: mapApiError(error).message });
+      }
     }
   }
 
@@ -2441,19 +2523,26 @@ function TicketLookupPage({
       {lookupState.status === "loaded" && (
         <>
           <TicketLookupSummary result={lookupState.data} />
-          <section className="panel" aria-labelledby="statutory-discount-start-title">
+          {currentDraftState.status === "loaded" ? (
+            <SubmittedStatutoryRequestSummary detail={currentDraftState.data} client={client} />
+          ) : <section className="panel" aria-labelledby="statutory-discount-start-title">
             <div className="panelHeader">
-              <h3 id="statutory-discount-start-title">Start statutory discount review</h3>
-              <span className="statusPill">Metadata-only evidence</span>
+              <h3 id="statutory-discount-start-title">Request Statutory Discount</h3>
+              <span className="statusPill">{isCompletedTransaction(lookupState.data) ? "Request unavailable" : "ID photo required"}</span>
             </div>
             <p className="notice">
               This creates an Operator Console review draft only. It does not collect payment, open gate, call HikCentral,
               create Sales Invoice, or render final BIR documents.
             </p>
-            {readinessBlockReason && <p className="notice">Draft creation unavailable: {readinessBlockReason}</p>}
             {draftState.status === "error" && <p className="errorMessage">{draftState.message}</p>}
             {draftState.status === "loaded" && <p className="successMessage">{draftState.data}</p>}
-            <form className="draftStartForm" onSubmit={createDraft}>
+            {currentDraftState.status === "loading" && <p role="status">Checking for an existing statutory request...</p>}
+            {currentDraftState.status === "error" && <p className="errorMessage">Unable to load the existing statutory request for this ticket.</p>}
+            {currentDraftState.status === "empty" && (isCompletedTransaction(lookupState.data) ? (
+              <p className="notice">Statutory discount request is no longer available because payment has been completed and exit authorization has been issued.</p>
+            ) : !lookupState.data.parkingSessionId ? (
+              <p className="errorMessage">Unable to start the statutory discount request for this ticket.</p>
+            ) : <form className="draftStartForm" onSubmit={createDraft}>
               <label>
                 Entitlement type
                 <select
@@ -2461,9 +2550,9 @@ function TicketLookupPage({
                   onChange={(event) => {
                     const next = event.target.value as "SENIOR_CITIZEN" | "PWD";
                     setEntitlementType(next);
-                    setIdDocumentType(next === "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID");
-                    setIssuingAuthority(next === "PWD" ? "PDAO" : "OSCA");
-                    setMaskedIdReference(next === "PWD" ? "PWD-UAT-****-0001" : "SC-UAT-****-0001");
+                    setIssuingAuthority("");
+                    setIdReference("");
+                    replaceIdPhoto(null);
                   }}
                 >
                   <option value="SENIOR_CITIZEN">Senior Citizen</option>
@@ -2472,45 +2561,71 @@ function TicketLookupPage({
               </label>
               <label>
                 ID document type
-                <input value={idDocumentType} onChange={(event) => setIdDocumentType(event.target.value)} />
+                <input value={idDocumentTypeForEntitlement(entitlementType)} readOnly />
               </label>
               <label>
                 Issuing authority
                 <input value={issuingAuthority} onChange={(event) => setIssuingAuthority(event.target.value)} />
               </label>
               <label>
-                Masked ID reference
-                <input value={maskedIdReference} onChange={(event) => setMaskedIdReference(event.target.value)} />
+                ID reference
+                <input
+                  value={idReference}
+                  onChange={(event) => setIdReference(event.target.value)}
+                  autoComplete="off"
+                />
               </label>
+              {maskStatutoryIdReference(idReference) && (
+                <p className="fieldHint" role="status">ID reference will be stored as {maskStatutoryIdReference(idReference)}.</p>
+              )}
+              <PhoneCameraCapture value={idPhoto} onChange={replaceIdPhoto} disabled={draftState.status === "loading"} />
               <label className="checkboxField">
                 <input
                   type="checkbox"
                   checked={operatorAttestation}
                   onChange={(event) => setOperatorAttestation(event.target.checked)}
                 />
-                Operator confirms the entitlement information was reviewed and only metadata evidence will be captured.
+                Operator confirms the entitlement information and captured ID photo match the presented document.
               </label>
               <div className="actionBar">
                 <button
                   type="submit"
                   disabled={
-                    readinessBlockReason !== null ||
                     draftState.status === "loading" ||
-                    lookupState.data.sessionEligible === false ||
-                    !operatorAttestation
+                    !issuingAuthority.trim() ||
+                    !idReference.trim() ||
+                    !operatorAttestation ||
+                    !idPhoto
                   }
                 >
-                  {draftState.status === "loading" ? "Creating draft" : "Create review draft"}
+                  {draftState.status === "loading" ? "Submitting Request" : "Submit Request"}
                 </button>
-                {lookupState.data.sessionEligible === false && (
-                  <span className="notice">
-                    {normalizeStatus(lookupState.data.sessionSource) === "VENDOR_SESSION_PROJECTION"
-                      ? "Transactional parking and payment state have not started."
-                      : lookupState.data.message ?? "Session is not eligible for operator workflow."}
-                  </span>
-                )}
               </div>
-            </form>
+            </form>)}
+          </section>}
+          <section className="panel" aria-labelledby="invoice-customer-information-title">
+            <div className="panelHeader">
+              <h3 id="invoice-customer-information-title">Customer Information for Sales Invoice</h3>
+              <span className="statusPill">Optional</span>
+            </div>
+            {customerInformationState.status === "loading" && <p role="status">Loading authoritative customer information...</p>}
+            {customerInformationState.status === "error" && <div className="errorMessage" role="alert"><p>{customerInformationState.message}</p><button type="button" onClick={() => void reloadCustomerInformation()}>Retry customer information</button></div>}
+            {(() => {
+              const locked = customerInformationState.status === "loaded" && customerInformationState.data.fiscalSnapshotLocked;
+              const authoritativeReady = customerInformationState.status === "loaded";
+              return <>
+              {locked && <p className="notice">Customer information can no longer be changed because the Sales Invoice information has already been finalized.</p>}
+              {customerInformationSaveState.status === "loaded" && <p className="successMessage" role="status">{customerInformationSaveState.data}</p>}
+              {customerInformationSaveState.status === "error" && <div className="errorMessage" role="alert"><p>{customerInformationSaveState.message}</p><button type="button" onClick={() => void reloadCustomerInformation()}>Reload authoritative values</button></div>}
+              <form className="draftStartForm" onSubmit={saveCustomerInformation}>
+                <label>Name<input value={customerName} onChange={(event) => setCustomerName(event.target.value)} maxLength={160} readOnly={locked} disabled={!authoritativeReady} /></label>
+                <label>Address<textarea value={customerAddress} onChange={(event) => setCustomerAddress(event.target.value)} maxLength={300} readOnly={locked} disabled={!authoritativeReady} /></label>
+                <label>TIN<input value={customerTin} onChange={(event) => setCustomerTin(event.target.value)} maxLength={40} readOnly={locked} disabled={!authoritativeReady} /></label>
+                <label>Business Style / Business Name<input value={customerBusinessStyle} onChange={(event) => setCustomerBusinessStyle(event.target.value)} maxLength={160} readOnly={locked} disabled={!authoritativeReady} /></label>
+                {!locked && <button type="submit" disabled={!authoritativeReady || customerInformationSaveState.status === "loading" || !(customerName.trim() || customerAddress.trim() || customerTin.trim() || customerBusinessStyle.trim())}>{customerInformationSaveState.status === "loading" ? "Saving" : "Save Customer Information"}</button>}
+              </form>
+            </>;
+            })()}
           </section>
         </>
       )}
@@ -2518,105 +2633,178 @@ function TicketLookupPage({
   );
 }
 
-function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult }) {
-  const guidance = ticketLookupGuidance(result);
+type SubmittedEvidencePreviewState =
+  | { status: "loading" }
+  | { status: "loaded"; objectUrl: string }
+  | { status: "unavailable"; message: string };
 
+function SubmittedStatutoryRequestSummary({
+  detail,
+  client
+}: {
+  detail: StatutoryDiscountDraftDetail;
+  client: OperatorConsoleApiClient;
+}) {
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [previewState, setPreviewState] = useState<SubmittedEvidencePreviewState>(
+    detail.latestEvidenceId ? { status: "loading" } : { status: "unavailable", message: "No submitted ID image is linked to this request." }
+  );
+
+  useEffect(() => {
+    if (!detail.latestEvidenceId) {
+      setPreviewState({ status: "unavailable", message: "No submitted ID image is linked to this request." });
+      return;
+    }
+
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+    setPreviewState({ status: "loading" });
+    client.getSubmittedStatutoryEvidencePreview(detail.draftId, detail.latestEvidenceId, controller.signal)
+      .then((preview) => {
+        if (controller.signal.aborted) return;
+        objectUrl = URL.createObjectURL(preview.blob);
+        setPreviewState({ status: "loaded", objectUrl });
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setPreviewState({ status: "unavailable", message: mapApiError(error).message });
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [client, detail.draftId, detail.latestEvidenceId, refreshToken]);
+
+  const reviewStatus = statutoryDocumentReviewStatus(detail);
+  return (
+    <section className="panel submittedStatutoryRequest" aria-labelledby={`submitted-statutory-${detail.draftId}`}>
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">Statutory Discount Request</p>
+          <h3 id={`submitted-statutory-${detail.draftId}`}>{plainEntitlementLabel(detail.entitlementType)}</h3>
+        </div>
+        <span className={`statusPill ${statusClassForOperationalState(detail.status)}`}>{detail.status}</span>
+      </div>
+      <dl className="detailGrid submittedRequestDetails">
+        <dt>Entitlement</dt><dd>{plainEntitlementLabel(detail.entitlementType)}</dd>
+        <dt>ID document type</dt><dd>{statutoryDocumentTypeLabel(detail.idDocumentType, detail.entitlementType)}</dd>
+        <dt>Issuing authority</dt><dd>{displayValue(detail.issuingAuthority)}</dd>
+        <dt>ID reference</dt><dd>{displayValue(detail.maskedIdReference)}</dd>
+        <dt>Submitted by</dt><dd>{displayValue(detail.requestedBy)}</dd>
+        <dt>Submitted at</dt><dd>{formatDateTime(detail.requestedAt)}</dd>
+        <dt>Document review status</dt><dd>{reviewStatus}</dd>
+      </dl>
+      <div className="submittedEvidencePreview">
+        <div className="panelHeader">
+          <h4>Submitted ID image</h4>
+          {detail.latestEvidenceId && (
+            <button type="button" className="secondaryButton" onClick={() => setRefreshToken((value) => value + 1)}>
+              Refresh image
+            </button>
+          )}
+        </div>
+        {previewState.status === "loading" && <p role="status">Loading submitted ID image...</p>}
+        {previewState.status === "loaded" && (
+          <img src={previewState.objectUrl} alt="Submitted statutory ID evidence" className="submittedEvidenceImage" />
+        )}
+        {previewState.status === "unavailable" && <p className="notice">{previewState.message}</p>}
+      </div>
+      {reviewStatus === "Pending review" && <p className="notice">The submitted ID image is awaiting review by an authorized Statutory Discount Processor.</p>}
+    </section>
+  );
+}
+
+function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult }) {
   return (
     <section className="panel ticketSummaryPanel" aria-labelledby="ticket-summary-title">
       <div className="panelHeader">
         <div>
           <p className="eyebrow">Session summary</p>
-          <h3 id="ticket-summary-title">{displayValue(result.ticketNumber ?? result.cardNum)}</h3>
+          <h3 id="ticket-summary-title">Session Summary</h3>
         </div>
-        <span className={`statusPill ${guidance.className}`}>{guidance.label}</span>
       </div>
 
-      <div className={guidance.messageClass}>
-        {guidance.messages.map((message) => (
-          <p key={message}>{message}</p>
-        ))}
-      </div>
-
-      <div className="detailGrid">
-        <section aria-labelledby="ticket-session-heading">
-          <h4 id="ticket-session-heading">Session Information</h4>
-          <DescriptionList
-            items={[
-              ["Ticket number", displayValue(result.ticketNumber)],
-              ["Sales Invoice number", "Not available"],
-              ["Card number", displayValue(result.cardNum)],
-              ["Plate license", displayPlateLicense(result.plateLicense)],
-              ["Site", displayValue(result.siteName ?? result.siteId)],
-              ["Parking in time", result.parkingInTime ? formatDateTime(result.parkingInTime) : "Not available"],
-              ["Parking duration seconds", formatSeconds(result.parkingDurationSeconds)]
-            ]}
-          />
-        </section>
-
-        <section aria-labelledby="ticket-tariff-heading">
-          <h4 id="ticket-tariff-heading">Tariff Information</h4>
-          <DescriptionList
-            items={[
-              ["Current payable amount", formatPhpMoney(result.feeMinorUnits, result.currencyCode)],
-              ["Fee rule type", displayValue(result.feeRuleType)],
-              ["Fee rule index code", displayValue(result.feeRuleIndexCode)],
-              ["Fee rule name", displayValue(result.feeRuleName)]
-            ]}
-          />
-        </section>
-
-        <section aria-labelledby="ticket-payment-heading">
-          <h4 id="ticket-payment-heading">Payment Information</h4>
-          <DescriptionList
-            items={[
-              ["Payment attempt status", displayValue(result.paymentAttemptStatus)],
-              ["Payment status", displayValue(result.paymentStatus)],
-              ["Payment confirmation status", displayValue(result.paymentConfirmationStatus)]
-            ]}
-          />
-        </section>
-
-        <section aria-labelledby="ticket-vendor-heading">
-          <h4 id="ticket-vendor-heading">Vendor Information</h4>
-          <DescriptionList
-            items={[
-              ["Vendor system code", displayValue(result.vendorSystemCode)],
-              ["Session source", displayValue(result.sessionSource)],
-              ["Projection status", displayValue(result.projectionStatus)],
-              [
-                "Projection refreshed",
-                result.projectionLastRefreshedAt ? formatDateTime(result.projectionLastRefreshedAt) : "Not available"
-              ],
-              ["Vendor confirmation code", displayValue(result.vendorConfirmationCode)],
-              ["Vendor confirmation status", result.vendorConfirmationStatus ?? "Vendor confirmation unavailable"],
-              [
-                "Vendor confirmation timestamp",
-                result.vendorConfirmationTimestamp ? formatDateTime(result.vendorConfirmationTimestamp) : "Not available"
-              ],
-              ["Vendor message", displayValue(result.vendorMessage)]
-            ]}
-          />
-        </section>
-      </div>
-
-      <details className="diagnosticsPanel">
-        <summary>Diagnostics</summary>
-        <DescriptionList
-          items={[
-            ["Vendor system code", displayValue(result.vendorSystemCode)],
-            ["Session source", displayValue(result.sessionSource)],
-            [
-              "Projection source event",
-              result.projectionSourceEventAt ? formatDateTime(result.projectionSourceEventAt) : "Not available"
-            ],
-            ["Vendor confirmation code", displayValue(result.vendorConfirmationCode)],
-            ["Vendor message", displayValue(result.vendorMessage)],
-            ["Correlation ID", displayValue(result.correlationId)]
-          ]}
-        />
-      </details>
+      <DescriptionList
+        items={[
+          ["Ticket number", displayValue(result.ticketNumber)],
+          ["Sales Invoice number", displayValue(result.salesInvoiceNumber)],
+          ["Plate license", displayPlateLicense(result.plateLicense)],
+          ["Site", displayValue(result.siteName)],
+          ["Parking in time", result.parkingInTime ? formatDateTime(result.parkingInTime) : "Not available"],
+          ["Parking duration", formatParkingDuration(result.parkingDurationSeconds)],
+          ["Exit Authorization", displayValue(result.exitAuthorizationStatus)],
+          ["Current payable amount", formatTicketLookupMoney(result.feeMinorUnits, result.currencyCode)],
+          ["Payment attempt status", displayValue(result.paymentAttemptStatus)],
+          ["Payment Status", displayValue(result.paymentStatus)],
+          ["Amount Paid", formatTicketLookupMoney(result.amountPaidMinorUnits, result.currencyCode)],
+          ["Payment method", displayValue(result.paymentMethod)]
+        ]}
+      />
     </section>
   );
+}
+
+function SalesInvoiceActions({ status, client }: {
+  status: FiscalIssuanceStatus;
+  client: OperatorConsoleApiClient;
+}) {
+  const [invoice, setInvoice] = useState<OperatorDigitalSalesInvoice>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [qrDataUrl, setQrDataUrl] = useState("");
+  const customerUrl = invoice ? customerDigitalSalesInvoiceUrl(invoice.customerDigitalSalesInvoicePath) : "";
+
+  useEffect(() => {
+    let active = true;
+    setQrDataUrl("");
+    if (!customerUrl) return () => { active = false; };
+    void QRCode.toDataURL(customerUrl, { errorCorrectionLevel: "M", margin: 1, width: 280 })
+      .then((value) => { if (active) setQrDataUrl(value); })
+      .catch(() => { if (active) setError("The customer Sales Invoice QR code could not be generated."); });
+    return () => { active = false; };
+  }, [customerUrl]);
+
+  async function viewInvoice() {
+    setLoading(true);
+    setError("");
+    try {
+      setInvoice(await client.getDigitalSalesInvoice(status.fiscalIssuanceReferenceId));
+    } catch (cause) {
+      const mapped = mapApiError(cause);
+      setError(mapped.message || "Digital Sales Invoice is unavailable.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return <section className="digitalSalesInvoice" aria-labelledby="digital-sales-invoice-title">
+    <div className="salesInvoiceActions">
+      <button type="button" onClick={viewInvoice} disabled={loading}>
+        {loading ? "Retrieving Sales Invoice..." : "View Sales Invoice"}
+      </button>
+      {invoice && <button type="button" onClick={() => window.print()}>Print Sales Invoice</button>}
+    </div>
+    {error && <p className="errorMessage" role="alert">{error}</p>}
+    {invoice && <article className="canonicalSalesInvoice" aria-label="Canonical Digital Sales Invoice">
+      <h3 id="digital-sales-invoice-title">{invoice.presentation.documentTitle ?? "Sales Invoice"}</h3>
+      <pre className="canonicalSalesInvoiceText">{invoice.canonicalText}</pre>
+      {qrDataUrl && <figure className="customerInvoiceQr">
+        <img src={qrDataUrl} alt="QR code for the customer Digital Sales Invoice URL" />
+        <figcaption>Scan to view or download this Sales Invoice. Access expires in 24 hours.</figcaption>
+      </figure>}
+    </article>}
+  </section>;
+}
+
+function customerDigitalSalesInvoiceUrl(path: string) {
+  const configuredBase = import.meta.env.VITE_WEBPAY_PUBLIC_BASE_URL?.trim();
+  return new URL(path, configuredBase || window.location.origin).toString();
+}
+
+function isCompletedTransaction(result: OperatorTicketLookupResult) {
+  return normalizeStatus(result.paymentConfirmationStatus) === "RECORDED" &&
+    normalizeStatus(result.exitAuthorizationStatus) === "ISSUED";
 }
 
 function ProductionPolicyImportReviewPage({
@@ -3226,9 +3414,7 @@ function StatutoryDiscountQueuePage({
         <div>
           <p className="eyebrow">Statutory Discount Validation</p>
           <h2>Work queue</h2>
-          <p>
-            Review Senior Citizen and PWD statutory discount drafts with stored policy context and decision state.
-          </p>
+          <p>Review Senior Citizen and PWD statutory discount requests.</p>
         </div>
         <button type="button" disabled={readinessBlockReason !== null} onClick={() => setRefreshToken((value) => value + 1)}>
           Refresh
@@ -3237,7 +3423,7 @@ function StatutoryDiscountQueuePage({
 
       <section className="panel" aria-labelledby="queue-title">
         <div className="panelHeader">
-          <h3 id="queue-title">Validation drafts</h3>
+          <h3 id="queue-title">Statutory discount requests</h3>
           <span className="statusPill">Live read model</span>
         </div>
 
@@ -3251,15 +3437,12 @@ function StatutoryDiscountQueuePage({
             <table>
               <thead>
                 <tr>
-                  <th>Draft</th>
                   <th>Ticket / Plate</th>
                   <th>Site</th>
                   <th>Entitlement</th>
-                  <th>Policy basis</th>
-                  <th>Policy readiness</th>
-                  <th>Evidence</th>
                   <th>Status</th>
-                  <th>Requested</th>
+                  <th>Requested By</th>
+                  <th>Requested At</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -3267,29 +3450,16 @@ function StatutoryDiscountQueuePage({
                 {queueState.data.map((item) => (
                   <tr key={item.draftId}>
                     <td>
-                      <code>{shortId(item.draftId)}</code>
-                    </td>
-                    <td>
                       <strong>{item.ticketReference}</strong>
                       <span>{item.plateNumber}</span>
                     </td>
                     <td>{item.siteName}</td>
                     <td>{item.entitlementType}</td>
-                    <td>{policyBasisLabel(item.policyContext.kind)}</td>
-                    <td>
-                      <PolicyReadinessSummary policy={item.policyContext} compact />
-                    </td>
-                    <td>
-                      <span>{item.policyContext.evidenceRequired ? "Required" : "Not required"}</span>
-                      <span>{item.evidenceRequiredSatisfied ? "Satisfied" : `${item.evidenceCount} captured`}</span>
-                    </td>
                     <td>
                       <span className={`statusPill ${statusClass(item.status)}`}>{item.status}</span>
                     </td>
-                    <td>
-                      <span>{formatDateTime(item.requestedAt)}</span>
-                      <span>{item.requestedBy}</span>
-                    </td>
+                    <td>{item.requestedBy}</td>
+                    <td>{formatDateTime(item.requestedAt)}</td>
                     <td>
                       <button
                         type="button"
@@ -3463,20 +3633,7 @@ function DraftDetail({
 
       <StatutoryReviewEligibilityPanel detail={detail} />
 
-      <StatutoryEvidenceReviewPanel
-        client={client}
-        decisionId={detail.statutoryDiscountDecisionCommandId}
-        authorityContextKey={`${detail.siteGroupId}:${detail.siteId}`}
-        entitlementLabel={plainEntitlementLabel(detail.entitlementType)}
-      />
-
-      <CompactEvidencePanel
-        detail={detail}
-        client={client}
-        refreshDetail={refreshDetail}
-        readinessBlockReason={readinessBlockReason}
-        readOnly={!showDecisionControls}
-      />
+      <SubmittedStatutoryRequestSummary detail={detail} client={client} />
 
       <section className="panel" aria-labelledby="decision-title">
         <div className="panelHeader">
@@ -3597,7 +3754,7 @@ function CompactEvidencePanel({
     }
 
     if (!operatorConfirmation) {
-      setFormError("Confirm the selected document is verified.");
+      setFormError("Confirm the submitted document details are accurate.");
       return;
     }
 
@@ -3620,7 +3777,7 @@ function CompactEvidencePanel({
 
       setNotes("");
       setOperatorConfirmation(false);
-      setFormMessage("Document marked as verified.");
+      setFormMessage("Document evidence recorded for processor review.");
       setRefreshToken((value) => value + 1);
       refreshDetail();
     } catch (error) {
@@ -3681,13 +3838,13 @@ function CompactEvidencePanel({
                 checked={operatorConfirmation}
                 onChange={(event) => setOperatorConfirmation(event.target.checked)}
               />
-              Document is verified
+              Submitted document details are accurate
             </label>
             {formMessage && <p className="successMessage">{formMessage}</p>}
             {formError && <p className="errorMessage">{formError}</p>}
             {evidenceState.status === "error" && <p className="errorMessage">{evidenceState.message}</p>}
             <button type="submit" disabled={submitting || !operatorConfirmation || readinessBlockReason !== null}>
-              {submitting ? "Saving" : "Mark as verified"}
+              {submitting ? "Saving" : "Record evidence"}
             </button>
           </form>
         ) : (
@@ -3708,7 +3865,6 @@ function StatutoryReviewEligibilityPanel({ detail }: { detail: StatutoryDiscount
   const benefitLabel = benefitDisplayLabel(policy, detail.policyContext);
   const evidenceStatus = plainEvidenceStatus(detail, detail.evidenceRequiredSatisfied);
   const requestCardStatus = privilegeRequestCardStatus(detail, blockReason);
-  const eligibilityConfirmed = parkingLocationEligibilityConfirmed(detail);
 
   return (
     <section className="panel reviewerChecklistPanel" aria-labelledby="reviewer-checklist-title">
@@ -3737,10 +3893,6 @@ function StatutoryReviewEligibilityPanel({ detail }: { detail: StatutoryDiscount
           <span>Benefit</span>
           <strong>{benefitLabel}</strong>
         </div>
-        <div className="reviewerSummaryItem">
-          <span>Location eligibility</span>
-          <strong>{eligibilityConfirmed ? "Confirmed" : "Could not be confirmed"}</strong>
-        </div>
         {policy?.beneficiaryResidencyScope === "RESIDENT_ONLY" && (
           <div className="reviewerSummaryItem">
             <span>Residency requirement</span>
@@ -3749,7 +3901,7 @@ function StatutoryReviewEligibilityPanel({ detail }: { detail: StatutoryDiscount
         )}
       </div>
 
-      {blockReason && <p className="notice">{blockReason}</p>}
+      {blockReason && <p className="notice">This request is not currently available for decision.</p>}
 
       <div className="reviewerChecklistGrid">
         <section aria-labelledby="required-checks-title">
@@ -3781,53 +3933,9 @@ function StatutoryReviewEligibilityPanel({ detail }: { detail: StatutoryDiscount
       </div>
 
       <div className="policyGuardrail" role="note">
-        {eligibilityConfirmed ? (
-          <>
-            <p>This parking location is eligible for the requested privilege.</p>
-            <p>Review the required beneficiary documents and applicable conditions.</p>
-          </>
-        ) : (
-          <>
-            <p>Parking-location eligibility could not be confirmed.</p>
-            <p>Reject the request or ask support to refresh the parking-location record.</p>
-          </>
-        )}
+        <p>Review the required beneficiary documents and applicable conditions.</p>
       </div>
     </section>
-  );
-}
-
-function PolicyReadinessSummary({
-  policy,
-  compact = false
-}: {
-  policy: StatutoryDiscountPolicyContext;
-  compact?: boolean;
-}) {
-  const readiness = policy.policyReadinessClassification ?? "NOT_READY";
-  return (
-    <div className={`policyReadinessSummary ${compact ? "policyReadinessCompact" : ""}`}>
-      <span className={`statusPill ${policyReadinessClass(readiness)}`}>{readinessLabelForPolicy(readiness)}</span>
-      <strong>{policy.policyCode ?? "Policy missing"}</strong>
-      <span>{readiness}</span>
-      <span>{policySourceLabel(policy.registrySource)}</span>
-      <span>{policy.verificationStatus ?? "Verification unknown"}</span>
-      <span>{policy.requiresManualReview ? "Manual review required" : "No manual review flag"}</span>
-    </div>
-  );
-}
-
-function AuditPolicyReadinessSummary({ item }: { item: AuditReportItem }) {
-  const readiness = item.policyReadinessClassification ?? "NOT_READY";
-  return (
-    <div className="policyReadinessSummary policyReadinessCompact">
-      <span className={`statusPill ${policyReadinessClass(readiness)}`}>{readinessLabelForPolicy(readiness)}</span>
-      <strong>{item.policyCode ?? "Policy missing"}</strong>
-      <span>{readiness}</span>
-      <span>{policySourceLabel(item.registrySource)}</span>
-      <span>{item.verificationStatus ?? "Verification unknown"}</span>
-      <span>{item.requiresManualReview ? "Manual review required" : "No manual review flag"}</span>
-    </div>
   );
 }
 
@@ -3863,7 +3971,7 @@ function approvalBlockReason(detail: StatutoryDiscountDraftDetail, submitting: b
 function governingPolicyBlockReason(detail: StatutoryDiscountDraftDetail) {
   const policy = detail.governingPolicy;
   if (!policy) {
-    return "This request cannot be approved because the location eligibility record is incomplete. Reject the request or ask support to refresh it.";
+    return "This request is not currently available for decision.";
   }
 
   if (
@@ -3874,11 +3982,11 @@ function governingPolicyBlockReason(detail: StatutoryDiscountDraftDetail) {
     !policy.policyCode ||
     !policy.policyVersion
   ) {
-    return "This request cannot be approved because the location eligibility record is incomplete. Reject the request or ask support to refresh it.";
+    return "This request is not currently available for decision.";
   }
 
   if (policy.transactionPublicationStatus !== "ACTIVE_FOR_TRANSACTION_USE") {
-    return "This request cannot be approved because the parking privilege is not currently available for this site.";
+    return "This request is not currently available for decision.";
   }
 
   if (
@@ -3886,50 +3994,18 @@ function governingPolicyBlockReason(detail: StatutoryDiscountDraftDetail) {
     policy.sourceVerificationStatus !== "VERIFIED_ACTIVE_OPERATIONAL" &&
     policy.sourceVerificationStatus !== "ACTIVE_APPROVED"
   ) {
-    return "This request cannot be approved because the parking privilege is not available for operational review.";
+    return "This request is not currently available for decision.";
   }
 
   if (policy.parkingServiceApplicability !== "COVERED") {
-    return "This request cannot be approved because the resolved privilege does not cover parking service.";
+    return "This request is not currently available for decision.";
   }
 
   if (!supportedBenefitEffect(policy.benefitType)) {
-    return "This request cannot be approved because this parking benefit is not supported by the current approval flow.";
+    return "This request is not currently available for decision.";
   }
 
   return null;
-}
-
-function parkingLocationEligibilityConfirmed(detail: StatutoryDiscountDraftDetail) {
-  const policy = detail.governingPolicy;
-  if (!policy) {
-    return false;
-  }
-
-  if (
-    !policy.statutoryDiscountPolicyVersionId ||
-    !policy.jurisdictionId ||
-    !policy.jurisdictionCode ||
-    !policy.jurisdictionDisplayName ||
-    !policy.policyCode ||
-    !policy.policyVersion
-  ) {
-    return false;
-  }
-
-  if (policy.transactionPublicationStatus !== "ACTIVE_FOR_TRANSACTION_USE") {
-    return false;
-  }
-
-  if (
-    policy.sourceVerificationStatus !== "VERIFIED_OFFICIAL" &&
-    policy.sourceVerificationStatus !== "VERIFIED_ACTIVE_OPERATIONAL" &&
-    policy.sourceVerificationStatus !== "ACTIVE_APPROVED"
-  ) {
-    return false;
-  }
-
-  return policy.parkingServiceApplicability === "COVERED";
 }
 
 type OperationalCheck = {
@@ -4219,7 +4295,7 @@ function rejectionReasonLabel(reasonCode?: string | null) {
 }
 
 function plainEvidenceStatus(detail: StatutoryDiscountDraftDetail, evidenceSatisfied: boolean) {
-  if (evidenceSatisfied) {
+  if (detail.status === "Approved" && Boolean(detail.validatedAt || detail.validatedByUserId)) {
     return "Verified";
   }
 
@@ -4232,8 +4308,8 @@ function plainEvidenceStatus(detail: StatutoryDiscountDraftDetail, evidenceSatis
     return "Missing";
   }
 
-  if (normalized.includes("SUBMITTED") || normalized.includes("CAPTURED")) {
-    return "Submitted";
+  if (evidenceSatisfied || normalized.includes("SUBMITTED") || normalized.includes("CAPTURED")) {
+    return "Pending review";
   }
 
   return "Needs review";
@@ -4349,62 +4425,6 @@ function NotFoundPage({ navigate }: { navigate: (path: string) => void }) {
   );
 }
 
-function ticketLookupGuidance(result: OperatorTicketLookupResult) {
-  if (normalizeStatus(result.sessionSource) === "VENDOR_SESSION_PROJECTION") {
-    return {
-      label: "Projected session",
-      messages: ["Current vendor session is visible. Transactional parking and payment state have not started."],
-      messageClass: "notice",
-      className: "pending-review"
-    };
-  }
-
-  const vendorStatus = normalizeStatus(result.vendorConfirmationStatus);
-
-  if (!vendorStatus) {
-    return {
-      label: "Vendor unavailable",
-      messages: ["Vendor confirmation unavailable"],
-      messageClass: "notice",
-      className: "pending-review"
-    };
-  }
-
-  if (vendorStatus === "PENDING") {
-    return {
-      label: "Vendor pending",
-      messages: ["Payment confirmed in ExitPass. Vendor confirmation pending."],
-      messageClass: "notice",
-      className: "pending-review"
-    };
-  }
-
-  if (vendorStatus === "CONFIRMED") {
-    return {
-      label: "Vendor confirmed",
-      messages: ["Vendor confirmation complete.", "Proceed to ticket exit validator."],
-      messageClass: "successMessage",
-      className: "readiness-ready"
-    };
-  }
-
-  if (vendorStatus === "FAILED") {
-    return {
-      label: "Vendor failed",
-      messages: ["Vendor confirmation failed.", "Escalate to supervisor."],
-      messageClass: "errorMessage",
-      className: "blocked"
-    };
-  }
-
-  return {
-    label: "Status review",
-    messages: ["Vendor confirmation unavailable"],
-    messageClass: "notice",
-    className: "pending-review"
-  };
-}
-
 function normalizeStatus(status?: string | null) {
   return status?.trim().toUpperCase().replaceAll(" ", "_") ?? "";
 }
@@ -4415,6 +4435,52 @@ function newUiRequestId() {
 
 function displayValue(value?: string) {
   return value && value.trim().length > 0 ? value : "Not available";
+}
+
+function formatTicketLookupMoney(minorUnits?: number, currencyCode?: string) {
+  if (minorUnits === undefined || currencyCode !== "PHP") {
+    return "Not available";
+  }
+
+  return formatPhpMoney(minorUnits, currencyCode);
+}
+
+export function maskStatutoryIdReference(value: string) {
+  const normalized = value.trim();
+  if (normalized.length <= 4 || normalized.length > 64 || !/^[\p{L}\p{N}-]+$/u.test(normalized)) {
+    return null;
+  }
+
+  return `${normalized.slice(0, -4)}****`;
+}
+
+function idDocumentTypeForEntitlement(entitlementType: "SENIOR_CITIZEN" | "PWD") {
+  return entitlementType === "PWD" ? "PWD" : "Senior Citizen";
+}
+
+function statutoryDocumentTypeLabel(value: string | undefined, entitlementType: string) {
+  const normalized = (value ?? "").trim().toUpperCase().replaceAll("_", " ");
+  if (normalized.includes("PWD")) return "PWD";
+  if (normalized.includes("SENIOR")) return "Senior Citizen";
+  return plainEntitlementLabel(entitlementType);
+}
+
+function statutoryDocumentReviewStatus(detail: StatutoryDiscountDraftDetail) {
+  if (detail.status === "Approved" && Boolean(detail.validatedAt || detail.validatedByUserId)) return "Verified";
+  if (detail.status === "Rejected") return "Rejected";
+  return "Pending review";
+}
+
+export function statutoryDraftErrorMessage(message: string) {
+  if (message.includes("MaskedIdReference")) {
+    return "Enter a valid ID reference.";
+  }
+
+  if (/policy|ordinance|verification unknown|source unavailable/i.test(message)) {
+    return "This statutory entitlement is not available for this Site.";
+  }
+
+  return message;
 }
 
 function operatorDisplayValue(item: { operatorDisplayName?: string; operatorUsername?: string }) {
@@ -4458,8 +4524,14 @@ function displayPlateLicense(value?: string) {
   return value;
 }
 
-function formatSeconds(value?: number) {
-  return value === undefined ? "Not available" : String(value);
+export function formatParkingDuration(value?: number) {
+  if (value === undefined || value < 0) return "Not available";
+  const totalMinutes = Math.floor(value / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  const hourText = `${hours} ${hours === 1 ? "hour" : "hours"}`;
+  return minutes === 0 ? hourText : `${hourText} ${String(minutes).padStart(2, "0")} minutes`;
 }
 
 function formatFreshnessAge(value?: number | null) {
@@ -4596,58 +4668,6 @@ function formatDateTime(value: string) {
     dateStyle: "medium",
     timeStyle: "short"
   }).format(new Date(value));
-}
-
-function policyBasisLabel(kind: PolicyContextKind) {
-  return {
-    "national-fallback": "RA 9994 / RA 10754 national fallback",
-    "verified-local": "Verified local policy",
-    "blocked-unverified-local": "Blocked unverified local policy",
-    "unsupported-entitlement": "Unsupported entitlement",
-    "missing-site-jurisdiction": "Missing site jurisdiction"
-  }[kind];
-}
-
-function policySourceLabel(source?: string) {
-  return {
-    DEDICATED_REGISTRY: "Dedicated registry",
-    COMPATIBILITY_POLICY_REFERENCES: "Compatibility policy references"
-  }[source ?? ""] ?? "Policy source not confirmed";
-}
-
-function readinessLabelForPolicy(classification: string) {
-  return {
-    READY_VERIFIED: "Production-ready",
-    READY_WITH_MANUAL_REVIEW: "Manual review",
-    CONFIGURED_BUT_UNVERIFIED: "Unverified",
-    LEAD_UNVERIFIED: "Unverified",
-    PROPOSED_ONLY: "Proposed only",
-    SANDBOX_ONLY: "Sandbox/test",
-    MISSING_REQUIRED_POLICY: "Policy missing",
-    NOT_READY: "Blocked",
-    EXPIRED_OR_INACTIVE: "Inactive"
-  }[classification] ?? classification;
-}
-
-function policyReadinessClass(classification: string) {
-  if (classification === "READY_VERIFIED") {
-    return "readiness-ready";
-  }
-
-  if (classification === "READY_WITH_MANUAL_REVIEW") {
-    return "readiness-manual";
-  }
-
-  if (
-    classification === "CONFIGURED_BUT_UNVERIFIED" ||
-    classification === "LEAD_UNVERIFIED" ||
-    classification === "PROPOSED_ONLY" ||
-    classification === "SANDBOX_ONLY"
-  ) {
-    return "readiness-warning";
-  }
-
-  return "readiness-blocked";
 }
 
 function statusClass(status: string) {

@@ -597,6 +597,41 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
             "patches",
             "ExitPass_TerminalCashPaymentCommandReadback_v1.3.sql");
         await ExecuteAsync(await File.ReadAllTextAsync(patchPath));
+        await ExecuteAsync("""
+            INSERT INTO identity.service_identities (
+                service_identity_id,
+                service_identity_code,
+                service_identity_name,
+                identity_type,
+                identity_status,
+                owning_service_name,
+                credential_reference,
+                credential_type,
+                effective_from,
+                created_at,
+                created_by_service_identity_id,
+                updated_at,
+                updated_by_service_identity_id,
+                row_version
+            )
+            VALUES (
+                '23000000-0000-0000-0000-000000000001',
+                'APT_READINESS_MOCK_ADAPTER',
+                'APT readiness mock adapter',
+                'DEVICE',
+                'ACTIVE',
+                'ExitPass.CentralPms.IntegrationTests',
+                NULL,
+                'NONE',
+                NOW() - INTERVAL '1 minute',
+                NOW(),
+                '23000000-0000-0000-0000-000000000001',
+                NOW(),
+                '23000000-0000-0000-0000-000000000001',
+                1
+            )
+            ON CONFLICT (service_identity_id) DO NOTHING;
+            """);
     }
 
     private static string ResolveRepositoryPath(params string[] parts)

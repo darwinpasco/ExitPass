@@ -1,5 +1,8 @@
 namespace ExitPass.CentralPms.Contracts.OperatorConsole;
 
+/// <summary>Opaque selector for a CSRF-protected, authorization-checked inline preview.</summary>
+public sealed record OperatorConsoleSubmittedEvidencePreviewRequest(Guid EvidenceId);
+
 /// <summary>
 /// Metadata-only evidence capture request for an Operator Console statutory discount draft.
 /// </summary>

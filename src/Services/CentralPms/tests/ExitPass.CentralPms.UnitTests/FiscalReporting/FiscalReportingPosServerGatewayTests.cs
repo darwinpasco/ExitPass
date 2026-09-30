@@ -72,6 +72,48 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
         Assert.Contains("\"expectedStateVersion\":7", handler.Bodies[1]);
     }
 
+    [Fact]
+    public async Task CloseablePeriodsUsesTheMergedSiteScopedPosReadContract()
+    {
+        var handler = new CaptureHandler(_ => Json("{\"fiscalBusinessDates\":[]}"));
+
+        var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.ZCloseablePeriods));
+
+        Assert.Equal(200, result.HttpStatusCode);
+        var outbound = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, outbound.Method);
+        Assert.Equal("/v1/fiscal-reports/z-readings/closeable-periods", outbound.RequestUri!.AbsolutePath);
+        Assert.Contains($"sitePosServerId={Pos:D}", outbound.RequestUri.Query);
+        Assert.Contains($"fiscalIdentityId={Identity:D}", outbound.RequestUri.Query);
+        Assert.Contains("currencyCode=PHP", outbound.RequestUri.Query);
+        Assert.Equal("fiscal_z_reading.read", Header(outbound, "X-PosServer-Admin-Permission"));
+    }
+
+    [Fact]
+    public async Task ClosePeriodUsesTheExistingSinglePeriodPosCloseContract()
+    {
+        var periodId = Guid.Parse("40000000-0000-4000-8000-000000000041");
+        var handler = new CaptureHandler(_ => Json("{\"succeeded\":true}", HttpStatusCode.Created));
+
+        var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.ZClosePeriod) with
+            {
+                OperationKey = "site-close-20260920",
+                FiscalReportingPeriodId = periodId,
+                ExpectedStateVersion = 17
+            });
+
+        Assert.Equal(201, result.HttpStatusCode);
+        var outbound = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, outbound.Method);
+        Assert.Equal("/v1/fiscal-reports/z-readings", outbound.RequestUri!.AbsolutePath);
+        Assert.Equal("fiscal_z_reading.close", Header(outbound, "X-PosServer-Admin-Permission"));
+        Assert.Contains($"\"fiscalReportingPeriodId\":\"{periodId:D}\"", handler.Bodies.Single());
+        Assert.Contains("\"expectedStateVersion\":17", handler.Bodies.Single());
+        Assert.Contains($"\"sitePosServerId\":\"{Pos:D}\"", handler.Bodies.Single());
+    }
+
     [Theory]
     [InlineData(FiscalReportingGatewayAction.XDownload, "/v1/fiscal-reports/x-readings/X-20260915-001/exports/pdf", "fiscal_x_reading.export")]
     [InlineData(FiscalReportingGatewayAction.ZDownload, "/v1/fiscal-reports/z-readings/Z-20260915-001/exports/pdf", "fiscal_z_reading.export")]

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.Common;
 using OpenTelemetry.Trace;
 
@@ -47,7 +48,7 @@ public static class OperatorConsoleFiscalIssuanceStatusEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .WithSummary("Look up Operator Console fiscal issuance status")
-            .WithDescription("Resolves an Operator Console fiscal issuance status lookup by fiscal issuance reference ID or exact Sales Invoice/fiscal document number, then returns the same safe status DTO and view-audit posture as the reference lookup.");
+            .WithDescription("Resolves an exact Ticket Number, Plate Number, or Sales Invoice number within the authenticated Site scope, then returns the same safe status DTO and view-audit posture as the reference lookup.");
 
         return app;
     }
@@ -56,6 +57,7 @@ public static class OperatorConsoleFiscalIssuanceStatusEndpoints
         Guid fiscalIssuanceReferenceId,
         HttpRequest request,
         IOperatorConsoleFiscalIssuanceStatusService service,
+        ICentralPmsRbacRepository rbacRepository,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
@@ -73,6 +75,14 @@ public static class OperatorConsoleFiscalIssuanceStatusEndpoints
             var identity = OperatorConsoleIdentityContext.Resolve(
                 request,
                 fallbackCorrelationId: correlationId);
+            if (!await OperatorConsoleFiscalReportingAccess.IsOperationsSupervisorAsync(
+                    request.HttpContext.User,
+                    identity.UserId,
+                    rbacRepository,
+                    cancellationToken))
+            {
+                return OperatorConsoleFiscalReportingAccess.Denied(identity.CorrelationId);
+            }
 
             var result = await service.GetAsync(
                 new OperatorConsoleFiscalIssuanceStatusQuery(
@@ -173,6 +183,7 @@ public static class OperatorConsoleFiscalIssuanceStatusEndpoints
         string? query,
         HttpRequest request,
         IOperatorConsoleFiscalIssuanceStatusService service,
+        ICentralPmsRbacRepository rbacRepository,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
@@ -199,6 +210,14 @@ public static class OperatorConsoleFiscalIssuanceStatusEndpoints
             var identity = OperatorConsoleIdentityContext.Resolve(
                 request,
                 fallbackCorrelationId: correlationId);
+            if (!await OperatorConsoleFiscalReportingAccess.IsOperationsSupervisorAsync(
+                    request.HttpContext.User,
+                    identity.UserId,
+                    rbacRepository,
+                    cancellationToken))
+            {
+                return OperatorConsoleFiscalReportingAccess.Denied(identity.CorrelationId);
+            }
 
             var result = await service.LookupAsync(
                 new OperatorConsoleFiscalIssuanceLookupQuery(
@@ -239,8 +258,8 @@ public static class OperatorConsoleFiscalIssuanceStatusEndpoints
                 activity?.SetStatus(ActivityStatusCode.Ok);
                 return Results.Json(
                     BuildError(
-                        "FISCAL_DOCUMENT_NUMBER_LOOKUP_AMBIGUOUS",
-                        "Fiscal document number matched multiple fiscal issuance references. Use the fiscal issuance reference ID.",
+                        "FISCAL_IDENTIFIER_LOOKUP_AMBIGUOUS",
+                        "The identifier matched multiple fiscal issuance records. Use a more specific exact identifier.",
                         result.CorrelationId),
                     statusCode: StatusCodes.Status409Conflict);
             }

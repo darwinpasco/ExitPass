@@ -768,7 +768,10 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             resolvedRepository,
             resolvedFixtureStore,
             Options.Create(options ?? EnabledOptions()),
-            Options.Create(gatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions()));
+            Options.Create(gatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions
+            {
+                EnableFiscalBeforeExitAuthorizationEnforcement = false
+            }));
     }
 
     private static FiscalIssuancePosServerIntegrationOptions EnabledOptions() =>

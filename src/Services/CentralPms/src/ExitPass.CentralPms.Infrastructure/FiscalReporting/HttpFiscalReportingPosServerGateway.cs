@@ -40,7 +40,17 @@ public sealed class HttpFiscalReportingPosServerGateway(
         using var historyResponse = await httpClient.SendAsync(historyRequest, ct).ConfigureAwait(false);
         var historyBytes = await historyResponse.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
         if (!historyResponse.IsSuccessStatusCode) return new((int)historyResponse.StatusCode, "application/json; charset=utf-8", historyBytes, "fiscal_reporting_period_unavailable", Retryable: (int)historyResponse.StatusCode >= 500);
-        using var history = JsonDocument.Parse(historyBytes);
+        JsonDocument history;
+        try
+        {
+            history = JsonDocument.Parse(historyBytes);
+        }
+        catch (JsonException)
+        {
+            return Failure(502, "fiscal_reporting_upstream_response_invalid", true);
+        }
+        using (history)
+        {
         if (!history.RootElement.TryGetProperty("currentPeriod", out var period) || period.ValueKind != JsonValueKind.Object ||
             !period.TryGetProperty("fiscalReportingPeriodId", out var periodId) || !period.TryGetProperty("expectedZStateVersion", out var stateVersion) ||
             periodId.ValueKind != JsonValueKind.String || stateVersion.ValueKind != JsonValueKind.Number)
@@ -60,6 +70,7 @@ public sealed class HttpFiscalReportingPosServerGateway(
         var bytes = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
         return new((int)response.StatusCode, response.Content.Headers.ContentType?.ToString() ?? "application/json; charset=utf-8", bytes,
             response.IsSuccessStatusCode ? "pos_fiscal_reporting_succeeded" : "pos_fiscal_reporting_failed", Retryable: (int)response.StatusCode >= 500);
+        }
     }
 
     private HttpRequestMessage BuildRequest(ResolvedEndpoint endpoint, FiscalReportingGatewayRequest request)
@@ -73,6 +84,16 @@ public sealed class HttpFiscalReportingPosServerGateway(
             FiscalReportingGatewayAction.XGenerate => (HttpMethod.Post, "/v1/fiscal-reports/x-readings", "fiscal_x_reading.generate", new { operationKey=request.OperationKey, sitePosServerId=endpoint.SitePosServerId, fiscalIdentityId=endpoint.FiscalIdentityId, observedAt=DateTimeOffset.UtcNow }),
             FiscalReportingGatewayAction.XDownload => (HttpMethod.Get, $"/v1/fiscal-reports/x-readings/{Uri.EscapeDataString(RequireReference(request))}/exports/pdf", "fiscal_x_reading.export", null),
             FiscalReportingGatewayAction.ZHistory => (HttpMethod.Get, $"/v1/fiscal-reports/z-readings/history?{scope}", "fiscal_z_reading.read", null),
+            FiscalReportingGatewayAction.ZCloseablePeriods => (HttpMethod.Get, $"/v1/fiscal-reports/z-readings/closeable-periods?{scope}", "fiscal_z_reading.read", null),
+            FiscalReportingGatewayAction.ZClosePeriod => (HttpMethod.Post, "/v1/fiscal-reports/z-readings", "fiscal_z_reading.close", new
+            {
+                operationKey = request.OperationKey,
+                sitePosServerId = endpoint.SitePosServerId,
+                fiscalIdentityId = endpoint.FiscalIdentityId,
+                currencyCode = endpoint.CurrencyCode,
+                fiscalReportingPeriodId = RequirePeriodId(request),
+                expectedStateVersion = RequireExpectedStateVersion(request)
+            }),
             FiscalReportingGatewayAction.ZDownload => (HttpMethod.Get, $"/v1/fiscal-reports/z-readings/{Uri.EscapeDataString(RequireReference(request))}/exports/pdf", "fiscal_z_reading.export", null),
             _ => throw new InvalidOperationException("Unsupported fiscal reporting gateway action.")
         };
@@ -117,6 +138,8 @@ public sealed class HttpFiscalReportingPosServerGateway(
         return $"&fiscalDocumentNumber={Uri.EscapeDataString(value)}";
     }
     private static string RequireReference(FiscalReportingGatewayRequest r)=>!string.IsNullOrWhiteSpace(r.ReportReference)?r.ReportReference.Trim():throw new ArgumentException("Report reference is required.");
+    private static Guid RequirePeriodId(FiscalReportingGatewayRequest r)=>r.FiscalReportingPeriodId is { } value&&value!=Guid.Empty?value:throw new ArgumentException("Fiscal reporting period is required.");
+    private static long RequireExpectedStateVersion(FiscalReportingGatewayRequest r)=>r.ExpectedStateVersion is >0? r.ExpectedStateVersion.Value:throw new ArgumentException("Expected fiscal-period state version is required.");
     private static FiscalReportingGatewayResponse Failure(int status,string code,bool retryable)=>new(status,"application/json; charset=utf-8",Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new{succeeded=false,code,message="The authoritative fiscal reporting operation could not be completed."})),code,Retryable:retryable);
     private sealed record ResolvedEndpoint(Uri BaseUri,Guid SitePosServerId,Guid FiscalIdentityId,string CurrencyCode,string ApiKey);
 }

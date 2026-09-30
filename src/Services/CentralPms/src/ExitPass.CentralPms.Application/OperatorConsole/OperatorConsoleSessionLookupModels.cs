@@ -62,4 +62,11 @@ public sealed record OperatorConsoleSessionReadModel(
     string? VendorSystemCode = null,
     string? ProjectionStatus = null,
     DateTimeOffset? ProjectionSourceEventAt = null,
-    DateTimeOffset? ProjectionLastRefreshedAt = null);
+    DateTimeOffset? ProjectionLastRefreshedAt = null,
+    string? SalesInvoiceNumber = null,
+    long? ParkingDurationSeconds = null,
+    string? PaymentAttemptStatus = null,
+    string? PaymentConfirmationStatus = null,
+    long? AmountPaidMinorUnits = null,
+    string? PaymentMethod = null,
+    Guid? VendorSystemId = null);

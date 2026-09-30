@@ -197,10 +197,10 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
                 tcp.original_correlation_id,
                 tcp.fiscal_status,
                 tcp.cash_received_at,
-                site.site_name AS branch_site,
-                parking.ticket_number_masked AS ticket_number,
+                COALESCE(parking.ticket_number_masked, parking.vendor_session_ref) AS ticket_number,
                 parking.plate_number_masked AS plate_number,
-                parking.entry_at AS entry_time,
+                site.site_name AS site_name,
+                COALESCE(parking.entry_at, parking.created_at) AS entry_time,
                 EXISTS (
                     SELECT 1
                     FROM core.exit_authorizations ea
@@ -804,6 +804,12 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
             reader.GetString(reader.GetOrdinal("fiscal_status")));
     }
 
+    private static string? OptionalString(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    }
+
     private static TerminalCashPaymentReadback ReadReadback(NpgsqlDataReader reader)
     {
         return new TerminalCashPaymentReadback(
@@ -832,15 +838,15 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("confirmed_at")),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("last_updated_at")),
             reader.GetGuid(reader.GetOrdinal("original_correlation_id")),
-            reader.GetString(reader.GetOrdinal("fiscal_status")))
+            reader.GetString(reader.GetOrdinal("fiscal_status")),
+            OptionalString(reader, "ticket_number"),
+            OptionalString(reader, "plate_number"),
+            OptionalString(reader, "site_name"),
+            reader.IsDBNull(reader.GetOrdinal("entry_time"))
+                ? null
+                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("entry_time")))
         {
             CashReceivedAt = reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("cash_received_at")),
-            BranchSite = reader.IsDBNull(reader.GetOrdinal("branch_site")) ? null : reader.GetString(reader.GetOrdinal("branch_site")),
-            TicketNumber = reader.IsDBNull(reader.GetOrdinal("ticket_number")) ? null : reader.GetString(reader.GetOrdinal("ticket_number")),
-            PlateNumber = reader.IsDBNull(reader.GetOrdinal("plate_number")) ? null : reader.GetString(reader.GetOrdinal("plate_number")),
-            EntryTime = reader.IsDBNull(reader.GetOrdinal("entry_time"))
-                ? null
-                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("entry_time")),
             ExitAuthorizationIssued = reader.GetBoolean(reader.GetOrdinal("exit_authorization_issued"))
         };
     }

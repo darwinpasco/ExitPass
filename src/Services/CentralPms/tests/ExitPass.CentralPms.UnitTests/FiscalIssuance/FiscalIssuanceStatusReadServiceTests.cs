@@ -133,8 +133,11 @@ public sealed class FiscalIssuanceStatusReadServiceTests
         result.Status!.FiscalIssuanceReferenceId.Should().Be(reference.FiscalIssuanceReferenceId);
     }
 
-    [Fact]
-    public async Task LookupAsync_WhenFiscalDocumentNumber_ResolvesExactNumber()
+    [Theory]
+    [InlineData("TICKET-24")]
+    [InlineData("ABC 1234")]
+    [InlineData("SI-00000024")]
+    public async Task LookupAsync_WhenTicketPlateOrFiscalDocumentNumber_ResolvesExactIdentifier(string query)
     {
         var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
         {
@@ -142,15 +145,17 @@ public sealed class FiscalIssuanceStatusReadServiceTests
             FiscalDocumentNumber = "SI-00000024"
         };
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
-        repository.FindByFiscalDocumentNumberAsync("SI-00000024", Arg.Any<CancellationToken>())
-            .Returns([reference]);
+        repository.FindByOperatorIdentifierAsync(query, null, Arg.Any<CancellationToken>())
+            .Returns([new FiscalIssuanceOperatorLookupMatch(reference, "TICKET-24", "ABC 1234")]);
         var sut = new FiscalIssuanceStatusReadService(repository);
 
-        var result = await sut.LookupAsync(" SI-00000024 ", CancellationToken.None);
+        var result = await sut.LookupAsync($" {query} ", CancellationToken.None);
 
         result.Outcome.Should().Be(FiscalIssuanceStatusLookupOutcome.Found);
         result.Status.Should().NotBeNull();
         result.Status!.FiscalIssuanceReferenceId.Should().Be(reference.FiscalIssuanceReferenceId);
+        result.Status.TicketNumber.Should().Be("TICKET-24");
+        result.Status.PlateNumber.Should().Be("ABC 1234");
         result.Status.FiscalDocumentNumber.Should().Be("SI-00000024");
     }
 
@@ -158,14 +163,14 @@ public sealed class FiscalIssuanceStatusReadServiceTests
     public async Task LookupAsync_WhenFiscalDocumentNumberMissing_ReturnsNotFound()
     {
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
-        repository.FindByFiscalDocumentNumberAsync("SI-MISSING-UAT", Arg.Any<CancellationToken>())
-            .Returns(Array.Empty<FiscalIssuanceReferenceRecord>());
+        repository.FindByOperatorIdentifierAsync("SI-MISSING-UAT", null, Arg.Any<CancellationToken>())
+            .Returns(Array.Empty<FiscalIssuanceOperatorLookupMatch>());
         var sut = new FiscalIssuanceStatusReadService(repository);
 
         var result = await sut.LookupAsync("SI-MISSING-UAT", CancellationToken.None);
 
         result.Outcome.Should().Be(FiscalIssuanceStatusLookupOutcome.NotFound);
-        result.SafeReasonCode.Should().Be("fiscal_document_number_not_found");
+        result.SafeReasonCode.Should().Be("fiscal_identifier_not_found");
         result.Status.Should().BeNull();
     }
 
@@ -173,23 +178,25 @@ public sealed class FiscalIssuanceStatusReadServiceTests
     public async Task LookupAsync_WhenFiscalDocumentNumberAmbiguous_ReturnsAmbiguous()
     {
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
-        repository.FindByFiscalDocumentNumberAsync("SI-DUP-UAT", Arg.Any<CancellationToken>())
+        repository.FindByOperatorIdentifierAsync("SI-DUP-UAT", null, Arg.Any<CancellationToken>())
             .Returns([
-                Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
-                {
-                    FiscalIssuanceReferenceId = Guid.Parse("64000000-0000-0000-0000-000000000003")
-                },
-                Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
-                {
-                    FiscalIssuanceReferenceId = Guid.Parse("64000000-0000-0000-0000-000000000004")
-                }
+                new FiscalIssuanceOperatorLookupMatch(
+                    Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+                    {
+                        FiscalIssuanceReferenceId = Guid.Parse("64000000-0000-0000-0000-000000000003")
+                    }, "TICKET-3", "ABC 0003"),
+                new FiscalIssuanceOperatorLookupMatch(
+                    Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+                    {
+                        FiscalIssuanceReferenceId = Guid.Parse("64000000-0000-0000-0000-000000000004")
+                    }, "TICKET-4", "ABC 0004")
             ]);
         var sut = new FiscalIssuanceStatusReadService(repository);
 
         var result = await sut.LookupAsync("SI-DUP-UAT", CancellationToken.None);
 
         result.Outcome.Should().Be(FiscalIssuanceStatusLookupOutcome.Ambiguous);
-        result.SafeReasonCode.Should().Be("fiscal_document_number_ambiguous");
+        result.SafeReasonCode.Should().Be("fiscal_identifier_ambiguous");
         result.Status.Should().BeNull();
     }
 

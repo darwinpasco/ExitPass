@@ -130,17 +130,13 @@ public sealed record TerminalCashPaymentReadback(
     DateTimeOffset ConfirmedAt,
     DateTimeOffset LastUpdatedAt,
     Guid CorrelationId,
-    string FiscalStatus)
+    string FiscalStatus,
+    string? TicketNumber = null,
+    string? PlateNumber = null,
+    string? SiteName = null,
+    DateTimeOffset? EntryTime = null)
 {
     public DateTimeOffset? CashReceivedAt { get; init; }
-
-    public string? BranchSite { get; init; }
-
-    public string? TicketNumber { get; init; }
-
-    public string? PlateNumber { get; init; }
-
-    public DateTimeOffset? EntryTime { get; init; }
 
     public bool ExitAuthorizationIssued { get; init; }
 }

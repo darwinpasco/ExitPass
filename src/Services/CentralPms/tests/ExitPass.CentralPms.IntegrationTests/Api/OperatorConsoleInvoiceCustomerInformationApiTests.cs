@@ -38,6 +38,26 @@ public sealed class OperatorConsoleInvoiceCustomerInformationApiTests
     }
 
     [Fact]
+    public async Task Get_FiscalSnapshotLock_IsReturnedAsAuthoritativeReadOnlyState()
+    {
+        var fake = new FakeService
+        {
+            ReadResult = new(InvoiceCustomerInformationReadStatus.Found, Record(4), FiscalSnapshotLocked: true)
+        };
+        using var factory = Factory(fake);
+        using var client = Client(factory, "sales-invoice-customer-information.read");
+
+        var response = await client.GetAsync(Route);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleInvoiceCustomerInformationResponse>();
+        body.Should().NotBeNull();
+        body!.FiscalSnapshotLocked.Should().BeTrue();
+        body.RowVersion.Should().Be(4);
+        body.CustomerName.Should().Be("ABC Corporation");
+    }
+
+    [Fact]
     public async Task Put_DerivesActorScopeAndSourceFromServerBoundary()
     {
         var record = Record(1);

@@ -919,13 +919,14 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             ["terminalCashTenderId"] = cashPayment.TerminalCashTenderId.ToString("D"),
             ["cashCustodySessionId"] = cashPayment.CashCustodySessionId.ToString("D"),
             ["fiscalIssuanceReferenceId"] = reference.FiscalIssuanceReferenceId.ToString("D"),
-            ["branch_site"] = cashPayment.BranchSite!.Trim(),
+            ["branch_site"] = cashPayment.SiteName!.Trim(),
             ["ticket_number"] = cashPayment.TicketNumber!.Trim(),
             ["plate_number"] = cashPayment.PlateNumber!.Trim(),
             ["entry_time"] = entryTime.ToString("O", CultureInfo.InvariantCulture),
             ["payment_time"] = paymentTime.ToString("O", CultureInfo.InvariantCulture),
             ["parking_duration"] = FormatParkingDuration(duration)
         };
+        context["payment_method"] = "CASH";
 
         if (statutoryContext is null)
         {
@@ -945,7 +946,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
 
     private static void EnsureParkingFiscalContextAvailable(TerminalCashPaymentReadback cashPayment)
     {
-        if (string.IsNullOrWhiteSpace(cashPayment.BranchSite) ||
+        if (string.IsNullOrWhiteSpace(cashPayment.SiteName) ||
             string.IsNullOrWhiteSpace(cashPayment.TicketNumber) ||
             string.IsNullOrWhiteSpace(cashPayment.PlateNumber) ||
             cashPayment.EntryTime is null ||

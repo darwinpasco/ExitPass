@@ -24,7 +24,11 @@ public sealed record OperatorConsoleStatutoryDiscountDraftCommand(
     string? AttestationNotes,
     string? ReasonCode,
     string IdempotencyKey,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string? EvidenceStorageReference = null,
+    string? EvidenceHash = null,
+    string? EvidenceContentType = null,
+    long? EvidenceSizeBytes = null);
 
 /// <summary>
 /// Result for an access-gated Operator Console statutory discount validation draft.
@@ -71,7 +75,11 @@ public sealed record OperatorConsoleStatutoryDiscountDraftPersistenceCommand(
     string? AttestationNotes,
     Guid RequestedByUserId,
     Guid CorrelationId,
-    OperatorConsoleResolvedStatutoryDiscountPolicy Policy);
+    OperatorConsoleResolvedStatutoryDiscountPolicy Policy,
+    string? EvidenceStorageReference = null,
+    string? EvidenceHash = null,
+    string? EvidenceContentType = null,
+    long? EvidenceSizeBytes = null);
 
 /// <summary>
 /// Persistence result for a statutory discount validation draft row.

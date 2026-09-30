@@ -99,7 +99,9 @@ public sealed record FiscalIssuanceStatusResponse(
     DateTimeOffset? PosServerVoidedAt,
     string CompletionBasis,
     Guid? CompletionAuthorityReferenceId,
-    string? ElectronicJournalEventReference)
+    string? ElectronicJournalEventReference,
+    string? TicketNumber,
+    string? PlateNumber)
 {
     public static FiscalIssuanceStatusResponse FromReadModel(FiscalIssuanceStatusReadModel model) =>
         new(
@@ -145,7 +147,9 @@ public sealed record FiscalIssuanceStatusResponse(
             PosServerVoidedAt: model.PosServerVoidedAt,
             CompletionBasis: model.CompletionBasis,
             CompletionAuthorityReferenceId: model.CompletionAuthorityReferenceId,
-            ElectronicJournalEventReference: model.ElectronicJournalEventReference);
+            ElectronicJournalEventReference: model.ElectronicJournalEventReference,
+            TicketNumber: model.TicketNumber,
+            PlateNumber: model.PlateNumber);
 }
 
 #pragma warning restore CS1591

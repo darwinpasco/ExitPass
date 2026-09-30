@@ -188,8 +188,8 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
     {
         using var factory = CreateFactory(Result(
             status: null,
-            safeErrorCode: "FISCAL_DOCUMENT_NUMBER_LOOKUP_AMBIGUOUS",
-            safeErrorPosture: "Fiscal document number lookup matched multiple fiscal issuance references.",
+            safeErrorCode: "FISCAL_IDENTIFIER_LOOKUP_AMBIGUOUS",
+            safeErrorPosture: "The exact fiscal identifier matched multiple fiscal issuance references.",
             lookupAmbiguous: true));
         using var client = factory.CreateClient();
         AddStatusReadHeaders(client);
@@ -199,7 +199,7 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
         var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
         body.Should().NotBeNull();
-        body!.ErrorCode.Should().Be("FISCAL_DOCUMENT_NUMBER_LOOKUP_AMBIGUOUS");
+        body!.ErrorCode.Should().Be("FISCAL_IDENTIFIER_LOOKUP_AMBIGUOUS");
     }
 
     [Fact]
@@ -214,6 +214,22 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
         using var response = await client.GetAsync($"{LookupEndpoint}?query=SI-00000001-UAT");
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        fake.LookupCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Lookup_WhenCallerIsSiteOperator_ReturnsRoleDeniedWithoutInvokingService()
+    {
+        var fake = new FakeFiscalStatusService(Result(Status()));
+        using var factory = CreateFactory(fake, operationsSupervisor: false);
+        using var client = factory.CreateClient();
+        AddStatusReadHeaders(client);
+
+        using var response = await client.GetAsync($"{LookupEndpoint}?query=SI-00000001-UAT");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body!.ErrorCode.Should().Be("OPERATOR_CONSOLE_FISCAL_REPORTING_ROLE_REQUIRED");
         fake.LookupCallCount.Should().Be(0);
     }
 
@@ -297,7 +313,9 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
     private static CustomWebApplicationFactory CreateFactory(OperatorConsoleFiscalIssuanceStatusResult result) =>
         CreateFactory(new FakeFiscalStatusService(result));
 
-    private static CustomWebApplicationFactory CreateFactory(FakeFiscalStatusService fake) =>
+    private static CustomWebApplicationFactory CreateFactory(
+        FakeFiscalStatusService fake,
+        bool operationsSupervisor = true) =>
         new CustomWebApplicationFactory()
             .WithConfigurationOverrides(new Dictionary<string, string?>
             {
@@ -309,7 +327,7 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
                 services.RemoveAll<IOperatorConsoleFiscalIssuanceStatusService>();
                 services.AddSingleton<IOperatorConsoleFiscalIssuanceStatusService>(fake);
                 services.RemoveAll<ICentralPmsRbacRepository>();
-                services.AddSingleton<ICentralPmsRbacRepository>(new FakeRbacRepository());
+                services.AddSingleton<ICentralPmsRbacRepository>(new FakeRbacRepository(operationsSupervisor));
             });
 
     private static void AddStatusReadHeaders(HttpClient client)
@@ -417,13 +435,19 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
         }
     }
 
-    private sealed class FakeRbacRepository : ICentralPmsRbacRepository
+    private sealed class FakeRbacRepository(bool operationsSupervisor) : ICentralPmsRbacRepository
     {
         public Task<bool> UserHasAnyPermissionAsync(
             Guid userId,
             IReadOnlyCollection<string> permissionCodes,
             CancellationToken cancellationToken) =>
             Task.FromResult(false);
+
+        public Task<bool> UserHasAnyRoleAsync(
+            Guid userId,
+            IReadOnlyCollection<string> roleCodes,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(operationsSupervisor && roleCodes.Contains("OPERATIONS_SUPERVISOR"));
 
         public Task<bool> ServiceIdentityIsActiveAsync(
             Guid serviceIdentityId,

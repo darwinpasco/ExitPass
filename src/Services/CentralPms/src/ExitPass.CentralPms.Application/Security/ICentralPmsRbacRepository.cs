@@ -14,6 +14,14 @@ public interface ICentralPmsRbacRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Checks whether an active user has one of the requested active role assignments.
+    /// </summary>
+    Task<bool> UserHasAnyRoleAsync(
+        Guid userId,
+        IReadOnlyCollection<string> roleCodes,
+        CancellationToken cancellationToken) => Task.FromResult(false);
+
+    /// <summary>
     /// Checks whether an internal service identity is active.
     /// </summary>
     Task<bool> ServiceIdentityIsActiveAsync(

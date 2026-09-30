@@ -70,12 +70,16 @@ export interface StatutoryDiscountDraftDetail extends StatutoryDiscountQueueItem
   originalTariffAmount: string;
   payableBasisPreview: string;
   currentPaymentStatus: string;
+  idDocumentType?: string;
   maskedIdReference: string;
   issuingAuthority: string;
   evidenceCaptured: boolean;
   evidenceRequiredSatisfied: boolean;
   evidenceCount: number;
+  latestEvidenceId?: string;
   latestEvidenceStatus?: string;
+  validatedAt?: string;
+  validatedByUserId?: string;
   requiredEvidenceTypes: string[];
   originalTariffSnapshotId?: string;
   payableBasisApplicationId?: string;
@@ -146,7 +150,9 @@ export interface CanonicalStatutoryReviewQueueItem {
   sourceChannel: string;
   siteId?: string;
   siteGroupId?: string;
+  siteName?: string;
   ticketReference?: string;
+  plateNumber?: string;
   entitlementType: string;
   commandStatus: string;
   decisionResultStatus: string;
@@ -300,6 +306,8 @@ export interface OperatorTicketLookupResult {
   plateLicense?: string;
   parkingInTime?: string;
   parkingDurationSeconds?: number;
+  salesInvoiceNumber?: string;
+  exitAuthorizationStatus?: string;
   feeMinorUnits?: number;
   currencyCode?: string;
   feeRuleType?: string;
@@ -308,6 +316,8 @@ export interface OperatorTicketLookupResult {
   paymentAttemptStatus?: string;
   paymentStatus?: string;
   paymentConfirmationStatus?: string;
+  amountPaidMinorUnits?: number;
+  paymentMethod?: string;
   vendorSystemCode?: string;
   vendorConfirmationCode?: string;
   vendorConfirmationStatus?: string | null;
@@ -322,6 +332,26 @@ export interface OperatorTicketLookupResult {
   message?: string;
 }
 
+export interface InvoiceCustomerInformation {
+  parkingSessionId: string;
+  hasCustomerInformation: boolean;
+  customerName?: string;
+  address?: string;
+  tin?: string;
+  businessStyle?: string;
+  rowVersion?: number;
+  updatedAt?: string;
+  fiscalSnapshotLocked: boolean;
+}
+
+export interface SaveInvoiceCustomerInformationInput {
+  customerName?: string;
+  address?: string;
+  tin?: string;
+  businessStyle?: string;
+  expectedVersion?: number;
+}
+
 export interface StatutoryDiscountDraftCreateInput {
   parkingSessionId: string;
   ticketReference?: string;
@@ -332,6 +362,7 @@ export interface StatutoryDiscountDraftCreateInput {
   idDocumentType: string;
   issuingAuthority: string;
   maskedIdReference: string;
+  idPhoto: File;
   evidenceCaptureRequested: boolean;
   operatorAttestation: boolean;
   attestationNotes?: string;
@@ -394,6 +425,44 @@ export interface FiscalIssuanceStatus {
   posServerVoidStatus?: string;
   posServerVoidReasonCode?: string;
   posServerVoidedAt?: string;
+  ticketNumber?: string;
+  plateNumber?: string;
+}
+
+export interface DigitalSalesInvoicePresentationRow {
+  key?: string;
+  label?: string;
+  valueKind?: string;
+  posture?: string;
+  displayValue?: string | number | null;
+  rawValue?: unknown;
+}
+
+export interface DigitalSalesInvoicePresentationSection {
+  name?: string;
+  title?: string;
+  label?: string;
+  sortOrder?: number;
+  posture?: string;
+  rows?: DigitalSalesInvoicePresentationRow[];
+}
+
+export interface DigitalSalesInvoicePresentation {
+  documentTitle?: string;
+  presentationVersion?: string;
+  sourceTemplateContractVersion?: string;
+  fiscalTemplateFamily?: string;
+  renderFormat?: string;
+  numberingState?: string;
+  sections?: DigitalSalesInvoicePresentationSection[];
+  notices?: Array<{ code?: string; severity?: string; message?: string }>;
+}
+
+export interface OperatorDigitalSalesInvoice {
+  presentation: DigitalSalesInvoicePresentation;
+  canonicalText: string;
+  customerDigitalSalesInvoicePath: string;
+  capabilityExpiresAt: string;
 }
 
 export interface AccessReadinessClientContext {

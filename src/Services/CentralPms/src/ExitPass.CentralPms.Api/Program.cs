@@ -73,6 +73,7 @@ using ExitPass.CentralPms.Infrastructure.VendorParking;
 using ExitPass.CentralPms.Infrastructure.VendorSessions;
 using ExitPass.CentralPms.Infrastructure.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Infrastructure.WebPay;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -104,6 +105,8 @@ ConfigureOpenTelemetry(builder, otlpEndpoint, serviceVersion);
 ConfigureHealthChecks(builder);
 ConfigureInternalSecurity(builder);
 ConfigureHumanAuthentication(builder, mainDatabaseConnectionString);
+ConfigureCustomerDigitalSalesInvoiceCapability(builder);
+ConfigureOperatorConsoleStatutoryIdPhoto(builder);
 ConfigureApplicationServices(builder, mainDatabaseConnectionString);
 builder.Services.AddCentralPmsAuditEventClient(builder.Configuration);
 ConfigureOperatorConsoleLocalCors(builder);
@@ -198,6 +201,7 @@ app.MapAptPayableBasisEndpoints();
 app.MapAptStatutoryOrdinanceAvailabilityEndpoints();
 app.MapTerminalCashPaymentEndpoints();
 app.MapWebPayReceiptPresentationEndpoints();
+app.MapCustomerDigitalSalesInvoiceEndpoints();
 app.MapWebPayStatutoryDiscountPendingLifecycleRediscoveryEndpoints();
 app.MapHumanAuthenticationEndpoints();
 app.MapShiftManagementEndpoints();
@@ -418,6 +422,28 @@ static void ConfigureHumanAuthentication(WebApplicationBuilder builder, string m
         services => new HumanAuthenticationHealthCheck(mainDatabaseConnectionString, services.GetRequiredService<ITotpSecretProtector>()),
         failureStatus: HealthStatus.Unhealthy,
         tags: ["ready"]));
+}
+
+static void ConfigureCustomerDigitalSalesInvoiceCapability(WebApplicationBuilder builder)
+{
+    builder.Services.AddDataProtection()
+        .SetApplicationName("ExitPass.CentralPms");
+    builder.Services.AddSingleton(TimeProvider.System);
+    builder.Services.AddOptions<CustomerDigitalSalesInvoiceCapabilityOptions>()
+        .Bind(builder.Configuration.GetSection(CustomerDigitalSalesInvoiceCapabilityOptions.SectionName))
+        .Validate(options => options.LifetimeHours is > 0 and <= 168, "Customer Digital Sales Invoice capability lifetime must be between 1 and 168 hours.")
+        .Validate(options => !string.IsNullOrWhiteSpace(options.PublicPagePath) && options.PublicPagePath.StartsWith('/'), "Customer Digital Sales Invoice public page path must be an absolute application path.")
+        .ValidateOnStart();
+    builder.Services.AddScoped<ICustomerDigitalSalesInvoiceCapabilityService, CustomerDigitalSalesInvoiceCapabilityService>();
+}
+
+static void ConfigureOperatorConsoleStatutoryIdPhoto(WebApplicationBuilder builder)
+{
+    builder.Services.AddOptions<OperatorConsoleStatutoryIdPhotoOptions>()
+        .Bind(builder.Configuration.GetSection(OperatorConsoleStatutoryIdPhotoOptions.SectionName))
+        .Validate(options => options.ReceiptLifetimeMinutes is > 0 and <= 60, "Operator Console statutory ID photo receipt lifetime must be between 1 and 60 minutes.")
+        .ValidateOnStart();
+    builder.Services.AddScoped<IOperatorConsoleStatutoryIdPhotoService, OperatorConsoleStatutoryIdPhotoService>();
 }
 
 static void ConfigureApplicationServices(

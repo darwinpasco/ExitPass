@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.OperatorConsole;
+using System.Data;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -220,6 +221,61 @@ public sealed class OperatorConsoleStatutoryDiscountEvidenceRepository
             items.FirstOrDefault()?.VerificationStatus,
             items,
             correlationId);
+    }
+
+    /// <inheritdoc />
+    public async Task<OperatorConsoleStatutoryDiscountEvidencePreviewTarget?> GetPreviewTargetAsync(
+        Guid draftId,
+        Guid evidenceId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                der.discount_evidence_reference_id,
+                sdv.statutory_discount_validation_id,
+                sdv.parking_session_id,
+                ps.site_id,
+                ps.site_group_id,
+                sdv.requested_by_user_id,
+                der.evidence_type::text,
+                der.evidence_storage_ref,
+                der.evidence_hash,
+                der.evidence_capture_status::text
+            FROM discounts.discount_evidence_references AS der
+            JOIN discounts.statutory_discount_validations AS sdv
+              ON sdv.statutory_discount_validation_id = der.statutory_discount_validation_id
+            JOIN core.parking_sessions AS ps
+              ON ps.parking_session_id = sdv.parking_session_id
+            WHERE der.discount_evidence_reference_id = @evidence_id
+              AND der.statutory_discount_validation_id = @draft_id
+              AND der.purged_at IS NULL
+              AND der.evidence_storage_type::text = 'OBJECT_STORAGE'
+              AND sdv.validation_channel = 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum
+            LIMIT 1;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("draft_id", NpgsqlDbType.Uuid).Value = draftId;
+        command.Parameters.Add("evidence_id", NpgsqlDbType.Uuid).Value = evidenceId;
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new OperatorConsoleStatutoryDiscountEvidencePreviewTarget(
+            reader.GetGuid(0),
+            reader.GetGuid(1),
+            reader.GetGuid(2),
+            reader.GetGuid(3),
+            reader.GetGuid(4),
+            reader.IsDBNull(5) ? null : reader.GetGuid(5),
+            reader.GetString(6),
+            reader.GetString(7),
+            reader.GetString(8),
+            reader.GetString(9));
     }
 
     private static async Task<DraftEvidenceRow?> ReadDraftForUpdateAsync(

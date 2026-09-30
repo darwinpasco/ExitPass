@@ -99,6 +99,10 @@ public sealed class HumanSessionAuthenticationHandler : AuthenticationHandler<Au
         {
             claims.Add(new Claim(CentralPmsRbacPolicyCatalog.PermissionClaimType, permission));
         }
+        foreach (var roleCode in session.RoleCodes ?? [])
+        {
+            claims.Add(new Claim(ClaimTypes.Role, roleCode));
+        }
         foreach (var siteReference in session.SiteReferences)
         {
             claims.Add(new Claim("site_id", siteReference.ToString("D")));

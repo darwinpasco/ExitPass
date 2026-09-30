@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
-    [switch] $SmokeTest
+    [switch] $SmokeTest,
+    [switch] $SkipEvidenceGovernanceInitialization,
+    [string] $OperatorConsolePublicOrigin = 'https://operator-console-exitpass.ngrok.dev'
 )
 
 Set-StrictMode -Version Latest
@@ -31,6 +33,10 @@ $evidenceServicesLauncherPath = Join-Path $PSScriptRoot 'Start-StatutoryEvidence
 $evidenceGovernanceInitializerPath = Join-Path $PSScriptRoot 'Initialize-StatutoryEvidenceRuntime.ps1'
 $mtlsProvisionerPath = Join-Path $PSScriptRoot 'Initialize-WebPayStatutoryMtls.ps1'
 $containerStarted = $false
+$normalizedOperatorConsolePublicOrigin = $OperatorConsolePublicOrigin.TrimEnd('/')
+if (-not [Uri]::IsWellFormedUriString($normalizedOperatorConsolePublicOrigin, [UriKind]::Absolute)) {
+    throw "Operator Console public origin must be an absolute URI."
+}
 
 function Invoke-CheckedCommand {
     param(
@@ -180,10 +186,15 @@ if ($null -eq $evidenceRuntime -or
     -not (Test-Path -LiteralPath $evidenceRuntime.MinioRootCertificatePath -PathType Leaf)) {
     throw 'Persistent PITX statutory evidence services did not provide the required private Central PMS configuration.'
 }
-& $evidenceGovernanceInitializerPath `
-    -DatabaseContainer $databaseContainer `
-    -DatabaseName $databaseName `
-    -DatabaseUser $databaseUser
+if ($SkipEvidenceGovernanceInitialization) {
+    Write-Host 'Statutory evidence governance initialization: SKIPPED by explicit runtime option'
+}
+else {
+    & $evidenceGovernanceInitializerPath `
+        -DatabaseContainer $databaseContainer `
+        -DatabaseName $databaseName `
+        -DatabaseUser $databaseUser
+}
 
 try {
     Invoke-CheckedCommand docker.exe @(
@@ -213,6 +224,9 @@ try {
         --env 'InternalSecurity__Mtls__ServicePrincipalCredentials__0__Permissions__3=statutory-discounts.evidence.capture.webpay' `
         --env 'HumanAuthentication__AllowedWebOrigins__0=http://127.0.0.1:5175' `
         --env 'HumanAuthentication__AllowedWebOrigins__1=http://127.0.0.1:5178' `
+        --env "HumanAuthentication__AllowedWebOrigins__2=$normalizedOperatorConsolePublicOrigin" `
+        --env 'HumanAuthentication__WebIdleMinutes=30' `
+        --env 'HumanAuthentication__WebAbsoluteHours=8' `
         --publish '127.0.0.1:56065:8080' `
         --publish '127.0.0.1:56064:8443' `
         --mount "type=bind,source=$($mtls.ServerCertificatePath),target=/run/exitpass/statutory-mtls/central-pms-server.pfx,readonly" `
