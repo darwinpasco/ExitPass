@@ -2,6 +2,7 @@ using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.StatutoryEvidence;
+using Microsoft.Extensions.Options;
 
 namespace ExitPass.CentralPms.Application.ManagementPlatform;
 
@@ -20,6 +21,9 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
     private readonly IAuthorizedStatutoryBenefitDecisionService _decisions;
     private readonly IStatutoryDiscountDecisionFacadeService _decisionFacade;
     private readonly IOperatorConsoleStatutoryEvidenceReviewService _evidenceReview;
+    private readonly IOperatorConsoleStatutoryDiscountEvidenceRepository _operatorConsoleEvidence;
+    private readonly IStatutoryEvidenceProtectedObjectStorageAdapter _evidenceStorage;
+    private readonly StatutoryEvidenceUploadOptions _evidenceOptions;
     private readonly ICentralPmsRbacRepository _audit;
 
     public ManagementStatutoryBenefitReviewService(
@@ -28,6 +32,9 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         IAuthorizedStatutoryBenefitDecisionService decisions,
         IStatutoryDiscountDecisionFacadeService decisionFacade,
         IOperatorConsoleStatutoryEvidenceReviewService evidenceReview,
+        IOperatorConsoleStatutoryDiscountEvidenceRepository operatorConsoleEvidence,
+        IStatutoryEvidenceProtectedObjectStorageAdapter evidenceStorage,
+        IOptions<StatutoryEvidenceUploadOptions> evidenceOptions,
         ICentralPmsRbacRepository audit)
     {
         _repository = repository;
@@ -35,6 +42,9 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         _decisions = decisions;
         _decisionFacade = decisionFacade;
         _evidenceReview = evidenceReview;
+        _operatorConsoleEvidence = operatorConsoleEvidence;
+        _evidenceStorage = evidenceStorage;
+        _evidenceOptions = evidenceOptions.Value;
         _audit = audit;
     }
 
@@ -142,6 +152,53 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
 
         var canonical = await _canonicalReviews.GetAsync(decisionCommandReference, correlationId, cancellationToken);
         if (canonical is null) return NotFound<ManagementStatutoryBenefitEvidence>(correlationId);
+
+        if (IsOperatorConsoleReview(canonical))
+        {
+            var legacy = await _operatorConsoleEvidence.ListAsync(
+                    canonical.StatutoryDiscountValidationId!.Value,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            var operatorConsoleItems = new List<ManagementStatutoryBenefitEvidenceItem>(legacy.Items.Count);
+            foreach (var item in legacy.Items)
+            {
+                var target = await _operatorConsoleEvidence.GetPreviewTargetAsync(
+                        canonical.StatutoryDiscountValidationId.Value,
+                        item.EvidenceId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                var previewPermitted = target is not null &&
+                    target.SiteId == metadata.SiteReference &&
+                    string.Equals(target.CaptureStatus, "CAPTURED", StringComparison.Ordinal);
+                operatorConsoleItems.Add(new ManagementStatutoryBenefitEvidenceItem(
+                    item.EvidenceType,
+                    item.CaptureMethod,
+                    canonical.MaskedIdReference,
+                    item.VerificationStatus)
+                {
+                    EvidenceItemReference = item.EvidenceId,
+                    DocumentType = item.EvidenceType,
+                    ItemRole = "ENTITLEMENT_ID_FRONT",
+                    UploadStatus = previewPermitted ? "UPLOADED" : "UNAVAILABLE",
+                    ReviewabilityStatus = previewPermitted ? "PENDING_REVIEW" : "UNAVAILABLE",
+                    UploadedAt = item.CapturedAt,
+                    FinalizedAt = item.CapturedAt,
+                    PreviewPermitted = previewPermitted
+                });
+            }
+
+            var operatorConsoleValue = new ManagementStatutoryBenefitEvidence(
+                ManagementStatutoryBenefitReviewValues.ContractVersion,
+                decisionCommandReference,
+                canonical.EvidenceRequired,
+                legacy.EvidenceRequiredSatisfied,
+                operatorConsoleItems,
+                correlationId);
+            await AuditAsync("STATUTORY_BENEFIT_EVIDENCE_VIEW", "SUCCESS", "SAFE_OPERATOR_CONSOLE_EVIDENCE_METADATA_RETURNED", actor, metadata.SiteReference, correlationId, cancellationToken);
+            return ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitEvidence>.Succeeded(operatorConsoleValue, correlationId);
+        }
+
         var authoritative = await _evidenceReview.ReadAuthorizedAsync(
             decisionCommandReference,
             new StatutoryEvidenceAuthorizedReviewContext(
@@ -209,6 +266,84 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             return new OperatorConsoleStatutoryEvidencePreviewResult("REJECTED", "NOT_FOUND", false, correlationId, null, null);
         }
 
+        if (IsOperatorConsoleReview(canonical))
+        {
+            var target = await _operatorConsoleEvidence.GetPreviewTargetAsync(
+                    canonical.StatutoryDiscountValidationId!.Value,
+                    evidenceItemReference,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (target is null || target.SiteId != metadata.SiteReference)
+            {
+                await AuditAsync("STATUTORY_BENEFIT_EVIDENCE_PREVIEW", "DENIED", "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_NOT_FOUND", actor, metadata.SiteReference, correlationId, cancellationToken);
+                return new OperatorConsoleStatutoryEvidencePreviewResult("REJECTED", "NOT_FOUND", false, correlationId, null, null);
+            }
+
+            if (string.IsNullOrWhiteSpace(_evidenceOptions.BucketName) || _evidenceOptions.MaxContentLengthBytes <= 0)
+            {
+                return new OperatorConsoleStatutoryEvidencePreviewResult("REJECTED", "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STORAGE_NOT_CONFIGURED", false, correlationId, null, null);
+            }
+
+            StatutoryEvidenceObjectContent content;
+            try
+            {
+                content = await _evidenceStorage.OpenObjectContentStreamAsync(
+                        new StatutoryEvidenceObjectContentRequest(
+                            _evidenceOptions.BucketName,
+                            target.StorageReference,
+                            _evidenceOptions.MaxContentLengthBytes),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (InvalidOperationException)
+            {
+                return new OperatorConsoleStatutoryEvidencePreviewResult("REJECTED", "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STORAGE_UNAVAILABLE", true, correlationId, null, null);
+            }
+
+            var valid = string.Equals(target.CaptureStatus, "CAPTURED", StringComparison.Ordinal) &&
+                OperatorConsoleStatutoryEvidenceReviewConstants.SupportedPreviewMediaTypes.Contains(content.ContentType) &&
+                !string.IsNullOrWhiteSpace(content.ChecksumSha256) &&
+                string.Equals(target.ChecksumSha256, content.ChecksumSha256, StringComparison.OrdinalIgnoreCase);
+            if (!valid)
+            {
+                await content.DisposeAsync().ConfigureAwait(false);
+                await AuditAsync("STATUTORY_BENEFIT_EVIDENCE_PREVIEW", "DENIED", "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STALE", actor, metadata.SiteReference, correlationId, cancellationToken);
+                return new OperatorConsoleStatutoryEvidencePreviewResult("REJECTED", "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STALE", false, correlationId, null, null);
+            }
+
+            var auditTarget = new OperatorConsoleStatutoryEvidencePreviewTarget(
+                decisionCommandReference,
+                target.ParkingSessionId,
+                target.SiteId,
+                target.SiteGroupId,
+                EvidenceSetId: Guid.Empty,
+                EvidenceSetReference: Guid.Empty,
+                SetRowVersion: 0,
+                EvidenceItemId: target.EvidenceId,
+                EvidenceItemReference: target.EvidenceId,
+                ItemRowVersion: 0,
+                UploadAuthorizationId: Guid.Empty,
+                UploadAuthorizationReference: Guid.Empty,
+                UploadAuthorizationRowVersion: 0,
+                target.StorageReference,
+                content.ContentType,
+                content.ContentLength,
+                target.ChecksumSha256,
+                content.ObjectVersion,
+                correlationId,
+                actor.UserId);
+            await AuditAsync("STATUTORY_BENEFIT_EVIDENCE_PREVIEW", "SUCCESS", "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STARTED", actor, metadata.SiteReference, correlationId, cancellationToken);
+            return new OperatorConsoleStatutoryEvidencePreviewResult(
+                "ACCEPTED",
+                null,
+                false,
+                correlationId,
+                content,
+                new OperatorConsoleStatutoryEvidencePreviewAuditContext(
+                    auditTarget,
+                    new StatutoryEvidenceActor(actor.UserId, null, MediatedEvidenceAuditSourceChannel)));
+        }
+
         return await _evidenceReview.OpenAuthorizedPreviewAsync(
             decisionCommandReference,
             evidenceItemReference,
@@ -224,8 +359,33 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
     public Task RecordEvidencePreviewStreamOutcomeAsync(
         OperatorConsoleStatutoryEvidencePreviewAuditContext context,
         string outcome,
-        CancellationToken cancellationToken) =>
-        _evidenceReview.RecordPreviewStreamOutcomeAsync(context, outcome, cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        if (context.Target.EvidenceSetId != Guid.Empty)
+        {
+            return _evidenceReview.RecordPreviewStreamOutcomeAsync(context, outcome, cancellationToken);
+        }
+
+        var normalized = outcome?.Trim().ToUpperInvariant();
+        var result = normalized == "COMPLETED" ? "SUCCESS" : "FAILED";
+        var reason = normalized switch
+        {
+            "COMPLETED" => "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_COMPLETED",
+            "CANCELLED" => "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_CANCELLED",
+            _ => "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STREAM_FAILED"
+        };
+        return _audit.RecordAuditEventAsync(
+            "STATUTORY_BENEFIT_EVIDENCE_PREVIEW",
+            result,
+            reason,
+            "DISCOUNT_EVIDENCE_REFERENCE",
+            context.Target.EvidenceItemReference,
+            context.Actor.UserId,
+            context.Actor.ServiceIdentityId,
+            context.Target.CorrelationId,
+            $"Management Platform statutory-benefit evidence preview event {reason}.",
+            cancellationToken);
+    }
 
     public async Task<ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitDecisionResult>> DecideAsync(
         IdentityAdministrationActor actor,
@@ -446,6 +606,10 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             StatutoryDiscountApplicationStageStatuses.NotRequested,
             StringComparison.Ordinal);
 
+    private static bool IsOperatorConsoleReview(StatutoryDiscountServiceChannelReviewDetail review) =>
+        string.Equals(review.SourceChannel, StatutoryDiscountSourceChannels.OperatorConsole, StringComparison.Ordinal) &&
+        review.StatutoryDiscountValidationId.HasValue;
+
     private Task AuditAsync(
         string type,
         string result,
@@ -471,6 +635,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                 NormalizeOptional(review.IdDocumentType),
                 NormalizeOptional(review.IssuingAuthority),
                 review.ExpiryDate,
+                review.BirthDate,
                 NormalizeOptional(review.IdControlReference));
             errorCode = null;
             return true;
@@ -479,6 +644,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         var idDocumentType = NormalizeOptional(command.IdDocumentType) ?? NormalizeOptional(review.IdDocumentType);
         var issuingAuthority = NormalizeOptional(command.IssuingAuthority) ?? NormalizeOptional(review.IssuingAuthority);
         var expiryDate = command.ExpiryDate ?? review.ExpiryDate;
+        var birthDate = command.BirthDate ?? review.BirthDate;
         // A missing value means the reviewer left the existing governed value unchanged.
         // The browser receives only its masked presentation and cannot safely replay the raw value.
         var idControlReference = NormalizeOptional(command.IdControlReference) ??
@@ -495,10 +661,13 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             return false;
         }
 
+        var requiresBirthDate =
+            string.Equals(review.SourceChannel, StatutoryDiscountSourceChannels.OperatorConsole, StringComparison.Ordinal) &&
+            string.Equals(review.EntitlementType, "SENIOR_CITIZEN", StringComparison.Ordinal);
         if (decision == "APPROVE" &&
             (string.IsNullOrWhiteSpace(idDocumentType) ||
              string.IsNullOrWhiteSpace(issuingAuthority) ||
-             !expiryDate.HasValue ||
+             (requiresBirthDate ? !birthDate.HasValue : !expiryDate.HasValue) ||
              !IsValidIdControlReference(idControlReference)))
         {
             reviewedDocument = null;
@@ -510,6 +679,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             idDocumentType,
             issuingAuthority,
             expiryDate,
+            birthDate,
             idControlReference);
         errorCode = null;
         return true;
@@ -522,7 +692,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         !value.Contains('*', StringComparison.Ordinal);
 
     private static string BuildReviewedMetadataAuditSummary(StatutoryDiscountServiceChannelReviewedDocument metadata) =>
-        $"Reviewed metadata supplied: documentType={metadata.IdDocumentType is not null}; issuingAuthority={metadata.IssuingAuthority is not null}; expiryDate={metadata.ExpiryDate.HasValue}; idControlReferenceSupplied={metadata.IdControlReference is not null}.";
+        $"Reviewed metadata supplied: documentType={metadata.IdDocumentType is not null}; issuingAuthority={metadata.IssuingAuthority is not null}; expiryDate={metadata.ExpiryDate.HasValue}; birthDate={metadata.BirthDate.HasValue}; idControlReferenceSupplied={metadata.IdControlReference is not null}.";
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -535,7 +705,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         var benefit = string.IsNullOrWhiteSpace(query.BenefitType) ? null : query.BenefitType.Trim().ToUpperInvariant();
         var search = string.IsNullOrWhiteSpace(query.Search) ? null : query.Search.Trim().ToLowerInvariant();
         if (status is not ("PENDING_REVIEW" or "APPROVED" or "REJECTED" or "ALL") ||
-            source is not null and not ("WEBPAY" or "ASSISTED_PAYMENT_TERMINAL") ||
+            source is not null and not ("WEBPAY" or "ASSISTED_PAYMENT_TERMINAL" or "OPERATOR_CONSOLE") ||
             benefit is not null and not ("SENIOR_CITIZEN" or "PWD") ||
             search?.Length > 160 || query.Page < 1 || query.PageSize is < 1 or > 100 ||
             query.SubmittedFrom >= query.SubmittedTo)
@@ -584,6 +754,10 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             source.IdDocumentType,
             source.IssuingAuthority,
             source.ExpiryDate,
+            source.BirthDate,
+            string.Equals(source.ReviewStatus, StatutoryDiscountServiceChannelReviewStatuses.PendingReview, StringComparison.Ordinal)
+                ? authoritativeIdControlReference
+                : null,
             maskedIdReference,
             authoritativeIdControlReference is not null,
             source.RequesterAttestation,
@@ -649,7 +823,8 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                 caller.ApplicationAudience,
                 caller.PermissionCode))
         {
-            IdControlReference = source.IdControlReference
+            IdControlReference = source.IdControlReference,
+            BirthDate = source.BirthDate
         };
 
     private static bool? RequiredResidencyWasSatisfied(StatutoryDiscountServiceChannelReviewDetail source) =>

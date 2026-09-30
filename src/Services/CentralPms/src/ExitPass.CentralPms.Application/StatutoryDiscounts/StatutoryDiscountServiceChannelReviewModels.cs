@@ -47,6 +47,9 @@ public sealed record StatutoryDiscountServiceChannelReviewIntakeCommand(
     DateTimeOffset SubmittedAt)
 {
     public string? IdControlReference { get; init; }
+    public DateOnly? BirthDate { get; init; }
+    public Guid? ExistingStatutoryDiscountValidationId { get; init; }
+    public Guid? SubmittedByUserId { get; init; }
 }
 
 /// <summary>
@@ -150,6 +153,7 @@ public sealed record StatutoryDiscountServiceChannelReviewDetail(
     Guid CorrelationId)
 {
     public string? IdControlReference { get; init; }
+    public DateOnly? BirthDate { get; init; }
 
     /// <summary>
     /// Internal provider-neutral vendor identity used to re-resolve the parking tariff before
@@ -204,6 +208,7 @@ public sealed record StatutoryDiscountServiceChannelReviewedDocument(
     string? IdDocumentType,
     string? IssuingAuthority,
     DateOnly? ExpiryDate,
+    DateOnly? BirthDate,
     string? IdControlReference);
 
 /// <summary>

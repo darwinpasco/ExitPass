@@ -73,6 +73,8 @@ public sealed record ManagementStatutoryBenefitReviewDetail(
     string? IdDocumentType,
     string? IssuingAuthority,
     DateOnly? ExpiryDate,
+    DateOnly? BirthDate,
+    string? IdControlReference,
     string? MaskedIdReference,
     bool HasAuthoritativeIdControlReference,
     bool RequesterAttestation,
@@ -135,6 +137,7 @@ public sealed record ManagementStatutoryBenefitDecisionCommand(
     string? IdDocumentType,
     string? IssuingAuthority,
     DateOnly? ExpiryDate,
+    DateOnly? BirthDate,
     string? IdControlReference,
     Guid CorrelationId);
 

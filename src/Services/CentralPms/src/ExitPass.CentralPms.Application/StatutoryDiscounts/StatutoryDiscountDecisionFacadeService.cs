@@ -79,10 +79,14 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         var serviceChannel = IsServiceChannel(normalized.SourceChannel);
         var serviceChannelDecisionOmitted = string.IsNullOrWhiteSpace(normalized.Decision);
         var serviceChannelApplicationIntent = serviceChannel && serviceChannelDecisionOmitted && normalized.ApplyPayableBasis;
-        var pendingReviewIntake = serviceChannel && serviceChannelDecisionOmitted && !normalized.ApplyPayableBasis;
+        var pendingReviewIntake = IsProcessorReviewIntakeChannel(normalized.SourceChannel) &&
+            serviceChannelDecisionOmitted &&
+            !normalized.ApplyPayableBasis;
+        var operatorConsolePendingReviewIntake = pendingReviewIntake &&
+            normalized.SourceChannel == StatutoryDiscountSourceChannels.OperatorConsole;
         StatutoryDiscountParkingAvailabilityResult? availability = null;
 
-        if (!serviceChannelApplicationIntent)
+        if (!serviceChannelApplicationIntent && !operatorConsolePendingReviewIntake)
         {
             availability = await _parkingEligibilityResolver.ResolveAsync(ToAvailabilityRequest(normalized), cancellationToken)
                 .ConfigureAwait(false);
@@ -1062,7 +1066,12 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             command.CorrelationId,
             decision.CreatedAt)
         {
-            IdControlReference = command.IdControlReference
+            IdControlReference = command.IdControlReference,
+            BirthDate = command.BirthDate,
+            ExistingStatutoryDiscountValidationId = command.ExistingStatutoryDiscountValidationId,
+            SubmittedByUserId = command.SourceChannel == StatutoryDiscountSourceChannels.OperatorConsole
+                ? command.ActorUserId
+                : null
         };
 
     private static StatutoryDiscountPayableBasisApplicationV1Command ToApplicationV1Command(
@@ -1123,7 +1132,11 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             command.AttestationNotes,
             command.ReasonCode,
             $"{command.IdempotencyKey}:draft",
-            command.CorrelationId);
+            command.CorrelationId)
+        {
+            IdControlReference = command.IdControlReference,
+            BirthDate = command.BirthDate
+        };
 
     private static OperatorConsoleStatutoryDiscountEvidenceCaptureCommand ToEvidenceCommand(
         StatutoryDiscountDecisionCommand command,
@@ -1448,6 +1461,11 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
     private static bool IsServiceChannel(string sourceChannel) =>
         sourceChannel is StatutoryDiscountSourceChannels.WebPay
+            or StatutoryDiscountSourceChannels.AssistedPaymentTerminal;
+
+    private static bool IsProcessorReviewIntakeChannel(string sourceChannel) =>
+        sourceChannel is StatutoryDiscountSourceChannels.OperatorConsole
+            or StatutoryDiscountSourceChannels.WebPay
             or StatutoryDiscountSourceChannels.AssistedPaymentTerminal;
 
     private static void Require(Guid value, string errorCode, string message)

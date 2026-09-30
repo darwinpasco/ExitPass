@@ -179,6 +179,7 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
             completed.IdDocumentType.Should().Be("SENIOR_CITIZEN_ID");
             completed.IssuingAuthority.Should().Be("LOCAL_GOVERNMENT");
             completed.ExpiryDate.Should().Be(new DateOnly(2027, 9, 23));
+            completed.BirthDate.Should().Be(new DateOnly(1955, 9, 30));
             completed.IdControlReference.Should().Be(decision == "APPROVE" ? "12345678" : null);
             completed.MaskedIdReference.Should().Be("SC-****-1234");
             completed.EvidenceReferences
@@ -196,12 +197,13 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
                 Guid.NewGuid(),
                 decision,
                 "REPLAY",
-                new StatutoryDiscountServiceChannelReviewedDocument("PWD_ID", "OTHER_AUTHORITY", null, "87654321"),
+                new StatutoryDiscountServiceChannelReviewedDocument("PWD_ID", "OTHER_AUTHORITY", null, null, "87654321"),
                 Guid.NewGuid(),
                 CancellationToken.None);
             replayed.IdDocumentType.Should().Be("SENIOR_CITIZEN_ID");
             replayed.IssuingAuthority.Should().Be("LOCAL_GOVERNMENT");
             replayed.ExpiryDate.Should().Be(new DateOnly(2027, 9, 23));
+            replayed.BirthDate.Should().Be(new DateOnly(1955, 9, 30));
             replayed.IdControlReference.Should().Be(decision == "APPROVE" ? "12345678" : null);
             replayed.MaskedIdReference.Should().Be("SC-****-1234");
             (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(seeded.Decision.StatutoryDiscountDecisionCommandId)).Should().Be(0);
@@ -345,6 +347,8 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
             linkage.Should().NotBeNull();
             (await ReadAuthoritativeIdControlReferenceAsync(linkage!.StatutoryDiscountValidationId))
                 .Should().Be("12345678");
+            (await ReadBirthDateAsync(linkage.StatutoryDiscountValidationId))
+                .Should().Be(new DateOnly(1955, 9, 30));
             var authority = await repository.GetValidationReviewerAuthorityAsync(
                 linkage.StatutoryDiscountValidationId,
                 CancellationToken.None);
@@ -491,7 +495,21 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
     }
 
     private static StatutoryDiscountServiceChannelReviewedDocument ReviewedDocument() =>
-        new("SENIOR_CITIZEN_ID", "LOCAL_GOVERNMENT", new DateOnly(2027, 9, 23), "12345678");
+        new("SENIOR_CITIZEN_ID", "LOCAL_GOVERNMENT", new DateOnly(2027, 9, 23), new DateOnly(1955, 9, 30), "12345678");
+
+    private static async Task<DateOnly?> ReadBirthDateAsync(Guid validationId)
+    {
+        const string sql = """
+            SELECT birth_date
+              FROM discounts.statutory_discount_validations
+             WHERE statutory_discount_validation_id = @validation_id;
+            """;
+        await using var connection = new NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("validation_id", NpgsqlDbType.Uuid).Value = validationId;
+        return (DateOnly?)await command.ExecuteScalarAsync();
+    }
 
     private static async Task<string?> ReadAuthoritativeIdControlReferenceAsync(Guid validationId)
     {

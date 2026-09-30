@@ -196,6 +196,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                     ORDER BY der.created_at DESC, der.discount_evidence_reference_id DESC
                     LIMIT 1
                 ) AS evidence_reference_id
+                , sdv.id_control_reference
+                , sdv.masked_id_reference
             FROM discounts.statutory_discount_validations AS sdv
             JOIN core.parking_sessions AS ps
               ON ps.parking_session_id = sdv.parking_session_id
@@ -234,7 +236,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             EvidenceRequired: reader.GetBoolean(2),
             EvidenceReferenceCreated: false,
             EvidenceReferenceId: reader.IsDBNull(38) ? null : reader.GetGuid(38),
-            Policy: ReadPolicy(reader, startOrdinal: 3));
+            Policy: ReadPolicy(reader, startOrdinal: 3))
+        {
+            IdControlReference = reader.IsDBNull(39) ? null : reader.GetString(39),
+            MaskedIdReference = reader.IsDBNull(40) ? null : reader.GetString(40)
+        };
     }
 
     private static async Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult> InsertDraftAsync(
@@ -256,7 +262,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 id_document_type,
                 issuing_authority,
                 id_expiry_date,
+                birth_date,
                 masked_id_reference,
+                id_control_reference,
                 policy_resolution_basis,
                 validation_channel,
                 validation_status,
@@ -279,7 +287,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 @id_document_type,
                 @issuing_authority,
                 @id_expiry_date,
+                @birth_date,
                 @masked_id_reference,
+                @id_control_reference,
                 @policy_resolution_basis::discounts.policy_resolution_basis_enum,
                 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum,
                 'REQUESTED'::discounts.statutory_discount_validations_status_enum,
@@ -303,7 +313,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                     @resolved_policy_snapshot_json,
                     '{resolvedAt}',
                     to_jsonb(requested_at),
-                    true)::text AS resolved_policy_snapshot_json;
+                    true)::text AS resolved_policy_snapshot_json,
+                id_control_reference,
+                masked_id_reference;
             """;
 
         await using var npgsqlCommand = new NpgsqlCommand(sql, connection, transaction);
@@ -312,7 +324,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         npgsqlCommand.Parameters.Add("id_document_type", NpgsqlDbType.Varchar).Value = command.IdDocumentType;
         npgsqlCommand.Parameters.Add("issuing_authority", NpgsqlDbType.Varchar).Value = command.IssuingAuthority;
         npgsqlCommand.Parameters.Add("id_expiry_date", NpgsqlDbType.Date).Value = DbValue(command.ExpiryDate);
+        npgsqlCommand.Parameters.Add("birth_date", NpgsqlDbType.Date).Value = command.BirthDate!.Value;
         npgsqlCommand.Parameters.Add("masked_id_reference", NpgsqlDbType.Varchar).Value = command.MaskedIdReference;
+        npgsqlCommand.Parameters.Add("id_control_reference", NpgsqlDbType.Varchar).Value = command.IdControlReference!;
         npgsqlCommand.Parameters.Add("policy_resolution_basis", NpgsqlDbType.Text).Value = command.Policy.PolicyResolutionBasis;
         npgsqlCommand.Parameters.Add("evidence_required", NpgsqlDbType.Boolean).Value = command.EvidenceRequired;
         npgsqlCommand.Parameters.Add("evidence_captured", NpgsqlDbType.Boolean).Value = HasProtectedPhoto(command);
@@ -346,7 +360,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             Policy: command.Policy with
             {
                 PolicySnapshot = JsonDocument.Parse(reader.GetString(2)).RootElement.Clone()
-            });
+            })
+        {
+            IdControlReference = reader.GetString(3),
+            MaskedIdReference = reader.GetString(4)
+        };
     }
 
     private static async Task<(Guid? LegacyPolicyReferenceId, Guid? PolicyVersionId)> ResolvePersistencePolicyAuthorityIdsAsync(

@@ -129,7 +129,7 @@ public sealed class PostgresManagementStatutoryBenefitReviewRepository : IManage
               ON d.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
             JOIN sites.sites s ON s.site_id = r.site_id
             LEFT JOIN identity.users reviewer ON reviewer.user_id = r.reviewer_user_id
-            WHERE r.source_channel IN ('WEBPAY', 'ASSISTED_PAYMENT_TERMINAL')
+            WHERE r.source_channel IN ('WEBPAY', 'ASSISTED_PAYMENT_TERMINAL', 'OPERATOR_CONSOLE')
               AND r.site_id = ANY(@authorized_sites)
               AND (@site_reference IS NULL OR r.site_id = @site_reference)
                AND (@status = 'ALL' OR r.review_status = @status)
