@@ -724,7 +724,14 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             AmountMinorUnits, AmountMinorUnits, 0, "CONFIRMED", ConfirmationId, "CREATED",
             "terminal-cash-payment:test", "terminal-cash-payment:sha256:v1",
             DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(-4),
-            DateTimeOffset.UtcNow.AddMinutes(-3), TransactionCorrelation, "NOT_STARTED_IN_THIS_SLICE");
+            DateTimeOffset.UtcNow.AddMinutes(-3), TransactionCorrelation, "NOT_STARTED_IN_THIS_SLICE")
+        {
+            CashReceivedAt = DateTimeOffset.Parse("2026-09-28T06:31:29Z"),
+            BranchSite = "PITX Level 3",
+            TicketNumber = "1474119573105",
+            PlateNumber = "ABC1105",
+            EntryTime = DateTimeOffset.Parse("2026-09-28T04:15:59Z")
+        };
 
     private static FiscalIssuanceReferenceRecord Reference() =>
         new(

@@ -3,6 +3,7 @@ using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using Microsoft.Extensions.Logging;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -139,6 +140,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             .ReadByAppliedTariffSnapshotAsync(cashPayment, cancellationToken)
             .ConfigureAwait(false);
         EnsureStatutoryFiscalLinkageCanBeFiscalized(statutoryFiscalLinkage);
+        EnsureParkingFiscalContextAvailable(cashPayment);
         var posServerEndpoint = ResolvePosServerEndpoint(cashPayment);
 
         var prepared = await _orchestrationService.PreparePendingAsync(
@@ -478,9 +480,17 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 cancellationToken)
             .ConfigureAwait(false);
 
-        return reference is null
-            ? null
-            : ToResult(cashPayment, reference, correlationId, posServerCallAttempted: false);
+        if (reference is null)
+        {
+            return null;
+        }
+
+        return ToResult(
+            cashPayment,
+            reference,
+            correlationId,
+            posServerCallAttempted: false,
+            exitAuthorizationIssued: cashPayment.ExitAuthorizationIssued);
     }
 
     private async Task<TerminalCashPaymentReadback> ReadConfirmedCashPaymentAsync(
@@ -900,11 +910,21 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         FiscalIssuanceReferenceRecord reference,
         TerminalCashStatutoryFiscalLinkageContext? statutoryContext)
     {
+        EnsureParkingFiscalContextAvailable(cashPayment);
+        var entryTime = cashPayment.EntryTime!.Value.ToUniversalTime();
+        var paymentTime = cashPayment.CashReceivedAt!.Value.ToUniversalTime();
+        var duration = paymentTime - entryTime;
         var context = new Dictionary<string, string>
         {
             ["terminalCashTenderId"] = cashPayment.TerminalCashTenderId.ToString("D"),
             ["cashCustodySessionId"] = cashPayment.CashCustodySessionId.ToString("D"),
-            ["fiscalIssuanceReferenceId"] = reference.FiscalIssuanceReferenceId.ToString("D")
+            ["fiscalIssuanceReferenceId"] = reference.FiscalIssuanceReferenceId.ToString("D"),
+            ["branch_site"] = cashPayment.BranchSite!.Trim(),
+            ["ticket_number"] = cashPayment.TicketNumber!.Trim(),
+            ["plate_number"] = cashPayment.PlateNumber!.Trim(),
+            ["entry_time"] = entryTime.ToString("O", CultureInfo.InvariantCulture),
+            ["payment_time"] = paymentTime.ToString("O", CultureInfo.InvariantCulture),
+            ["parking_duration"] = FormatParkingDuration(duration)
         };
 
         if (statutoryContext is null)
@@ -921,6 +941,29 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         context["appliedTariffSnapshotId"] = statutoryContext.AppliedTariffSnapshotId.ToString("D");
         context["originalTariffSnapshotId"] = statutoryContext.OriginalTariffSnapshotId.ToString("D");
         return context;
+    }
+
+    private static void EnsureParkingFiscalContextAvailable(TerminalCashPaymentReadback cashPayment)
+    {
+        if (string.IsNullOrWhiteSpace(cashPayment.BranchSite) ||
+            string.IsNullOrWhiteSpace(cashPayment.TicketNumber) ||
+            string.IsNullOrWhiteSpace(cashPayment.PlateNumber) ||
+            cashPayment.EntryTime is null ||
+            cashPayment.CashReceivedAt is null ||
+            cashPayment.EntryTime.Value > cashPayment.CashReceivedAt.Value)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_CONTEXT_INCOMPLETE",
+                "Authoritative parking context is incomplete for Sales Invoice issuance.");
+        }
+    }
+
+    private static string FormatParkingDuration(TimeSpan duration)
+    {
+        var totalHours = checked((long)Math.Floor(duration.TotalHours));
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{totalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}");
     }
 
     private static void AddIfPresent(Dictionary<string, string> context, string key, string? value)

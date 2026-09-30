@@ -152,7 +152,8 @@ public static class CentralPmsRbacPolicyCatalog
             ],
             ["TerminalCashPayableBasisRead"] =
             [
-                AptHumanPermissionCatalog.PayableBasisRead
+                AptHumanPermissionCatalog.PayableBasisRead,
+                AptHumanPermissionCatalog.CashierOperate
             ],
             ["ShiftManagementView"] =
             [
