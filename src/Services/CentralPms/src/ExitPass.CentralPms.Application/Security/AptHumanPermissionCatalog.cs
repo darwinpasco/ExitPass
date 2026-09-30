@@ -5,6 +5,13 @@ namespace ExitPass.CentralPms.Application.Security;
 /// </summary>
 public static class AptHumanPermissionCatalog
 {
+    /// <summary>
+    /// Canonical composite authority assigned to the APT_CASHIER_OPERATOR role.
+    /// Endpoint policies may admit it only at established APT cashier boundaries;
+    /// current human session, device binding, and Site scope remain mandatory.
+    /// </summary>
+    public const string CashierOperate = "apt.cashier.operate";
+
     /// <summary>Allows a scoped, device-bound human to enter and use APT.</summary>
     public const string Access = "apt.access";
 

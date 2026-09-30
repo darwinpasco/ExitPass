@@ -127,12 +127,15 @@ public sealed class AptPayableBasisReadinessContractTests
     }
 
     [Fact]
-    public void AptPayableBasisPolicy_MapsToNarrowTerminalCashPermission()
+    public void AptPayableBasisPolicy_AdmitsDedicatedReadOrCanonicalAptCashierAuthority()
     {
         AptPayableBasisEndpoints.ReadPolicy.Should().Be("TerminalCashPayableBasisRead");
         CentralPmsRbacPolicyCatalog.ResolvePermissions(AptPayableBasisEndpoints.ReadPolicy)
             .Should()
-            .BeEquivalentTo([AptHumanPermissionCatalog.PayableBasisRead]);
+            .BeEquivalentTo([
+                AptHumanPermissionCatalog.PayableBasisRead,
+                AptHumanPermissionCatalog.CashierOperate
+            ]);
         CentralPmsRbacPolicyCatalog.ResolvePermissions(AptPayableBasisEndpoints.ReadPolicy)
             .Should()
             .NotContain(AptHumanPermissionCatalog.OperationalPermissions);

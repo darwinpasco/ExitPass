@@ -52,6 +52,7 @@ public static class AptPayableBasisEndpoints
         HttpRequest request,
         AptPayableBasisResolveRequest? body,
         IAptPayableBasisReadinessService service,
+        ICentralPmsRbacRepository rbacRepository,
         CancellationToken cancellationToken)
     {
         using var activity = ActivitySource.StartActivity("ResolveTerminalCashPayableBasis", ActivityKind.Server);
@@ -68,6 +69,19 @@ public static class AptPayableBasisEndpoints
             return Results.Json(forbidden, statusCode: StatusCodes.Status403Forbidden);
         }
 
+        var authorityFailure = await ValidateAptAuthorityAsync(
+            request,
+            rbacRepository,
+            body.SiteId,
+            body.TerminalId,
+            body.CorrelationId,
+            cancellationToken);
+        if (authorityFailure is not null)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, authorityFailure.Message);
+            return Results.Json(authorityFailure, statusCode: StatusCodes.Status403Forbidden);
+        }
+
         var result = await service.ResolveAsync(body, cancellationToken);
         return ToHttpResult(result, request.HttpContext.Response);
     }
@@ -76,6 +90,7 @@ public static class AptPayableBasisEndpoints
         HttpRequest request,
         AptPayableBasisRevalidateRequest? body,
         IAptPayableBasisReadinessService service,
+        ICentralPmsRbacRepository rbacRepository,
         CancellationToken cancellationToken)
     {
         using var activity = ActivitySource.StartActivity("RevalidateTerminalCashPayableBasis", ActivityKind.Server);
@@ -90,6 +105,19 @@ public static class AptPayableBasisEndpoints
         {
             activity?.SetStatus(ActivityStatusCode.Error, forbidden!.Message);
             return Results.Json(forbidden, statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        var authorityFailure = await ValidateAptAuthorityAsync(
+            request,
+            rbacRepository,
+            body.SiteId,
+            body.TerminalId,
+            body.CorrelationId,
+            cancellationToken);
+        if (authorityFailure is not null)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, authorityFailure.Message);
+            return Results.Json(authorityFailure, statusCode: StatusCodes.Status403Forbidden);
         }
 
         var result = await service.RevalidateAsync(body, cancellationToken);
@@ -149,6 +177,77 @@ public static class AptPayableBasisEndpoints
         }
 
         return true;
+    }
+
+    public static async Task<ErrorResponse?> ValidateAptAuthorityAsync(
+        HttpRequest request,
+        ICentralPmsRbacRepository repository,
+        string siteId,
+        string terminalId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(
+                request.HttpContext.User.Identity?.AuthenticationType,
+                HumanSessionAuthenticationHandler.SchemeName,
+                StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        if (!Guid.TryParse(siteId, out var requestedSiteId) ||
+            requestedSiteId == Guid.Empty ||
+            !HasExactSiteScope(request.HttpContext.User, requestedSiteId))
+        {
+            return BuildError(
+                "FORBIDDEN_SITE",
+                "Caller is not authorized for the requested Site.",
+                correlationId,
+                false);
+        }
+
+        if (!Guid.TryParse(
+                request.HttpContext.User.FindFirst("device_service_identity_id")?.Value,
+                out var deviceServiceIdentityId) ||
+            deviceServiceIdentityId == Guid.Empty)
+        {
+            return BuildError(
+                "FORBIDDEN_TERMINAL",
+                "The trusted terminal binding is unavailable.",
+                correlationId,
+                false);
+        }
+
+        var device = await repository.GetAptDeviceAuthorizationAsync(
+            deviceServiceIdentityId,
+            requestedSiteId,
+            cancellationToken);
+        if (device is null ||
+            !device.Active ||
+            !device.SiteAssigned ||
+            !string.Equals(device.IdentityType, "DEVICE", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(device.OwningServiceName, "ExitPass.AssistedPaymentTerminal", StringComparison.Ordinal) ||
+            !string.Equals(device.ServiceIdentityCode, terminalId?.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildError(
+                "FORBIDDEN_TERMINAL",
+                "The trusted terminal is not authorized for the requested Site.",
+                correlationId,
+                false);
+        }
+
+        return null;
+    }
+
+    private static bool HasExactSiteScope(System.Security.Claims.ClaimsPrincipal principal, Guid siteId)
+    {
+        var expected = siteId.ToString("D");
+        return principal.FindAll("site_id").Any(claim =>
+                   string.Equals(claim.Value, expected, StringComparison.OrdinalIgnoreCase)) ||
+               string.Equals(
+                   principal.FindFirst("operator_effective_site_id")?.Value,
+                   expected,
+                   StringComparison.OrdinalIgnoreCase);
     }
 
     private static ErrorResponse BuildError(

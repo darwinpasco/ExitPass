@@ -551,7 +551,7 @@ public static class PaymentTestDataHelper
                 @plate_number_hash,
                 'ABC1234',
                 NULL,
-                NULL,
+                @ticket_number_masked,
                 NOW() - INTERVAL '2 hours',
                 'PAYMENT_REQUIRED',
                 'ACTIVE',
@@ -657,6 +657,7 @@ public static class PaymentTestDataHelper
 
         command.Parameters.AddWithValue("description", description);
         command.Parameters.AddWithValue("vendor_session_ref", $"RACE-VSESSION-{context.ParkingSessionId:N}");
+        command.Parameters.AddWithValue("ticket_number_masked", $"TICKET-{context.ParkingSessionId:N}");
         command.Parameters.AddWithValue("vendor_tariff_ref", $"VTAR-{context.TariffSnapshotId:N}");
         command.Parameters.AddWithValue("tariff_version_reference", $"TVR-{context.TariffSnapshotId:N}");
 

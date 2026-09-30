@@ -48,6 +48,15 @@ public interface ICentralPmsRbacRepository
         Task.FromResult<CentralPmsServiceIdentityAuthorizationRecord?>(null);
 
     /// <summary>
+    /// Resolves the canonical APT device identity, terminal code, and active Site assignment.
+    /// </summary>
+    Task<CentralPmsAptDeviceAuthorizationRecord?> GetAptDeviceAuthorizationAsync(
+        Guid serviceIdentityId,
+        Guid siteId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<CentralPmsAptDeviceAuthorizationRecord?>(null);
+
+    /// <summary>
     /// Records denied privileged access where the audit schema supports it.
     /// </summary>
     Task RecordDeniedAsync(
@@ -79,6 +88,17 @@ public interface ICentralPmsRbacRepository
 /// </summary>
 public sealed record CentralPmsServiceIdentityAuthorizationRecord(
     Guid ServiceIdentityId,
+    string IdentityType,
+    string OwningServiceName,
+    bool Active,
+    bool SiteAssigned);
+
+/// <summary>
+/// Server-owned APT device facts used to bind an APT human session to its terminal and Site.
+/// </summary>
+public sealed record CentralPmsAptDeviceAuthorizationRecord(
+    Guid ServiceIdentityId,
+    string ServiceIdentityCode,
     string IdentityType,
     string OwningServiceName,
     bool Active,
