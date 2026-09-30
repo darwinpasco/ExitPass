@@ -217,7 +217,9 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     {
         var payableBasis = CentralPmsRbacPolicyCatalog.ResolvePermissions("TerminalCashPayableBasisRead");
 
-        payableBasis.Should().ContainSingle().Which.Should().Be(AptHumanPermissionCatalog.PayableBasisRead);
+        payableBasis.Should().BeEquivalentTo(
+            AptHumanPermissionCatalog.PayableBasisRead,
+            AptHumanPermissionCatalog.CashierOperate);
         payableBasis.Should().NotContain(AptHumanPermissionCatalog.OperationalPermissions);
         AptHumanPermissionCatalog.ReadOnlyPermissions.Should().ContainSingle()
             .Which.Should().Be(AptHumanPermissionCatalog.PayableBasisRead);

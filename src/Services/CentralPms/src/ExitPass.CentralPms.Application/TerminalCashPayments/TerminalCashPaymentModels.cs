@@ -134,7 +134,12 @@ public sealed record TerminalCashPaymentReadback(
     string? TicketNumber = null,
     string? PlateNumber = null,
     string? SiteName = null,
-    DateTimeOffset? EntryTime = null);
+    DateTimeOffset? EntryTime = null)
+{
+    public DateTimeOffset? CashReceivedAt { get; init; }
+
+    public bool ExitAuthorizationIssued { get; init; }
+}
 
 /// <summary>
 /// Controlled terminal cash payment rejection.

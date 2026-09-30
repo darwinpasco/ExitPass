@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.TerminalCashPayments;
+using ExitPass.CentralPms.Infrastructure.TerminalCashPayments;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using Npgsql;
 using NpgsqlTypes;
@@ -72,6 +73,32 @@ public sealed class TerminalCashPaymentApiIntegrationTests
             Assert.Equal(body.PaymentConfirmationId, readbackBody.PaymentConfirmationId);
             Assert.Equal("CONFIRMED", readbackBody.CanonicalPaymentStatus);
             Assert.Equal("NOT_STARTED_IN_THIS_SLICE", readbackBody.FiscalStatus);
+
+            var authoritativeReadback = await new TerminalCashPaymentRepository(ConnectionString)
+                .GetByTerminalCashTenderIdAsync(request.TerminalCashTenderId, CancellationToken.None);
+            Assert.NotNull(authoritativeReadback);
+            Assert.Equal(
+                request.CashReceivedAt.ToUnixTimeMilliseconds(),
+                authoritativeReadback!.CashReceivedAt!.Value.ToUnixTimeMilliseconds());
+            Assert.Equal($"TEST-SITE-{context.SiteId:N}", authoritativeReadback.SiteName);
+            Assert.Equal($"TICKET-{context.ParkingSessionId:N}", authoritativeReadback.TicketNumber);
+            Assert.Equal("ABC1234", authoritativeReadback.PlateNumber);
+            Assert.NotNull(authoritativeReadback.EntryTime);
+            Assert.False(authoritativeReadback.ExitAuthorizationIssued);
+
+            var authorization = await PaymentRoutineTestHelper.IssueExitAuthorizationAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                body.PaymentAttemptId,
+                context.RequestedByUserId,
+                context.CorrelationId);
+            Assert.NotNull(authorization);
+            Assert.Equal("ISSUED", authorization!.AuthorizationStatus);
+
+            var issuedReadback = await new TerminalCashPaymentRepository(ConnectionString)
+                .GetByTerminalCashTenderIdAsync(request.TerminalCashTenderId, CancellationToken.None);
+            Assert.NotNull(issuedReadback);
+            Assert.True(issuedReadback!.ExitAuthorizationIssued);
         }
         finally
         {
@@ -238,6 +265,36 @@ public sealed class TerminalCashPaymentApiIntegrationTests
     }
 
     [Fact]
+    public async Task TerminalCashPayment_WithSnapshotValidAtCashReceivedButExpiredBeforeSubmission_Succeeds()
+    {
+        await EnsureTerminalCashPatchAppliedAsync();
+        var context = PaymentTestContext.Create(nameof(TerminalCashPayment_WithSnapshotValidAtCashReceivedButExpiredBeforeSubmission_Succeeds));
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed terminal cash-payment historical tariff acceptance.");
+
+        try
+        {
+            var cashReceivedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+            await SetSnapshotLifecycleAsync(
+                context.TariffSnapshotId,
+                "EXPIRED",
+                cashReceivedAt.AddMinutes(-10),
+                cashReceivedAt.AddMinutes(1));
+
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var request = BuildRequest(context) with { CashReceivedAt = cashReceivedAt };
+            using var response = await SendCreateAsync(client, request, $"cash-{Guid.NewGuid():N}", context.CorrelationId);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.Equal(1, (await ReadCountsAsync(context)).PaymentConfirmationCount);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
     public async Task TerminalCashPayment_WithExpiredTariff_ReturnsConflict()
     {
         await EnsureTerminalCashPatchAppliedAsync();
@@ -246,13 +303,17 @@ public sealed class TerminalCashPaymentApiIntegrationTests
 
         try
         {
-            await ExecuteAsync(
-                "UPDATE core.tariff_snapshots SET expires_at = NOW() - INTERVAL '1 minute' WHERE tariff_snapshot_id = @tariff_snapshot_id;",
-                ("tariff_snapshot_id", NpgsqlDbType.Uuid, context.TariffSnapshotId));
+            var cashReceivedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+            await SetSnapshotLifecycleAsync(
+                context.TariffSnapshotId,
+                "EXPIRED",
+                cashReceivedAt.AddMinutes(-10),
+                cashReceivedAt.AddMilliseconds(-1));
 
             using var factory = new CustomWebApplicationFactory();
             using var client = factory.CreateClient();
-            using var response = await SendCreateAsync(client, BuildRequest(context), $"cash-{Guid.NewGuid():N}", context.CorrelationId);
+            var request = BuildRequest(context) with { CashReceivedAt = cashReceivedAt };
+            using var response = await SendCreateAsync(client, request, $"cash-{Guid.NewGuid():N}", context.CorrelationId);
 
             Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
             var error = await ReadJsonAsync<ErrorResponse>(response);
@@ -260,6 +321,131 @@ public sealed class TerminalCashPaymentApiIntegrationTests
         }
         finally
         {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
+    public async Task TerminalCashPayment_WithInvalidatedTariff_ReturnsConflict()
+    {
+        await EnsureTerminalCashPatchAppliedAsync();
+        var context = PaymentTestContext.Create(nameof(TerminalCashPayment_WithInvalidatedTariff_ReturnsConflict));
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed terminal cash-payment invalidated tariff.");
+
+        try
+        {
+            var cashReceivedAt = DateTimeOffset.UtcNow;
+            await SetSnapshotLifecycleAsync(
+                context.TariffSnapshotId,
+                "INVALIDATED",
+                cashReceivedAt.AddMinutes(-10),
+                cashReceivedAt.AddMinutes(10));
+
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var request = BuildRequest(context) with { CashReceivedAt = cashReceivedAt };
+            using var response = await SendCreateAsync(client, request, $"cash-{Guid.NewGuid():N}", context.CorrelationId);
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Equal("STALE_TARIFF", (await ReadJsonAsync<ErrorResponse>(response)).ErrorCode);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
+    public async Task TerminalCashPayment_WithConsumedTariff_ReturnsConflict()
+    {
+        await EnsureTerminalCashPatchAppliedAsync();
+        var context = PaymentTestContext.Create(nameof(TerminalCashPayment_WithConsumedTariff_ReturnsConflict));
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed terminal cash-payment consumed tariff.");
+
+        try
+        {
+            var cashReceivedAt = DateTimeOffset.UtcNow;
+            await SetSnapshotLifecycleAsync(
+                context.TariffSnapshotId,
+                "CONSUMED",
+                cashReceivedAt.AddMinutes(-10),
+                cashReceivedAt.AddMinutes(10),
+                consumedAt: cashReceivedAt.AddMinutes(-1));
+
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var request = BuildRequest(context) with { CashReceivedAt = cashReceivedAt };
+            using var response = await SendCreateAsync(client, request, $"cash-{Guid.NewGuid():N}", context.CorrelationId);
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Equal("STALE_TARIFF", (await ReadJsonAsync<ErrorResponse>(response)).ErrorCode);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
+    public async Task TerminalCashPayment_WithSnapshotSupersededBeforeCashReceived_ReturnsConflict()
+    {
+        await EnsureTerminalCashPatchAppliedAsync();
+        var context = PaymentTestContext.Create(nameof(TerminalCashPayment_WithSnapshotSupersededBeforeCashReceived_ReturnsConflict));
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed terminal cash-payment unprovable superseded tariff.");
+
+        try
+        {
+            var cashReceivedAt = DateTimeOffset.UtcNow;
+            await SupersedeSnapshotAsync(
+                context.TariffSnapshotId,
+                Guid.NewGuid(),
+                cashReceivedAt.AddMinutes(-10),
+                cashReceivedAt.AddMinutes(10),
+                cashReceivedAt.AddMinutes(-1));
+
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var request = BuildRequest(context) with { CashReceivedAt = cashReceivedAt };
+            using var response = await SendCreateAsync(client, request, $"cash-{Guid.NewGuid():N}", context.CorrelationId);
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Equal("STALE_TARIFF", (await ReadJsonAsync<ErrorResponse>(response)).ErrorCode);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
+    public async Task TerminalCashPayment_WithSnapshotSupersededAfterCashReceived_Succeeds()
+    {
+        await EnsureTerminalCashPatchAppliedAsync();
+        var context = PaymentTestContext.Create(nameof(TerminalCashPayment_WithSnapshotSupersededAfterCashReceived_Succeeds));
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed terminal cash-payment historically authoritative superseded tariff.");
+        var successorTariffSnapshotId = Guid.NewGuid();
+
+        try
+        {
+            var cashReceivedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+            await SupersedeSnapshotAsync(
+                context.TariffSnapshotId,
+                successorTariffSnapshotId,
+                cashReceivedAt.AddMinutes(-10),
+                cashReceivedAt.AddMinutes(10),
+                cashReceivedAt.AddMinutes(1));
+
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var request = BuildRequest(context) with { CashReceivedAt = cashReceivedAt };
+            using var response = await SendCreateAsync(client, request, $"cash-{Guid.NewGuid():N}", context.CorrelationId);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.Equal(1, (await ReadCountsAsync(context)).PaymentConfirmationCount);
+        }
+        finally
+        {
+            await RemoveSuccessorSnapshotAsync(context.TariffSnapshotId, successorTariffSnapshotId);
             await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
         }
     }
@@ -287,6 +473,63 @@ public sealed class TerminalCashPaymentApiIntegrationTests
             Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
             var error = await ReadJsonAsync<ErrorResponse>(response);
             Assert.Equal("PAYABLE_BASIS_MISMATCH", error.ErrorCode);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
+    public async Task TerminalCashPayment_WithCurrencyMismatch_ReturnsConflict()
+    {
+        await EnsureTerminalCashPatchAppliedAsync();
+        var context = PaymentTestContext.Create(nameof(TerminalCashPayment_WithCurrencyMismatch_ReturnsConflict));
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed terminal cash-payment currency mismatch.");
+
+        try
+        {
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var request = BuildRequest(context) with { Currency = "USD" };
+            using var response = await SendCreateAsync(client, request, $"cash-{Guid.NewGuid():N}", context.CorrelationId);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal("UNSUPPORTED_CURRENCY", (await ReadJsonAsync<ErrorResponse>(response)).ErrorCode);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
+    public async Task TerminalCashPayment_WithSiteOrSiteGroupMismatch_ReturnsConflict()
+    {
+        await EnsureTerminalCashPatchAppliedAsync();
+        var context = PaymentTestContext.Create(nameof(TerminalCashPayment_WithSiteOrSiteGroupMismatch_ReturnsConflict));
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed terminal cash-payment scope mismatch.");
+
+        try
+        {
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+
+            using var wrongSite = await SendCreateAsync(
+                client,
+                BuildRequest(context) with { SiteId = Guid.NewGuid() },
+                $"cash-{Guid.NewGuid():N}",
+                context.CorrelationId);
+            Assert.Equal(HttpStatusCode.Conflict, wrongSite.StatusCode);
+            Assert.Equal("INVALID_SESSION_TARIFF_RELATIONSHIP", (await ReadJsonAsync<ErrorResponse>(wrongSite)).ErrorCode);
+
+            using var wrongSiteGroup = await SendCreateAsync(
+                client,
+                BuildRequest(context) with { SiteGroupId = Guid.NewGuid() },
+                $"cash-{Guid.NewGuid():N}",
+                Guid.NewGuid());
+            Assert.Equal(HttpStatusCode.Conflict, wrongSiteGroup.StatusCode);
+            Assert.Equal("INVALID_SESSION_TARIFF_RELATIONSHIP", (await ReadJsonAsync<ErrorResponse>(wrongSiteGroup)).ErrorCode);
         }
         finally
         {
@@ -538,6 +781,126 @@ public sealed class TerminalCashPaymentApiIntegrationTests
 
         await command.ExecuteNonQueryAsync();
     }
+
+    private static Task SetSnapshotLifecycleAsync(
+        Guid tariffSnapshotId,
+        string status,
+        DateTimeOffset calculatedAt,
+        DateTimeOffset expiresAt,
+        DateTimeOffset? consumedAt = null) =>
+        ExecuteAsync(
+            """
+            UPDATE core.tariff_snapshots
+            SET snapshot_status = @snapshot_status::core.tariff_snapshot_status_enum,
+                calculated_at = @calculated_at,
+                expires_at = @expires_at,
+                consumed_at = @consumed_at,
+                updated_at = NOW(),
+                row_version = row_version + 1
+            WHERE tariff_snapshot_id = @tariff_snapshot_id;
+            """,
+            ("snapshot_status", NpgsqlDbType.Varchar, status),
+            ("calculated_at", NpgsqlDbType.TimestampTz, calculatedAt),
+            ("expires_at", NpgsqlDbType.TimestampTz, expiresAt),
+            ("consumed_at", NpgsqlDbType.TimestampTz, (object?)consumedAt ?? DBNull.Value),
+            ("tariff_snapshot_id", NpgsqlDbType.Uuid, tariffSnapshotId));
+
+    private static Task SupersedeSnapshotAsync(
+        Guid tariffSnapshotId,
+        Guid successorTariffSnapshotId,
+        DateTimeOffset calculatedAt,
+        DateTimeOffset expiresAt,
+        DateTimeOffset successorCalculatedAt) =>
+        ExecuteAsync(
+            """
+            UPDATE core.tariff_snapshots
+            SET snapshot_status = 'SUPERSEDED'::core.tariff_snapshot_status_enum,
+                calculated_at = @calculated_at,
+                expires_at = @expires_at,
+                superseded_by_tariff_snapshot_id = NULL,
+                updated_at = NOW(),
+                row_version = row_version + 1
+            WHERE tariff_snapshot_id = @tariff_snapshot_id;
+
+            INSERT INTO core.tariff_snapshots (
+                tariff_snapshot_id,
+                parking_session_id,
+                superseded_by_tariff_snapshot_id,
+                vendor_system_id,
+                vendor_tariff_ref,
+                tariff_version_reference,
+                currency_code,
+                gross_amount,
+                statutory_discount_amount,
+                coupon_discount_amount,
+                net_amount,
+                statutory_discount_validation_id,
+                coupon_application_id,
+                snapshot_status,
+                calculated_at,
+                expires_at,
+                consumed_at,
+                correlation_id,
+                created_at,
+                created_by_service_identity_id,
+                updated_at,
+                updated_by_service_identity_id,
+                row_version)
+            SELECT
+                @successor_tariff_snapshot_id,
+                parking_session_id,
+                NULL,
+                vendor_system_id,
+                vendor_tariff_ref,
+                tariff_version_reference,
+                currency_code,
+                gross_amount,
+                statutory_discount_amount,
+                coupon_discount_amount,
+                net_amount,
+                statutory_discount_validation_id,
+                coupon_application_id,
+                'ACTIVE'::core.tariff_snapshot_status_enum,
+                @successor_calculated_at,
+                @expires_at,
+                NULL,
+                correlation_id,
+                NOW(),
+                created_by_service_identity_id,
+                NOW(),
+                updated_by_service_identity_id,
+                1
+            FROM core.tariff_snapshots
+            WHERE tariff_snapshot_id = @tariff_snapshot_id;
+
+            UPDATE core.tariff_snapshots
+            SET superseded_by_tariff_snapshot_id = @successor_tariff_snapshot_id,
+                updated_at = NOW(),
+                row_version = row_version + 1
+            WHERE tariff_snapshot_id = @tariff_snapshot_id;
+            """,
+            ("tariff_snapshot_id", NpgsqlDbType.Uuid, tariffSnapshotId),
+            ("successor_tariff_snapshot_id", NpgsqlDbType.Uuid, successorTariffSnapshotId),
+            ("calculated_at", NpgsqlDbType.TimestampTz, calculatedAt),
+            ("expires_at", NpgsqlDbType.TimestampTz, expiresAt),
+            ("successor_calculated_at", NpgsqlDbType.TimestampTz, successorCalculatedAt));
+
+    private static Task RemoveSuccessorSnapshotAsync(
+        Guid tariffSnapshotId,
+        Guid successorTariffSnapshotId) =>
+        ExecuteAsync(
+            """
+            UPDATE core.tariff_snapshots
+            SET superseded_by_tariff_snapshot_id = NULL,
+                updated_at = NOW(),
+                row_version = row_version + 1
+            WHERE tariff_snapshot_id = @tariff_snapshot_id;
+
+            DELETE FROM core.tariff_snapshots
+            WHERE tariff_snapshot_id = @successor_tariff_snapshot_id;
+            """,
+            ("tariff_snapshot_id", NpgsqlDbType.Uuid, tariffSnapshotId),
+            ("successor_tariff_snapshot_id", NpgsqlDbType.Uuid, successorTariffSnapshotId));
 
     private static async Task<T> ReadScalarAsync<T>(
         string sql,

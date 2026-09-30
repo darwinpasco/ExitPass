@@ -3,6 +3,7 @@ using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using Microsoft.Extensions.Logging;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -139,6 +140,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             .ReadByAppliedTariffSnapshotAsync(cashPayment, cancellationToken)
             .ConfigureAwait(false);
         EnsureStatutoryFiscalLinkageCanBeFiscalized(statutoryFiscalLinkage);
+        EnsureParkingFiscalContextAvailable(cashPayment);
         var posServerEndpoint = ResolvePosServerEndpoint(cashPayment);
 
         var prepared = await _orchestrationService.PreparePendingAsync(
@@ -478,9 +480,17 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 cancellationToken)
             .ConfigureAwait(false);
 
-        return reference is null
-            ? null
-            : ToResult(cashPayment, reference, correlationId, posServerCallAttempted: false);
+        if (reference is null)
+        {
+            return null;
+        }
+
+        return ToResult(
+            cashPayment,
+            reference,
+            correlationId,
+            posServerCallAttempted: false,
+            exitAuthorizationIssued: cashPayment.ExitAuthorizationIssued);
     }
 
     private async Task<TerminalCashPaymentReadback> ReadConfirmedCashPaymentAsync(
@@ -900,18 +910,22 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         FiscalIssuanceReferenceRecord reference,
         TerminalCashStatutoryFiscalLinkageContext? statutoryContext)
     {
+        EnsureParkingFiscalContextAvailable(cashPayment);
+        var entryTime = cashPayment.EntryTime!.Value.ToUniversalTime();
+        var paymentTime = cashPayment.CashReceivedAt!.Value.ToUniversalTime();
+        var duration = paymentTime - entryTime;
         var context = new Dictionary<string, string>
         {
             ["terminalCashTenderId"] = cashPayment.TerminalCashTenderId.ToString("D"),
             ["cashCustodySessionId"] = cashPayment.CashCustodySessionId.ToString("D"),
-            ["fiscalIssuanceReferenceId"] = reference.FiscalIssuanceReferenceId.ToString("D")
+            ["fiscalIssuanceReferenceId"] = reference.FiscalIssuanceReferenceId.ToString("D"),
+            ["branch_site"] = cashPayment.SiteName!.Trim(),
+            ["ticket_number"] = cashPayment.TicketNumber!.Trim(),
+            ["plate_number"] = cashPayment.PlateNumber!.Trim(),
+            ["entry_time"] = entryTime.ToString("O", CultureInfo.InvariantCulture),
+            ["payment_time"] = paymentTime.ToString("O", CultureInfo.InvariantCulture),
+            ["parking_duration"] = FormatParkingDuration(duration)
         };
-        AddIfPresent(context, "ticket_number", cashPayment.TicketNumber);
-        AddIfPresent(context, "plate_number", cashPayment.PlateNumber);
-        AddIfPresent(context, "branch_site", cashPayment.SiteName);
-        AddIfPresent(context, "entry_time", cashPayment.EntryTime?.ToString("O"));
-        AddIfPresent(context, "payment_time", cashPayment.ConfirmedAt.ToString("O"));
-        AddIfPresent(context, "parking_duration", FormatDuration(cashPayment.EntryTime, cashPayment.ConfirmedAt));
         context["payment_method"] = "CASH";
 
         if (statutoryContext is null)
@@ -930,24 +944,35 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         return context;
     }
 
+    private static void EnsureParkingFiscalContextAvailable(TerminalCashPaymentReadback cashPayment)
+    {
+        if (string.IsNullOrWhiteSpace(cashPayment.SiteName) ||
+            string.IsNullOrWhiteSpace(cashPayment.TicketNumber) ||
+            string.IsNullOrWhiteSpace(cashPayment.PlateNumber) ||
+            cashPayment.EntryTime is null ||
+            cashPayment.CashReceivedAt is null ||
+            cashPayment.EntryTime.Value > cashPayment.CashReceivedAt.Value)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_CONTEXT_INCOMPLETE",
+                "Authoritative parking context is incomplete for Sales Invoice issuance.");
+        }
+    }
+
+    private static string FormatParkingDuration(TimeSpan duration)
+    {
+        var totalHours = checked((long)Math.Floor(duration.TotalHours));
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{totalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}");
+    }
+
     private static void AddIfPresent(Dictionary<string, string> context, string key, string? value)
     {
         if (!string.IsNullOrWhiteSpace(value))
         {
             context[key] = value.Trim();
         }
-    }
-
-    private static string? FormatDuration(DateTimeOffset? entryTime, DateTimeOffset completedAt)
-    {
-        if (!entryTime.HasValue || completedAt < entryTime.Value) return null;
-        var totalMinutes = (long)Math.Floor((completedAt - entryTime.Value).TotalMinutes);
-        var hours = totalMinutes / 60;
-        var minutes = totalMinutes % 60;
-        if (hours == 0) return $"{minutes} minute{(minutes == 1 ? string.Empty : "s")}";
-        return minutes == 0
-            ? $"{hours} hour{(hours == 1 ? string.Empty : "s")}"
-            : $"{hours} hour{(hours == 1 ? string.Empty : "s")} {minutes:00} minutes";
     }
 
     private static void EnsureExistingReferenceMatchesTerminalCashPayment(

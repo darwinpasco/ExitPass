@@ -170,18 +170,55 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
 
         const string sql = """
             SELECT
-                cash_command.*,
+                tcp.terminal_cash_payment_command_id,
+                tcp.terminal_cash_tender_id,
+                tcp.payment_attempt_id,
+                tcp.cash_custody_session_id,
+                tcp.parking_session_id,
+                tcp.tariff_snapshot_id,
+                tcp.terminal_id,
+                tcp.site_id,
+                tcp.site_group_id,
+                tcp.pos_server_id,
+                tcp.cashier_id,
+                tcp.cashier_shift_id,
+                tcp.currency_code,
+                tcp.amount_due_minor_units,
+                tcp.amount_tendered_minor_units,
+                tcp.change_due_minor_units,
+                tcp.canonical_payment_status,
+                tcp.payment_confirmation_id,
+                tcp.result_classification,
+                tcp.idempotency_scope,
+                tcp.semantic_hash_source_version,
+                tcp.created_at,
+                tcp.confirmed_at,
+                tcp.last_updated_at,
+                tcp.original_correlation_id,
+                tcp.fiscal_status,
+                tcp.cash_received_at,
                 COALESCE(parking.ticket_number_masked, parking.vendor_session_ref) AS ticket_number,
-                parking.plate_number_masked,
-                site.site_name,
-                COALESCE(parking.entry_at, parking.created_at) AS entry_time
-            FROM core.terminal_cash_payment_commands AS cash_command
-            INNER JOIN core.parking_sessions AS parking
-                ON parking.parking_session_id = cash_command.parking_session_id
-            INNER JOIN sites.sites AS site
-                ON site.site_id = parking.site_id
-            WHERE cash_command.terminal_cash_tender_id = @terminal_cash_tender_id
-            ORDER BY cash_command.created_at DESC
+                parking.plate_number_masked AS plate_number,
+                site.site_name AS site_name,
+                COALESCE(parking.entry_at, parking.created_at) AS entry_time,
+                EXISTS (
+                    SELECT 1
+                    FROM core.exit_authorizations ea
+                    WHERE ea.parking_session_id = tcp.parking_session_id
+                      AND ea.payment_attempt_id = tcp.payment_attempt_id
+                      AND ea.payment_confirmation_id = tcp.payment_confirmation_id
+                      AND ea.authorization_status = 'ISSUED'
+                ) AS exit_authorization_issued
+            FROM core.terminal_cash_payment_commands tcp
+            INNER JOIN core.parking_sessions parking
+                ON parking.parking_session_id = tcp.parking_session_id
+               AND parking.site_id = tcp.site_id
+               AND parking.site_group_id = tcp.site_group_id
+            INNER JOIN sites.sites site
+                ON site.site_id = tcp.site_id
+               AND site.site_group_id = tcp.site_group_id
+            WHERE tcp.terminal_cash_tender_id = @terminal_cash_tender_id
+            ORDER BY tcp.created_at DESC
             LIMIT 1;
             """;
 
@@ -285,8 +322,17 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
                 ts.currency_code::text,
                 ts.net_amount,
                 ts.snapshot_status::text,
+                ts.calculated_at,
                 ts.expires_at,
-                ts.consumed_at
+                ts.consumed_at,
+                NOT EXISTS (
+                    SELECT 1
+                    FROM core.tariff_snapshots later_ts
+                    WHERE later_ts.parking_session_id = ts.parking_session_id
+                      AND later_ts.tariff_snapshot_id <> ts.tariff_snapshot_id
+                      AND later_ts.calculated_at > ts.calculated_at
+                      AND later_ts.calculated_at <= @cash_received_at
+                ) AS authoritative_at_cash_received
             FROM core.parking_sessions ps
             INNER JOIN core.tariff_snapshots ts
                 ON ts.parking_session_id = ps.parking_session_id
@@ -298,6 +344,7 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
         await using var dbCommand = new NpgsqlCommand(sql, connection, transaction) { CommandTimeout = 30 };
         dbCommand.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = command.Command.ParkingSessionId;
         dbCommand.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = command.Command.TariffSnapshotId;
+        dbCommand.Parameters.Add("cash_received_at", NpgsqlDbType.TimestampTz).Value = command.Command.CashReceivedAt;
 
         await using var reader = await dbCommand.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -317,9 +364,14 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
         }
 
         var status = reader.GetString(reader.GetOrdinal("snapshot_status"));
+        var calculatedAt = reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("calculated_at"));
         var expiresAt = reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("expires_at"));
-        if (!string.Equals(status, "ACTIVE", StringComparison.Ordinal) ||
-            expiresAt <= command.RequestedAt ||
+        var authoritativeAtCashReceived = reader.GetBoolean(reader.GetOrdinal("authoritative_at_cash_received"));
+        var statusCanProveHistoricalAuthority = status is "ACTIVE" or "EXPIRED" or "SUPERSEDED";
+        if (!statusCanProveHistoricalAuthority ||
+            calculatedAt > command.Command.CashReceivedAt ||
+            command.Command.CashReceivedAt >= expiresAt ||
+            !authoritativeAtCashReceived ||
             !reader.IsDBNull(reader.GetOrdinal("consumed_at")))
         {
             throw new TerminalCashPaymentRejectedException("STALE_TARIFF", "Tariff snapshot is stale or expired.");
@@ -788,11 +840,15 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
             reader.GetGuid(reader.GetOrdinal("original_correlation_id")),
             reader.GetString(reader.GetOrdinal("fiscal_status")),
             OptionalString(reader, "ticket_number"),
-            OptionalString(reader, "plate_number_masked"),
+            OptionalString(reader, "plate_number"),
             OptionalString(reader, "site_name"),
             reader.IsDBNull(reader.GetOrdinal("entry_time"))
                 ? null
-                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("entry_time")));
+                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("entry_time")))
+        {
+            CashReceivedAt = reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("cash_received_at")),
+            ExitAuthorizationIssued = reader.GetBoolean(reader.GetOrdinal("exit_authorization_issued"))
+        };
     }
 
     private static TerminalCashPaymentResult ToCreatedResult(TerminalCashPaymentRecord record) =>

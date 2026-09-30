@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Globalization;
 using ExitPass.CentralPms.Api.Endpoints;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.FiscalIssuance;
@@ -38,6 +39,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     private static readonly Guid StatutoryApplicationId = Guid.Parse("21000000-0000-4000-8000-000000000033");
     private static readonly Guid OriginalTariffSnapshotId = Guid.Parse("21000000-0000-4000-8000-000000000034");
     private static readonly Guid AppliedPolicyReferenceId = Guid.Parse("21000000-0000-4000-8000-000000000035");
+    private static readonly DateTimeOffset EntryTime = DateTimeOffset.Parse("2026-09-28T04:15:59Z", CultureInfo.InvariantCulture);
+    private static readonly DateTimeOffset CashReceivedAt = DateTimeOffset.Parse("2026-09-28T06:31:29Z", CultureInfo.InvariantCulture);
 
     [Fact]
     public async Task TerminalCashFiscalIssuance_ConfirmedCashPayment_TriggersExistingFiscalIssuancePath()
@@ -70,6 +73,12 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal("CASH", posIntegration.LastFiscalContext!.Tenders.Single().ProviderRef);
         Assert.Empty(posIntegration.LastFiscalContext.PayableBasis.DiscountReferences);
         Assert.Empty(posIntegration.LastFiscalContext.DiscountPrivilegeDetails);
+        Assert.Equal("PITX Level 3", posIntegration.LastFiscalContext.ReferenceContext["branch_site"]);
+        Assert.Equal("1474119573105", posIntegration.LastFiscalContext.ReferenceContext["ticket_number"]);
+        Assert.Equal("ABC1105", posIntegration.LastFiscalContext.ReferenceContext["plate_number"]);
+        Assert.Equal(EntryTime.ToString("O", CultureInfo.InvariantCulture), posIntegration.LastFiscalContext.ReferenceContext["entry_time"]);
+        Assert.Equal(CashReceivedAt.ToString("O", CultureInfo.InvariantCulture), posIntegration.LastFiscalContext.ReferenceContext["payment_time"]);
+        Assert.Equal("02:15:30", posIntegration.LastFiscalContext.ReferenceContext["parking_duration"]);
         Assert.Equal(1, exitAuthorization.CallCount);
         Assert.Equal(1, acknowledgment.CallCount);
     }
@@ -273,6 +282,24 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     }
 
     [Fact]
+    public async Task TerminalCashFiscalIssuance_IncompleteAuthoritativeParkingContext_FailsBeforeFiscalPreparation()
+    {
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var service = CreateService(
+            CashPayment() with { TicketNumber = null },
+            repo,
+            posIntegration);
+
+        var ex = await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(
+            () => service.IssueOrReadAsync(Command(), CancellationToken.None));
+
+        Assert.Equal("TERMINAL_CASH_FISCAL_CONTEXT_INCOMPLETE", ex.ErrorCode);
+        Assert.Equal(0, repo.CreateCount);
+        Assert.Equal(0, posIntegration.IssueCallCount);
+    }
+
+    [Fact]
     public async Task TerminalCashFiscalIssuance_UnconfirmedCashPayment_IsRejectedWithoutPaymentOrchestratorEvidence()
     {
         var service = CreateService(CashPayment(canonicalPaymentStatus: "PENDING"));
@@ -363,7 +390,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         var issued = await firstService.IssueOrReadAsync(Command(), CancellationToken.None);
 
         var secondService = CreateService(
-            CashPayment(),
+            CashPayment() with { ExitAuthorizationIssued = true },
             repo,
             new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied));
         var readback = await secondService.GetByTerminalCashTenderIdAsync(
@@ -374,6 +401,30 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.NotNull(readback);
         Assert.Equal(issued.FiscalIssuanceReferenceId, readback!.FiscalIssuanceReferenceId);
         Assert.Equal(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded, readback.FiscalIssuanceState);
+        Assert.True(readback.ExitAuthorizationIssued);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_ReadbackWithoutIssuedAuthorization_RemainsFailClosed()
+    {
+        var repo = new InMemoryFiscalReferenceRepository();
+        var service = CreateService(
+            CashPayment(),
+            repo,
+            new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied));
+        await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        var readbackService = CreateService(
+            CashPayment() with { ExitAuthorizationIssued = false },
+            repo,
+            new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied));
+        var readback = await readbackService.GetByTerminalCashTenderIdAsync(
+            TerminalCashTenderId,
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        Assert.NotNull(readback);
+        Assert.False(readback!.ExitAuthorizationIssued);
     }
 
     [Fact]
@@ -673,7 +724,14 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             ConfirmedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
             LastUpdatedAt: DateTimeOffset.UtcNow,
             CorrelationId: Guid.Parse("21000000-0000-4000-8000-000000000014"),
-            FiscalStatus: "NOT_STARTED_IN_THIS_SLICE");
+            FiscalStatus: "NOT_STARTED_IN_THIS_SLICE")
+        {
+            CashReceivedAt = CashReceivedAt,
+            SiteName = "PITX Level 3",
+            TicketNumber = "1474119573105",
+            PlateNumber = "ABC1105",
+            EntryTime = EntryTime
+        };
 
     private static TerminalCashStatutoryFiscalLinkageContext StatutoryContext() =>
         new(

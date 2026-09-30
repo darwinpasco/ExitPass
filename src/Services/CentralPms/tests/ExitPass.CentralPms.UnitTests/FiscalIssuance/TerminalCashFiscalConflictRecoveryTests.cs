@@ -48,6 +48,9 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
                 value.ReferenceContext["ticket_number"] == "CASH-TICKET-001" &&
                 value.ReferenceContext["plate_number"] == "CASH 1001" &&
                 value.ReferenceContext["branch_site"] == "PITX Level 3" &&
+                value.ReferenceContext["entry_time"] == "2026-09-28T04:15:59.0000000+00:00" &&
+                value.ReferenceContext["payment_time"] == "2026-09-28T06:31:29.0000000+00:00" &&
+                value.ReferenceContext["parking_duration"] == "02:15:30" &&
                 value.ReferenceContext["payment_method"] == "CASH"),
             Arg.Is<PosServerCreateResultRecordingContext>(value =>
                 value.CorrelationId == FiscalCorrelation && value.ServiceIdentityId == ActorId),
@@ -727,9 +730,18 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             SiteId, SiteGroupId, PosId.ToString("D"), Guid.NewGuid().ToString("D"), "shift-01", "PHP",
             AmountMinorUnits, AmountMinorUnits, 0, "CONFIRMED", ConfirmationId, "CREATED",
             "terminal-cash-payment:test", "terminal-cash-payment:sha256:v1",
-            DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(-4),
-            DateTimeOffset.UtcNow.AddMinutes(-3), TransactionCorrelation, "NOT_STARTED_IN_THIS_SLICE",
-            "CASH-TICKET-001", "CASH 1001", "PITX Level 3", DateTimeOffset.UtcNow.AddHours(-1));
+            DateTimeOffset.Parse("2026-09-28T06:32:29Z"),
+            DateTimeOffset.Parse("2026-09-28T18:31:29Z"),
+            DateTimeOffset.Parse("2026-09-28T19:31:29Z"),
+            TransactionCorrelation,
+            "NOT_STARTED_IN_THIS_SLICE",
+            "CASH-TICKET-001",
+            "CASH 1001",
+            "PITX Level 3",
+            DateTimeOffset.Parse("2026-09-28T04:15:59Z"))
+        {
+            CashReceivedAt = DateTimeOffset.Parse("2026-09-28T06:31:29Z")
+        };
 
     private static FiscalIssuanceReferenceRecord Reference() =>
         new(
