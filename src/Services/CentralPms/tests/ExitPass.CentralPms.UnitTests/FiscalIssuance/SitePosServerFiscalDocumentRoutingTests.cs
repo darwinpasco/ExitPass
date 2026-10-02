@@ -71,6 +71,34 @@ public sealed class SitePosServerFiscalDocumentRoutingTests : IDisposable
         observed[0].CorrelationId.Should().Be(correlationId.ToString("D"));
     }
 
+    [Fact]
+    public async Task Reprint_UsesDedicatedMutationPermissionAndPreservesRoutingScope()
+    {
+        var observed = new List<ObservedRequest>();
+        var client = CreateClient(TwoSiteOptions(), observed, ReprintResponse());
+        var correlationId = Guid.Parse("d9f94e06-b3f4-4dcc-904a-9cb7dcab6f1e");
+
+        var result = await client.ReprintFiscalDocumentAsync(
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            new PosServerFiscalDocumentReprintRequest(
+                "apt-reprint-001",
+                SiteBPosId,
+                Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                "PHP",
+                "operator_request",
+                correlationId),
+            new PosServerRoutingContext(SiteBPosId, "SITE-B-POS"),
+            CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue("reprint result was {0}", result.Code);
+        result.CanonicalText.Should().Contain("REPRINT");
+        observed.Should().ContainSingle();
+        observed[0].Uri.Should().Be("http://site-b-pos:8080/v1/fiscal-documents/11111111-1111-1111-1111-111111111111/reprints");
+        observed[0].Permission.Should().Be("fiscal_document.reprint.record");
+        observed[0].Permission.Should().NotBe("fiscal_document.read");
+        observed[0].CorrelationId.Should().Be(correlationId.ToString("D"));
+    }
+
     [Theory]
     [InlineData("unknown", "site_pos_server_endpoint_not_found")]
     [InlineData("mismatch", "site_pos_server_endpoint_identity_mismatch")]
@@ -245,6 +273,24 @@ public sealed class SitePosServerFiscalDocumentRoutingTests : IDisposable
           "templateVersion": "v1",
           "contentType": "application/json",
           "authoritativeResponse": { "fiscalDocumentNumber": "SI-000001" }
+        }
+        """;
+
+    private static string ReprintResponse() =>
+        """
+        {
+          "succeeded": true,
+          "code": "fiscal_document_reprint_replayed",
+          "message": "Governed reprint returned.",
+          "correlationId": "d9f94e06-b3f4-4dcc-904a-9cb7dcab6f1e",
+          "reprint": {
+            "reprintRequestId": "55555555-5555-4555-8555-555555555555",
+            "fiscalDocumentId": "11111111-1111-1111-1111-111111111111",
+            "fiscalDocumentNumber": "SI-000001",
+            "reprintStatus": "committed",
+            "reprintLabelApplied": true
+          },
+          "canonicalText": "SALES INVOICE\nREPRINT\nSI No.: SI-000001\n"
         }
         """;
 

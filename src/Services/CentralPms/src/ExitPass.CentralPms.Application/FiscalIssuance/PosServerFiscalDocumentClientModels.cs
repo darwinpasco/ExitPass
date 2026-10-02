@@ -26,6 +26,22 @@ public interface IPosServerFiscalDocumentClient
         PosServerRoutingContext routingContext,
         CancellationToken cancellationToken);
 
+    Task<PosServerFiscalDocumentReprintResult> ReprintFiscalDocumentAsync(
+        Guid fiscalDocumentId,
+        PosServerFiscalDocumentReprintRequest request,
+        PosServerRoutingContext routingContext,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new PosServerFiscalDocumentReprintResult(
+            Succeeded: false,
+            HttpStatusCode: 503,
+            Code: "pos_server_reprint_client_unavailable",
+            Message: "POS Server governed reprint integration is unavailable.",
+            FiscalDocumentId: null,
+            FiscalDocumentNumber: null,
+            Reprint: null,
+            CanonicalText: null,
+            CorrelationId: null));
+
     Task<PosServerFiscalDocumentVoidResult> VoidFiscalDocumentAsync(
         Guid fiscalDocumentId,
         PosServerFiscalDocumentVoidRequest request,
@@ -461,6 +477,25 @@ public sealed record PosServerFiscalDocumentPresentationReadResult(
     string? TemplateVersion,
     string? ContentType,
     JsonElement? AuthoritativeResponse);
+
+public sealed record PosServerFiscalDocumentReprintRequest(
+    string OperationKey,
+    Guid SitePosServerId,
+    Guid FiscalIdentityId,
+    string CurrencyCode,
+    string ReasonCode,
+    Guid CorrelationId);
+
+public sealed record PosServerFiscalDocumentReprintResult(
+    bool Succeeded,
+    int HttpStatusCode,
+    string Code,
+    string Message,
+    Guid? FiscalDocumentId,
+    string? FiscalDocumentNumber,
+    JsonElement? Reprint,
+    string? CanonicalText,
+    string? CorrelationId);
 
 public sealed record PosServerFiscalDocumentVoidRequest(
     string IdempotencyKey,

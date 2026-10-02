@@ -138,6 +138,117 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             correlationId);
     }
 
+    public async Task<TerminalCashReceiptReprintResult> ReprintAsync(
+        Guid terminalCashTenderId,
+        string operationKey,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (terminalCashTenderId == Guid.Empty || string.IsNullOrWhiteSpace(operationKey) ||
+            operationKey.Length > 200 || operationKey.Contains('\r') || operationKey.Contains('\n'))
+        {
+            throw Rejected(
+                "TERMINAL_CASH_RECEIPT_REPRINT_REQUEST_INVALID",
+                "A terminal cash tender reference and safe reprint operation key are required.",
+                Status400BadRequest,
+                retryable: false);
+        }
+
+        var cashPayment = await _terminalCashPayments.GetByTerminalCashTenderIdAsync(
+                terminalCashTenderId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (cashPayment is null)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_PAYMENT_NOT_FOUND",
+                "Terminal cash payment was not found.",
+                Status404NotFound,
+                retryable: false);
+        }
+
+        EnsureConfirmed(cashPayment);
+        var reference = await _fiscalReferences.FindByPaymentConfirmationIdAsync(
+                cashPayment.PaymentConfirmationId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (reference is null)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_ISSUANCE_NOT_FOUND",
+                "Fiscal issuance was not found for the terminal cash tender reference.",
+                Status404NotFound,
+                retryable: false);
+        }
+
+        EnsureReferenceMatchesTerminalCashPayment(reference, cashPayment);
+        EnsureFiscalRecorded(reference);
+        if (reference.PosServerFiscalDocumentId is null || reference.PosServerFiscalDocumentId == Guid.Empty ||
+            reference.SitePosServerId is null || reference.SitePosServerId == Guid.Empty ||
+            reference.FiscalIdentityId is null || reference.FiscalIdentityId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(reference.SitePosServerRef) ||
+            string.IsNullOrWhiteSpace(reference.FiscalDocumentNumber) ||
+            string.IsNullOrWhiteSpace(cashPayment.Currency))
+        {
+            throw Rejected(
+                "TERMINAL_CASH_RECEIPT_REPRINT_CONTEXT_INCOMPLETE",
+                "Recorded fiscal issuance does not contain complete governed reprint context.",
+                Status409Conflict,
+                retryable: false);
+        }
+
+        PosServerFiscalDocumentReprintResult posResult;
+        try
+        {
+            posResult = await _posServerClient.ReprintFiscalDocumentAsync(
+                    reference.PosServerFiscalDocumentId.Value,
+                    new PosServerFiscalDocumentReprintRequest(
+                        operationKey.Trim(),
+                        reference.SitePosServerId.Value,
+                        reference.FiscalIdentityId.Value,
+                        cashPayment.Currency.Trim().ToUpperInvariant(),
+                        "operator_request",
+                        correlationId),
+                    PosServerRoutingContext.Create(reference.SitePosServerId, reference.SitePosServerRef),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw Rejected(
+                "POS_SERVER_RECEIPT_REPRINT_UNAVAILABLE",
+                "POS Server governed reprint is temporarily unavailable.",
+                Status503ServiceUnavailable,
+                retryable: true);
+        }
+
+        if (!posResult.Succeeded || posResult.Reprint is null ||
+            string.IsNullOrWhiteSpace(posResult.CanonicalText) ||
+            posResult.FiscalDocumentId != reference.PosServerFiscalDocumentId ||
+            !string.Equals(posResult.FiscalDocumentNumber, reference.FiscalDocumentNumber, StringComparison.Ordinal))
+        {
+            var retryable = posResult.HttpStatusCode >= 500;
+            throw Rejected(
+                posResult.Code,
+                string.IsNullOrWhiteSpace(posResult.Message)
+                    ? "POS Server governed reprint failed safely."
+                    : posResult.Message,
+                posResult.HttpStatusCode is >= 400 and <= 599 ? posResult.HttpStatusCode : Status409Conflict,
+                retryable);
+        }
+
+        return new TerminalCashReceiptReprintResult(
+            terminalCashTenderId,
+            cashPayment.PaymentAttemptId,
+            cashPayment.PaymentConfirmationId,
+            reference.FiscalIssuanceReferenceId,
+            reference.PosServerFiscalDocumentId.Value,
+            reference.FiscalDocumentNumber,
+            posResult.Reprint.Value,
+            posResult.CanonicalText,
+            correlationId);
+    }
+
     private static void EnsureConfirmed(TerminalCashPaymentReadback cashPayment)
     {
         if (!string.Equals(cashPayment.CanonicalPaymentStatus, ConfirmedCanonicalPaymentStatus, StringComparison.Ordinal))

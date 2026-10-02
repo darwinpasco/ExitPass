@@ -15,6 +15,13 @@ public interface ITerminalCashReceiptPresentationService
         Guid terminalCashTenderId,
         Guid correlationId,
         CancellationToken cancellationToken);
+
+    Task<TerminalCashReceiptReprintResult> ReprintAsync(
+        Guid terminalCashTenderId,
+        string operationKey,
+        Guid correlationId,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Governed terminal cash receipt reprint is unavailable.");
 }
 
 /// <summary>
@@ -43,6 +50,17 @@ public sealed record TerminalCashReceiptPresentationResult(
     DateTimeOffset? VoidedAt,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
+    Guid CorrelationId);
+
+public sealed record TerminalCashReceiptReprintResult(
+    Guid TerminalCashTenderId,
+    Guid PaymentAttemptId,
+    Guid PaymentConfirmationId,
+    Guid FiscalIssuanceReferenceId,
+    Guid PosFiscalDocumentId,
+    string FiscalDocumentNumber,
+    JsonElement Reprint,
+    string CanonicalText,
     Guid CorrelationId);
 
 /// <summary>

@@ -55,6 +55,15 @@ public static class TerminalCashPaymentEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .Produces<ErrorResponse>(StatusCodes.Status503ServiceUnavailable);
 
+        group.MapPost("/references/{terminalCashTenderId:guid}/receipt-reprints", ReprintReceiptAsync)
+            .WithName("ReprintTerminalCashPaymentReceipt")
+            .Produces<TerminalCashReceiptReprintResponse>(StatusCodes.Status200OK)
+            .Produces<TerminalCashReceiptReprintResponse>(StatusCodes.Status201Created)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+            .Produces<ErrorResponse>(StatusCodes.Status503ServiceUnavailable);
+
         return app;
     }
 
@@ -285,6 +294,49 @@ public static class TerminalCashPaymentEndpoints
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
+            return Results.Json(
+                BuildError(ex.ErrorCode, ex.Message, correlationId, ex.Retryable),
+                statusCode: ex.HttpStatusCode);
+        }
+    }
+
+    private static async Task<IResult> ReprintReceiptAsync(
+        Guid terminalCashTenderId,
+        HttpRequest request,
+        ITerminalCashReceiptPresentationService service,
+        CancellationToken cancellationToken)
+    {
+        using var activity = ActivitySource.StartActivity("ReprintTerminalCashReceipt", ActivityKind.Server);
+        activity?.SetTag("http.route", "POST /v1/terminal-cash-payments/references/{terminalCashTenderId}/receipt-reprints");
+        activity?.SetTag("terminal_cash_tender_id", terminalCashTenderId);
+
+        if (!TryReadHeaders(request, out var operationKey, out var correlationId, out var headerError))
+        {
+            return Results.BadRequest(headerError);
+        }
+
+        try
+        {
+            var result = await service.ReprintAsync(
+                    terminalCashTenderId,
+                    operationKey!,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return Results.Ok(new TerminalCashReceiptReprintResponse(
+                result.TerminalCashTenderId,
+                result.PaymentAttemptId,
+                result.PaymentConfirmationId,
+                result.FiscalIssuanceReferenceId,
+                result.PosFiscalDocumentId,
+                result.FiscalDocumentNumber,
+                result.Reprint,
+                result.CanonicalText,
+                result.CorrelationId));
+        }
+        catch (TerminalCashReceiptPresentationRejectedException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             return Results.Json(
                 BuildError(ex.ErrorCode, ex.Message, correlationId, ex.Retryable),
                 statusCode: ex.HttpStatusCode);

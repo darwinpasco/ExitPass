@@ -240,6 +240,49 @@ public static class PosServerFiscalDocumentResponseParser
         }
     }
 
+    public static PosServerFiscalDocumentReprintResult ParseReprintResponse(
+        int httpStatusCode,
+        string responseBody)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            var root = document.RootElement;
+            var succeeded = httpStatusCode is (int)HttpStatusCode.OK or (int)HttpStatusCode.Created
+                && TryGetBoolean(root, "succeeded") == true;
+            var reprint = root.TryGetProperty("reprint", out var reprintElement)
+                && reprintElement.ValueKind == JsonValueKind.Object
+                    ? reprintElement.Clone()
+                    : (JsonElement?)null;
+            var canonicalText = TryGetString(root, "canonicalText");
+            if (succeeded && (reprint is null || string.IsNullOrWhiteSpace(canonicalText)))
+            {
+                return new PosServerFiscalDocumentReprintResult(
+                    false, httpStatusCode, "invalid_reprint_response",
+                    "POS Server governed reprint response was incomplete.",
+                    null, null, null, null, TryGetString(root, "correlationId"));
+            }
+
+            return new PosServerFiscalDocumentReprintResult(
+                succeeded,
+                httpStatusCode,
+                TryGetString(root, "code") ?? "pos_server_reprint_failure",
+                TryGetString(root, "message") ?? string.Empty,
+                reprint is not null ? TryGetGuid(reprint.Value, "fiscalDocumentId") : null,
+                reprint is not null ? TryGetString(reprint.Value, "fiscalDocumentNumber") : null,
+                reprint,
+                canonicalText,
+                TryGetString(root, "correlationId"));
+        }
+        catch (JsonException)
+        {
+            return new PosServerFiscalDocumentReprintResult(
+                false, httpStatusCode, "invalid_json_response",
+                "POS Server governed reprint response body was not valid JSON.",
+                null, null, null, null, null);
+        }
+    }
+
     public static PosServerFiscalDocumentVoidResult ParseVoidResponse(
         int httpStatusCode,
         string responseBody)
