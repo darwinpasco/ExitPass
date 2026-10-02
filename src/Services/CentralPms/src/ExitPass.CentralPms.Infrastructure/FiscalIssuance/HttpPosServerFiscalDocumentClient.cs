@@ -13,6 +13,7 @@ public sealed class HttpPosServerFiscalDocumentClient : IPosServerFiscalDocument
     private const string CorrelationHeader = "X-Correlation-Id";
     private const string CreatePermission = "fiscal_document.create";
     private const string ReadPermission = "fiscal_document.read";
+    private const string ReprintPermission = "fiscal_document.reprint.record";
     private const string VoidPermission = "fiscal_document.void";
 
     private readonly HttpClient _httpClient;
@@ -115,6 +116,46 @@ public sealed class HttpPosServerFiscalDocumentClient : IPosServerFiscalDocument
         using var response = await _httpClient.SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         return PosServerFiscalDocumentResponseParser.ParsePresentationResponse((int)response.StatusCode, body);
+    }
+
+    public async Task<PosServerFiscalDocumentReprintResult> ReprintFiscalDocumentAsync(
+        Guid fiscalDocumentId,
+        PosServerFiscalDocumentReprintRequest request,
+        PosServerRoutingContext routingContext,
+        CancellationToken cancellationToken)
+    {
+        if (fiscalDocumentId == Guid.Empty)
+        {
+            throw new ArgumentException("Fiscal document id is required.", nameof(fiscalDocumentId));
+        }
+
+        ArgumentNullException.ThrowIfNull(request);
+        var endpoint = _endpointResolver.Resolve(routingContext);
+        if (!endpoint.IsSuccess)
+        {
+            return new PosServerFiscalDocumentReprintResult(
+                false, 503, endpoint.Code, "Site POS Server routing configuration is unavailable.",
+                null, null, null, null, null);
+        }
+
+        using var httpRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            BuildUri(endpoint.BaseUri!, $"{FiscalDocumentsPath}{fiscalDocumentId:D}/reprints"))
+        {
+            Content = JsonContent.Create(new
+            {
+                request.OperationKey,
+                request.SitePosServerId,
+                request.FiscalIdentityId,
+                request.CurrencyCode,
+                request.ReasonCode
+            })
+        };
+        ApplyAuthentication(httpRequest, endpoint.ApiKey!, ReprintPermission, request.CorrelationId);
+
+        using var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        return PosServerFiscalDocumentResponseParser.ParseReprintResponse((int)response.StatusCode, body);
     }
 
     public async Task<PosServerFiscalDocumentVoidResult> VoidFiscalDocumentAsync(

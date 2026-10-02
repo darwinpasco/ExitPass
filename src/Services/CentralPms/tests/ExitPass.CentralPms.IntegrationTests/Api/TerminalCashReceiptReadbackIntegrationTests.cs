@@ -308,6 +308,27 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
     }
 
     [Fact]
+    public async Task TerminalCashReceiptReprint_ForwardsGovernedPosCanonicalTextWithoutReconstruction()
+    {
+        var posClient = new FakePosServerPresentationClient();
+        var result = await CreateService(posClient: posClient).ReprintAsync(
+            TerminalCashTenderId,
+            "apt-reprint-operation-001",
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.Equal(TerminalCashTenderId, result.TerminalCashTenderId);
+        Assert.Equal(PosFiscalDocumentId, result.PosFiscalDocumentId);
+        Assert.Equal("SI-310001", result.FiscalDocumentNumber);
+        Assert.Contains("REPRINT", result.CanonicalText, StringComparison.Ordinal);
+        Assert.DoesNotContain("ORIGINAL", result.CanonicalText, StringComparison.Ordinal);
+        Assert.Equal(1, posClient.ReprintCount);
+        Assert.Equal("apt-reprint-operation-001", posClient.LastReprintRequest!.OperationKey);
+        Assert.Equal("operator_request", posClient.LastReprintRequest.ReasonCode);
+        Assert.Equal("PHP", posClient.LastReprintRequest.CurrencyCode);
+    }
+
+    [Fact]
     public void TerminalCashReceiptReadback_ServiceDoesNotDependOnPaymentOrchestrator()
     {
         var constructorParameterNames = typeof(TerminalCashReceiptPresentationService)
@@ -569,6 +590,10 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
 
         public Guid? LastCorrelationId { get; private set; }
 
+        public int ReprintCount { get; private set; }
+
+        public PosServerFiscalDocumentReprintRequest? LastReprintRequest { get; private set; }
+
         public Task<PosServerFiscalDocumentCreateResult> CreateFiscalDocumentAsync(
             PosServerFiscalDocumentCreateRequest request,
             CancellationToken cancellationToken) =>
@@ -606,6 +631,36 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
             PosServerRoutingContext routingContext,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException("Receipt readback must not void fiscal documents.");
+
+        public Task<PosServerFiscalDocumentReprintResult> ReprintFiscalDocumentAsync(
+            Guid fiscalDocumentId,
+            PosServerFiscalDocumentReprintRequest request,
+            PosServerRoutingContext routingContext,
+            CancellationToken cancellationToken)
+        {
+            ReprintCount++;
+            LastReprintRequest = request;
+            using var reprint = JsonDocument.Parse($$"""
+            {
+              "reprintRequestId": "31000000-0000-4000-8000-000000000099",
+              "fiscalDocumentId": "{{PosFiscalDocumentId:D}}",
+              "fiscalDocumentNumber": "SI-310001",
+              "reprintStatus": "committed",
+              "reprintLabelApplied": true,
+              "committedAt": "2026-10-01T00:00:00Z"
+            }
+            """);
+            return Task.FromResult(new PosServerFiscalDocumentReprintResult(
+                true,
+                200,
+                "fiscal_document_reprint_replayed",
+                "Governed reprint returned.",
+                PosFiscalDocumentId,
+                "SI-310001",
+                reprint.RootElement.Clone(),
+                "SALES INVOICE\nREPRINT\nSI No.: SI-310001\n",
+                request.CorrelationId.ToString("D")));
+        }
 
         private static PosServerFiscalDocumentPresentationReadResult PresentationSuccess(string? voidStatus = null)
         {
