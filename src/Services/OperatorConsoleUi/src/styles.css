@@ -163,6 +163,11 @@ code {
   width: 100%;
 }
 
+.mobileMenuButton,
+.mobileNavigationLayer {
+  display: none;
+}
+
 .appHeader {
   align-items: flex-start;
   display: flex;
@@ -189,7 +194,6 @@ code {
 
 .headerCopy,
 .pageTitle p,
-.homePanel p,
 .placeholderCopy,
 .policySummary,
 .stateMessage p {
@@ -325,6 +329,92 @@ code {
   color: #654d12;
 }
 
+.mobileNavigationBackdrop {
+  background: rgb(19 31 42 / 58%);
+  border: 0;
+  border-radius: 0;
+  inset: 0;
+  min-height: 0;
+  padding: 0;
+  position: absolute;
+  width: 100%;
+}
+
+.mobileNavigationDrawer {
+  background: #ffffff;
+  border-right: 1px solid #c7d1d9;
+  box-shadow: 12px 0 32px rgb(25 39 52 / 24%);
+  display: grid;
+  gap: 16px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  height: 100vh;
+  height: 100dvh;
+  left: 0;
+  max-width: 320px;
+  overflow-y: auto;
+  padding: 18px;
+  position: absolute;
+  top: 0;
+  width: min(86vw, 320px);
+}
+
+.mobileNavigationHeader {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.mobileNavigationHeader h2 {
+  margin: 0;
+}
+
+.mobileNavigationClose {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.mobileOperatorIdentity {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 6px;
+  display: grid;
+  gap: 3px;
+  padding: 12px;
+}
+
+.mobileOperatorIdentity span {
+  color: #526674;
+  font-size: 0.82rem;
+}
+
+.mobileNavigationDrawer nav {
+  align-content: start;
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.mobileNavigationDrawer .navLink,
+.mobileNavigationFooter button {
+  min-height: 44px;
+  width: 100%;
+}
+
+.mobileNavigationFooter {
+  border-top: 1px solid #dfe5ea;
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+}
+
+.mobileNavigationFooter .authenticationInlineError {
+  color: #8b1e1e;
+  font-weight: 650;
+}
+
 .readiness-ready {
   background: #e4f4ed;
   border-color: #a8d9c4;
@@ -379,12 +469,6 @@ code {
   padding: 22px;
 }
 
-.homePanel {
-  display: grid;
-  gap: 16px;
-  max-width: 760px;
-}
-
 .panelHeader {
   align-items: flex-start;
   display: flex;
@@ -398,6 +482,33 @@ code {
   min-width: 0;
   overflow-x: auto;
   overscroll-behavior-x: contain;
+}
+
+.workQueueActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workQueueExpander,
+.workQueueDetailRow {
+  display: none;
+}
+
+.workQueueDetails {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.workQueueDetails div {
+  min-width: 0;
+}
+
+.workQueueDetails dd {
+  margin-top: 3px;
 }
 
 .fiscalVoidAuditTableScroller {
@@ -1709,6 +1820,218 @@ dd {
 
   .evidencePreviewViewport img {
     max-height: calc(100vh - 290px);
+  }
+}
+
+@media (max-width: 899px) {
+  .appShell {
+    font-size: 16px;
+  }
+
+  .appShell {
+    padding: 14px;
+  }
+
+  .appHeader {
+    align-items: start;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: auto minmax(0, 1fr);
+    margin-bottom: 14px;
+  }
+
+  .appHeader h1 {
+    font-size: 27px;
+    grid-column: 1 / -1;
+    line-height: 1.12;
+  }
+
+  .appBrand {
+    display: contents;
+  }
+
+  .workspace {
+    gap: 12px;
+  }
+
+  .workspace .pageTitle h2 {
+    font-size: 23px;
+    line-height: 1.2;
+  }
+
+  .workspace .panelHeader h2,
+  .workspace .panelHeader h3 {
+    font-size: 19px;
+    line-height: 1.25;
+  }
+
+  .workspace .panel {
+    padding: 14px;
+  }
+
+  .workspace .panelHeader {
+    margin-bottom: 12px;
+  }
+
+  .workspace button,
+  .workspace input,
+  .workspace select {
+    min-height: 44px;
+  }
+
+  .mobileMenuButton {
+    align-items: center;
+    display: inline-flex;
+    font-size: 1.35rem;
+    height: 44px;
+    justify-content: center;
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0;
+    width: 44px;
+  }
+
+  .operatorStatus,
+  .moduleRail {
+    display: none;
+  }
+
+  .platformShell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workQueueScroller {
+    overflow-x: visible;
+  }
+
+  .workQueueTable {
+    min-width: 0;
+  }
+
+  .workQueueTable .workQueueRequestedByColumn,
+  .workQueueTable .workQueueRequestedAtColumn {
+    display: none;
+  }
+
+  .workQueueExpander {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  .workQueueDetailRowExpanded {
+    display: table-row;
+  }
+
+  .workQueueDetailRow > td {
+    background: #f7fafb;
+    padding: 12px;
+  }
+
+  .workQueueDetailSite,
+  .workQueueDetailEntitlement {
+    display: none;
+  }
+
+  .mobileNavigationLayer {
+    display: block;
+    inset: 0;
+    position: fixed;
+    z-index: 1000;
+  }
+}
+
+@media (max-width: 599px) {
+  .workQueueTable,
+  .workQueueTable tbody,
+  .workQueuePrimaryRow,
+  .workQueuePrimaryRow td,
+  .workQueueDetailRow,
+  .workQueueDetailRow td {
+    display: block;
+    width: 100%;
+  }
+
+  .workQueueTable thead {
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+
+  .workQueuePrimaryRow {
+    border: 1px solid #dfe5ea;
+    border-radius: 8px;
+    display: grid;
+    gap: 10px 12px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    margin-bottom: 10px;
+    padding: 12px;
+  }
+
+  .workQueuePrimaryRow td {
+    border: 0;
+    padding: 0;
+  }
+
+  .workQueuePrimaryRow td::before {
+    color: #61717e;
+    content: attr(data-label);
+    display: block;
+    font-size: 0.76rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+
+  .workQueueTable .workQueueTicketColumn {
+    grid-column: 1 / -1;
+  }
+
+  .workQueueTable .workQueueSiteColumn,
+  .workQueueTable .workQueueEntitlementColumn,
+  .workQueueTable .workQueueRequestedByColumn,
+  .workQueueTable .workQueueRequestedAtColumn {
+    display: none;
+  }
+
+  .workQueueStatusColumn {
+    align-self: center;
+  }
+
+  .workQueueActionColumn {
+    align-self: end;
+    grid-column: 1 / -1;
+  }
+
+  .workQueueActions {
+    justify-content: flex-start;
+  }
+
+  .workQueueDetailRow {
+    margin: -10px 0 10px;
+  }
+
+  .workQueueDetailRow:not(.workQueueDetailRowExpanded) {
+    display: none;
+  }
+
+  .workQueueDetailRow > td {
+    border: 1px solid #dfe5ea;
+    border-radius: 0 0 8px 8px;
+  }
+
+  .workQueueDetails {
+    grid-template-columns: 1fr;
+  }
+
+  .workQueueDetailSite,
+  .workQueueDetailEntitlement {
+    display: block;
   }
 }
 .fiscalReporting .reportFilters { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin: 1rem 0; }

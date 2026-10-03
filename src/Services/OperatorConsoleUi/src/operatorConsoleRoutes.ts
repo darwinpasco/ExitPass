@@ -1,7 +1,7 @@
 import { fiscalReportingPermissions } from "./fiscalReporting";
 
 export const routes = {
-  home: "/operator-console",
+  root: "/operator-console",
   ticketLookup: "/operator-console/ticket-lookup",
   fiscalStatus: "/operator-console/fiscal-issuance-status",
   queue: "/operator-console/statutory-discounts",
@@ -45,7 +45,6 @@ export const statutorySupervisorPermissions = [
 ] as const;
 
 export const operatorConsoleNavigation: readonly OperatorConsoleNavigationItem[] = [
-  { route: routes.home, label: "Overview", requiredAnyPermissions: [] },
   {
     route: routes.ticketLookup,
     label: "Ticket Lookup",
@@ -59,7 +58,7 @@ export const operatorConsoleNavigation: readonly OperatorConsoleNavigationItem[]
   },
   {
     route: routes.queue,
-    label: "Statutory Discounts",
+    label: "Work Queue",
     requiredAnyPermissions: statutoryWorkflowPermissions,
     matches: (path) => path === routes.queue || path.startsWith(routes.detail)
   },
@@ -70,7 +69,7 @@ export const operatorConsoleNavigation: readonly OperatorConsoleNavigationItem[]
   },
   {
     route: routes.fiscalReporting,
-    label: "Fiscal Reporting / EJ / X / Z",
+    label: "Fiscal Reporting",
     requiredAnyPermissions: Object.values(fiscalReportingPermissions),
     requiredAnyRoles: ["OPERATIONS_SUPERVISOR"]
   },
@@ -120,6 +119,12 @@ export const operatorConsoleNavigation: readonly OperatorConsoleNavigationItem[]
     ]
   }
 ];
+
+export function resolveOperatorConsolePath(path: string): string {
+  return path === "" || path === "/" || path === routes.root || path === `${routes.root}/`
+    ? routes.ticketLookup
+    : path;
+}
 
 export function hasAnyPermission(
   permissions: readonly string[],

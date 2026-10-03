@@ -14,6 +14,37 @@ const prohibitedAuthorityHeaders = [
 ];
 
 test.describe("Operator Console I-020 human authentication", () => {
+  test("shared-terminal login keeps credentials transient and returns blank after sign out", async ({ page }) => {
+    await page.goto("/operator-console?auth=logged-out");
+
+    const form = page.locator("form.authenticationForm");
+    const username = page.getByLabel("Username");
+    const password = page.getByLabel("Password");
+    await expect(form).toHaveAttribute("autocomplete", "off");
+    await expect(username).toHaveAttribute("autocomplete", "off");
+    await expect(password).toHaveAttribute("autocomplete", "off");
+    await expect(page.getByText(/remember me|keep me signed in|remember username/i)).toHaveCount(0);
+
+    await signIn(page, "unknown.operator", "wrong-password");
+    await expect(page.getByRole("alert")).toHaveText("The username or password could not be verified.");
+    await expect(username).toHaveValue("unknown.operator");
+    await expect(password).toHaveValue("");
+
+    await username.fill("review.operator");
+    await password.fill("operator-password");
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.getByLabel("Operator identity")).toContainText("Review Operator");
+    await expect(page).toHaveURL(/\/operator-console\/ticket-lookup$/);
+    await expect(page.getByRole("heading", { name: "Ticket Lookup" })).toBeVisible();
+    await expectNoAuthenticationAuthorityInStorage(page);
+
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await expect(page.getByRole("heading", { name: "Staff sign in" })).toBeVisible();
+    await expect(page.getByLabel("Username")).toHaveValue("");
+    await expect(page.getByLabel("Password")).toHaveValue("");
+    await expectNoAuthenticationAuthorityInStorage(page);
+  });
+
   test("ordinary operator signs in without MFA and refresh rediscovers the server session", async ({ page }) => {
     const requests: Request[] = [];
     page.on("request", (request) => requests.push(request));
@@ -144,6 +175,8 @@ test.describe("Operator Console I-020 human authentication", () => {
       await expect(page.getByRole("heading", { name: "Staff sign in" })).toBeVisible();
       await expect(page.getByRole("alert")).toHaveText(message);
       await expect(page.locator(".platformShell")).toHaveCount(0);
+      await expect(page.getByLabel("Username")).toHaveValue("");
+      await expect(page.getByLabel("Password")).toHaveValue("");
       await expectNoAuthenticationAuthorityInStorage(page);
     }
   });

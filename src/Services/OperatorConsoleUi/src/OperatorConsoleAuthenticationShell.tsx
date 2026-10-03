@@ -48,6 +48,7 @@ export function OperatorConsoleAuthenticationShell({
 
   const requireAuthentication = useCallback((message = "Your session ended. Sign in again.") => {
     authClient.clearRuntimeState();
+    setUsername("");
     setPassword("");
     setCurrentTemporaryPassword("");
     setTotpCode("");
@@ -75,6 +76,8 @@ export function OperatorConsoleAuthenticationShell({
         if (!activeRef.current) return;
         const mapped = authenticationMessage(error);
         authClient.clearRuntimeState();
+        setUsername("");
+        setPassword("");
         setState({
           status: "unauthenticated",
           message: mapped.silent ? undefined : mapped.message,
@@ -146,6 +149,7 @@ export function OperatorConsoleAuthenticationShell({
         newPassword
       });
       authClient.clearRuntimeState();
+      setUsername("");
       setPassword("");
       setCurrentTemporaryPassword("");
       setTotpCode("");
@@ -235,12 +239,17 @@ export function OperatorConsoleAuthenticationShell({
           <h1 id="operator-console-account-action-title">Change temporary password</h1>
           <p>Your temporary password must be changed before Operator Console access is available.</p>
           {passwordChangeError && <p className="authenticationError" role="alert">{passwordChangeError}</p>}
-          <form className="authenticationForm" onSubmit={submitPasswordChange} aria-busy={passwordChangePending}>
+          <form
+            className="authenticationForm"
+            autoComplete="off"
+            onSubmit={submitPasswordChange}
+            aria-busy={passwordChangePending}
+          >
             <label>
               Current temporary password
               <input
                 type="password"
-                autoComplete="current-password"
+                autoComplete="off"
                 autoFocus
                 value={currentTemporaryPassword}
                 onChange={(event) => setCurrentTemporaryPassword(event.target.value)}
@@ -254,7 +263,7 @@ export function OperatorConsoleAuthenticationShell({
                 type="text"
                 inputMode="numeric"
                 pattern="[0-9]*"
-                autoComplete="one-time-code"
+                autoComplete="off"
                 value={totpCode}
                 onChange={(event) => setTotpCode(event.target.value)}
                 disabled={passwordChangePending}
@@ -265,7 +274,7 @@ export function OperatorConsoleAuthenticationShell({
               New password
               <input
                 type="password"
-                autoComplete="new-password"
+                autoComplete="off"
                 value={newPassword}
                 onChange={(event) => setNewPassword(event.target.value)}
                 disabled={passwordChangePending}
@@ -299,11 +308,11 @@ export function OperatorConsoleAuthenticationShell({
         <p>Use your ExitPass staff account to open the authorized operations workspace.</p>
         {message && <p className="authenticationError" role="alert">{message}</p>}
         {supportReference && <p className="supportReference">Support reference: {supportReference}</p>}
-        <form className="authenticationForm" onSubmit={submitLogin} aria-busy={busy}>
+        <form className="authenticationForm" autoComplete="off" onSubmit={submitLogin} aria-busy={busy}>
           <label>
             Username
             <input
-              autoComplete="username"
+              autoComplete="off"
               autoFocus
               value={username}
               onChange={(event) => setUsername(event.target.value)}
@@ -314,7 +323,7 @@ export function OperatorConsoleAuthenticationShell({
             Password
             <input
               type="password"
-              autoComplete="current-password"
+              autoComplete="off"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               disabled={busy}

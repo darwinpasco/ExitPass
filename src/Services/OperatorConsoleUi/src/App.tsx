@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import QRCode from "qrcode";
 import {
   createOperatorConsoleApiClient,
@@ -62,6 +62,7 @@ import {
 import {
   canAccessOperatorConsolePath,
   hasStatutorySupervisorWorkspace,
+  resolveOperatorConsolePath,
   routes,
   visibleOperatorConsoleNavigation
 } from "./operatorConsoleRoutes";
@@ -83,11 +84,17 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
       ? createOperatorFiscalReportingFixture()
       : createOperatorFiscalReportingClient()
   ), [fiscalReportingClient]);
-  const [path, setPath] = useState(initialPath ?? normalizePath(window.location.pathname));
+  const [path, setPath] = useState(() => resolveOperatorConsolePath(initialPath ?? window.location.pathname));
   const [readinessState, setReadinessState] = useState<LoadState<AccessReadinessResponse>>({ status: "idle" });
   const [statutoryReviewFilters, setStatutoryReviewFilters] = useState<CanonicalStatutoryReviewFilters>(defaultCanonicalStatutoryReviewFilters);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const devModeContext = useMemo(() => defaultDevModeContext(), []);
   const mountedRef = useRef(true);
+  const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const mobileNavigationDrawerRef = useRef<HTMLElement>(null);
+  const workspaceRef = useRef<HTMLElement>(null);
+  const focusDestinationHeadingRef = useRef(false);
+  const restoreMobileMenuFocusRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -101,17 +108,113 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
       return;
     }
 
-    const handlePopState = () => setPath(normalizePath(window.location.pathname));
+    const syncPathFromBrowser = (focusDestination: boolean) => {
+      const browserPath = window.location.pathname;
+      const nextPath = resolveOperatorConsolePath(browserPath);
+      if (nextPath !== browserPath) {
+        window.history.replaceState({}, "", `${nextPath}${window.location.search}${window.location.hash}`);
+      }
+      if (focusDestination) focusDestinationHeadingRef.current = true;
+      setPath(nextPath);
+    };
+
+    syncPathFromBrowser(false);
+    const handlePopState = () => {
+      syncPathFromBrowser(true);
+    };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, [initialPath]);
 
   function navigate(nextPath: string) {
+    focusDestinationHeadingRef.current = true;
     setPath(nextPath);
     if (!initialPath) {
       window.history.pushState({}, "", nextPath);
     }
+
+    if (nextPath === path) {
+      focusDestinationHeading();
+    }
   }
+
+  function focusDestinationHeading() {
+    window.requestAnimationFrame(() => {
+      const heading = workspaceRef.current?.querySelector<HTMLElement>("h2");
+      if (!heading) return;
+      if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+      heading.focus();
+    });
+  }
+
+  function dismissMobileNavigation(restoreMenuFocus = true) {
+    restoreMobileMenuFocusRef.current = restoreMenuFocus;
+    setMobileNavigationOpen(false);
+  }
+
+  useEffect(() => {
+    if (!focusDestinationHeadingRef.current) return;
+    focusDestinationHeadingRef.current = false;
+    focusDestinationHeading();
+  }, [path]);
+
+  useEffect(() => {
+    if (!mobileNavigationOpen) return;
+
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    mobileNavigationDrawerRef.current?.querySelector<HTMLElement>("[data-drawer-initial-focus]")?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dismissMobileNavigation();
+        return;
+      }
+
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(
+        mobileNavigationDrawerRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ) ?? []
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [mobileNavigationOpen]);
+
+  useEffect(() => {
+    if (mobileNavigationOpen || !restoreMobileMenuFocusRef.current) return;
+    restoreMobileMenuFocusRef.current = false;
+    const frame = window.requestAnimationFrame(() => mobileMenuButtonRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [mobileNavigationOpen]);
+
+  useEffect(() => {
+    if (!mobileNavigationOpen || typeof window.matchMedia !== "function") return;
+    const desktopMedia = window.matchMedia("(min-width: 900px)");
+    const closeAtDesktop = (event: MediaQueryListEvent | MediaQueryList) => {
+      if (event.matches) dismissMobileNavigation(false);
+    };
+    closeAtDesktop(desktopMedia);
+    desktopMedia.addEventListener("change", closeAtDesktop);
+    return () => desktopMedia.removeEventListener("change", closeAtDesktop);
+  }, [mobileNavigationOpen]);
 
   function refreshReadiness(requestedAction = "SESSION_LOOKUP") {
     setReadinessState({ status: "loading" });
@@ -146,14 +249,28 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
   const supervisorStatutoryWorkspace = hasStatutorySupervisorWorkspace(permissions);
 
   return (
-    <main className="appShell" aria-labelledby="app-title">
+    <>
+    <main
+      className="appShell"
+      aria-labelledby="app-title"
+      aria-hidden={mobileNavigationOpen ? true : undefined}
+      inert={mobileNavigationOpen ? true : undefined}
+    >
       <header className="appHeader">
-        <div>
+        <button
+          ref={mobileMenuButtonRef}
+          className="mobileMenuButton"
+          type="button"
+          aria-label="Open navigation menu"
+          aria-expanded={mobileNavigationOpen}
+          aria-controls="operator-console-mobile-navigation"
+          onClick={() => setMobileNavigationOpen(true)}
+        >
+          <span aria-hidden="true">&#9776;</span>
+        </button>
+        <div className="appBrand">
           <p className="eyebrow">Operator Console</p>
           <h1 id="app-title">ExitPass Operator Console</h1>
-          <p className="headerCopy">
-            Site operations workspace for shift accountability, parking support, and controlled exception handling.
-          </p>
         </div>
         <div className="operatorStatus" aria-label="Operator identity">
           <span>Operator</span>
@@ -193,21 +310,14 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
             })}
           </nav>
 
-          <div className="statusStack">
-            <span className="statusPill">Authenticated session</span>
-            <span className="statusPill">Live read model</span>
-            {devModeContext.usesLocalDevFallbackContext && <span className="statusPill warningPill">Operating context incomplete</span>}
-          </div>
+          {devModeContext.usesLocalDevFallbackContext && (
+            <div className="statusStack">
+              <span className="statusPill warningPill">Operating context incomplete</span>
+            </div>
+          )}
         </aside>
 
-        <section className="workspace">
-          {!draftId && path !== routes.shiftManagement && (
-            <AccessReadinessPanel
-              state={readinessState}
-              usesLocalDevFallbackContext={devModeContext.usesLocalDevFallbackContext}
-              onRefresh={() => refreshReadiness("SESSION_LOOKUP")}
-            />
-          )}
+        <section className="workspace" ref={workspaceRef}>
           {!routeAuthorized ? (
             <section className="stateMessage danger" role="alert">
               <h2>Function unavailable</h2>
@@ -263,14 +373,94 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
             <VendorSessionProjectionHealthPage client={client} />
           ) : path === routes.policyImportReview ? (
             <ProductionPolicyImportReviewPage client={client} readinessBlockReason={readinessBlockReason} />
-          ) : path === routes.home ? (
-            <OperatorConsoleHome navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : (
             <NotFoundPage navigate={navigate} />
           )}
         </section>
       </section>
     </main>
+    {mobileNavigationOpen && (
+      <div className="mobileNavigationLayer">
+        <button
+          className="mobileNavigationBackdrop"
+          type="button"
+          tabIndex={-1}
+          aria-label="Close navigation menu"
+          onClick={() => dismissMobileNavigation()}
+        />
+        <aside
+          ref={mobileNavigationDrawerRef}
+          className="mobileNavigationDrawer"
+          id="operator-console-mobile-navigation"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mobile-navigation-title"
+        >
+          <div className="mobileNavigationHeader">
+            <div>
+              <p className="eyebrow">Workspace</p>
+              <h2 id="mobile-navigation-title">Navigation</h2>
+            </div>
+            <button
+              className="mobileNavigationClose"
+              type="button"
+              data-drawer-initial-focus
+              onClick={() => dismissMobileNavigation()}
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="mobileOperatorIdentity" aria-label="Mobile operator identity">
+            <span>Operator</span>
+            <strong>{session?.displayName ?? "Authenticated session"}</strong>
+            {session?.username && <span>{session.username}</span>}
+            {session && <span>{scopeSummary(session)}</span>}
+          </div>
+
+          <nav aria-label="Operator Console mobile routes">
+            {navigationItems.map((item) => {
+              const selected = item.matches ? item.matches(path) : path === item.route;
+              return (
+                <button
+                  key={item.route}
+                  aria-current={selected ? "page" : undefined}
+                  className={`navLink ${selected ? "navLinkActive" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setMobileNavigationOpen(false);
+                    navigate(item.route);
+                  }}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="mobileNavigationFooter">
+            {devModeContext.usesLocalDevFallbackContext && (
+              <span className="statusPill warningPill">Operating context incomplete</span>
+            )}
+            {logoutMessage && <span className="authenticationInlineError" role="alert">{logoutMessage}</span>}
+            {onLogout && (
+              <button
+                type="button"
+                className="secondaryButton"
+                onClick={() => {
+                  setMobileNavigationOpen(false);
+                  onLogout();
+                }}
+                disabled={logoutPending}
+              >
+                {logoutPending ? "Signing out" : "Sign out"}
+              </button>
+            )}
+          </div>
+        </aside>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -2216,34 +2406,6 @@ function VendorSessionProjectionLatestRecordRow({ record }: { record: VendorSess
   );
 }
 
-function OperatorConsoleHome({
-  navigate,
-  readinessBlockReason
-}: {
-  navigate: (path: string) => void;
-  readinessBlockReason: string | null;
-}) {
-  return (
-    <section className="panel homePanel" aria-labelledby="home-title">
-      <div className="panelHeader">
-        <p className="eyebrow">Review workspace</p>
-        <h2 id="home-title">Statutory discount validation foundation</h2>
-      </div>
-      <p>
-        The first Operator Console module provides a work queue, draft details, and readable policy context for Senior
-        Citizen and PWD statutory discount validation.
-      </p>
-      {readinessBlockReason && <p className="notice">{readinessBlockReason}</p>}
-      <button type="button" onClick={() => navigate(routes.queue)}>
-        Open work queue
-      </button>
-      <button type="button" onClick={() => navigate(routes.ticketLookup)}>
-        Open ticket lookup
-      </button>
-    </section>
-  );
-}
-
 function TicketLookupPage({
   client
 }: {
@@ -2486,12 +2648,7 @@ function TicketLookupPage({
     <>
       <section className="pageTitle">
         <div>
-          <p className="eyebrow">Ticket Lookup</p>
-          <h2>Ticket exit readiness</h2>
-          <p>
-            Scan or enter a HikCentral-issued ticket number to review session, payment, and vendor confirmation state.
-            Sales Invoice numbers are issued separately by POS Server.
-          </p>
+          <h2>Ticket Lookup</h2>
         </div>
       </section>
 
@@ -2519,11 +2676,6 @@ function TicketLookupPage({
           </button>
         </form>
 
-        <div className="lookupGuardrail" role="note">
-          <p>No manual mark-as-paid.</p>
-          <p>No payment collection.</p>
-          <p>No direct gate open.</p>
-        </div>
       </section>
 
       {lookupState.status === "loading" && <StateMessage title="Looking up ticket" message="Retrieving Operator Console session status." />}
@@ -2540,10 +2692,6 @@ function TicketLookupPage({
               <h3 id="statutory-discount-start-title">Request Statutory Discount</h3>
               <span className="statusPill">{isCompletedTransaction(lookupState.data) ? "Request unavailable" : "ID photo required"}</span>
             </div>
-            <p className="notice">
-              This creates an Operator Console review draft only. It does not collect payment, open gate, call HikCentral,
-              create Sales Invoice, or render final BIR documents.
-            </p>
             {draftState.status === "error" && <p className="errorMessage">{draftState.message}</p>}
             {draftState.status === "loaded" && <p className="successMessage">{draftState.data}</p>}
             {currentDraftState.status === "loading" && <p role="status">Checking for an existing statutory request...</p>}
@@ -2739,10 +2887,7 @@ function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult })
   return (
     <section className="panel ticketSummaryPanel" aria-labelledby="ticket-summary-title">
       <div className="panelHeader">
-        <div>
-          <p className="eyebrow">Session summary</p>
-          <h3 id="ticket-summary-title">Session Summary</h3>
-        </div>
+        <h3 id="ticket-summary-title">Session Summary</h3>
       </div>
 
       <DescriptionList
@@ -3286,105 +3431,6 @@ function ProductionPolicyImportReviewPage({
   );
 }
 
-function AccessReadinessPanel({
-  state,
-  usesLocalDevFallbackContext,
-  onRefresh
-}: {
-  state: LoadState<AccessReadinessResponse>;
-  usesLocalDevFallbackContext: boolean;
-  onRefresh: () => void;
-}) {
-  const readiness = state.status === "loaded" ? state.data : null;
-  const blocked = readiness?.accessAllowed === false;
-  const fallbackDenied = readiness?.denialReasons.some((reason) => reason.code === "LOCAL_DEV_CONTEXT_NOT_ALLOWED_IN_PRODUCTION");
-
-  return (
-    <section
-      className={`panel readinessPanel ${blocked ? "readinessBlocked" : readiness ? "readinessReady" : "readinessPending"}`}
-      aria-labelledby="access-readiness-title"
-    >
-      <div className="panelHeader">
-        <div>
-          <p className="eyebrow">Access readiness</p>
-          <h3 id="access-readiness-title">Operator readiness state</h3>
-        </div>
-        <button type="button" onClick={onRefresh}>
-          {state.status === "loading" ? "Checking readiness" : "Refresh readiness"}
-        </button>
-      </div>
-
-      {usesLocalDevFallbackContext && (
-        <p className="sandboxIndicator">
-          Sandbox/local validation context is active. This is not production trust.
-        </p>
-      )}
-
-      {state.status === "idle" && <StateMessage title="Readiness not checked" message="Check readiness before controlled actions." />}
-      {state.status === "loading" && <StateMessage title="Checking readiness" message="Evaluating operator, device, shift, site, and workflow state." />}
-      {state.status === "error" && (
-        <StateMessage
-          title="Unable to check readiness"
-          message={`${state.message} Read-only monitoring pages may still load when their RBAC checks allow access.`}
-        />
-      )}
-
-      {readiness && (
-        <>
-          <DescriptionList
-            items={[
-              ["Overall readiness", readiness.readinessStatus],
-              ["Access decision", readiness.accessDecision],
-              ["Requested action", readiness.requestedAction],
-              ["Operator readiness", readinessLabel(readiness.operatorReadiness.ready, readiness.operatorReadiness.status)],
-              ["Device readiness", readinessLabel(readiness.deviceReadiness.ready, readiness.deviceReadiness.status)],
-              ["Shift readiness", readinessLabel(readiness.shiftReadiness.ready, readiness.shiftReadiness.status)],
-              ["Site readiness", readinessLabel(readiness.siteReadiness.ready, readiness.siteReadiness.status)],
-              ["Workflow readiness", readinessLabel(readiness.workflowReadiness.ready, readiness.workflowReadiness.status)],
-              ["Audit persisted", readiness.auditPersisted ? "Yes" : "No"],
-              ["Correlation ID", readiness.correlationId],
-              ["Evaluated at", formatDateTime(readiness.evaluatedAt)]
-            ]}
-          />
-
-          <div className="readinessDimensionGrid" aria-label="Readiness dimensions">
-            {readiness.readinessDimensions.map((dimension) => (
-              <div
-                className={`readinessDimension ${dimension.denialReasonCodes.length > 0 ? "dimensionBlocked" : "dimensionReady"}`}
-                key={dimension.dimension}
-              >
-                <span>{dimension.required ? "Required" : "Optional"}</span>
-                <strong>{dimension.dimension}</strong>
-                <span>{dimension.status}</span>
-                {dimension.denialReasonCodes.length > 0 && <code>{dimension.denialReasonCodes.join(", ")}</code>}
-              </div>
-            ))}
-          </div>
-
-          {blocked && (
-            <div className="readinessDenial" role="alert">
-              <p>This device, shift, or site is not ready for controlled Operator Console actions.</p>
-              <p>Read-only monitoring pages may still load when their RBAC checks allow access.</p>
-              <p>Contact a supervisor or support and provide the correlation ID.</p>
-              {fallbackDenied && <p>Local/dev fallback context is not accepted as production trust.</p>}
-              {readiness.nextOperatorAction && <p>Next action: {readiness.nextOperatorAction}</p>}
-              <p>Retryable: {readiness.retryable ? "Yes" : "No"}</p>
-              <ul className="denialReasonList">
-                {readiness.denialReasons.map((reason) => (
-                  <li key={reason.code}>
-                    <code>{reason.code}</code>
-                    <span>{reason.severity} / {reason.uxMessageCategory}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
 function StatutoryDiscountQueuePage({
   client,
   navigate,
@@ -3396,6 +3442,16 @@ function StatutoryDiscountQueuePage({
 }) {
   const [queueState, setQueueState] = useState<LoadState<StatutoryDiscountQueueItem[]>>({ status: "loading" });
   const [refreshToken, setRefreshToken] = useState(0);
+  const [expandedDraftIds, setExpandedDraftIds] = useState<Set<string>>(() => new Set());
+
+  function toggleQueueDetails(draftId: string) {
+    setExpandedDraftIds((current) => {
+      const next = new Set(current);
+      if (next.has(draftId)) next.delete(draftId);
+      else next.add(draftId);
+      return next;
+    });
+  }
 
   useEffect(() => {
     let active = true;
@@ -3444,7 +3500,6 @@ function StatutoryDiscountQueuePage({
       <section className="panel" aria-labelledby="queue-title">
         <div className="panelHeader">
           <h3 id="queue-title">Statutory discount requests</h3>
-          <span className="statusPill">Live read model</span>
         </div>
 
         {readinessBlockReason && <p className="notice">{readinessBlockReason}</p>}
@@ -3453,45 +3508,74 @@ function StatutoryDiscountQueuePage({
         {queueState.status === "access-denied" && <StateMessage title="Access denied" message={queueState.message} />}
         {queueState.status === "error" && <StateMessage title="Unable to load queue" message={queueState.message} />}
         {queueState.status === "loaded" && (
-          <div className="tableScroller">
-            <table>
+          <div className="tableScroller workQueueScroller">
+            <table className="workQueueTable">
               <thead>
                 <tr>
-                  <th>Ticket / Plate</th>
-                  <th>Site</th>
-                  <th>Entitlement</th>
-                  <th>Status</th>
-                  <th>Requested By</th>
-                  <th>Requested At</th>
-                  <th>Action</th>
+                  <th className="workQueueTicketColumn">Ticket / Plate</th>
+                  <th className="workQueueSiteColumn">Site</th>
+                  <th className="workQueueEntitlementColumn">Entitlement</th>
+                  <th className="workQueueStatusColumn">Status</th>
+                  <th className="workQueueRequestedByColumn">Requested By</th>
+                  <th className="workQueueRequestedAtColumn">Requested At</th>
+                  <th className="workQueueActionColumn">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {queueState.data.map((item) => (
-                  <tr key={item.draftId}>
-                    <td>
-                      <strong>{item.ticketReference}</strong>
-                      <span>{item.plateNumber}</span>
-                    </td>
-                    <td>{item.siteName}</td>
-                    <td>{item.entitlementType}</td>
-                    <td>
-                      <span className={`statusPill ${statusClass(item.status)}`}>{item.status}</span>
-                    </td>
-                    <td>{item.requestedBy}</td>
-                    <td>{formatDateTime(item.requestedAt)}</td>
-                    <td>
-                      <button
-                        type="button"
-                        aria-label={`View ${item.ticketReference}`}
-                        disabled={readinessBlockReason !== null}
-                        onClick={() => navigate(`${routes.detail}${item.draftId}`)}
-                      >
-                        View
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {queueState.data.map((item) => {
+                  const detailsId = `work-queue-details-${item.draftId}`;
+                  const expanded = expandedDraftIds.has(item.draftId);
+                  return (
+                    <Fragment key={item.draftId}>
+                      <tr className="workQueuePrimaryRow">
+                        <td className="workQueueTicketColumn" data-label="Ticket / Plate">
+                          <strong>{item.ticketReference}</strong>
+                          <span>{item.plateNumber}</span>
+                        </td>
+                        <td className="workQueueSiteColumn" data-label="Site">{item.siteName}</td>
+                        <td className="workQueueEntitlementColumn" data-label="Entitlement">{item.entitlementType}</td>
+                        <td className="workQueueStatusColumn" data-label="Status">
+                          <span className={`statusPill ${statusClass(item.status)}`}>{item.status}</span>
+                        </td>
+                        <td className="workQueueRequestedByColumn" data-label="Requested By">{item.requestedBy}</td>
+                        <td className="workQueueRequestedAtColumn" data-label="Requested At">{formatDateTime(item.requestedAt)}</td>
+                        <td className="workQueueActionColumn" data-label="Action">
+                          <div className="workQueueActions">
+                            <button
+                              className="workQueueExpander"
+                              type="button"
+                              aria-label={`${expanded ? "Hide details" : "Details"} for ${item.ticketReference}`}
+                              aria-expanded={expanded}
+                              aria-controls={detailsId}
+                              onClick={() => toggleQueueDetails(item.draftId)}
+                            >
+                              {expanded ? "Hide details" : "Details"}
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Review ${item.ticketReference}`}
+                              disabled={readinessBlockReason !== null}
+                              onClick={() => navigate(`${routes.detail}${item.draftId}`)}
+                            >
+                              Review
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      <tr className={`workQueueDetailRow ${expanded ? "workQueueDetailRowExpanded" : ""}`}>
+                        <td colSpan={7}>
+                          <dl id={detailsId} className="workQueueDetails">
+                            <div className="workQueueDetailSite"><dt>Site</dt><dd>{item.siteName}</dd></div>
+                            <div className="workQueueDetailEntitlement"><dt>Entitlement</dt><dd>{item.entitlementType}</dd></div>
+                            <div><dt>Requested By</dt><dd>{item.requestedBy}</dd></div>
+                            <div><dt>Requested At</dt><dd>{formatDateTime(item.requestedAt)}</dd></div>
+                            <div><dt>Source</dt><dd>Operator Console</dd></div>
+                          </dl>
+                        </td>
+                      </tr>
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -4390,10 +4474,6 @@ function readinessBlockedActionReason(readiness: AccessReadinessResponse) {
   return `Readiness check is blocking controlled Operator Console actions.${reasonCodes ? ` Reasons: ${reasonCodes}.` : ""}`;
 }
 
-function readinessLabel(ready: boolean, status: string) {
-  return `${ready ? "Ready" : "Not ready"} (${status})`;
-}
-
 function scopeSummary(session: OperatorConsoleHumanSession) {
   if (session.hasGlobalScope) {
     return "Global operating scope";
@@ -4576,14 +4656,6 @@ function formatFreshnessAge(value?: number | null) {
   }
 
   return `${Math.round(hours / 24)} days`;
-}
-
-function normalizePath(path: string) {
-  if (path === "/" || path === "") {
-    return routes.home;
-  }
-
-  return path;
 }
 
 function productionPolicyImportSampleCsv() {
