@@ -49,7 +49,7 @@ export function PhoneCameraCapture({ value, disabled = false, onChange }: PhoneC
     setMessage(undefined);
     if (!isSupportedPhone()) {
       setState("error");
-      setMessage("Use a supported phone to capture the customer's ID.");
+      setMessage("Camera unavailable.");
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -129,8 +129,6 @@ export function PhoneCameraCapture({ value, disabled = false, onChange }: PhoneC
   return (
     <div className="statutoryIdPhotoField">
       <strong>ID photo</strong>
-      <p className="notice">A new rear-camera photo of the presented Senior Citizen or PWD ID is required.</p>
-      {!phoneSupported && <p className="notice" role="status">Use a supported phone to capture the customer's ID.</p>}
       {!value && state !== "live" && state !== "starting" && phoneSupported && (
         <button type="button" onClick={() => void startCamera()} disabled={disabled}>Take ID Photo</button>
       )}

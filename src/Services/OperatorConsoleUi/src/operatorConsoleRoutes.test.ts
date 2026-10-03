@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canAccessOperatorConsolePath,
   hasStatutorySupervisorWorkspace,
+  resolveOperatorConsolePath,
   routes,
   visibleOperatorConsoleNavigation
 } from "./operatorConsoleRoutes";
@@ -21,10 +22,18 @@ const siteOperatorPermissions = [
 describe("Operator Console permission-driven routes", () => {
   it("shows exactly the approved Site Operator navigation surface", () => {
     expect(visibleOperatorConsoleNavigation(siteOperatorPermissions).map((item) => item.label)).toEqual([
-      "Overview",
       "Ticket Lookup",
-      "Statutory Discounts"
+      "Work Queue"
     ]);
+  });
+
+  it("resolves every Operator Console root form to the canonical Ticket Lookup route", () => {
+    expect(resolveOperatorConsolePath("")).toBe(routes.ticketLookup);
+    expect(resolveOperatorConsolePath("/")).toBe(routes.ticketLookup);
+    expect(resolveOperatorConsolePath(routes.root)).toBe(routes.ticketLookup);
+    expect(resolveOperatorConsolePath(`${routes.root}/`)).toBe(routes.ticketLookup);
+    expect(resolveOperatorConsolePath(routes.queue)).toBe(routes.queue);
+    expect(visibleOperatorConsoleNavigation(siteOperatorPermissions).map((item) => item.label)).not.toContain("Overview");
   });
 
   it("does not expose fiscal reporting to a Site Operator even when stale fiscal permissions remain", () => {
@@ -36,7 +45,7 @@ describe("Operator Console permission-driven routes", () => {
     ];
 
     expect(visibleOperatorConsoleNavigation(staleSiteOperatorFiscalPermissions, ["SITE_OPERATOR"])
-      .map((item) => item.label)).not.toContain("Fiscal Reporting / EJ / X / Z");
+      .map((item) => item.label)).not.toContain("Fiscal Reporting");
     expect(canAccessOperatorConsolePath(
       routes.fiscalReporting,
       staleSiteOperatorFiscalPermissions,
@@ -56,7 +65,7 @@ describe("Operator Console permission-driven routes", () => {
       .map((item) => item.label);
 
     expect(navigation).toContain("Fiscal Status");
-    expect(navigation).toContain("Fiscal Reporting / EJ / X / Z");
+    expect(navigation).toContain("Fiscal Reporting");
     expect(canAccessOperatorConsolePath(routes.fiscalReporting, permissions, ["OPERATIONS_SUPERVISOR"])).toBe(true);
   });
 

@@ -33,7 +33,8 @@ describe("phone-only statutory ID camera", () => {
     setPhone(false);
     render(<PhoneCameraCapture value={null} onChange={vi.fn()} />);
 
-    expect(screen.getByText("Use a supported phone to capture the customer's ID.")).toBeInTheDocument();
+    expect(screen.queryByText("Use a supported phone to capture the customer's ID.")).not.toBeInTheDocument();
+    expect(screen.queryByText("A new rear-camera photo of the presented Senior Citizen or PWD ID is required.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Take ID Photo" })).not.toBeInTheDocument();
     expect(document.querySelector('input[type="file"]')).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/choose file|browse|upload image|select image|gallery|existing photo/i);

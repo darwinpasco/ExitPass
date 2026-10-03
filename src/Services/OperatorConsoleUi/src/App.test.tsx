@@ -97,13 +97,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     const navigation = screen.getByRole("navigation", { name: "Operator Console routes" });
     const navigationItems = within(navigation).getAllByRole("button");
     expect(navigationItems.map((item) => item.textContent)).toEqual([
-      "Overview",
       "Ticket Lookup",
-      "Statutory Discounts"
+      "Work Queue"
     ]);
     expect(navigationItems.every((item) => !item.hasAttribute("disabled"))).toBe(true);
 
-    const statutoryDiscounts = within(navigation).getByRole("button", { name: "Statutory Discounts" });
+    const statutoryDiscounts = within(navigation).getByRole("button", { name: "Work Queue" });
     expect(statutoryDiscounts).toHaveAttribute("aria-current", "page");
     expect(within(navigation).getAllByRole("button", { current: "page" })).toHaveLength(1);
     expect(within(navigation).getByRole("button", { name: "Ticket Lookup" })).not.toHaveAttribute("aria-current");
@@ -115,17 +114,154 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(within(navigation).getAllByRole("button", { current: "page" })).toHaveLength(1);
   });
 
-  it.skip("OperatorConsole_RendersShellAndRoutes", async () => {
+  it("OperatorConsoleMobileNavigation_TrapsFocusClosesOnEscapeAndRestoresMenuFocus", async () => {
+    const user = userEvent.setup();
+    const onLogout = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient()}
+        initialPath="/operator-console/statutory-discounts"
+        onLogout={onLogout}
+      />
+    );
+
+    const menuButton = screen.getByRole("button", { name: "Open navigation menu" });
+    expect(menuButton).toHaveAttribute("aria-expanded", "false");
+    expect(menuButton).toHaveAttribute("aria-controls", "operator-console-mobile-navigation");
+
+    await user.click(menuButton);
+
+    const drawer = screen.getByRole("dialog", { name: "Navigation" });
+    const closeButton = within(drawer).getByRole("button", { name: "Close" });
+    const signOutButton = within(drawer).getByRole("button", { name: "Sign out" });
+    expect(menuButton).toHaveAttribute("aria-expanded", "true");
+    expect(closeButton).toHaveFocus();
+    expect(document.body.style.overflow).toBe("hidden");
+
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(signOutButton).toHaveFocus();
+    await user.keyboard("{Tab}");
+    expect(closeButton).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
+    expect(menuButton).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() => expect(menuButton).toHaveFocus());
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("OperatorConsoleMobileNavigation_PreservesRoleFilteringAndFocusesDestinationHeading", async () => {
+    const user = userEvent.setup();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient()}
+        initialPath="/operator-console/statutory-discounts"
+        session={operatorSession("site.operator", [
+          "ticket.lookup",
+          "statutory-discounts.session.lookup",
+          "statutory-discounts.draft.view"
+        ], ["SITE_OPERATOR"])}
+      />
+    );
+
+    const menuButton = screen.getByRole("button", { name: "Open navigation menu" });
+    await user.click(menuButton);
+    let drawer = screen.getByRole("dialog", { name: "Navigation" });
+    const mobileNavigation = within(drawer).getByRole("navigation", { name: "Operator Console mobile routes" });
+    expect(within(mobileNavigation).getAllByRole("button").map((item) => item.textContent)).toEqual([
+      "Ticket Lookup",
+      "Work Queue"
+    ]);
+    expect(within(mobileNavigation).getByRole("button", { name: "Work Queue" })).toHaveAttribute("aria-current", "page");
+    expect(within(drawer).getByLabelText("Mobile operator identity")).toHaveTextContent("Review Operator");
+    expect(within(drawer).getByLabelText("Mobile operator identity")).toHaveTextContent("1 Site, 1 Site Group");
+    expect(document.querySelector(".moduleRail")).not.toHaveTextContent("Authenticated session");
+    expect(document.querySelector(".moduleRail")).not.toHaveTextContent("Live read model");
+    expect(drawer).not.toHaveTextContent("Authenticated session");
+    expect(drawer).not.toHaveTextContent("Live read model");
+
+    await user.click(within(mobileNavigation).getByRole("button", { name: "Ticket Lookup" }));
+
+    expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
+    const destinationHeading = await screen.findByRole("heading", { name: "Ticket Lookup" });
+    await waitFor(() => expect(destinationHeading).toHaveFocus());
+
+    await user.click(menuButton);
+    drawer = screen.getByRole("dialog", { name: "Navigation" });
+    await user.click(screen.getByRole("button", { name: "Close navigation menu" }));
+    expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
+    await waitFor(() => expect(menuButton).toHaveFocus());
+
+    await user.click(menuButton);
+    drawer = screen.getByRole("dialog", { name: "Navigation" });
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
+    await waitFor(() => expect(menuButton).toHaveFocus());
+  });
+
+  it("OperatorConsole_RemovesGlobalReadinessAndRoutineOperationalProse", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient()}
+        initialPath="/operator-console/ticket-lookup"
+        session={operatorSession("site.operator", [
+          "ticket.lookup",
+          "statutory-discounts.session.lookup",
+          "statutory-discounts.draft.view"
+        ], ["SITE_OPERATOR"])}
+      />
+    );
+
+    expect(screen.getByRole("heading", { name: "Ticket Lookup" })).toBeInTheDocument();
+    expect(screen.queryByText(/Access readiness/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Operator readiness state/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Refresh readiness/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Site operations workspace/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No manual mark-as-paid/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No payment collection/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No direct gate open/i)).not.toBeInTheDocument();
+  });
+
+  it("OperatorConsoleRoot_ResolvesToTicketLookupWithoutAnOverviewSurface", () => {
     render(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console" />);
 
     expect(screen.getByRole("heading", { name: "ExitPass Operator Console" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Operator Console routes" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /statutory discount validation foundation/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Ticket Lookup" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Overview" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Review workspace|Statutory discount validation foundation|The first Operator Console module provides/i)).not.toBeInTheDocument();
+  });
 
-    await userEvent.click(screen.getByRole("button", { name: /open work queue/i }));
+  it("StatutoryDiscountQueue_ExpandsSecondaryDetailsWithoutChangingReviewNavigation", async () => {
+    const user = userEvent.setup();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient()}
+        initialPath="/operator-console/statutory-discounts"
+        session={operatorSession("site.operator", [
+          "ticket.lookup",
+          "statutory-discounts.session.lookup",
+          "statutory-discounts.draft.view"
+        ], ["SITE_OPERATOR"])}
+      />
+    );
 
-    expect(await screen.findByRole("heading", { name: "Work queue" })).toBeInTheDocument();
-    expect(await screen.findByText("STAT-OP-SESSION-0001")).toBeInTheDocument();
+    const expander = await screen.findByRole("button", { name: `Details for STAT-OP-SESSION-0001` });
+    expect(expander).toHaveAttribute("aria-expanded", "false");
+    expect(expander).toHaveAttribute("aria-controls", `work-queue-details-${firstDraftId}`);
+    expect(screen.queryByText("Live read model")).not.toBeInTheDocument();
+
+    await user.click(expander);
+
+    expect(expander).toHaveAttribute("aria-expanded", "true");
+    const details = document.getElementById(`work-queue-details-${firstDraftId}`);
+    expect(details).toHaveTextContent("Terminal Parking / North Exit");
+    expect(details).toHaveTextContent("operator.shift-a");
+    expect(details).toHaveTextContent("Source");
+    expect(details).toHaveTextContent("Operator Console");
+
+    await user.click(screen.getByRole("button", { name: /Review STAT-OP-SESSION-0001/i }));
+    expect(await screen.findByRole("heading", { level: 2, name: "Senior Citizen Parking Privilege" })).toBeInTheDocument();
   });
 
   it.skip("StatutoryDiscountQueue_RendersLoadingEmptyAndDataStates", async () => {
@@ -783,21 +919,17 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
   });
 
-  it("OperatorConsoleReadiness_RendersPanelDimensionsWithoutBrowserFallbackAuthority", async () => {
+  it("OperatorConsoleReadiness_DoesNotRenderTheGlobalReadinessPanel", async () => {
     render(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/statutory-discounts" />);
 
-    expect(await screen.findByRole("heading", { name: "Operator readiness state" })).toBeInTheDocument();
-    expect(await screen.findByText("Overall readiness")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Review queue" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Operator readiness state" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Overall readiness")).not.toBeInTheDocument();
     expect(screen.queryByText("Sandbox/local validation context is active. This is not production trust.")).not.toBeInTheDocument();
-    expect(screen.getAllByText("READY").length).toBeGreaterThan(0);
-    expect(screen.getByLabelText("Readiness dimensions")).toHaveTextContent("OPERATOR");
-    expect(screen.getByLabelText("Readiness dimensions")).toHaveTextContent("DEVICE");
-    expect(screen.getByLabelText("Readiness dimensions")).toHaveTextContent("SHIFT");
-    expect(screen.getByLabelText("Readiness dimensions")).toHaveTextContent("SITE");
-    expect(screen.getByLabelText("Readiness dimensions")).toHaveTextContent("WORKFLOW");
+    expect(screen.queryByLabelText("Readiness dimensions")).not.toBeInTheDocument();
   });
 
-  it("OperatorConsoleReadiness_DenialShowsReasonsNextActionAndCorrelation", async () => {
+  it("OperatorConsoleReadiness_DenialDoesNotRestoreTheGlobalReadinessPanel", async () => {
     render(
       <App
         apiClient={createMockOperatorConsoleApiClient({ readiness: blockedReadiness() })}
@@ -805,14 +937,13 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByText(/this device, shift, or site is not ready/i)).toBeInTheDocument();
-    expect(screen.getByText(/read-only monitoring pages may still load when their rbac checks allow access/i)).toBeInTheDocument();
-    expect(screen.getByText(/contact a supervisor or support and provide the correlation id/i)).toBeInTheDocument();
-    expect(screen.getAllByText("LOCAL_DEV_CONTEXT_NOT_ALLOWED_IN_PRODUCTION").length).toBeGreaterThan(0);
-    expect(screen.getByText(/local\/dev fallback context is not accepted as production trust/i)).toBeInTheDocument();
-    expect(screen.getByText("00000000-0000-0000-0000-00000000feed")).toBeInTheDocument();
-    expect(screen.getByText(/next action: enroll and activate a production device, shift, and site assignment/i)).toBeInTheDocument();
-    expect(screen.getByText("Retryable: No")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Review queue" })).toBeInTheDocument();
+    expect(screen.queryByText(/this device, shift, or site is not ready/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/read-only monitoring pages may still load when their rbac checks allow access/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("LOCAL_DEV_CONTEXT_NOT_ALLOWED_IN_PRODUCTION")).not.toBeInTheDocument();
+    expect(screen.queryByText("00000000-0000-0000-0000-00000000feed")).not.toBeInTheDocument();
+    expect(screen.queryByText(/next action: enroll and activate a production device, shift, and site assignment/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Retryable: No")).not.toBeInTheDocument();
   });
 
   it.skip("OperatorConsoleReadiness_BlocksControlledActionsWhenAccessIsDenied", async () => {
@@ -1717,7 +1848,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     expect(await screen.findByText("1474119573103")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Session Summary" })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { name: "Session Summary" })).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "Customer Information for Sales Invoice" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue("Jose Rizal"));
     expect(screen.getByLabelText("Address")).toHaveValue("123 Calamba");
@@ -3080,7 +3211,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "HikCentral Projection Health" })).toBeInTheDocument();
-    expect(await screen.findByText(/read-only monitoring pages may still load when their rbac checks allow access/i)).toBeInTheDocument();
+    expect(screen.queryByText(/read-only monitoring pages may still load when their rbac checks allow access/i)).not.toBeInTheDocument();
     expect(await screen.findByText("TEST SITE")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /sync now/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^enable$/i })).not.toBeInTheDocument();
