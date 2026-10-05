@@ -445,6 +445,23 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             return Invalid<ManagementStatutoryBenefitDecisionResult>(metadataError!, command.CorrelationId);
         }
 
+        var beneficiaryResidencyRequired = BeneficiaryResidencyIsRequired(review);
+        if (decision == "APPROVE" && !command.ReviewerAttestation)
+        {
+            return Invalid<ManagementStatutoryBenefitDecisionResult>(
+                "STATUTORY_BENEFIT_REVIEWER_ATTESTATION_REQUIRED",
+                command.CorrelationId);
+        }
+
+        if (decision == "APPROVE" &&
+            beneficiaryResidencyRequired &&
+            command.BeneficiaryResidencySatisfied != true)
+        {
+            return Invalid<ManagementStatutoryBenefitDecisionResult>(
+                "STATUTORY_BENEFIT_RESIDENCY_ATTESTATION_REQUIRED",
+                command.CorrelationId);
+        }
+
         if (review.ReviewStatus == StatutoryDiscountServiceChannelReviewStatuses.PendingReview && review.EvidenceRequired)
         {
             var evidence = await _evidenceReview.ReadAuthorizedAsync(
@@ -509,7 +526,12 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                 try
                 {
                     application = await _decisionFacade.SubmitAsync(
-                        ToAutomaticApplicationCommand(canonical, caller, command.CorrelationId),
+                        ToAutomaticApplicationCommand(
+                            canonical,
+                            caller,
+                            command.ReviewerAttestation,
+                            beneficiaryResidencyRequired ? command.BeneficiaryResidencySatisfied : null,
+                            command.CorrelationId),
                         cancellationToken).ConfigureAwait(false);
                 }
                 catch (StatutoryDiscountDecisionRejectedException exception)
@@ -596,7 +618,13 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             metadata.SiteReference,
             command.CorrelationId,
             cancellationToken,
-            BuildReviewedMetadataAuditSummary(reviewedDocument!));
+            BuildReviewedMetadataAuditSummary(
+                reviewedDocument!,
+                decision == "APPROVE" && command.ReviewerAttestation,
+                beneficiaryResidencyRequired,
+                decision == "APPROVE" && beneficiaryResidencyRequired
+                    ? command.BeneficiaryResidencySatisfied
+                    : null));
         return ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitDecisionResult>.Succeeded(value, command.CorrelationId);
     }
 
@@ -641,7 +669,8 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             return true;
         }
 
-        var idDocumentType = NormalizeOptional(command.IdDocumentType) ?? NormalizeOptional(review.IdDocumentType);
+        var idDocumentType = NormalizeReviewedDocumentType(command.IdDocumentType) ??
+            NormalizeReviewedDocumentType(review.IdDocumentType);
         var issuingAuthority = NormalizeOptional(command.IssuingAuthority) ?? NormalizeOptional(review.IssuingAuthority);
         var expiryDate = command.ExpiryDate ?? review.ExpiryDate;
         var birthDate = command.BirthDate ?? review.BirthDate;
@@ -691,8 +720,21 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         !value.Any(char.IsWhiteSpace) &&
         !value.Contains('*', StringComparison.Ordinal);
 
-    private static string BuildReviewedMetadataAuditSummary(StatutoryDiscountServiceChannelReviewedDocument metadata) =>
-        $"Reviewed metadata supplied: documentType={metadata.IdDocumentType is not null}; issuingAuthority={metadata.IssuingAuthority is not null}; expiryDate={metadata.ExpiryDate.HasValue}; birthDate={metadata.BirthDate.HasValue}; idControlReferenceSupplied={metadata.IdControlReference is not null}.";
+    private static string BuildReviewedMetadataAuditSummary(
+        StatutoryDiscountServiceChannelReviewedDocument metadata,
+        bool reviewerAttestation,
+        bool beneficiaryResidencyRequired,
+        bool? beneficiaryResidencySatisfied) =>
+        $"Reviewed metadata supplied: documentType={metadata.IdDocumentType is not null}; issuingAuthority={metadata.IssuingAuthority is not null}; expiryDate={metadata.ExpiryDate.HasValue}; birthDate={metadata.BirthDate.HasValue}; idControlReferenceSupplied={metadata.IdControlReference is not null}; reviewerAttestation={reviewerAttestation}; beneficiaryResidencyRequired={beneficiaryResidencyRequired}; beneficiaryResidencySatisfied={beneficiaryResidencySatisfied == true}.";
+
+    private static string? NormalizeReviewedDocumentType(string? value) =>
+        NormalizeOptional(value)?.ToUpperInvariant() switch
+        {
+            "SENIOR CITIZEN" or "SENIOR_CITIZEN" or "SENIOR_CITIZEN_ID" => "SENIOR_CITIZEN_ID",
+            "PWD" or "PWD_ID" => "PWD_ID",
+            "OTHER_SUPPORTING_DOCUMENT" => "OTHER_SUPPORTING_DOCUMENT",
+            _ => NormalizeOptional(value)
+        };
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -761,7 +803,8 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             maskedIdReference,
             authoritativeIdControlReference is not null,
             source.RequesterAttestation,
-            RequiredResidencyWasSatisfied(source),
+            BeneficiaryResidencyIsRequired(source),
+            null,
             source.AttestationNotes ?? source.ReasonCode,
             source.SubmittedAt,
             money,
@@ -778,6 +821,8 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
     private static StatutoryDiscountDecisionCommand ToAutomaticApplicationCommand(
         StatutoryDiscountServiceChannelReviewDetail source,
         ManagementStatutoryBenefitAutomaticApplicationCaller caller,
+        bool reviewerAttestation,
+        bool? beneficiaryResidencySatisfied,
         Guid correlationId) =>
         new(
             source.RequestReference,
@@ -811,10 +856,10 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             Decision: null,
             DecisionReasonCode: null,
             ReviewerUserId: null,
-            ReviewerAttestation: false,
+            ReviewerAttestation: reviewerAttestation,
             ApplyPayableBasis: true,
             source.OriginalTariffSnapshotId,
-            BeneficiaryResidencySatisfied: RequiredResidencyWasSatisfied(source),
+            BeneficiaryResidencySatisfied: beneficiaryResidencySatisfied,
             $"management-review-auto-apply:{source.StatutoryDiscountDecisionCommandId:N}",
             correlationId,
             new StatutoryDiscountServiceChannelCallerContext(
@@ -827,13 +872,11 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             BirthDate = source.BirthDate
         };
 
-    private static bool? RequiredResidencyWasSatisfied(StatutoryDiscountServiceChannelReviewDetail source) =>
+    private static bool BeneficiaryResidencyIsRequired(StatutoryDiscountServiceChannelReviewDetail source) =>
         string.Equals(
             source.GoverningPolicy?.BeneficiaryResidencyScope,
             "RESIDENT_ONLY",
-            StringComparison.Ordinal)
-            ? true
-            : null;
+            StringComparison.Ordinal);
 
     private static ManagementStatutoryBenefitReviewResult<T> Invalid<T>(string code, Guid correlationId) =>
         ManagementStatutoryBenefitReviewResult<T>.Failed(ManagementStatutoryBenefitReviewOutcome.Invalid, code, "The statutory-benefit review request is invalid.", correlationId);

@@ -114,6 +114,8 @@ public static class ManagementStatutoryBenefitReviewEndpoints
                 body.ExpiryDate,
                 body.BirthDate,
                 body.IdControlReference,
+                body.ReviewerAttestation,
+                body.BeneficiaryResidencySatisfied,
                 correlationId), cancellationToken));
         }
         catch (Exception exception)
@@ -296,6 +298,8 @@ public sealed record ManagementStatutoryBenefitDecisionRequest(
     string? IssuingAuthority,
     DateOnly? ExpiryDate,
     DateOnly? BirthDate,
-    string? IdControlReference);
+    string? IdControlReference,
+    bool ReviewerAttestation,
+    bool? BeneficiaryResidencySatisfied);
 
 public sealed record ManagementStatutoryBenefitEvidencePreviewRequest(Guid EvidenceItemReference);

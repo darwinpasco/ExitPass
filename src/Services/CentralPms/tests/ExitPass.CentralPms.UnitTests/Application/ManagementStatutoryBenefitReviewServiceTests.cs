@@ -61,7 +61,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
     }
 
     [Fact]
-    public async Task Detail_WhenFrozenPolicyRequiresResidency_ExposesConfirmedResidencyAttestation()
+    public async Task Detail_WhenFrozenPolicyRequiresResidency_ExposesRequirementWithoutInventingAttestation()
     {
         var canonical = new FakeCanonicalRepository
         {
@@ -76,7 +76,8 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         var result = await service.GetAsync(Actor(), DecisionReference, CorrelationId, CancellationToken.None);
 
         result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
-        result.Value!.BeneficiaryResidencySatisfied.Should().BeTrue();
+        result.Value!.BeneficiaryResidencyRequired.Should().BeTrue();
+        result.Value.BeneficiaryResidencySatisfied.Should().BeNull();
     }
 
     [Theory]
@@ -235,6 +236,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             Arg.Is<StatutoryDiscountDecisionCommand>(application =>
                 application.ApplyPayableBasis &&
                 application.ParkingSessionId == ParkingSessionReference &&
+                application.ReviewerAttestation &&
                 application.BeneficiaryResidencySatisfied == true &&
                 application.IdControlReference == "ABC1234" &&
                 application.IdempotencyKey == $"management-review-auto-apply:{DecisionReference:N}" &&
@@ -345,6 +347,100 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         decisions.CapturedCommand.ReviewedDocument.IdControlReference.Should().Be("123467");
     }
 
+    [Theory]
+    [InlineData("SENIOR CITIZEN", "SENIOR_CITIZEN_ID")]
+    [InlineData("SENIOR_CITIZEN", "SENIOR_CITIZEN_ID")]
+    [InlineData("SENIOR_CITIZEN_ID", "SENIOR_CITIZEN_ID")]
+    [InlineData("PWD", "PWD_ID")]
+    [InlineData("PWD_ID", "PWD_ID")]
+    public async Task Approve_NormalizesKnownReviewedDocumentTypes(string supplied, string expected)
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with { IdDocumentType = supplied }
+        };
+        var decisions = new FakeDecisionService();
+        var command = Command("APPROVE") with { IdDocumentType = supplied };
+
+        var result = await CreateService(AllowedRepository(), canonical, decisions)
+            .DecideAsync(Actor(), command, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        decisions.CapturedCommand!.ReviewedDocument.IdDocumentType.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task Approve_WithoutReviewerAttestation_FailsBeforePersistence()
+    {
+        var decisions = new FakeDecisionService();
+
+        var result = await CreateService(AllowedRepository(), decisions: decisions).DecideAsync(
+            Actor(), Command("APPROVE") with { ReviewerAttestation = false }, CancellationToken.None);
+
+        result.Classification.Should().Be("STATUTORY_BENEFIT_REVIEWER_ATTESTATION_REQUIRED");
+        decisions.Calls.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(false)]
+    public async Task Approve_ResidentOnlyPolicyWithoutResidencyAttestation_FailsBeforePersistence(bool? attestation)
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with { GoverningPolicy = ResidentOnlyPolicy() }
+        };
+        var decisions = new FakeDecisionService();
+
+        var result = await CreateService(AllowedRepository(), canonical, decisions).DecideAsync(
+            Actor(), Command("APPROVE") with { BeneficiaryResidencySatisfied = attestation }, CancellationToken.None);
+
+        result.Classification.Should().Be("STATUTORY_BENEFIT_RESIDENCY_ATTESTATION_REQUIRED");
+        decisions.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Reject_DoesNotRequireReviewerOrResidencyAttestation()
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with { GoverningPolicy = ResidentOnlyPolicy() }
+        };
+        var decisions = new FakeDecisionService();
+
+        var result = await CreateService(AllowedRepository(), canonical, decisions).DecideAsync(
+            Actor(), Command("REJECT", "NOT_ELIGIBLE") with
+            {
+                ReviewerAttestation = false,
+                BeneficiaryResidencySatisfied = null
+            }, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        decisions.Calls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Approve_NonResidentPolicyDoesNotManufactureResidencyFact()
+    {
+        var repository = AllowedRepository();
+        repository.AutomaticApplicationCaller = new ManagementStatutoryBenefitAutomaticApplicationCaller(
+            Guid.Parse("72000000-0000-4000-8000-000000000401"),
+            "WEBPAY",
+            "WEBPAY",
+            "statutory-discounts.decision.submit.webpay");
+        var facade = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
+        var service = CreateService(repository, decisionFacade: facade);
+
+        var result = await service.DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        await facade.Received(1).SubmitAsync(
+            Arg.Is<StatutoryDiscountDecisionCommand>(application =>
+                application.ReviewerAttestation &&
+                application.BeneficiaryResidencySatisfied == null),
+            Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task Approve_WhenIdReplacementIsOmitted_RetainsExistingAuthoritativeValue()
     {
@@ -406,11 +502,18 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
     public async Task Approve_DoesNotCopyAuthoritativeIdControlReferenceIntoAuditSummary()
     {
         var audit = new FakeAuditRepository();
-        var result = await CreateService(AllowedRepository(), audit: audit).DecideAsync(
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with { GoverningPolicy = ResidentOnlyPolicy() }
+        };
+        var result = await CreateService(AllowedRepository(), canonical, audit: audit).DecideAsync(
             Actor(), Command("APPROVE") with { IdControlReference = "12345678" }, CancellationToken.None);
 
         result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
         audit.Summaries.Should().Contain(summary => summary.Contains("idControlReferenceSupplied=True", StringComparison.Ordinal));
+        audit.Summaries.Should().Contain(summary => summary.Contains("reviewerAttestation=True", StringComparison.Ordinal));
+        audit.Summaries.Should().Contain(summary => summary.Contains("beneficiaryResidencyRequired=True", StringComparison.Ordinal));
+        audit.Summaries.Should().Contain(summary => summary.Contains("beneficiaryResidencySatisfied=True", StringComparison.Ordinal));
         audit.Summaries.Should().OnlyContain(summary => !summary.Contains("12345678", StringComparison.Ordinal));
     }
 
@@ -820,7 +923,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         new(status, null, null, null, null, null, null, 1, 25, CorrelationId);
 
     private static ManagementStatutoryBenefitDecisionCommand Command(string decision, string? reason = null, long expectedVersion = 7) =>
-        new(DecisionReference, decision, reason, expectedVersion, "idempotency-001", "PWD_ID", "LOCAL_GOVERNMENT", new DateOnly(2027, 8, 24), null, "ABC1234", CorrelationId);
+        new(DecisionReference, decision, reason, expectedVersion, "idempotency-001", "PWD_ID", "LOCAL_GOVERNMENT", new DateOnly(2027, 8, 24), null, "ABC1234", true, true, CorrelationId);
 
     private static StatutoryDiscountServiceChannelReviewDetail Detail(
         string status = "PENDING_REVIEW",
