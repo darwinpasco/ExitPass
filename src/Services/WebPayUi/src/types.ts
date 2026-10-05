@@ -119,6 +119,7 @@ export type ParkingSessionResolveResponse = {
   vendorSystemId?: string | null;
   siteGroupName?: string | null;
   amountMinorUnits: number;
+  customerInformationSubmitted?: boolean | null;
   originalAmountMinorUnits?: number | null;
   couponAdjustmentMinorUnits?: number | null;
   statutoryAdjustmentMinorUnits?: number | null;

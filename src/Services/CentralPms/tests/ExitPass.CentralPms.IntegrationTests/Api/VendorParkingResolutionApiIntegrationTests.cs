@@ -2,11 +2,14 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
+using ExitPass.CentralPms.Application.SalesInvoiceCustomerInformation;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.Public.PaymentAttempts;
 using ExitPass.CentralPms.Contracts.Public.VendorParking;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 using NpgsqlTypes;
 using Xunit;
@@ -89,6 +92,36 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         payload.NetPayableMinorUnits.Should().Be(10000);
         payload.StatutoryDiscountApplied.Should().BeFalse();
         payload.EffectiveTariffSnapshotId.Should().Be(payload.TariffSnapshotId);
+    }
+
+    /// <summary>
+    /// Verifies public resolution discloses only canonical customer-information presence.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorParking_WhenCustomerInformationExists_ReturnsPresenceWithoutCustomerData()
+    {
+        using var factory = new CustomWebApplicationFactory()
+            .WithServiceOverrides(services =>
+            {
+                services.RemoveAll<IParkingSessionInvoiceCustomerInformationService>();
+                services.AddSingleton<IParkingSessionInvoiceCustomerInformationService>(new ExistingCustomerInformationService());
+            });
+        using var client = factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000015");
+
+        using var response = await client.PostAsJsonAsync(
+            "/v1/vendor-parking/resolve",
+            Request(plateNumber: null, ticketReference: "TICKET-001", correlationId));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        var payload = JsonSerializer.Deserialize<ResolveVendorParkingResponse>(body, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        payload.Should().NotBeNull();
+        payload!.CustomerInformationSubmitted.Should().BeTrue();
+        body.Should().NotContain("customerName");
+        body.Should().NotContain("address");
+        body.Should().NotContain("tin");
+        body.Should().NotContain("businessStyle");
     }
 
     /// <summary>
@@ -1340,4 +1373,28 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         Guid ParkingSessionId,
         Guid TariffSnapshotId,
         decimal Amount);
+
+    private sealed class ExistingCustomerInformationService : IParkingSessionInvoiceCustomerInformationService
+    {
+        public Task<InvoiceCustomerInformationReadResult> ReadAsync(
+            Guid parkingSessionId,
+            InvoiceCustomerInformationScope scope,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new InvoiceCustomerInformationReadResult(
+                InvoiceCustomerInformationReadStatus.Found,
+                new ParkingSessionInvoiceCustomerInformationRecord(
+                    parkingSessionId,
+                    "Customer",
+                    "Address",
+                    "TIN",
+                    "Business",
+                    1,
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow)));
+
+        public Task<InvoiceCustomerInformationSaveResult> SaveAsync(
+            SaveParkingSessionInvoiceCustomerInformationCommand command,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
 }

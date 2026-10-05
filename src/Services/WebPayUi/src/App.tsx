@@ -611,12 +611,17 @@ export function App() {
         setError("");
         return;
       }
+      const canonicalCustomerInformationSubmitted = paymentSession?.customerInformationSubmitted === true;
       const includeStatutoryId = hasApprovedStatutoryBenefit(paymentSession, statutoryDiscountState.decision);
-      const customerInformationError = validateInvoiceCustomerInformation(invoiceCustomerInformation, includeStatutoryId);
-      if (customerInformationError) {
-        throw new Error(customerInformationError);
+      const normalizedInvoiceCustomerInformation = canonicalCustomerInformationSubmitted
+        ? undefined
+        : normalizeInvoiceCustomerInformation(invoiceCustomerInformation, includeStatutoryId);
+      if (!canonicalCustomerInformationSubmitted) {
+        const customerInformationError = validateInvoiceCustomerInformation(invoiceCustomerInformation, includeStatutoryId);
+        if (customerInformationError) {
+          throw new Error(customerInformationError);
+        }
       }
-      const normalizedInvoiceCustomerInformation = normalizeInvoiceCustomerInformation(invoiceCustomerInformation, includeStatutoryId);
       paymentIntentCorrelationId =
         statutoryRecoveryRecord?.paymentIntentCorrelationId ||
         (appliedStatutoryBasis ? createRequestReference() : undefined);
@@ -654,11 +659,16 @@ export function App() {
         invoiceCustomerInformation: normalizedInvoiceCustomerInformation,
         correlationId: paymentIntentCorrelationId
       }, fetch, {});
-      setInvoiceCustomerInformation(normalizedInvoiceCustomerInformation);
-      if (invoiceCustomerSessionIdRef.current) {
+      if (normalizedInvoiceCustomerInformation) {
+        setInvoiceCustomerInformation(normalizedInvoiceCustomerInformation);
+      }
+      if (normalizedInvoiceCustomerInformation && invoiceCustomerSessionIdRef.current) {
         saveInvoiceCustomerInformationDraft(invoiceCustomerSessionIdRef.current, normalizedInvoiceCustomerInformation);
       }
-      setResolvedSession(toParkingSessionResolveResponse(response));
+      setResolvedSession({
+        ...toParkingSessionResolveResponse(response),
+        customerInformationSubmitted: paymentSession?.customerInformationSubmitted
+      });
       if (appliedStatutoryBasis) {
         updateCurrentStatutoryRecovery({
           paymentAttemptId: response.paymentAttemptId,
@@ -1243,7 +1253,7 @@ export function App() {
   const canStartStatutoryDiscountRequest = coveredStatutoryEntitlements.length > 0 || Boolean(statutoryDiscountState.decision);
   const showStatutoryInvoiceId = !regularPaymentSelection && hasApprovedStatutoryBenefit(summary, statutoryDiscountState.decision);
   const invoiceCustomerInformationReadOnly = Boolean(
-    result || activePaymentAttempt || stage === "REDIRECTING" || stage === "HANDOFF_READY" || stage === "ACTIVE_ATTEMPT" || zeroPayableStatutoryCompletion
+    resolvedSession?.customerInformationSubmitted === true || result || activePaymentAttempt || stage === "REDIRECTING" || stage === "HANDOFF_READY" || stage === "ACTIVE_ATTEMPT" || zeroPayableStatutoryCompletion
   );
 
   return (
@@ -1399,6 +1409,7 @@ export function App() {
             showStatutoryId={showStatutoryInvoiceId}
             readOnly={invoiceCustomerInformationReadOnly}
             submitted={Boolean(result || activePaymentAttempt || stage === "REDIRECTING")}
+            canonicalSubmitted={summary.customerInformationSubmitted === true}
             onChange={setInvoiceCustomerInformation}
           />
         )}
@@ -1801,6 +1812,7 @@ function StatutoryDiscountRequestPanel({
         <div className={`statutory-status is-${copy.tone}`} aria-live="polite">
           <div>
             <h3>{copy.heading}</h3>
+            <p><strong>{formatStatutoryEntitlement(decision.entitlementType)}</strong></p>
             <p>{copy.body}</p>
           </div>
           {showSupportReference && <CustomerSupportReference value={decision.correlationId} />}
@@ -2281,12 +2293,14 @@ function InvoiceCustomerInformationPanel({
   showStatutoryId,
   readOnly,
   submitted,
+  canonicalSubmitted,
   onChange
 }: {
   value: InvoiceCustomerInformation;
   showStatutoryId: boolean;
   readOnly: boolean;
   submitted: boolean;
+  canonicalSubmitted: boolean;
   onChange: (value: InvoiceCustomerInformation) => void;
 }) {
   const update = (field: keyof InvoiceCustomerInformation, fieldValue: string) => {
@@ -2303,13 +2317,15 @@ function InvoiceCustomerInformationPanel({
         <span className="optional-badge">Optional</span>
       </div>
       <p id="customer-information-help" className="section-help">
-        {submitted
+        {canonicalSubmitted
+          ? "Customer information already provided."
+          : submitted
           ? "These details were submitted for your Sales Invoice."
           : readOnly
             ? "These details are retained for this WebPay transaction."
             : "Add these details only if you want them shown on your Sales Invoice."}
       </p>
-      <div className="customer-information-grid" aria-describedby="customer-information-help">
+      {!canonicalSubmitted && <div className="customer-information-grid" aria-describedby="customer-information-help">
         <label className="field">
           <span>Customer Name</span>
           <input
@@ -2369,7 +2385,7 @@ function InvoiceCustomerInformationPanel({
             <small>This field appears because an approved parking benefit is linked to this session.</small>
           </label>
         )}
-      </div>
+      </div>}
     </section>
   );
 }
@@ -3647,6 +3663,10 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
 
 function isStatutoryValidationPending(session?: ParkingSessionResolveResponse | null): boolean {
   return getNormalizedStatutoryStatus(session) === "PENDING";
+}
+
+function formatStatutoryEntitlement(entitlementType?: string | null): string {
+  return entitlementType?.toUpperCase() === "PWD" ? "PWD" : "Senior Citizen";
 }
 
 function getStatutoryDiscountDisplay(session: ParkingSessionResolveResponse): { label: string; isBlocking: boolean } {

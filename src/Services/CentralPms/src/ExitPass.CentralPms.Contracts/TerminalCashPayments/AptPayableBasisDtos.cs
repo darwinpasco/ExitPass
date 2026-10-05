@@ -53,6 +53,7 @@ public sealed record AptPayableBasisReadinessResponse(
     string ParkingStatus,
     string PaymentStatus,
     long AuthoritativeAmountMinorUnits,
+    bool? CustomerInformationSubmitted,
     string Currency,
     DateTimeOffset TariffCalculatedAt,
     DateTimeOffset TariffValidUntil,

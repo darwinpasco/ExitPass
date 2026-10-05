@@ -1004,6 +1004,7 @@ public sealed class WebPayPaymentIntentHandler
             VendorSystemId = BlankToNull(parking.VendorSystemId),
             SiteGroupName = WebPayDisplayNameSanitizer.ResolveSiteGroupName(parking.SiteGroupName),
             AmountMinorUnits = parking.NetPayableMinorUnits,
+            CustomerInformationSubmitted = parking.CustomerInformationSubmitted,
             Currency = parking.Currency,
             SiteName = WebPayDisplayNameSanitizer.ResolveSiteName(parking.SiteName),
             TicketReference = BlankToNull(parking.TicketReference),

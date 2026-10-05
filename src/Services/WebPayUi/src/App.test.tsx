@@ -568,6 +568,7 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.queryByRole("heading", { name: /awaiting review/i })).not.toBeInTheDocument();
     completeUpload(statutoryEvidenceResponse({ lifecycleClassification: "VALIDATION_PENDING" }));
     expect(await screen.findByRole("heading", { name: /evidence processing/i })).toBeInTheDocument();
+    expect(screen.getByText("Senior Citizen")).toBeInTheDocument();
   });
 
   it("retries a failed photo upload against the same statutory decision", async () => {
@@ -819,6 +820,28 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByLabelText(/^tin$/i)).toBeEnabled();
     expect(screen.getByLabelText(/business style/i)).toBeEnabled();
     expect(screen.queryByLabelText(/OSCA ID No/i)).not.toBeInTheDocument();
+  });
+
+  it("WebPay_WhenCanonicalCustomerInformationExists_ShowsPresenceWithoutReturningOrResubmittingPii", async () => {
+    const fetchMock = stubWebPayFetch({
+      resolvePayload: { ...successResponse, customerInformationSubmitted: true }
+    });
+    render(<App />);
+
+    await resolveTicket("TICKET-CUSTOMER-CANONICAL");
+
+    expect(screen.getByRole("heading", { name: /customer information/i })).toBeInTheDocument();
+    expect(screen.getByText("Customer information already provided.")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/customer name/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^address$/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^tin$/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/business style/i)).not.toBeInTheDocument();
+
+    await continueToPayment();
+
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1));
+    const body = JSON.parse(firstRouteCall(fetchMock, "/v1/webpay/payment-intents")[1]?.body as string);
+    expect(body).not.toHaveProperty("invoiceCustomerInformation");
   });
 
   it("WebPay_WhenSessionResolved_RendersCustomerInformationBeforeStatutoryDiscount", async () => {
@@ -1141,6 +1164,7 @@ describe("ExitPass WebPay UI", () => {
     await resolveTicket("TICKET-STAT-REDISCOVER");
 
     expect(await screen.findByRole("heading", { name: /evidence processing/i })).toBeInTheDocument();
+    expect(screen.getByText("Senior Citizen")).toBeInTheDocument();
     expect(await screen.findByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^upload photo$/i })).toBeInTheDocument();
     expect(screen.getByText(/existing statutory discount request was restored/i)).toBeInTheDocument();

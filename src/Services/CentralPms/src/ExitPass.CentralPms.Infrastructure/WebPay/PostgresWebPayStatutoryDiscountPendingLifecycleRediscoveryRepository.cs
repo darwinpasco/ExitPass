@@ -9,7 +9,7 @@ using NpgsqlTypes;
 namespace ExitPass.CentralPms.Infrastructure.WebPay;
 
 /// <summary>
-/// Read-only PostgreSQL rediscovery repository for existing WebPay statutory pending lifecycles.
+/// Read-only PostgreSQL rediscovery repository for existing statutory pending lifecycles visible to WebPay.
 /// </summary>
 public sealed class PostgresWebPayStatutoryDiscountPendingLifecycleRediscoveryRepository
     : IWebPayStatutoryDiscountPendingLifecycleRediscoveryRepository
@@ -137,7 +137,6 @@ public sealed class PostgresWebPayStatutoryDiscountPendingLifecycleRediscoveryRe
                 LIMIT 1
             ) AS a ON TRUE
             WHERE d.parking_session_id = @parking_session_id
-              AND d.source_channel = @source_channel
               AND COALESCE(r.site_id, ps.site_id) = @site_id
               AND COALESCE(r.site_group_id, ps.site_group_id) = @site_group_id
               AND (@entitlement_type IS NULL OR d.entitlement_type = @entitlement_type)
@@ -161,7 +160,6 @@ public sealed class PostgresWebPayStatutoryDiscountPendingLifecycleRediscoveryRe
             command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
             command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = siteId;
             command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = siteGroupId;
-            command.Parameters.AddWithValue("source_channel", WebPaySourceChannel);
             command.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = (object?)entitlementType ?? DBNull.Value;
 
             await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken).ConfigureAwait(false);

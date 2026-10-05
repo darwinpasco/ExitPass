@@ -747,6 +747,7 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
                 ParkingStatus: "ACTIVE",
                 PaymentStatus: "UNPAID",
                 AuthoritativeAmountMinorUnits: 10000,
+                CustomerInformationSubmitted: true,
                 Currency: "PHP",
                 TariffCalculatedAt: DateTimeOffset.Parse("2030-04-01T01:30:00Z"),
                 TariffValidUntil: DateTimeOffset.Parse("2030-04-01T01:35:00Z"),

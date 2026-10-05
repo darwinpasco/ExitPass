@@ -222,6 +222,41 @@ public sealed class WebPayStatutoryDiscountPendingLifecycleRediscoveryApiIntegra
     }
 
     [Fact]
+    public async Task Rediscover_WithExistingOperatorConsolePendingReview_ReturnsSameCanonicalDecisionWithoutWrites()
+    {
+        var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            nameof(Rediscover_WithExistingOperatorConsolePendingReview_ReturnsSameCanonicalDecisionWithoutWrites),
+            StatutoryDiscountSourceChannels.WebPay);
+
+        try
+        {
+            await ConvertToOperatorConsoleOriginAsync(seeded);
+            using var factory = CreateRealFactoryWithRbac();
+            using var client = factory.CreateClient();
+            AddWebPayHeaders(client);
+
+            var before = await CountWriteSensitiveRowsAsync(seeded);
+            using var response = await client.PostAsJsonAsync(
+                Route,
+                RequestFor(seeded, WebPayStatutoryDiscountPendingLifecycleRediscoveryValues.LookupModeParkingSessionId));
+            var after = await CountWriteSensitiveRowsAsync(seeded);
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await response.Content.ReadFromJsonAsync<WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse>();
+            body!.Classification.Should().Be(WebPayStatutoryDiscountPendingLifecycleRediscoveryValues.Found);
+            body.StatutoryDecisionCommandId.Should().Be(seeded.Decision.StatutoryDiscountDecisionCommandId);
+            body.ParkingSessionId.Should().Be(seeded.Context.ParkingSessionId);
+            body.EntitlementType.Should().Be("SENIOR_CITIZEN");
+            body.LifecycleState.Should().Be("PENDING_REVIEW");
+            after.Should().Be(before);
+        }
+        finally
+        {
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
+        }
+    }
+
+    [Fact]
     public async Task Rediscover_WhenNoActiveLifecycle_ReturnsNoActiveLifecycleWithoutWrites()
     {
         var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
@@ -628,6 +663,29 @@ public sealed class WebPayStatutoryDiscountPendingLifecycleRediscoveryApiIntegra
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = siteId;
         command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = siteGroupId;
         command.Parameters.AddWithValue("plate_number", plateNumber);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task ConvertToOperatorConsoleOriginAsync(SeededServiceChannelReview seeded)
+    {
+        await using var connection = new NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            UPDATE discounts.statutory_discount_decision_commands
+            SET source_channel = 'OPERATOR_CONSOLE'
+            WHERE statutory_discount_decision_command_id = @decision_command_id;
+
+            UPDATE operator_console.statutory_discount_service_channel_reviews
+            SET
+                source_channel = 'OPERATOR_CONSOLE',
+                birth_date = DATE '1950-01-01',
+                submitted_by_user_id = @submitted_by_user_id
+            WHERE statutory_discount_decision_command_id = @decision_command_id;
+            """,
+            connection);
+        command.Parameters.Add("decision_command_id", NpgsqlDbType.Uuid).Value = seeded.Decision.StatutoryDiscountDecisionCommandId;
+        command.Parameters.Add("submitted_by_user_id", NpgsqlDbType.Uuid).Value = seeded.Context.RequestedByUserId;
         await command.ExecuteNonQueryAsync();
     }
 

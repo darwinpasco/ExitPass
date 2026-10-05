@@ -41,6 +41,12 @@ public sealed class WebPayParkingSessionResolveResponse
     public long AmountMinorUnits { get; set; }
 
     /// <summary>
+    /// Indicates whether customer information has already been provided for the Sales Invoice.
+    /// Customer-entered values are intentionally not returned by this public contract.
+    /// </summary>
+    public bool? CustomerInformationSubmitted { get; set; }
+
+    /// <summary>
     /// ISO currency code.
     /// </summary>
     public string Currency { get; set; } = string.Empty;

@@ -192,7 +192,8 @@ public sealed class CentralPmsWebPayClientTests
                 currentFeeCalculationTime = "2026-05-18T12:57:00+08:00",
                 tariffName = "Weekend Rate",
                 parkingStatus = "PaymentRequired",
-                paymentStatus = "Not Started"
+                paymentStatus = "Not Started",
+                customerInformationSubmitted = true
             })
         });
         var client = CreateClient(handler);
@@ -217,6 +218,7 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal("Weekend Rate", result.Value.TariffName);
         Assert.Equal("PaymentRequired", result.Value.ParkingStatus);
         Assert.Equal("Not Started", result.Value.PaymentStatus);
+        Assert.True(result.Value.CustomerInformationSubmitted);
         Assert.Equal(DateTimeOffset.Parse("2026-05-18T13:15:00+08:00"), result.Value.FeeValidUntil);
     }
 
