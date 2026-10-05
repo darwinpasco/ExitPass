@@ -135,7 +135,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                     OR EXISTS (
                         SELECT 1
                         FROM discounts.statutory_discount_policy_version_evidence_requirements AS evidence_requirement
-                        WHERE evidence_requirement.statutory_discount_policy_version_id = dpa.statutory_discount_policy_version_id
+                        WHERE evidence_requirement.statutory_discount_policy_version_id = COALESCE(
+                            dpa.statutory_discount_policy_version_id,
+                            r.statutory_discount_policy_version_id,
+                            validation.statutory_discount_policy_version_id)
                           AND evidence_requirement.requirement_status = 'REQUIRED'
                     )
                 ) AS evidence_required,
@@ -151,6 +154,8 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
               ON site.site_id = r.site_id
             LEFT JOIN discounts.statutory_discount_decision_policy_authorities AS dpa
               ON dpa.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
+            LEFT JOIN discounts.statutory_discount_validations AS validation
+              ON validation.statutory_discount_validation_id = r.statutory_discount_validation_id
             WHERE r.source_channel IN ('WEBPAY', 'ASSISTED_PAYMENT_TERMINAL', 'OPERATOR_CONSOLE')
               AND (@has_global_scope OR r.site_id = ANY(@authorized_site_ids) OR r.site_group_id = ANY(@authorized_site_group_ids))
               AND (@site_id IS NULL OR r.site_id = @site_id)
@@ -219,7 +224,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                     OR EXISTS (
                         SELECT 1
                         FROM discounts.statutory_discount_policy_version_evidence_requirements AS evidence_requirement
-                        WHERE evidence_requirement.statutory_discount_policy_version_id = dpa.statutory_discount_policy_version_id
+                        WHERE evidence_requirement.statutory_discount_policy_version_id = COALESCE(
+                            dpa.statutory_discount_policy_version_id,
+                            r.statutory_discount_policy_version_id,
+                            validation.statutory_discount_policy_version_id)
                           AND evidence_requirement.requirement_status = 'REQUIRED'
                     )
                 ) AS evidence_required,
@@ -232,25 +240,25 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 payable.currency_code,
                 COALESCE(payable.original_tariff_snapshot_id, r.original_tariff_snapshot_id) AS effective_original_tariff_snapshot_id,
                 original_tariff.vendor_system_id AS original_vendor_system_id,
-                dpa.statutory_discount_policy_version_id AS governing_policy_version_id,
-                dpa.jurisdiction_id AS governing_jurisdiction_id,
-                dpa.jurisdiction_code AS governing_jurisdiction_code,
-                dpa.jurisdiction_display_name AS governing_jurisdiction_display_name,
-                dpa.policy_code AS governing_policy_code,
-                dpa.policy_version AS governing_policy_version,
-                dpa.ordinance_number AS governing_ordinance_number,
-                dpa.ordinance_title AS governing_ordinance_title,
-                dpa.source_verification_status::text AS governing_source_verification_status,
-                dpa.transaction_publication_status::text AS governing_transaction_publication_status,
-                dpa.detailed_rule_verification_status::text AS governing_detailed_rule_verification_status,
-                dpa.parking_service_applicability::text AS governing_parking_service_applicability,
-                dpa.benefit_type::text AS governing_benefit_type,
-                dpa.beneficiary_residency_scope::text AS governing_beneficiary_residency_scope,
-                dpa.official_source_available AS governing_official_source_available,
-                dpa.ordinance_text_available AS governing_ordinance_text_available,
-                dpa.ordinance_number_available AS governing_ordinance_number_available,
-                dpa.transaction_use_effective_from AS governing_effective_from,
-                dpa.transaction_use_effective_to AS governing_effective_to,
+                COALESCE(dpa.statutory_discount_policy_version_id, frozen_policy.statutory_discount_policy_version_id) AS governing_policy_version_id,
+                COALESCE(dpa.jurisdiction_id, frozen_policy.jurisdiction_id) AS governing_jurisdiction_id,
+                COALESCE(dpa.jurisdiction_code, frozen_policy.jurisdiction_code) AS governing_jurisdiction_code,
+                COALESCE(dpa.jurisdiction_display_name, frozen_policy.jurisdiction_display_name) AS governing_jurisdiction_display_name,
+                COALESCE(dpa.policy_code, frozen_policy.policy_code) AS governing_policy_code,
+                COALESCE(dpa.policy_version, frozen_policy.policy_version) AS governing_policy_version,
+                COALESCE(dpa.ordinance_number, frozen_policy.ordinance_number) AS governing_ordinance_number,
+                COALESCE(dpa.ordinance_title, frozen_policy.ordinance_title) AS governing_ordinance_title,
+                COALESCE(dpa.source_verification_status::text, frozen_policy.source_verification_status::text) AS governing_source_verification_status,
+                COALESCE(dpa.transaction_publication_status::text, frozen_policy.transaction_publication_status::text) AS governing_transaction_publication_status,
+                COALESCE(dpa.detailed_rule_verification_status::text, frozen_policy.detailed_rule_verification_status::text) AS governing_detailed_rule_verification_status,
+                COALESCE(dpa.parking_service_applicability::text, frozen_policy.parking_service_applicability::text) AS governing_parking_service_applicability,
+                COALESCE(dpa.benefit_type::text, frozen_policy.benefit_type::text) AS governing_benefit_type,
+                COALESCE(dpa.beneficiary_residency_scope::text, frozen_policy.beneficiary_residency_scope::text) AS governing_beneficiary_residency_scope,
+                COALESCE(dpa.official_source_available, frozen_policy.official_source_available) AS governing_official_source_available,
+                COALESCE(dpa.ordinance_text_available, frozen_policy.ordinance_text_available) AS governing_ordinance_text_available,
+                COALESCE(dpa.ordinance_number_available, frozen_policy.ordinance_number_available) AS governing_ordinance_number_available,
+                COALESCE(dpa.transaction_use_effective_from, frozen_policy.transaction_use_effective_from) AS governing_effective_from,
+                COALESCE(dpa.transaction_use_effective_to, frozen_policy.transaction_use_effective_to) AS governing_effective_to,
                 COALESCE(evidence.requirements_json, '[]') AS governing_evidence_requirements,
                 payable.application_status
             FROM operator_console.statutory_discount_service_channel_reviews AS r
@@ -258,6 +266,13 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
               ON d.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
             LEFT JOIN discounts.statutory_discount_decision_policy_authorities AS dpa
               ON dpa.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
+            LEFT JOIN discounts.statutory_discount_validations AS validation
+              ON validation.statutory_discount_validation_id = r.statutory_discount_validation_id
+            LEFT JOIN discounts.statutory_discount_policy_versions AS frozen_policy
+              ON dpa.statutory_discount_decision_command_id IS NULL
+             AND frozen_policy.statutory_discount_policy_version_id = COALESCE(
+                    r.statutory_discount_policy_version_id,
+                    validation.statutory_discount_policy_version_id)
             LEFT JOIN LATERAL (
                 SELECT jsonb_agg(
                     jsonb_build_object(
@@ -269,7 +284,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                     ORDER BY req.evidence_type::text
                 )::text AS requirements_json
                 FROM discounts.statutory_discount_policy_version_evidence_requirements AS req
-                WHERE req.statutory_discount_policy_version_id = dpa.statutory_discount_policy_version_id
+                WHERE req.statutory_discount_policy_version_id = COALESCE(
+                    dpa.statutory_discount_policy_version_id,
+                    r.statutory_discount_policy_version_id,
+                    validation.statutory_discount_policy_version_id)
                   AND req.requirement_status IN ('REQUIRED', 'OPTIONAL')
             ) AS evidence ON TRUE
             LEFT JOIN LATERAL (

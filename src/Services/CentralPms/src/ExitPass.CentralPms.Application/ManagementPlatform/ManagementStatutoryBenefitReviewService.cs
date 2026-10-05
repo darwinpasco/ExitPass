@@ -464,16 +464,19 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
 
         if (review.ReviewStatus == StatutoryDiscountServiceChannelReviewStatuses.PendingReview && review.EvidenceRequired)
         {
-            var evidence = await _evidenceReview.ReadAuthorizedAsync(
-                command.DecisionCommandReference,
-                new StatutoryEvidenceAuthorizedReviewContext(
+            var evidenceIsReviewable = IsOperatorConsoleReview(review)
+                ? await OperatorConsoleEvidenceIsReviewableAsync(
+                    review,
                     metadata.SiteReference,
-                    review.SiteGroupId,
-                    review.SourceChannel,
                     command.CorrelationId,
-                    new StatutoryEvidenceActor(actor.UserId, null, MediatedEvidenceAuditSourceChannel)),
-                cancellationToken).ConfigureAwait(false);
-            if (evidence?.Items.Any(item => item.ReviewabilityStatus == "REVIEWABLE" && item.PreviewPermitted) != true)
+                    cancellationToken).ConfigureAwait(false)
+                : await ServiceChannelEvidenceIsReviewableAsync(
+                    review,
+                    metadata.SiteReference,
+                    actor,
+                    command.CorrelationId,
+                    cancellationToken).ConfigureAwait(false);
+            if (!evidenceIsReviewable)
             {
                 await AuditAsync("STATUTORY_BENEFIT_REVIEW_DECISION", "REJECTED", "STATUTORY_BENEFIT_EVIDENCE_NOT_REVIEWABLE", actor, metadata.SiteReference, command.CorrelationId, cancellationToken);
                 return Invalid<ManagementStatutoryBenefitDecisionResult>("STATUTORY_BENEFIT_EVIDENCE_NOT_REVIEWABLE", command.CorrelationId);
@@ -637,6 +640,71 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
     private static bool IsOperatorConsoleReview(StatutoryDiscountServiceChannelReviewDetail review) =>
         string.Equals(review.SourceChannel, StatutoryDiscountSourceChannels.OperatorConsole, StringComparison.Ordinal) &&
         review.StatutoryDiscountValidationId.HasValue;
+
+    private async Task<bool> OperatorConsoleEvidenceIsReviewableAsync(
+        StatutoryDiscountServiceChannelReviewDetail review,
+        Guid authorizedSiteId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        var validationId = review.StatutoryDiscountValidationId!.Value;
+        var evidence = await _operatorConsoleEvidence.ListAsync(validationId, correlationId, cancellationToken)
+            .ConfigureAwait(false);
+        if (!evidence.EvidenceRequiredSatisfied || evidence.Items.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var item in evidence.Items)
+        {
+            if (evidence.RequiredEvidenceTypes.Count > 0 &&
+                !evidence.RequiredEvidenceTypes.Contains(item.EvidenceType, StringComparer.Ordinal))
+            {
+                continue;
+            }
+
+            var target = await _operatorConsoleEvidence.GetPreviewTargetAsync(
+                    validationId,
+                    item.EvidenceId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (target is not null &&
+                target.EvidenceId == item.EvidenceId &&
+                target.DraftId == validationId &&
+                target.ParkingSessionId == review.ParkingSessionId &&
+                target.SiteId == authorizedSiteId &&
+                (!review.SiteGroupId.HasValue || target.SiteGroupId == review.SiteGroupId.Value) &&
+                string.Equals(target.EvidenceType, item.EvidenceType, StringComparison.Ordinal) &&
+                !string.IsNullOrWhiteSpace(target.StorageReference) &&
+                !string.IsNullOrWhiteSpace(target.ChecksumSha256) &&
+                string.Equals(target.CaptureStatus, "CAPTURED", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private async Task<bool> ServiceChannelEvidenceIsReviewableAsync(
+        StatutoryDiscountServiceChannelReviewDetail review,
+        Guid authorizedSiteId,
+        IdentityAdministrationActor actor,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        var evidence = await _evidenceReview.ReadAuthorizedAsync(
+            review.StatutoryDiscountDecisionCommandId,
+            new StatutoryEvidenceAuthorizedReviewContext(
+                authorizedSiteId,
+                review.SiteGroupId,
+                review.SourceChannel,
+                correlationId,
+                new StatutoryEvidenceActor(actor.UserId, null, MediatedEvidenceAuditSourceChannel)),
+            cancellationToken).ConfigureAwait(false);
+        return evidence?.Items.Any(item =>
+            item.ReviewabilityStatus == "REVIEWABLE" && item.PreviewPermitted) == true;
+    }
 
     private Task AuditAsync(
         string type,
