@@ -112,7 +112,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
 
         if (sessionResponse.Status != VendorParkingLookupStatus.Found)
         {
-            if (sessionResponse.Status == VendorParkingLookupStatus.UnavailableRetryable)
+            if (sessionResponse.Status is VendorParkingLookupStatus.UnavailableRetryable or VendorParkingLookupStatus.AdapterError)
             {
                 var projectionFallback = await TryResolveProjectionFallbackAsync(
                     command,
@@ -339,16 +339,29 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
         }
 
         var requestedAt = _clock?.UtcNow ?? DateTimeOffset.UtcNow;
-        var lookup = await _projectionLookupService.LookupAsync(
-            new VendorSessionProjectionLookupQuery(
-                CardNum: Normalize(command.TicketReference),
-                PlateLicense: Normalize(command.PlateNumber),
-                SiteId: ParseOptionalGuid(command.SiteId),
-                SiteGroupId: ParseOptionalGuid(command.SiteGroupId),
-                ParkingLotIndexCode: null,
-                requestedAt,
-                sessionResponse.CorrelationId),
-            cancellationToken);
+        VendorSessionProjectionLookupResult lookup;
+        try
+        {
+            lookup = await _projectionLookupService.LookupAsync(
+                new VendorSessionProjectionLookupQuery(
+                    CardNum: Normalize(command.TicketReference),
+                    PlateLicense: Normalize(command.PlateNumber),
+                    SiteId: ParseOptionalGuid(command.SiteId),
+                    SiteGroupId: ParseOptionalGuid(command.SiteGroupId),
+                    ParkingLotIndexCode: null,
+                    requestedAt,
+                    sessionResponse.CorrelationId,
+                    VendorSystemId: ParseOptionalGuid(command.VendorSystemId)),
+                cancellationToken);
+        }
+        catch (VendorSessionProjectionLookupException exception)
+        {
+            _logger.LogWarning(
+                "Vendor projection fallback was rejected safely. projection_error_code={ProjectionErrorCode} live_error_code={LiveErrorCode}",
+                exception.ErrorCode,
+                sessionResponse.ErrorCode);
+            return null;
+        }
 
         if (!lookup.Found || lookup.Projection is null)
         {
@@ -370,11 +383,11 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             lookup.Projection.VendorSessionProjectionId,
             lookup.FreshnessAge.Value.TotalSeconds);
 
-        return ResolveVendorParkingResult.ProjectionSnapshot(
+        return ResolveVendorParkingResult.ProjectionSession(
             lookup,
-            "VENDOR_UNAVAILABLE_PROJECTION_SNAPSHOT_AVAILABLE",
+            sessionResponse.ErrorCode ?? sessionResponse.Status.ToString().ToUpperInvariant(),
             sessionResponse.CorrelationId,
-            sessionResponse.Session?.VendorProviderCode ?? command.VendorSystemId);
+            lookup.Projection.VendorSystemId?.ToString("D") ?? command.VendorSystemId);
     }
 
     private static ResolveVendorParkingOutcome MapOutcome(VendorParkingLookupStatus status)

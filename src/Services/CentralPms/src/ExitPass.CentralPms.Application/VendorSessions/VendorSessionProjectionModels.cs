@@ -270,7 +270,8 @@ public sealed record VendorSessionProjectionLookupQuery(
     Guid? SiteGroupId,
     string? ParkingLotIndexCode,
     DateTimeOffset RequestedAt,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    Guid? VendorSystemId = null);
 
 /// <summary>
 /// Snapshot lookup result that makes the authority boundary explicit.

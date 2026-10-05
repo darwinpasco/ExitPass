@@ -22,11 +22,19 @@ namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 /// <param name="SiteId">Optional resolved site identifier.</param>
 /// <param name="SiteGroupName">Optional site group display name.</param>
 /// <param name="CustomerInformationSubmitted">Presence-only indicator for canonical Sales Invoice customer information.</param>
+/// <param name="SessionFound">Whether Central PMS found a usable session identity.</param>
+/// <param name="SessionSource">Authoritative source classification for the returned session identity.</param>
+/// <param name="Degraded">Whether the session was returned through continuity projection fallback.</param>
+/// <param name="PayableBasisAvailable">Whether authoritative tariff and payable-basis facts are present.</param>
+/// <param name="VendorSessionProjectionId">Projection identifier when the result is a degraded continuity session.</param>
+/// <param name="ProjectionStatus">Lifecycle status of the returned projection.</param>
+/// <param name="ProjectionLastRefreshedAt">Timestamp of the latest successful projection refresh.</param>
+/// <param name="ProjectionFreshnessAgeSeconds">Age of the successful projection refresh in seconds.</param>
 public sealed record CentralPmsResolvedParking(
-    Guid ParkingSessionId,
-    Guid TariffSnapshotId,
-    long NetPayableMinorUnits,
-    string Currency,
+    Guid? ParkingSessionId,
+    Guid? TariffSnapshotId,
+    long? NetPayableMinorUnits,
+    string? Currency,
     string VendorSystemId,
     Guid CorrelationId,
     string? SiteName = null,
@@ -41,4 +49,12 @@ public sealed record CentralPmsResolvedParking(
     Guid? SiteGroupId = null,
     Guid? SiteId = null,
     string? SiteGroupName = null,
-    bool? CustomerInformationSubmitted = null);
+    bool? CustomerInformationSubmitted = null,
+    bool SessionFound = true,
+    string SessionSource = "LIVE_VENDOR",
+    bool Degraded = false,
+    bool PayableBasisAvailable = true,
+    Guid? VendorSessionProjectionId = null,
+    string? ProjectionStatus = null,
+    DateTimeOffset? ProjectionLastRefreshedAt = null,
+    double? ProjectionFreshnessAgeSeconds = null);

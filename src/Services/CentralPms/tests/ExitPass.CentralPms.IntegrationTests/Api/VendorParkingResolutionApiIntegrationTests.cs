@@ -333,10 +333,10 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
 
         var initial = await ResolveAsync(client, request);
         var applied = await CreateAppliedPayableBasisFixtureAsync(initial, correlationId);
-        var beforePaymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
+        var beforePaymentAttempts = await CountPaymentAttemptsAsync(RequireParkingSessionId(initial));
 
         var resolved = await ResolveAsync(client, request);
-        var afterPaymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
+        var afterPaymentAttempts = await CountPaymentAttemptsAsync(RequireParkingSessionId(initial));
 
         resolved.ParkingSessionId.Should().Be(initial.ParkingSessionId);
         resolved.TariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId);
@@ -349,10 +349,10 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         resolved.PolicyResolutionBasis.Should().Be("NATIONAL_LAW_FALLBACK");
         resolved.BenefitType.Should().Be("STATUTORY_DISCOUNT_VAT_EXEMPT");
         resolved.NetPayableMinorUnits.Should().Be(7143);
-        resolved.TariffSnapshotId.Should().NotBe(initial.TariffSnapshotId);
+        RequireTariffSnapshotId(resolved).Should().NotBe(RequireTariffSnapshotId(initial));
         afterPaymentAttempts.Should().Be(beforePaymentAttempts);
 
-        var tariffState = await ReadTariffStateAsync(initial.TariffSnapshotId, applied.AppliedTariffSnapshotId);
+        var tariffState = await ReadTariffStateAsync(RequireTariffSnapshotId(initial), applied.AppliedTariffSnapshotId);
         tariffState.OriginalStatus.Should().Be("SUPERSEDED");
         tariffState.OriginalGrossAmount.Should().Be(100m);
         tariffState.OriginalNetAmount.Should().Be(100m);
@@ -391,11 +391,11 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
 
         var persisted = await ReadPaymentAttemptAsync(payment.PaymentAttemptId);
         persisted.Should().NotBeNull();
-        persisted!.ParkingSessionId.Should().Be(initial.ParkingSessionId);
+        persisted!.ParkingSessionId.Should().Be(RequireParkingSessionId(initial));
         persisted.TariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId);
         persisted.Amount.Should().Be(71.43m);
 
-        var tariffState = await ReadTariffStateAsync(initial.TariffSnapshotId, applied.AppliedTariffSnapshotId);
+        var tariffState = await ReadTariffStateAsync(RequireTariffSnapshotId(initial), applied.AppliedTariffSnapshotId);
         tariffState.OriginalStatus.Should().Be("SUPERSEDED");
         tariffState.AppliedStatus.Should().Be("CONSUMED");
     }
@@ -440,7 +440,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         replayPayment!.PaymentAttemptId.Should().Be(firstPayment!.PaymentAttemptId);
         replayPayment.WasReused.Should().BeTrue();
 
-        var paymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
+        var paymentAttempts = await CountPaymentAttemptsAsync(RequireParkingSessionId(initial));
         paymentAttempts.Should().Be(1);
 
         var persisted = await ReadPaymentAttemptAsync(firstPayment.PaymentAttemptId);
@@ -448,7 +448,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         persisted!.TariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId);
         persisted.Amount.Should().Be(71.43m);
 
-        var tariffState = await ReadTariffStateAsync(initial.TariffSnapshotId, applied.AppliedTariffSnapshotId);
+        var tariffState = await ReadTariffStateAsync(RequireTariffSnapshotId(initial), applied.AppliedTariffSnapshotId);
         tariffState.AppliedStatus.Should().Be("CONSUMED");
     }
 
@@ -489,7 +489,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         error.Should().NotBeNull();
         error!.ErrorCode.Should().Be("IDEMPOTENCY_CONFLICT");
 
-        var paymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
+        var paymentAttempts = await CountPaymentAttemptsAsync(RequireParkingSessionId(initial));
         paymentAttempts.Should().Be(1);
     }
 
@@ -529,7 +529,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         error.Should().NotBeNull();
         error!.ErrorCode.Should().Be("ACTIVE_PAYMENT_ATTEMPT_EXISTS");
 
-        var paymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
+        var paymentAttempts = await CountPaymentAttemptsAsync(RequireParkingSessionId(initial));
         paymentAttempts.Should().Be(1);
     }
 
@@ -581,8 +581,8 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         staleError.ErrorCode.Should().NotBe("TARIFF_SNAPSHOT_INVALID");
 
         var refreshed = await ResolveAsync(client, request);
-        refreshed.ParkingSessionId.Should().Be(initial.ParkingSessionId);
-        refreshed.TariffSnapshotId.Should().NotBe(initial.TariffSnapshotId);
+        RequireParkingSessionId(refreshed).Should().Be(RequireParkingSessionId(initial));
+        RequireTariffSnapshotId(refreshed).Should().NotBe(RequireTariffSnapshotId(initial));
         refreshed.NetPayableMinorUnits.Should().Be(initial.NetPayableMinorUnits);
 
         using var retryPaymentResponse = await PostCreatePaymentAttemptAsync(
@@ -599,11 +599,11 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
 
         var persistedRetry = await ReadPaymentAttemptAsync(retryPayment.PaymentAttemptId);
         persistedRetry.Should().NotBeNull();
-        persistedRetry!.TariffSnapshotId.Should().Be(refreshed.TariffSnapshotId);
+        persistedRetry!.TariffSnapshotId.Should().Be(RequireTariffSnapshotId(refreshed));
 
-        (await CountPaymentAttemptsAsync(initial.ParkingSessionId)).Should().Be(2);
-        (await CountPaymentConfirmationsAsync(initial.ParkingSessionId)).Should().Be(0);
-        (await CountExitAuthorizationsAsync(initial.ParkingSessionId)).Should().Be(0);
+        (await CountPaymentAttemptsAsync(RequireParkingSessionId(initial))).Should().Be(2);
+        (await CountPaymentConfirmationsAsync(RequireParkingSessionId(initial))).Should().Be(0);
+        (await CountExitAuthorizationsAsync(RequireParkingSessionId(initial))).Should().Be(0);
     }
 
     /// <summary>
@@ -618,7 +618,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         var request = Request(plateNumber: null, ticketReference: ticketReference, correlationId);
 
         var initial = await ResolveAsync(client, request);
-        await ExpireTariffSnapshotAsync(initial.TariffSnapshotId);
+        await ExpireTariffSnapshotAsync(RequireTariffSnapshotId(initial));
 
         using var expiredPaymentResponse = await PostCreatePaymentAttemptAsync(
             client,
@@ -636,8 +636,8 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         expiredError.ErrorCode.Should().NotBe("TARIFF_SNAPSHOT_INVALID");
 
         var refreshed = await ResolveAsync(client, request);
-        refreshed.ParkingSessionId.Should().Be(initial.ParkingSessionId);
-        refreshed.TariffSnapshotId.Should().NotBe(initial.TariffSnapshotId);
+        RequireParkingSessionId(refreshed).Should().Be(RequireParkingSessionId(initial));
+        RequireTariffSnapshotId(refreshed).Should().NotBe(RequireTariffSnapshotId(initial));
         refreshed.NetPayableMinorUnits.Should().Be(initial.NetPayableMinorUnits);
 
         using var retryPaymentResponse = await PostCreatePaymentAttemptAsync(
@@ -649,8 +649,8 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         var retryRaw = await retryPaymentResponse.Content.ReadAsStringAsync();
         retryPaymentResponse.StatusCode.Should().Be(HttpStatusCode.Created, retryRaw);
 
-        (await CountPaymentConfirmationsAsync(initial.ParkingSessionId)).Should().Be(0);
-        (await CountExitAuthorizationsAsync(initial.ParkingSessionId)).Should().Be(0);
+        (await CountPaymentConfirmationsAsync(RequireParkingSessionId(initial))).Should().Be(0);
+        (await CountExitAuthorizationsAsync(RequireParkingSessionId(initial))).Should().Be(0);
     }
 
     /// <summary>
@@ -665,7 +665,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         var request = Request(plateNumber: null, ticketReference: ticketReference, correlationId);
 
         var initial = await ResolveAsync(client, request);
-        await ExpireTariffSnapshotStatusAsync(initial.TariffSnapshotId);
+        await ExpireTariffSnapshotStatusAsync(RequireTariffSnapshotId(initial));
 
         using var expiredPaymentResponse = await PostCreatePaymentAttemptAsync(
             client,
@@ -682,9 +682,9 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         expiredError.Retryable.Should().BeTrue();
         expiredError.ErrorCode.Should().NotBe("TARIFF_SNAPSHOT_INVALID");
 
-        (await CountPaymentAttemptsAsync(initial.ParkingSessionId)).Should().Be(0);
-        (await CountPaymentConfirmationsAsync(initial.ParkingSessionId)).Should().Be(0);
-        (await CountExitAuthorizationsAsync(initial.ParkingSessionId)).Should().Be(0);
+        (await CountPaymentAttemptsAsync(RequireParkingSessionId(initial))).Should().Be(0);
+        (await CountPaymentConfirmationsAsync(RequireParkingSessionId(initial))).Should().Be(0);
+        (await CountExitAuthorizationsAsync(RequireParkingSessionId(initial))).Should().Be(0);
     }
 
     /// <summary>
@@ -737,7 +737,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         error.Should().NotBeNull();
         error!.ErrorCode.Should().Be("TARIFF_SNAPSHOT_INVALID");
 
-        (await CountPaymentAttemptsAsync(initial.ParkingSessionId)).Should().Be(1);
+        (await CountPaymentAttemptsAsync(RequireParkingSessionId(initial))).Should().Be(1);
     }
 
     /// <summary>
@@ -753,7 +753,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
 
         var initial = await ResolveAsync(client, request);
         await CreateAppliedPayableBasisFixtureAsync(initial, correlationId);
-        var beforePaymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
+        var beforePaymentAttempts = await CountPaymentAttemptsAsync(RequireParkingSessionId(initial));
 
         using var paymentResponse = await PostCreatePaymentAttemptAsync(
             client,
@@ -768,7 +768,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         error.Should().NotBeNull();
         error!.ErrorCode.Should().Be("STALE_TARIFF_SNAPSHOT");
 
-        var afterPaymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
+        var afterPaymentAttempts = await CountPaymentAttemptsAsync(RequireParkingSessionId(initial));
         afterPaymentAttempts.Should().Be(beforePaymentAttempts);
     }
 
@@ -921,10 +921,20 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
 
         var payload = await response.Content.ReadFromJsonAsync<ResolveVendorParkingResponse>();
         payload.Should().NotBeNull();
-        payload!.ParkingSessionId.Should().NotBe(Guid.Empty);
-        payload.TariffSnapshotId.Should().NotBe(Guid.Empty);
+        payload!.ParkingSessionId.Should().NotBeNull();
+        payload.ParkingSessionId!.Value.Should().NotBe(Guid.Empty);
+        payload.TariffSnapshotId.Should().NotBeNull();
+        payload.TariffSnapshotId!.Value.Should().NotBe(Guid.Empty);
+        payload.Degraded.Should().BeFalse();
+        payload.PayableBasisAvailable.Should().BeTrue();
         return payload;
     }
+
+    private static Guid RequireParkingSessionId(ResolveVendorParkingResponse response) =>
+        response.ParkingSessionId ?? throw new InvalidOperationException("Expected authoritative parkingSessionId.");
+
+    private static Guid RequireTariffSnapshotId(ResolveVendorParkingResponse response) =>
+        response.TariffSnapshotId ?? throw new InvalidOperationException("Expected authoritative tariffSnapshotId.");
 
     private static async Task<HttpResponseMessage> PostCreatePaymentAttemptAsync(
         HttpClient client,
@@ -937,8 +947,8 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         {
             Content = JsonContent.Create(new CreatePaymentAttemptRequest
             {
-                ParkingSessionId = resolved.ParkingSessionId,
-                TariffSnapshotId = resolved.TariffSnapshotId,
+                ParkingSessionId = RequireParkingSessionId(resolved),
+                TariffSnapshotId = RequireTariffSnapshotId(resolved),
                 PaymentProvider = paymentProvider
             })
         };
@@ -1184,8 +1194,8 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         command.Parameters.AddWithValue("validation_id", validationId);
         command.Parameters.AddWithValue("application_id", applicationId);
         command.Parameters.AddWithValue("applied_tariff_snapshot_id", appliedTariffSnapshotId);
-        command.Parameters.AddWithValue("parking_session_id", resolved.ParkingSessionId);
-        command.Parameters.AddWithValue("original_tariff_snapshot_id", resolved.TariffSnapshotId);
+        command.Parameters.AddWithValue("parking_session_id", RequireParkingSessionId(resolved));
+        command.Parameters.AddWithValue("original_tariff_snapshot_id", RequireTariffSnapshotId(resolved));
         command.Parameters.AddWithValue("correlation_id", correlationId);
         command.Parameters.AddWithValue("service_identity_id", Guid.Parse("12000000-0000-0000-0000-000000000001"));
 

@@ -65,7 +65,7 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
         body.PlateNumber.Should().Be("PLATE-FROM-TICKET");
         body.CorrelationId.Should().Be(correlationId);
         fakeReadiness.TotalReadinessCalls.Should().Be(1);
-        (await CountForbiddenSideEffectsAsync(body.ParkingSessionId, correlationId)).Should().Be(0);
+        (await CountForbiddenSideEffectsAsync(RequireParkingSessionId(body), correlationId)).Should().Be(0);
     }
 
     [Fact]
@@ -88,7 +88,7 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
         body.TariffCalculatedAt.Should().Be(DateTimeOffset.Parse("2030-04-01T01:30:00Z"));
         body.VendorSystemId.Should().NotBeNullOrWhiteSpace();
         body.ReadyForCashAcceptance.Should().BeTrue();
-        (await CountForbiddenSideEffectsAsync(body.ParkingSessionId, correlationId)).Should().Be(0);
+        (await CountForbiddenSideEffectsAsync(RequireParkingSessionId(body), correlationId)).Should().Be(0);
     }
 
     [Fact]
@@ -134,7 +134,7 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
         body.FiscalReadiness.Should().Be("BLOCKED");
         body.BlockingReasonCodes.Should().Contain("SALES_INVOICE_CONFIGURATION_NOT_READY");
         body.BlockingReasonCodes.Should().Contain("SALES_INVOICE_CONFIGURATION_INCOMPLETE");
-        (await CountForbiddenSideEffectsAsync(body.ParkingSessionId, correlationId)).Should().Be(0);
+        (await CountForbiddenSideEffectsAsync(RequireParkingSessionId(body), correlationId)).Should().Be(0);
     }
 
     [Fact]
@@ -188,7 +188,7 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
         body.RevalidationOutcome.Should().Be("PASSED_UNCHANGED");
         body.ReadyForCashAcceptance.Should().BeTrue();
         body.AuthoritativeAmountMinorUnits.Should().Be(10000);
-        (await CountForbiddenSideEffectsAsync(body.ParkingSessionId, correlationId)).Should().Be(0);
+        (await CountForbiddenSideEffectsAsync(RequireParkingSessionId(body), correlationId)).Should().Be(0);
     }
 
     [Fact]
@@ -213,7 +213,7 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
         body.AuthoritativeAmountMinorUnits.Should().Be(10000);
         body.ReadyForCashAcceptance.Should().BeFalse();
         body.BlockingReasonCodes.Should().Contain("AMOUNT_CHANGED");
-        (await CountForbiddenSideEffectsAsync(body.ParkingSessionId, correlationId)).Should().Be(0);
+        (await CountForbiddenSideEffectsAsync(RequireParkingSessionId(body), correlationId)).Should().Be(0);
     }
 
     [Fact]
@@ -563,8 +563,8 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
         string expectedCurrency,
         Guid correlationId) =>
         new(
-            ParkingSessionId: resolved.ParkingSessionId.ToString("D"),
-            TariffSnapshotId: resolved.TariffSnapshotId.ToString("D"),
+            ParkingSessionId: RequireParkingSessionId(resolved).ToString("D"),
+            TariffSnapshotId: RequireTariffSnapshotId(resolved).ToString("D"),
             SiteGroupId: original.SiteGroupId,
             SiteId: original.SiteId,
             SitePosServerId: original.SitePosServerId,
@@ -576,6 +576,12 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
             ExpectedCurrency: expectedCurrency,
             StatutoryDiscountDecisionCommandId: null,
             CorrelationId: correlationId);
+
+    private static Guid RequireParkingSessionId(AptPayableBasisReadinessResponse response) =>
+        response.ParkingSessionId ?? throw new InvalidOperationException("Expected authoritative parkingSessionId.");
+
+    private static Guid RequireTariffSnapshotId(AptPayableBasisReadinessResponse response) =>
+        response.TariffSnapshotId ?? throw new InvalidOperationException("Expected authoritative tariffSnapshotId.");
 
     private static void AddSiteHeader(HttpClient client, string siteId) =>
         client.DefaultRequestHeaders.Add("X-Site-Id", siteId);

@@ -8,12 +8,32 @@ public sealed class ResolveVendorParkingResponse
     /// <summary>
     /// Central PMS parking session identifier resolved for the vendor parking session.
     /// </summary>
-    public Guid ParkingSessionId { get; set; }
+    public Guid? ParkingSessionId { get; set; }
 
     /// <summary>
     /// Central PMS tariff snapshot identifier resolved for the vendor tariff quote.
     /// </summary>
-    public Guid TariffSnapshotId { get; set; }
+    public Guid? TariffSnapshotId { get; set; }
+
+    /// <summary>
+    /// Indicates that a safe live or projected session identity was found.
+    /// </summary>
+    public bool SessionFound { get; set; }
+
+    /// <summary>
+    /// Identifies whether session facts came from live vendor resolution or the continuity projection.
+    /// </summary>
+    public string SessionSource { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Indicates that live vendor resolution did not provide an authoritative payable session.
+    /// </summary>
+    public bool Degraded { get; set; }
+
+    /// <summary>
+    /// Indicates that authoritative tariff and payable-basis facts accompany the session.
+    /// </summary>
+    public bool PayableBasisAvailable { get; set; }
 
     /// <summary>
     /// Site group that owns the resolved parking session.
@@ -63,7 +83,7 @@ public sealed class ResolveVendorParkingResponse
     /// <summary>
     /// Net payable amount in minor currency units.
     /// </summary>
-    public long NetPayableMinorUnits { get; set; }
+    public long? NetPayableMinorUnits { get; set; }
 
     /// <summary>
     /// Indicates whether canonical Sales Invoice customer information exists for this parking session.
@@ -74,27 +94,52 @@ public sealed class ResolveVendorParkingResponse
     /// <summary>
     /// ISO currency code for the resolved tariff quote.
     /// </summary>
-    public string Currency { get; set; } = string.Empty;
+    public string? Currency { get; set; }
 
     /// <summary>
     /// Timestamp after which the tariff snapshot should not be used for payment initiation.
     /// </summary>
-    public DateTimeOffset TariffExpiresAt { get; set; }
+    public DateTimeOffset? TariffExpiresAt { get; set; }
 
     /// <summary>
     /// Tariff snapshot expiry used by WebPay as the fee-valid-until boundary.
     /// </summary>
-    public DateTimeOffset FeeValidUntil { get; set; }
+    public DateTimeOffset? FeeValidUntil { get; set; }
 
     /// <summary>
     /// Current parking session status.
     /// </summary>
-    public string ParkingStatus { get; set; } = string.Empty;
+    public string? ParkingStatus { get; set; }
 
     /// <summary>
     /// Current payment attempt or confirmation status for WebPay display.
     /// </summary>
-    public string PaymentStatus { get; set; } = string.Empty;
+    public string? PaymentStatus { get; set; }
+
+    /// <summary>
+    /// Projection row used for continuity lookup, when the response is degraded.
+    /// </summary>
+    public Guid? VendorSessionProjectionId { get; set; }
+
+    /// <summary>
+    /// Lifecycle status of the projected session.
+    /// </summary>
+    public string? ProjectionStatus { get; set; }
+
+    /// <summary>
+    /// Last completed successful projection refresh used for freshness enforcement.
+    /// </summary>
+    public DateTimeOffset? ProjectionLastRefreshedAt { get; set; }
+
+    /// <summary>
+    /// Age of the successful projection refresh in seconds.
+    /// </summary>
+    public double? ProjectionFreshnessAgeSeconds { get; set; }
+
+    /// <summary>
+    /// Bounded original live lookup failure retained for operational diagnosis.
+    /// </summary>
+    public string? LiveLookupErrorCode { get; set; }
 
     /// <summary>
     /// Indicates whether the payable basis displayed by WebPay includes an applied statutory discount.

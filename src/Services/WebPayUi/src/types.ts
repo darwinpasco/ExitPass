@@ -112,13 +112,17 @@ export type PaymentIntentResponse = {
 };
 
 export type ParkingSessionResolveResponse = {
-  parkingSessionId: string;
-  tariffSnapshotId: string;
+  parkingSessionId?: string | null;
+  tariffSnapshotId?: string | null;
+  sessionFound?: boolean;
+  sessionSource?: "LIVE_VENDOR" | "VENDOR_SESSION_PROJECTION" | string;
+  degraded?: boolean;
+  payableBasisAvailable?: boolean;
   siteGroupId?: string | null;
   siteId?: string | null;
   vendorSystemId?: string | null;
   siteGroupName?: string | null;
-  amountMinorUnits: number;
+  amountMinorUnits?: number | null;
   customerInformationSubmitted?: boolean | null;
   originalAmountMinorUnits?: number | null;
   couponAdjustmentMinorUnits?: number | null;
@@ -128,7 +132,7 @@ export type ParkingSessionResolveResponse = {
   statutoryStatus?: string | null;
   statutoryDiscountStatus?: string | null;
   statutoryDiscountValidationStatus?: string | null;
-  currency: string;
+  currency?: string | null;
   paymentMethod?: string | null;
   paymentProvider?: string | null;
   paymentReference?: string | null;
@@ -146,6 +150,10 @@ export type ParkingSessionResolveResponse = {
   parkingStatus?: string | null;
   paymentStatus?: string | null;
   feeValidUntil?: string | null;
+  vendorSessionProjectionId?: string | null;
+  projectionStatus?: string | null;
+  projectionLastRefreshedAt?: string | null;
+  projectionFreshnessAgeSeconds?: number | null;
   tariffExpiresAt?: string | null;
   sessionSummary?: ParkingSessionSummary | null;
   exitInstruction?: WebPayExitInstruction | null;

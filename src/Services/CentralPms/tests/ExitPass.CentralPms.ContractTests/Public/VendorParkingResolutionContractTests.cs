@@ -121,6 +121,53 @@ public sealed class VendorParkingResolutionContractTests
         root.TryGetProperty("correlationId", out _).Should().BeTrue();
     }
 
+    [Fact]
+    public void ResolveVendorParking_projection_response_keeps_financial_authority_absent()
+    {
+        var response = new ResolveVendorParkingResponse
+        {
+            ParkingSessionId = null,
+            TariffSnapshotId = null,
+            SessionFound = true,
+            SessionSource = "VENDOR_SESSION_PROJECTION",
+            Degraded = true,
+            PayableBasisAvailable = false,
+            SiteGroupId = "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
+            SiteId = "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+            SiteName = "PITX Level 3",
+            LookupOutcome = "projection_session_resolved",
+            TicketReference = "1474119573147",
+            PlateNumber = "ABC1147",
+            EntryTime = new DateTimeOffset(2026, 10, 5, 8, 0, 0, TimeSpan.FromHours(8)),
+            CurrentFeeCalculationTime = null,
+            NetPayableMinorUnits = null,
+            Currency = null,
+            TariffExpiresAt = null,
+            FeeValidUntil = null,
+            PaymentStatus = null,
+            CustomerInformationSubmitted = null,
+            VendorSessionProjectionId = Guid.Parse("455bfa51-98b3-4fbf-9efb-336339596a34"),
+            ProjectionStatus = "ACTIVE",
+            VendorSystemId = "afdefaab-6be4-6b25-8f3f-3ad8309662e8",
+            CorrelationId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        };
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(response, JsonOptions()));
+        var root = document.RootElement;
+
+        root.GetProperty("sessionFound").GetBoolean().Should().BeTrue();
+        root.GetProperty("sessionSource").GetString().Should().Be("VENDOR_SESSION_PROJECTION");
+        root.GetProperty("degraded").GetBoolean().Should().BeTrue();
+        root.GetProperty("payableBasisAvailable").GetBoolean().Should().BeFalse();
+        root.GetProperty("parkingSessionId").ValueKind.Should().Be(JsonValueKind.Null);
+        root.GetProperty("tariffSnapshotId").ValueKind.Should().Be(JsonValueKind.Null);
+        root.GetProperty("netPayableMinorUnits").ValueKind.Should().Be(JsonValueKind.Null);
+        root.GetProperty("currency").ValueKind.Should().Be(JsonValueKind.Null);
+        root.GetProperty("tariffExpiresAt").ValueKind.Should().Be(JsonValueKind.Null);
+        root.GetProperty("paymentStatus").ValueKind.Should().Be(JsonValueKind.Null);
+        root.GetProperty("customerInformationSubmitted").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
     /// <summary>
     /// Verifies that HikCentral-specific fields do not appear in Central PMS vendor parking contracts.
     /// </summary>
