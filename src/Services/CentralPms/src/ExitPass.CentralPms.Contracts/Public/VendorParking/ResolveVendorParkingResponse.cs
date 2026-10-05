@@ -66,6 +66,12 @@ public sealed class ResolveVendorParkingResponse
     public long NetPayableMinorUnits { get; set; }
 
     /// <summary>
+    /// Indicates whether canonical Sales Invoice customer information exists for this parking session.
+    /// No customer-entered values are exposed by this flag.
+    /// </summary>
+    public bool? CustomerInformationSubmitted { get; set; }
+
+    /// <summary>
     /// ISO currency code for the resolved tariff quote.
     /// </summary>
     public string Currency { get; set; } = string.Empty;

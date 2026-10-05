@@ -94,6 +94,7 @@ public sealed class WebPayPaymentIntentContractTests
             Currency = "PHP",
             ParkingStatus = "PaymentRequired",
             PaymentStatus = "Not Started",
+            CustomerInformationSubmitted = true,
             FeeValidUntil = DateTimeOffset.Parse("2026-05-19T15:59:59Z"),
             CorrelationId = Guid.Parse("77777777-7777-7777-7777-777777777777")
         };
@@ -107,9 +108,14 @@ public sealed class WebPayPaymentIntentContractTests
         Assert.Contains("\"currency\":\"PHP\"", json);
         Assert.Contains("\"parkingStatus\":\"PaymentRequired\"", json);
         Assert.Contains("\"paymentStatus\":\"Not Started\"", json);
+        Assert.Contains("\"customerInformationSubmitted\":true", json);
         Assert.Contains("\"plateNumber\":\"WEBPAY001\"", json);
         Assert.Contains("\"entryTime\":", json);
         Assert.DoesNotContain("2030-04-01", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("customerName", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("customerAddress", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("customerTin", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("businessStyle", json, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

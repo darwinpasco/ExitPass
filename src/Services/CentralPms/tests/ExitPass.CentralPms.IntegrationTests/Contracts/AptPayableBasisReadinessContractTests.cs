@@ -57,6 +57,7 @@ public sealed class AptPayableBasisReadinessContractTests
             ParkingStatus: "PaymentRequired",
             PaymentStatus: "Not Started",
             AuthoritativeAmountMinorUnits: 10000,
+            CustomerInformationSubmitted: true,
             Currency: "PHP",
             TariffCalculatedAt: DateTimeOffset.Parse("2026-07-27T00:01:00Z"),
             TariffValidUntil: DateTimeOffset.Parse("2026-07-27T00:06:00Z"),
@@ -113,6 +114,7 @@ public sealed class AptPayableBasisReadinessContractTests
 
         json.Should().Contain("terminalId");
         json.Should().Contain("authoritativeAmountMinorUnits");
+        json.Should().Contain("customerInformationSubmitted");
         json.Should().Contain("readyForCashAcceptance");
         json.Should().Contain("revalidationOutcome");
         json.Should().Contain("statutoryDiscountDecisionCommandId");
@@ -124,6 +126,10 @@ public sealed class AptPayableBasisReadinessContractTests
         lowerJson.Should().NotContain("connectionstring");
         lowerJson.Should().NotContain("authorization");
         lowerJson.Should().NotContain("hikcentral");
+        lowerJson.Should().NotContain("customername");
+        lowerJson.Should().NotContain("customeraddress");
+        lowerJson.Should().NotContain("customertin");
+        lowerJson.Should().NotContain("businessstyle");
     }
 
     [Fact]

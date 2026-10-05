@@ -151,7 +151,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
             payload.PaymentStatus,
             ParseGuid(payload.SiteGroupId),
             ParseGuid(payload.SiteId),
-            payload.SiteGroupName));
+            payload.SiteGroupName,
+            payload.CustomerInformationSubmitted));
     }
 
     /// <inheritdoc />
@@ -1287,7 +1288,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         DateTimeOffset? CurrentFeeCalculationTime,
         string? TariffName,
         string? ParkingStatus,
-        string? PaymentStatus);
+        string? PaymentStatus,
+        bool? CustomerInformationSubmitted);
 
     private sealed record CreatePaymentAttemptRequest(
         Guid ParkingSessionId,

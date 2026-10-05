@@ -1,9 +1,11 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.ManagementPlatform;
+using ExitPass.CentralPms.Application.SalesInvoiceCustomerInformation;
 using ExitPass.CentralPms.Application.StatutoryEvidence;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.WebPay;
 using ExitPass.CentralPms.Contracts.TerminalCashPayments;
 using ExitPass.CentralPms.Domain.Sessions;
 using ExitPass.CentralPms.Domain.Tariffs;
@@ -389,10 +391,32 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         result.Response.BlockingReasonCodes.Should().NotContain("AMOUNT_CHANGED");
     }
 
+    [Fact]
+    public async Task Resolve_WhenCanonicalDecisionExists_DiscoversWorkflowAndCustomerInformationPresence()
+    {
+        var context = CreateContext(
+            AwaitingReview(),
+            rediscoveredDecisionCommandId: DecisionCommandId,
+            customerInformationStatus: InvoiceCustomerInformationReadStatus.Found);
+
+        var result = await context.Sut.ResolveAsync(ResolveRequest(statutoryDecisionCommandId: null), CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.Response.Should().NotBeNull();
+        result.Response!.CustomerInformationSubmitted.Should().BeTrue();
+        result.Response.StatutoryDiscountReadiness.Should().NotBeNull();
+        result.Response.StatutoryDiscountReadiness!.StatutoryDiscountDecisionCommandId.Should().Be(DecisionCommandId);
+        result.Response.StatutoryDiscountReadiness.PayableBasisReadinessStatus.Should().Be("AWAITING_REVIEW");
+        result.Response.ReadyForCashAcceptance.Should().BeFalse();
+        context.StatutoryDiscounts.GetCallCount.Should().Be(1);
+    }
+
     private static TestContext CreateContext(
         StatutoryDiscountDecisionResult? statutoryReadback = null,
         bool vendorReturnsAppliedTariff = false,
-        StatutoryEvidenceChannelReadiness? evidenceReadiness = null)
+        StatutoryEvidenceChannelReadiness? evidenceReadiness = null,
+        Guid? rediscoveredDecisionCommandId = null,
+        InvoiceCustomerInformationReadStatus customerInformationStatus = InvoiceCustomerInformationReadStatus.NotSupplied)
     {
         var session = ParkingSession.Rehydrate(
             ParkingSessionId,
@@ -421,7 +445,9 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
                 terminalCashEligibility,
                 new ReadySalesInvoiceProfileAdministrationService(),
                 statutoryDiscounts,
-                new FixedStatutoryEvidenceChannelService(evidenceReadiness)),
+                new FixedStatutoryEvidenceChannelService(evidenceReadiness),
+                new FixedStatutoryLifecycleRediscoveryService(rediscoveredDecisionCommandId),
+                new FixedInvoiceCustomerInformationService(customerInformationStatus)),
             terminalCashEligibility,
             statutoryDiscounts,
             vendorResolution);
@@ -801,6 +827,72 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         public Task RecordPreviewStreamOutcomeAsync(
             ExitPass.CentralPms.Application.OperatorConsole.OperatorConsoleStatutoryEvidencePreviewAuditContext context,
             string outcome,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class FixedStatutoryLifecycleRediscoveryService(Guid? decisionCommandId)
+        : IWebPayStatutoryDiscountPendingLifecycleRediscoveryService
+    {
+        public Task<WebPayStatutoryDiscountPendingLifecycleRediscoveryResult> RediscoverAsync(
+            WebPayStatutoryDiscountPendingLifecycleRediscoveryQuery query,
+            CancellationToken cancellationToken)
+        {
+            if (decisionCommandId is null)
+            {
+                return Task.FromResult(WebPayStatutoryDiscountPendingLifecycleRediscoveryResult.NotFound(
+                    WebPayStatutoryDiscountPendingLifecycleRediscoveryValues.NoActiveLifecycle,
+                    query.CorrelationId,
+                    "No active lifecycle."));
+            }
+
+            return Task.FromResult(WebPayStatutoryDiscountPendingLifecycleRediscoveryResult.Found(
+                new WebPayStatutoryDiscountPendingLifecycleRecord(
+                    Guid.Parse("41000000-0000-0000-0000-000000000013"),
+                    decisionCommandId.Value,
+                    Guid.Parse("41000000-0000-0000-0000-000000000014"),
+                    "SENIOR_CITIZEN",
+                    "AWAITING_REVIEW",
+                    "AWAITING_REVIEW",
+                    ParkingSessionId,
+                    SiteId,
+                    SiteGroupId,
+                    "opaque-continuation",
+                    null,
+                    "PENDING_REVIEW",
+                    true,
+                    DateTimeOffset.Parse("2026-07-28T00:01:00Z"),
+                    DateTimeOffset.Parse("2026-07-28T00:01:00Z"),
+                    DateTimeOffset.Parse("2026-07-28T00:01:00Z"),
+                    null,
+                    null),
+                query.CorrelationId));
+        }
+    }
+
+    private sealed class FixedInvoiceCustomerInformationService(InvoiceCustomerInformationReadStatus status)
+        : IParkingSessionInvoiceCustomerInformationService
+    {
+        public Task<InvoiceCustomerInformationReadResult> ReadAsync(
+            Guid parkingSessionId,
+            InvoiceCustomerInformationScope scope,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new InvoiceCustomerInformationReadResult(
+                status,
+                status == InvoiceCustomerInformationReadStatus.Found
+                    ? new ParkingSessionInvoiceCustomerInformationRecord(
+                        parkingSessionId,
+                        "Private customer",
+                        "Private address",
+                        "Private TIN",
+                        "Private business style",
+                        1,
+                        DateTimeOffset.Parse("2026-07-28T00:01:00Z"),
+                        DateTimeOffset.Parse("2026-07-28T00:01:00Z"))
+                    : null));
+
+        public Task<InvoiceCustomerInformationSaveResult> SaveAsync(
+            SaveParkingSessionInvoiceCustomerInformationCommand command,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }

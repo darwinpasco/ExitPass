@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using ExitPass.CentralPms.Api.Validation;
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.SalesInvoiceCustomerInformation;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.Public.VendorParking;
 using Microsoft.AspNetCore.Mvc;
@@ -22,6 +23,7 @@ public sealed class VendorParkingResolutionController : ControllerBase
         new("ExitPass.CentralPms.Api.VendorParking");
 
     private readonly IResolveVendorParkingUseCase _useCase;
+    private readonly IParkingSessionInvoiceCustomerInformationService _customerInformation;
     private readonly ResolveVendorParkingRequestValidator _validator;
     private readonly ILogger<VendorParkingResolutionController> _logger;
 
@@ -33,10 +35,12 @@ public sealed class VendorParkingResolutionController : ControllerBase
     /// <param name="logger">Application logger.</param>
     public VendorParkingResolutionController(
         IResolveVendorParkingUseCase useCase,
+        IParkingSessionInvoiceCustomerInformationService customerInformation,
         ResolveVendorParkingRequestValidator validator,
         ILogger<VendorParkingResolutionController> logger)
     {
         _useCase = useCase;
+        _customerInformation = customerInformation;
         _validator = validator;
         _logger = logger;
     }
@@ -131,6 +135,19 @@ public sealed class VendorParkingResolutionController : ControllerBase
 
         activity?.SetStatus(ActivityStatusCode.Ok);
 
+        var customerInformation = await _customerInformation.ReadAsync(
+            result.ParkingSession.ParkingSessionId,
+            new InvoiceCustomerInformationScope(
+                Guid.Parse(result.ParkingSession.SiteId),
+                Guid.Parse(result.ParkingSession.SiteGroupId)),
+            cancellationToken);
+        var customerInformationSubmitted = customerInformation.Status switch
+        {
+            InvoiceCustomerInformationReadStatus.Found => true,
+            InvoiceCustomerInformationReadStatus.NotSupplied => false,
+            _ => (bool?)null
+        };
+
         _logger.LogInformation(
             "ResolveVendorParking succeeded. vendor_system_id={VendorSystemId} parking_session_id={ParkingSessionId} tariff_snapshot_id={TariffSnapshotId} lookup_outcome={LookupOutcome}",
             result.VendorSystemId ?? validRequest.VendorSystemId,
@@ -152,6 +169,7 @@ public sealed class VendorParkingResolutionController : ControllerBase
             EntryTime = result.ParkingSession.EntryTimestamp,
             CurrentFeeCalculationTime = result.TariffSnapshot.CalculatedAt,
             NetPayableMinorUnits = ToMinorUnits(result.TariffSnapshot.NetPayable),
+            CustomerInformationSubmitted = customerInformationSubmitted,
             Currency = result.TariffSnapshot.CurrencyCode,
             TariffExpiresAt = result.TariffSnapshot.ExpiresAt,
             FeeValidUntil = result.TariffSnapshot.ExpiresAt,

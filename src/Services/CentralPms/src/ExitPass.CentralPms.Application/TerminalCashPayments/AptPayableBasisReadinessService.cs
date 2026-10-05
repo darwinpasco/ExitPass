@@ -3,6 +3,8 @@ using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.StatutoryEvidence;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.WebPay;
+using ExitPass.CentralPms.Application.SalesInvoiceCustomerInformation;
 using ExitPass.CentralPms.Contracts.TerminalCashPayments;
 using ExitPass.CentralPms.Domain.Sessions;
 using ExitPass.CentralPms.Domain.Tariffs;
@@ -25,6 +27,8 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
     private readonly ISalesInvoiceProfileAdministrationService _salesInvoiceReadiness;
     private readonly IStatutoryDiscountDecisionFacadeService _statutoryDiscounts;
     private readonly IStatutoryEvidenceChannelService _statutoryEvidence;
+    private readonly IWebPayStatutoryDiscountPendingLifecycleRediscoveryService _statutoryLifecycleRediscovery;
+    private readonly IParkingSessionInvoiceCustomerInformationService _customerInformation;
 
     public AptPayableBasisReadinessService(
         IResolveVendorParkingUseCase vendorResolution,
@@ -33,7 +37,9 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         ITerminalCashPayableBasisEligibilityReader terminalCashEligibility,
         ISalesInvoiceProfileAdministrationService salesInvoiceReadiness,
         IStatutoryDiscountDecisionFacadeService statutoryDiscounts,
-        IStatutoryEvidenceChannelService statutoryEvidence)
+        IStatutoryEvidenceChannelService statutoryEvidence,
+        IWebPayStatutoryDiscountPendingLifecycleRediscoveryService statutoryLifecycleRediscovery,
+        IParkingSessionInvoiceCustomerInformationService customerInformation)
     {
         _vendorResolution = vendorResolution;
         _parkingSessions = parkingSessions;
@@ -42,6 +48,8 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         _salesInvoiceReadiness = salesInvoiceReadiness;
         _statutoryDiscounts = statutoryDiscounts;
         _statutoryEvidence = statutoryEvidence;
+        _statutoryLifecycleRediscovery = statutoryLifecycleRediscovery;
+        _customerInformation = customerInformation;
     }
 
     public async Task<AptPayableBasisReadinessResult> ResolveAsync(
@@ -206,8 +214,15 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         var correlationId = resolved.CorrelationId;
         var siteGroupId = Guid.Parse(session.SiteGroupId);
         var siteId = Guid.Parse(session.SiteId);
-        var statutory = await StatutoryReadinessAsync(
+        var statutoryDecisionCommandId = await ResolveStatutoryDecisionCommandIdAsync(
             requestedStatutoryDecisionCommandId ?? resolved.EffectivePayableBasis?.StatutoryDiscountDecisionCommandId,
+            session,
+            siteGroupId,
+            siteId,
+            correlationId,
+            cancellationToken);
+        var statutory = await StatutoryReadinessAsync(
+            statutoryDecisionCommandId,
             session,
             tariff,
             siteGroupId,
@@ -222,7 +237,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         var tariffDimension = TariffReadiness(effectiveTariff);
         var statutoryDimension = ToStatutoryDimension(statutory.Readiness);
         var evidenceReadiness = await _statutoryEvidence.GetAptEvidenceReadinessAsync(
-            requestedStatutoryDecisionCommandId ?? resolved.EffectivePayableBasis?.StatutoryDiscountDecisionCommandId,
+            statutoryDecisionCommandId,
             new StatutoryEvidenceActor(null, null, StatutoryEvidenceChannelConstants.AssistedPaymentTerminal),
             correlationId,
             cancellationToken);
@@ -246,6 +261,16 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             correlationId,
             cancellationToken);
         var fiscalDimension = FiscalReadiness(salesInvoiceDimension);
+        var customerInformation = await _customerInformation.ReadAsync(
+            session.ParkingSessionId,
+            new InvoiceCustomerInformationScope(siteId, siteGroupId),
+            cancellationToken);
+        var customerInformationSubmitted = customerInformation.Status switch
+        {
+            InvoiceCustomerInformationReadStatus.Found => true,
+            InvoiceCustomerInformationReadStatus.NotSupplied => false,
+            _ => (bool?)null
+        };
 
         var dimensions = new[]
         {
@@ -295,6 +320,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             session.SessionStatus.ToString(),
             resolved.PaymentStatus ?? "Unknown",
             amountMinorUnits,
+            customerInformationSubmitted,
             currency,
             effectiveTariff.CalculatedAt,
             effectiveTariff.ExpiresAt,
@@ -316,6 +342,37 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             correlationId);
 
         return new AptPayableBasisReadinessResult(true, response, null, null, 200, retryable, correlationId);
+    }
+
+    private async Task<Guid?> ResolveStatutoryDecisionCommandIdAsync(
+        Guid? requestedDecisionCommandId,
+        ParkingSession session,
+        Guid siteGroupId,
+        Guid siteId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (requestedDecisionCommandId is { } decisionCommandId && decisionCommandId != Guid.Empty)
+        {
+            return decisionCommandId;
+        }
+
+        var rediscovery = await _statutoryLifecycleRediscovery.RediscoverAsync(
+            new WebPayStatutoryDiscountPendingLifecycleRediscoveryQuery(
+                WebPayStatutoryDiscountPendingLifecycleRediscoveryValues.LookupModeParkingSessionId,
+                session.ParkingSessionId,
+                siteId,
+                siteGroupId,
+                TicketReference: null,
+                PlateNumber: null,
+                VendorSystemId: session.VendorSystemCode,
+                EntitlementType: null,
+                CorrelationId: correlationId),
+            cancellationToken);
+
+        return rediscovery.Classification is WebPayStatutoryDiscountPendingLifecycleRediscoveryValues.Found
+            ? rediscovery.Lifecycle?.StatutoryDecisionCommandId
+            : null;
     }
 
     private static AptReadinessDimensionDto SessionReadiness(ParkingSession session)

@@ -21,6 +21,7 @@ namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 /// <param name="SiteGroupId">Optional resolved site group identifier.</param>
 /// <param name="SiteId">Optional resolved site identifier.</param>
 /// <param name="SiteGroupName">Optional site group display name.</param>
+/// <param name="CustomerInformationSubmitted">Presence-only indicator for canonical Sales Invoice customer information.</param>
 public sealed record CentralPmsResolvedParking(
     Guid ParkingSessionId,
     Guid TariffSnapshotId,
@@ -39,4 +40,5 @@ public sealed record CentralPmsResolvedParking(
     string? PaymentStatus = null,
     Guid? SiteGroupId = null,
     Guid? SiteId = null,
-    string? SiteGroupName = null);
+    string? SiteGroupName = null,
+    bool? CustomerInformationSubmitted = null);
