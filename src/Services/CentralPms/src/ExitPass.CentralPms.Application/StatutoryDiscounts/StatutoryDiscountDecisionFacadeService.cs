@@ -103,6 +103,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
         StagedStatutoryDiscountCommandStartResult<StatutoryDiscountDecisionV2Record> decisionStart;
         StatutoryDiscountDecisionV2Record decision;
+        var operatorConsoleIntakePrepared = false;
         if (serviceChannelApplicationIntent)
         {
             decision = await ResolveServiceChannelApplicationIntentDecisionAsync(normalized, decisionCommand, cancellationToken)
@@ -113,14 +114,27 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         {
             decisionStart = await _stagedCommandService.CreateOrResolveDecisionAsync(decisionCommand, cancellationToken)
                 .ConfigureAwait(false);
-            await EnsureDecisionPolicyAuthorityAsync(decisionStart, decisionCommand, availability, cancellationToken)
-                .ConfigureAwait(false);
+            if (operatorConsolePendingReviewIntake)
+            {
+                operatorConsoleIntakePrepared = await PrepareOperatorConsolePendingReviewIntakeAsync(
+                        normalized,
+                        decisionStart,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                await EnsureDecisionPolicyAuthorityAsync(decisionStart, decisionCommand, availability, cancellationToken)
+                    .ConfigureAwait(false);
+            }
             decision = pendingReviewIntake
                 ? await ResolvePendingReviewDecisionStageAsync(normalized, decisionStart, cancellationToken).ConfigureAwait(false)
                 : await ResolveDecisionStageAsync(normalized, decisionStart, cancellationToken).ConfigureAwait(false);
         }
 
-        if (pendingReviewIntake && decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.AwaitingReview)
+        if (pendingReviewIntake &&
+            !operatorConsoleIntakePrepared &&
+            decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.AwaitingReview)
         {
             await _serviceChannelReviewRepository.UpsertIntakeAsync(
                     ToServiceChannelReviewIntake(normalized, decision),
@@ -443,6 +457,72 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                 availability,
                 cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    private async Task<bool> PrepareOperatorConsolePendingReviewIntakeAsync(
+        StatutoryDiscountDecisionCommand command,
+        StagedStatutoryDiscountCommandStartResult<StatutoryDiscountDecisionV2Record> start,
+        CancellationToken cancellationToken)
+    {
+        if (start.Record is null)
+        {
+            throw new StatutoryDiscountDecisionRejectedException(
+                start.SafeErrorCode ?? "STATUTORY_DISCOUNT_DECISION_NOT_AVAILABLE",
+                "Statutory discount decision command is not available.");
+        }
+
+        if (start.SemanticConflict)
+        {
+            throw new StatutoryDiscountDecisionRejectedException(
+                start.SafeErrorCode ?? "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT",
+                "A statutory-discount decision already exists for materially different decision facts.");
+        }
+
+        if (start.Record.CommandStatus is StatutoryDiscountDecisionV2CommandStates.Completed
+            or StatutoryDiscountDecisionV2CommandStates.FailedNonRetryable)
+        {
+            return false;
+        }
+
+        if (!command.ExistingStatutoryDiscountValidationId.HasValue || !command.SiteId.HasValue)
+        {
+            throw new StatutoryDiscountDecisionRejectedException(
+                "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED",
+                "Operator Console pending review requires a frozen statutory validation and Site authority.");
+        }
+
+        await EnsureFrozenValidationPolicyAuthorityAsync(command, start.Record, cancellationToken)
+            .ConfigureAwait(false);
+        await _serviceChannelReviewRepository.UpsertIntakeAsync(
+                ToServiceChannelReviewIntake(command, start.Record),
+                cancellationToken)
+            .ConfigureAwait(false);
+        await EnsureFrozenValidationPolicyAuthorityAsync(command, start.Record, cancellationToken)
+            .ConfigureAwait(false);
+        return true;
+    }
+
+    private async Task EnsureFrozenValidationPolicyAuthorityAsync(
+        StatutoryDiscountDecisionCommand command,
+        StatutoryDiscountDecisionV2Record decision,
+        CancellationToken cancellationToken)
+    {
+        var ensured = await _parkingEligibilityRepository.EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+                decision.StatutoryDiscountDecisionCommandId,
+                command.ExistingStatutoryDiscountValidationId!.Value,
+                command.ParkingSessionId,
+                command.EntitlementType,
+                command.SiteId!.Value,
+                command.SiteGroupId,
+                command.CorrelationId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (!ensured.Established)
+        {
+            throw new StatutoryDiscountDecisionRejectedException(
+                ensured.ErrorCode ?? "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED",
+                "Frozen Operator Console statutory policy authority could not be established.");
+        }
     }
 
     private async Task RequireDecisionPolicyAuthorityAsync(

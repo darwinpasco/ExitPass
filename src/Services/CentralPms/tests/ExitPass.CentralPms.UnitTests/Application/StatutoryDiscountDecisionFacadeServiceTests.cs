@@ -153,6 +153,10 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         var result = await fixture.Sut.SubmitAsync(command, CancellationToken.None);
 
         result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+        fixture.ParkingEligibilityRepository.EnsureFromFrozenValidationCount.Should().BeGreaterThan(0);
+        (await fixture.ParkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(
+            result.StatutoryDiscountDecisionCommandId,
+            CancellationToken.None)).Should().NotBeNull();
         await fixture.ParkingEligibilityResolver.DidNotReceiveWithAnyArgs()
             .ResolveAsync(default!, default);
         await fixture.ServiceChannelReviewRepository.Received(1).UpsertIntakeAsync(
@@ -170,6 +174,29 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             Arg.Any<CancellationToken>());
         await fixture.DraftService.DidNotReceive()
             .DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenFrozenValidationAuthorityCannotBeEstablished_NeverMarksDecisionAwaitingReview()
+    {
+        var fixture = CreateFixture();
+        fixture.ParkingEligibilityRepository.EnsureFromFrozenValidationError =
+            "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED";
+        var command = Command(sourceChannel: "OPERATOR_CONSOLE", applyPayableBasis: false) with
+        {
+            Decision = null,
+            DecisionReasonCode = null,
+            ReviewerUserId = null,
+            ReviewerAttestation = false,
+            ExistingStatutoryDiscountValidationId = ValidationId
+        };
+
+        var action = () => fixture.Sut.SubmitAsync(command, CancellationToken.None);
+
+        await action.Should().ThrowAsync<StatutoryDiscountDecisionRejectedException>()
+            .Where(exception => exception.ErrorCode == "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED");
+        fixture.Repository.AwaitingReviewMarkCount.Should().Be(0);
+        await fixture.ServiceChannelReviewRepository.DidNotReceiveWithAnyArgs().UpsertIntakeAsync(default!, default);
     }
 
     [Fact]
@@ -1382,6 +1409,8 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         private readonly Dictionary<Guid, StatutoryDiscountDecisionPolicyAuthority> _authorities = [];
 
         public bool ReturnDefaultAuthority { get; set; } = true;
+        public int EnsureFromFrozenValidationCount { get; private set; }
+        public string? EnsureFromFrozenValidationError { get; set; }
 
         public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAsync(
             StatutoryDiscountParkingAvailabilityRequest request,
@@ -1432,6 +1461,44 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
                     ? DefaultAuthority(statutoryDiscountDecisionCommandId)
                     : null);
 
+        public async Task<StatutoryDiscountDecisionPolicyAuthorityEnsureResult> EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid statutoryDiscountValidationId,
+            Guid expectedParkingSessionId,
+            string expectedEntitlementType,
+            Guid expectedSiteId,
+            Guid? expectedSiteGroupId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            EnsureFromFrozenValidationCount++;
+            if (EnsureFromFrozenValidationError is not null)
+            {
+                return new(null, EnsureFromFrozenValidationError);
+            }
+
+            if (statutoryDiscountValidationId != ValidationId ||
+                expectedParkingSessionId != ParkingSessionId ||
+                expectedSiteId != SiteId ||
+                expectedSiteGroupId != SiteGroupId ||
+                !string.Equals(expectedEntitlementType, "SENIOR_CITIZEN", StringComparison.Ordinal))
+            {
+                return new(null, "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED");
+            }
+
+            var availability = AvailablePolicy(new StatutoryDiscountParkingAvailabilityRequest(
+                RequestReference,
+                ParkingSessionId,
+                expectedEntitlementType,
+                BeneficiaryResidencySatisfied: null,
+                correlationId));
+            await BindDecisionPolicyAuthorityAsync(
+                statutoryDiscountDecisionCommandId,
+                availability,
+                cancellationToken);
+            return new(_authorities[statutoryDiscountDecisionCommandId], null);
+        }
+
         public void Clear(Guid statutoryDiscountDecisionCommandId) => _authorities.Remove(statutoryDiscountDecisionCommandId);
 
         private static StatutoryDiscountDecisionPolicyAuthority DefaultAuthority(Guid statutoryDiscountDecisionCommandId) =>
@@ -1473,6 +1540,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         public StatutoryDiscountDecisionV2Command? LastDecisionCommand { get; private set; }
 
         public int ApplicationCount => _application is null ? 0 : 1;
+        public int AwaitingReviewMarkCount { get; private set; }
 
         public void SeedDeferredAppliedApplication()
         {
@@ -1620,6 +1688,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             Guid correlationId,
             CancellationToken cancellationToken)
         {
+            AwaitingReviewMarkCount++;
             _decision = _decision! with
             {
                 CommandStatus = StatutoryDiscountDecisionV2CommandStates.AwaitingReview,

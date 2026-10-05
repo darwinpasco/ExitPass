@@ -35,7 +35,7 @@ test.describe("Operator Console I-020 human authentication", () => {
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page.getByLabel("Operator identity")).toContainText("Review Operator");
     await expect(page).toHaveURL(/\/operator-console\/ticket-lookup$/);
-    await expect(page.getByRole("heading", { name: "Ticket Lookup" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Session Lookup" })).toBeVisible();
     await expectNoAuthenticationAuthorityInStorage(page);
 
     await page.getByRole("button", { name: "Sign out" }).click();

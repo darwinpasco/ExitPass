@@ -22,12 +22,12 @@ const siteOperatorPermissions = [
 describe("Operator Console permission-driven routes", () => {
   it("shows exactly the approved Site Operator navigation surface", () => {
     expect(visibleOperatorConsoleNavigation(siteOperatorPermissions).map((item) => item.label)).toEqual([
-      "Ticket Lookup",
+      "Session Lookup",
       "Work Queue"
     ]);
   });
 
-  it("resolves every Operator Console root form to the canonical Ticket Lookup route", () => {
+  it("resolves every Operator Console root form to the canonical Session Lookup route", () => {
     expect(resolveOperatorConsolePath("")).toBe(routes.ticketLookup);
     expect(resolveOperatorConsolePath("/")).toBe(routes.ticketLookup);
     expect(resolveOperatorConsolePath(routes.root)).toBe(routes.ticketLookup);

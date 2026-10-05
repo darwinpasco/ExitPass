@@ -117,6 +117,30 @@ public sealed class OperatorConsoleSessionLookupApiIntegrationTests
     }
 
     [Fact]
+    public async Task Lookup_WhenPlateProvided_ForwardsPlateThroughExistingEndpoint()
+    {
+        var service = new FakeSessionLookupService(AllowedFoundResult(), throwValidation: false);
+        using var factory = CreateFactory(service);
+        using var client = factory.CreateClient();
+        var request = Request() with
+        {
+            ParkingSessionId = null,
+            TicketReference = null,
+            PlateNumber = "ABC1102",
+            LookupMode = "PLATE_LICENSE"
+        };
+
+        using var response = await client.PostAsJsonAsync(Endpoint, request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        service.LastCommand.Should().NotBeNull();
+        service.LastCommand!.ParkingSessionId.Should().BeNull();
+        service.LastCommand.TicketReference.Should().BeNull();
+        service.LastCommand.PlateNumber.Should().Be("ABC1102");
+        service.LastCommand.LookupMode.Should().Be("PLATE_LICENSE");
+    }
+
+    [Fact]
     public void IdentityContext_WhenHumanSessionHasDirectSiteScope_UsesServerOwnedSiteClaim()
     {
         var context = new DefaultHttpContext
@@ -221,12 +245,14 @@ public sealed class OperatorConsoleSessionLookupApiIntegrationTests
     private static CustomWebApplicationFactory CreateFactory(
         OperatorConsoleSessionLookupResult result,
         bool throwValidation = false) =>
+        CreateFactory(new FakeSessionLookupService(result, throwValidation));
+
+    private static CustomWebApplicationFactory CreateFactory(FakeSessionLookupService service) =>
         new CustomWebApplicationFactory()
             .WithServiceOverrides(services =>
             {
                 services.RemoveAll<IOperatorConsoleSessionLookupService>();
-                services.AddSingleton<IOperatorConsoleSessionLookupService>(
-                    new FakeSessionLookupService(result, throwValidation));
+                services.AddSingleton<IOperatorConsoleSessionLookupService>(service);
             });
 
     private static OperatorConsoleSessionLookupRequest Request() =>
@@ -336,10 +362,13 @@ public sealed class OperatorConsoleSessionLookupApiIntegrationTests
             _throwValidation = throwValidation;
         }
 
+        public OperatorConsoleSessionLookupCommand? LastCommand { get; private set; }
+
         public Task<OperatorConsoleSessionLookupResult> LookupAsync(
             OperatorConsoleSessionLookupCommand command,
             CancellationToken cancellationToken)
         {
+            LastCommand = command;
             if (_throwValidation)
             {
                 throw new ArgumentException("Either ParkingSessionId or TicketReference is required.");

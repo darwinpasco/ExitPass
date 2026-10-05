@@ -44,8 +44,11 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
             return coreSession;
         }
 
-        if (!string.Equals(request.LookupMode, "TICKET_REFERENCE", StringComparison.Ordinal) ||
-            string.IsNullOrWhiteSpace(request.TicketReference) ||
+        var ticketLookup = string.Equals(request.LookupMode, "TICKET_REFERENCE", StringComparison.Ordinal);
+        var plateLookup = string.Equals(request.LookupMode, "PLATE_LICENSE", StringComparison.Ordinal);
+        if ((!ticketLookup && !plateLookup) ||
+            (ticketLookup && string.IsNullOrWhiteSpace(request.TicketReference)) ||
+            (plateLookup && string.IsNullOrWhiteSpace(request.PlateNumber)) ||
             !request.SiteId.HasValue)
         {
             return null;
@@ -153,9 +156,13 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                      OR ps.ticket_number_masked = @ticket_reference
                      OR ps.ticket_number_hash = @ticket_reference_hash
                     ))
+                 OR (@lookup_mode = 'PLATE_LICENSE' AND (
+                        ps.plate_number_masked = @plate_number
+                     OR ps.plate_number_hash = @plate_number_hash
+                    ))
               )
             ORDER BY ps.created_at DESC
-            LIMIT 1;
+            LIMIT 2;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection)
@@ -166,17 +173,19 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = DbValue(request.ParkingSessionId);
         command.Parameters.Add("ticket_reference", NpgsqlDbType.Text).Value = DbValue(request.TicketReference);
         command.Parameters.Add("ticket_reference_hash", NpgsqlDbType.Text).Value = DbValue(HashIdentifier(request.TicketReference));
+        command.Parameters.Add("plate_number", NpgsqlDbType.Text).Value = DbValue(request.PlateNumber);
+        command.Parameters.Add("plate_number_hash", NpgsqlDbType.Text).Value = DbValue(HashIdentifier(request.PlateNumber));
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = DbValue(request.SiteId);
         command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = DbValue(request.SiteGroupId);
         command.Parameters.Add("lookup_mode", NpgsqlDbType.Text).Value = request.LookupMode;
 
-        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
         {
             return null;
         }
 
-        return new OperatorConsoleSessionReadModel(
+        var result = new OperatorConsoleSessionReadModel(
             reader.GetGuid("parking_session_id"),
             GetNullableString(reader, "ticket_reference"),
             GetNullableString(reader, "plate_number_masked"),
@@ -198,6 +207,13 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
             PaymentConfirmationStatus: GetNullableString(reader, "payment_confirmation_status"),
             AmountPaidMinorUnits: GetNullableInt64(reader, "amount_paid_minor_units"),
             PaymentMethod: GetNullableString(reader, "payment_method_code"));
+
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            throw new InvalidOperationException("OPERATOR_CONSOLE_SESSION_IDENTIFIER_AMBIGUOUS");
+        }
+
+        return result;
     }
 
     private static async Task<OperatorConsoleSessionReadModel?> FindProjectionAsync(
@@ -207,17 +223,17 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
     {
         const string sql = """
             SELECT
-                projection.card_num,
-                projection.plate_license,
+                MAX(projection.card_num) AS card_num,
+                MAX(projection.plate_license) AS plate_license,
                 projection.site_id,
                 projection.site_group_id,
-                site.site_name,
-                COALESCE(projection.enter_time, projection.first_seen_at) AS entry_time,
-                projection.projection_status,
-                vendor.vendor_code AS vendor_system_code,
+                MAX(site.site_name) AS site_name,
+                MAX(COALESCE(projection.enter_time, projection.first_seen_at)) AS entry_time,
+                'ACTIVE'::text AS projection_status,
+                MAX(vendor.vendor_code) AS vendor_system_code,
                 projection.vendor_system_id,
-                projection.source_event_at,
-                projection.last_refreshed_at
+                MAX(projection.source_event_at) AS source_event_at,
+                MAX(projection.last_refreshed_at) AS last_refreshed_at
             FROM sessions.vendor_session_projections AS projection
             INNER JOIN sites.sites AS site
                 ON site.site_id = projection.site_id
@@ -229,16 +245,23 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                AND target.site_group_id = projection.site_group_id
                AND target.vendor_system_id = projection.vendor_system_id
                AND target.parking_lot_index_code = projection.parking_lot_index_code
-            WHERE projection.card_num = @ticket_reference
+            WHERE (
+                    (@lookup_mode = 'TICKET_REFERENCE' AND projection.card_num = @ticket_reference)
+                 OR (@lookup_mode = 'PLATE_LICENSE' AND upper(projection.plate_license) = @plate_number)
+                )
               AND projection.site_id = @site_id
               AND (@site_group_id IS NULL OR projection.site_group_id = @site_group_id)
               AND projection.projection_status = 'ACTIVE'
               AND projection.source_adapter_identity_id IS NOT NULL
               AND target.enabled_flag
+            GROUP BY
+                projection.site_id,
+                projection.site_group_id,
+                projection.vendor_system_id
             ORDER BY
-                projection.last_refreshed_at DESC,
-                projection.enter_time DESC NULLS LAST,
-                projection.created_at DESC
+                projection.site_id,
+                projection.site_group_id,
+                projection.vendor_system_id
             LIMIT 2;
             """;
 
@@ -246,7 +269,9 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
         {
             CommandTimeout = 30
         };
-        command.Parameters.Add("ticket_reference", NpgsqlDbType.Text).Value = request.TicketReference!;
+        command.Parameters.Add("ticket_reference", NpgsqlDbType.Text).Value = DbValue(request.TicketReference);
+        command.Parameters.Add("plate_number", NpgsqlDbType.Text).Value = DbValue(request.PlateNumber);
+        command.Parameters.Add("lookup_mode", NpgsqlDbType.Text).Value = request.LookupMode;
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = request.SiteId!.Value;
         command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = DbValue(request.SiteGroupId);
 

@@ -21,7 +21,7 @@ describe("Operator Console authentication shell", () => {
     expect(await screen.findByText("Ordinary Operator")).toBeInTheDocument();
     expect(screen.getByText("ordinary.operator")).toBeInTheDocument();
     expect(screen.getByText("1 Site, 1 Site Group")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Ticket Lookup" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Session Lookup" })).toBeInTheDocument();
     expect(client.getCurrentSession).toHaveBeenCalledTimes(1);
     expect(window.localStorage).toHaveLength(0);
     expect(window.sessionStorage).toHaveLength(0);
@@ -47,7 +47,7 @@ describe("Operator Console authentication shell", () => {
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByText("Ordinary Operator")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Ticket Lookup" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Session Lookup" })).toBeInTheDocument();
     expect(client.login).toHaveBeenCalledWith("ordinary.operator", "operator-password");
     expect(screen.queryByLabelText(/totp|one-time/i)).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("operator-password");

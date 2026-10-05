@@ -68,12 +68,34 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
     }
 
     [Fact]
-    public async Task TicketLookup_WhenScopedActiveProjectionIsAmbiguous_FailsClosed()
+    public async Task TicketLookup_WhenProjectionRowsShareCanonicalRoute_DoesNotReportFalseAmbiguity()
     {
         var fixture = await Fixture.CreateAsync();
         try
         {
             await fixture.InsertSecondProjectionAsync();
+            var repository = new OperatorConsoleSessionLookupReadRepository(fixture.ConnectionString);
+
+            var result = await repository.FindAsync(
+                fixture.Request(fixture.SiteId, fixture.SiteGroupId),
+                CancellationToken.None);
+
+            result.Should().NotBeNull();
+            result!.VendorSystemId.Should().Be(fixture.VendorSystemId);
+        }
+        finally
+        {
+            await fixture.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task TicketLookup_WhenIdentifierMatchesDistinctCanonicalRoutes_FailsClosed()
+    {
+        var fixture = await Fixture.CreateAsync();
+        try
+        {
+            await fixture.InsertProjectionForDistinctVendorRouteAsync();
             var repository = new OperatorConsoleSessionLookupReadRepository(fixture.ConnectionString);
 
             var action = () => repository.FindAsync(
@@ -89,6 +111,29 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task PlateLookup_UsesExactCanonicalPlateWithinAuthorizedScope()
+    {
+        var fixture = await Fixture.CreateAsync();
+        try
+        {
+            var repository = new OperatorConsoleSessionLookupReadRepository(fixture.ConnectionString);
+
+            var result = await repository.FindAsync(
+                fixture.PlateRequest(fixture.SiteId, fixture.SiteGroupId, "ABC1041"),
+                CancellationToken.None);
+
+            result.Should().NotBeNull();
+            result!.SessionSource.Should().Be("VENDOR_SESSION_PROJECTION");
+            result.TicketReference.Should().Be(fixture.Ticket);
+            result.VendorSystemId.Should().Be(fixture.VendorSystemId);
+        }
+        finally
+        {
+            await fixture.DisposeAsync();
+        }
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private Fixture(string connectionString)
@@ -97,6 +142,7 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
             SiteGroupId = Guid.NewGuid();
             SiteId = Guid.NewGuid();
             VendorSystemId = Guid.NewGuid();
+            SecondVendorSystemId = Guid.NewGuid();
             ProjectionId = Guid.NewGuid();
             ParkingSessionId = Guid.NewGuid();
             Ticket = $"PROJECTION-{Guid.NewGuid():N}";
@@ -106,6 +152,7 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
         public Guid SiteGroupId { get; }
         public Guid SiteId { get; }
         public Guid VendorSystemId { get; }
+        public Guid SecondVendorSystemId { get; }
         public Guid ProjectionId { get; }
         public Guid ParkingSessionId { get; }
         public string Ticket { get; }
@@ -122,7 +169,10 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
         }
 
         public OperatorConsoleSessionLookupReadRequest Request(Guid siteId, Guid? siteGroupId) =>
-            new(null, Ticket, siteId, siteGroupId, "TICKET_REFERENCE");
+            new(null, Ticket, null, siteId, siteGroupId, "TICKET_REFERENCE");
+
+        public OperatorConsoleSessionLookupReadRequest PlateRequest(Guid siteId, Guid? siteGroupId, string plateNumber) =>
+            new(null, null, plateNumber, siteId, siteGroupId, "PLATE_LICENSE");
 
         public async Task<long[]> CountBusinessRowsAsync()
         {
@@ -206,6 +256,47 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
             await command.ExecuteNonQueryAsync();
         }
 
+        public async Task InsertProjectionForDistinctVendorRouteAsync()
+        {
+            await using var connection = new NpgsqlConnection(ConnectionString);
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand(
+                """
+                INSERT INTO integration.vendor_systems (
+                    vendor_system_id, vendor_code, vendor_name, vendor_system_type,
+                    vendor_system_status, environment_code, effective_from)
+                VALUES (@second_vendor_system_id, @second_vendor_code, 'Second Projection Test Vendor', 'VENDOR_PMS',
+                    'ACTIVE', 'INTEGRATION_TEST', now());
+
+                INSERT INTO sessions.vendor_session_projection_sync_targets (
+                    projection_sync_target_id, site_id, site_group_id, vendor_system_id,
+                    parking_lot_index_code, enabled_flag, health_status)
+                VALUES (gen_random_uuid(), @site_id, @site_group_id, @second_vendor_system_id, 'LOT-2', true, 'HEALTHY');
+
+                INSERT INTO sessions.vendor_session_projections (
+                    vendor_session_projection_id, vendor_system_id, site_id, site_group_id,
+                    source_adapter_identity_id, parking_lot_index_code, vendor_record_guid,
+                    card_num, plate_license, enter_time, source_api, source_payload_hash,
+                    source_event_at, stable_identity_type, stable_identity_key,
+                    first_seen_at, last_seen_at, last_refreshed_at, projection_status,
+                    correlation_id, created_by_service_identity_id)
+                VALUES (
+                    gen_random_uuid(), @second_vendor_system_id, @site_id, @site_group_id,
+                    @service_identity_id, 'LOT-2', @second_record_guid,
+                    @ticket, 'XYZ2042', now() - interval '30 minutes', 'integration-test', repeat('b', 64),
+                    now() - interval '30 minutes', 'VENDOR_RECORD_GUID', @second_stable_key,
+                    now(), now(), now(), 'ACTIVE', gen_random_uuid(), @service_identity_id);
+                """,
+                connection);
+            AddScopeParameters(command);
+            command.Parameters.AddWithValue("second_vendor_system_id", SecondVendorSystemId);
+            command.Parameters.AddWithValue("second_vendor_code", $"VENDOR-{SecondVendorSystemId:N}");
+            command.Parameters.AddWithValue("ticket", Ticket);
+            command.Parameters.AddWithValue("second_record_guid", $"record-{Guid.NewGuid():N}");
+            command.Parameters.AddWithValue("second_stable_key", $"stable-{Guid.NewGuid():N}");
+            await command.ExecuteNonQueryAsync();
+        }
+
         private async Task SeedAsync()
         {
             await using var connection = new NpgsqlConnection(ConnectionString);
@@ -277,6 +368,7 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
                 DELETE FROM core.parking_sessions WHERE parking_session_id = @parking_session_id;
                 DELETE FROM sessions.vendor_session_projections WHERE site_id = @site_id;
                 DELETE FROM sessions.vendor_session_projection_sync_targets WHERE site_id = @site_id;
+                DELETE FROM integration.vendor_systems WHERE vendor_system_id = @second_vendor_system_id;
                 DELETE FROM integration.vendor_systems WHERE vendor_system_id = @vendor_system_id;
                 DELETE FROM sites.sites WHERE site_id = @site_id;
                 DELETE FROM sites.site_groups WHERE site_group_id = @site_group_id;
@@ -284,6 +376,7 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
                 connection);
             AddScopeParameters(command);
             command.Parameters.AddWithValue("parking_session_id", ParkingSessionId);
+            command.Parameters.AddWithValue("second_vendor_system_id", SecondVendorSystemId);
             await command.ExecuteNonQueryAsync();
         }
     }

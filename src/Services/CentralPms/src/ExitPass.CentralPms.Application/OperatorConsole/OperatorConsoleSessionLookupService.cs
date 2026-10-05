@@ -18,6 +18,7 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
     private const string ControlledActionCode = OperatorConsoleActionCodes.SessionLookup;
     private const string LookupModeParkingSessionId = "PARKING_SESSION_ID";
     private const string LookupModeTicketReference = "TICKET_REFERENCE";
+    private const string LookupModePlateLicense = "PLATE_LICENSE";
 
     private readonly IOperatorConsoleAccessEvaluationService _accessEvaluationService;
     private readonly IOperatorConsoleAccessEvaluationWriter _accessEvaluationWriter;
@@ -83,6 +84,7 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
             new OperatorConsoleSessionLookupReadRequest(
                 command.ParkingSessionId,
                 NormalizeIdentifier(command.TicketReference),
+                NormalizePlateNumber(command.PlateNumber),
                 command.SiteId,
                 command.SiteGroupId,
                 lookupMode),
@@ -99,8 +101,12 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
                     SiteId = session.SiteId.ToString("D"),
                     SiteGroupId = session.SiteGroupId.ToString("D"),
                     VendorSystemId = session.VendorSystemId.Value.ToString("D"),
-                    TicketReference = session.TicketReference ?? command.TicketReference,
-                    PlateNumber = null,
+                    TicketReference = lookupMode == LookupModeTicketReference
+                        ? session.TicketReference ?? command.TicketReference
+                        : null,
+                    PlateNumber = lookupMode == LookupModePlateLicense
+                        ? NormalizePlateNumber(command.PlateNumber)
+                        : null,
                     CorrelationId = persistedEvaluation.CorrelationId
                 },
                 cancellationToken);
@@ -111,6 +117,7 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
                     new OperatorConsoleSessionLookupReadRequest(
                         ParkingSessionId: resolution.ParkingSession.ParkingSessionId,
                         TicketReference: null,
+                        PlateNumber: null,
                         SiteId: session.SiteId,
                         SiteGroupId: session.SiteGroupId,
                         LookupMode: LookupModeParkingSessionId),
@@ -174,9 +181,11 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
             throw new ArgumentException("IdempotencyKey is required.", nameof(command.IdempotencyKey));
         }
 
-        if (!command.ParkingSessionId.HasValue && string.IsNullOrWhiteSpace(command.TicketReference))
+        if (!command.ParkingSessionId.HasValue &&
+            string.IsNullOrWhiteSpace(command.TicketReference) &&
+            string.IsNullOrWhiteSpace(command.PlateNumber))
         {
-            throw new ArgumentException("Either ParkingSessionId or TicketReference is required.", nameof(command));
+            throw new ArgumentException("ParkingSessionId, TicketReference, or PlateNumber is required.", nameof(command));
         }
 
         var normalizedLookupMode = NormalizeIdentifier(command.LookupMode);
@@ -185,9 +194,11 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
             return command.ParkingSessionId.HasValue ? LookupModeParkingSessionId : LookupModeTicketReference;
         }
 
-        if (normalizedLookupMode is not LookupModeParkingSessionId and not LookupModeTicketReference)
+        if (normalizedLookupMode is not LookupModeParkingSessionId and
+            not LookupModeTicketReference and
+            not LookupModePlateLicense)
         {
-            throw new ArgumentException("LookupMode must be PARKING_SESSION_ID or TICKET_REFERENCE.", nameof(command.LookupMode));
+            throw new ArgumentException("LookupMode must be PARKING_SESSION_ID, TICKET_REFERENCE, or PLATE_LICENSE.", nameof(command.LookupMode));
         }
 
         if (normalizedLookupMode == LookupModeParkingSessionId && !command.ParkingSessionId.HasValue)
@@ -198,6 +209,11 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
         if (normalizedLookupMode == LookupModeTicketReference && string.IsNullOrWhiteSpace(command.TicketReference))
         {
             throw new ArgumentException("TicketReference is required when LookupMode is TICKET_REFERENCE.", nameof(command.TicketReference));
+        }
+
+        if (normalizedLookupMode == LookupModePlateLicense && string.IsNullOrWhiteSpace(command.PlateNumber))
+        {
+            throw new ArgumentException("PlateNumber is required when LookupMode is PLATE_LICENSE.", nameof(command.PlateNumber));
         }
 
         return normalizedLookupMode;
@@ -213,4 +229,7 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
 
     private static string? NormalizeIdentifier(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? NormalizePlateNumber(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
 }

@@ -154,6 +154,58 @@ public sealed class OperatorConsoleSessionLookupServiceTests
             Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task LookupAsync_WhenPlateModeSelected_UsesExactPlateForCanonicalResolution()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var request = call.Arg<OperatorConsoleSessionLookupReadRequest>();
+                return request.LookupMode == "PARKING_SESSION_ID" ? Session("ACTIVE") : ProjectionSession(VendorSystemId);
+            });
+        var resolver = Substitute.For<IResolveVendorParkingUseCase>();
+        resolver.ExecuteAsync(Arg.Any<ResolveVendorParkingCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new ResolveVendorParkingResult(
+                ResolveVendorParkingOutcome.Resolved,
+                ParkingSession.Rehydrate(
+                    ParkingSessionId,
+                    SiteGroupId.ToString("D"),
+                    SiteId.ToString("D"),
+                    "HIKCENTRAL",
+                    "VENDOR-SESSION-001",
+                    "TICKET",
+                    "ABC1102",
+                    "TICKET-002",
+                    EntryTime,
+                    ParkingSessionStatus.PaymentRequired),
+                null,
+                null,
+                false,
+                CorrelationId,
+                VendorSystemId.ToString("D"),
+                "PITX",
+                "PITX Level 3",
+                "UNPAID",
+                null,
+                null));
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, resolver);
+
+        var result = await sut.LookupAsync(
+            Command(parkingSessionId: null, ticketReference: null, plateNumber: " abc1102 ", lookupMode: "PLATE_LICENSE"),
+            CancellationToken.None);
+
+        result.Session!.ParkingSessionId.Should().Be(ParkingSessionId);
+        await repository.Received().FindAsync(
+            Arg.Is<OperatorConsoleSessionLookupReadRequest>(request =>
+                request.LookupMode == "PLATE_LICENSE" && request.PlateNumber == "ABC1102" && request.TicketReference == null),
+            Arg.Any<CancellationToken>());
+        await resolver.Received(1).ExecuteAsync(
+            Arg.Is<ResolveVendorParkingCommand>(command =>
+                command.PlateNumber == "ABC1102" && command.TicketReference == null),
+            Arg.Any<CancellationToken>());
+    }
+
     /// <summary>
     /// Verifies not-found lookup returns a deterministic non-eligible result.
     /// </summary>
@@ -206,7 +258,7 @@ public sealed class OperatorConsoleSessionLookupServiceTests
         var action = () => sut.LookupAsync(MissingLookupCommand(), CancellationToken.None);
 
         await action.Should().ThrowAsync<ArgumentException>()
-            .WithMessage("*ParkingSessionId or TicketReference*");
+            .WithMessage("*ParkingSessionId, TicketReference, or PlateNumber*");
     }
 
     /// <summary>
@@ -221,7 +273,7 @@ public sealed class OperatorConsoleSessionLookupServiceTests
         var action = () => sut.LookupAsync(Command(lookupMode: "PLATE"), CancellationToken.None);
 
         await action.Should().ThrowAsync<ArgumentException>()
-            .WithMessage("*LookupMode must be PARKING_SESSION_ID or TICKET_REFERENCE*");
+            .WithMessage("*LookupMode must be PARKING_SESSION_ID, TICKET_REFERENCE, or PLATE_LICENSE*");
     }
 
     private static OperatorConsoleSessionLookupService CreateSut(
@@ -243,6 +295,7 @@ public sealed class OperatorConsoleSessionLookupServiceTests
     private static OperatorConsoleSessionLookupCommand Command(
         Guid? parkingSessionId = null,
         string? ticketReference = "TICKET-001",
+        string? plateNumber = null,
         string? lookupMode = null) =>
         new(
             UserId,
@@ -252,7 +305,7 @@ public sealed class OperatorConsoleSessionLookupServiceTests
             ShiftId,
             parkingSessionId ?? ParkingSessionId,
             ticketReference,
-            PlateNumber: null,
+            plateNumber,
             lookupMode,
             "operator-console-session-lookup-test",
             CorrelationId);

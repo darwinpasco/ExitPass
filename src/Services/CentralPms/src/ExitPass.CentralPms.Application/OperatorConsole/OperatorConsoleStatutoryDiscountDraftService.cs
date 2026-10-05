@@ -86,6 +86,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             new OperatorConsoleSessionLookupReadRequest(
                 command.ParkingSessionId,
                 NormalizeOptional(command.TicketReference),
+                PlateNumber: null,
                 command.SiteId,
                 command.SiteGroupId,
                 "PARKING_SESSION_ID"),

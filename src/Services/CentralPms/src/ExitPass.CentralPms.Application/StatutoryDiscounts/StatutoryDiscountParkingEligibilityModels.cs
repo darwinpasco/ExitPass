@@ -124,6 +124,13 @@ public sealed record StatutoryDiscountDecisionPolicyAuthority(
     string PolicyAuthoritySemanticHash,
     Guid CorrelationId);
 
+public sealed record StatutoryDiscountDecisionPolicyAuthorityEnsureResult(
+    StatutoryDiscountDecisionPolicyAuthority? Authority,
+    string? ErrorCode)
+{
+    public bool Established => Authority is not null && string.IsNullOrWhiteSpace(ErrorCode);
+}
+
 public interface IStatutoryDiscountParkingEligibilityResolver
 {
     Task<StatutoryDiscountParkingAvailabilityResult> ResolveAsync(
@@ -140,6 +147,16 @@ public interface IStatutoryDiscountParkingEligibilityRepository
     Task BindDecisionPolicyAuthorityAsync(
         Guid statutoryDiscountDecisionCommandId,
         StatutoryDiscountParkingAvailabilityResult availability,
+        CancellationToken cancellationToken);
+
+    Task<StatutoryDiscountDecisionPolicyAuthorityEnsureResult> EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid statutoryDiscountValidationId,
+        Guid expectedParkingSessionId,
+        string expectedEntitlementType,
+        Guid expectedSiteId,
+        Guid? expectedSiteGroupId,
+        Guid correlationId,
         CancellationToken cancellationToken);
 
     Task<StatutoryDiscountDecisionPolicyAuthority?> GetDecisionPolicyAuthorityAsync(

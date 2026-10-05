@@ -288,9 +288,11 @@ export interface OperatorConsoleApiError {
   errorCode?: string;
 }
 
-export interface OperatorTicketLookupInput {
-  ticketNumber: string;
-  cardNum?: string;
+export type OperatorSessionLookupMode = "TICKET_REFERENCE" | "PLATE_LICENSE";
+
+export interface OperatorSessionLookupInput {
+  lookupMode: OperatorSessionLookupMode;
+  identifier: string;
 }
 
 export interface OperatorTicketLookupResult {

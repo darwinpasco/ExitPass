@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import QRCode from "qrcode";
 import {
   createOperatorConsoleApiClient,
@@ -46,6 +46,8 @@ import type {
   VendorSessionProjectionHealthTargetsResponse
 } from "./types";
 import { PhoneCameraCapture } from "./PhoneCameraCapture";
+import { SessionQrScanner } from "./SessionQrScanner";
+import { normalizeScannedTicketReference } from "./sessionLookup";
 import {
   CanonicalStatutoryReviewDetailPage,
   CanonicalStatutoryReviewQueuePage,
@@ -342,7 +344,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
           ) : path === routes.shiftManagement ? (
             <ShiftManagement client={client} />
           ) : path === routes.ticketLookup ? (
-            <TicketLookupPage client={client} />
+            <SessionLookupPage client={client} />
           ) : path === routes.fiscalStatus ? (
             <FiscalIssuanceStatusPage client={client} />
           ) : path === routes.fiscalReporting ? (
@@ -2406,12 +2408,15 @@ function VendorSessionProjectionLatestRecordRow({ record }: { record: VendorSess
   );
 }
 
-function TicketLookupPage({
+function SessionLookupPage({
   client
 }: {
   client: OperatorConsoleApiClient;
 }) {
+  const [lookupMode, setLookupMode] = useState<"TICKET_REFERENCE" | "PLATE_LICENSE">("TICKET_REFERENCE");
   const [ticketReference, setTicketReference] = useState("");
+  const [plateNumber, setPlateNumber] = useState("");
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [lookupState, setLookupState] = useState<LoadState<OperatorTicketLookupResult>>({ status: "idle" });
   const [draftState, setDraftState] = useState<LoadState<string>>({ status: "idle" });
   const [currentDraftState, setCurrentDraftState] = useState<LoadState<StatutoryDiscountDraftDetail>>({ status: "idle" });
@@ -2444,11 +2449,38 @@ function TicketLookupPage({
     setIdPhoto(file);
   }
 
+  const handleQrDecoded = useCallback((rawValue: string) => {
+    const ticket = normalizeScannedTicketReference(rawValue);
+    if (ticket) {
+      setTicketReference(ticket);
+      setLookupState({ status: "idle" });
+    } else {
+      setLookupState({ status: "error", message: "The QR code does not contain a ticket number." });
+    }
+    setScannerOpen(false);
+  }, []);
+
+  function changeLookupMode(nextMode: "TICKET_REFERENCE" | "PLATE_LICENSE") {
+    if (nextMode === lookupMode) return;
+    setLookupMode(nextMode);
+    setScannerOpen(false);
+    setLookupState({ status: "idle" });
+    setDraftState({ status: "idle" });
+    setCurrentDraftState({ status: "idle" });
+    setCustomerInformationState({ status: "idle" });
+    setCustomerInformationSaveState({ status: "idle" });
+  }
+
   async function submitLookup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const normalizedTicket = ticketReference.trim();
-    if (!normalizedTicket) {
-      setLookupState({ status: "error", message: "Scan or enter a ticket number." });
+    const identifier = lookupMode === "TICKET_REFERENCE"
+      ? ticketReference.trim()
+      : plateNumber.trim().toUpperCase();
+    if (!identifier) {
+      setLookupState({
+        status: "error",
+        message: lookupMode === "TICKET_REFERENCE" ? "Scan or enter a ticket number." : "Enter a plate number."
+      });
       return;
     }
 
@@ -2468,7 +2500,7 @@ function TicketLookupPage({
     replaceIdPhoto(null);
     setOperatorAttestation(false);
     try {
-      const result = await client.lookupSessionByTicket({ ticketNumber: normalizedTicket });
+      const result = await client.lookupSession({ lookupMode, identifier });
       setLookupState(result.sessionFound ? { status: "loaded", data: result } : { status: "not-found" });
       if (result.sessionFound && result.parkingSessionId) {
         setCurrentDraftState({ status: "loading" });
@@ -2490,13 +2522,13 @@ function TicketLookupPage({
         } catch {
           setCustomerInformationState({
             status: "error",
-            message: "Unable to load customer information for this ticket."
+            message: "Unable to load customer information for this session."
           });
         }
       } else if (result.sessionFound) {
         setCustomerInformationState({
           status: "error",
-          message: "Unable to load customer information for this ticket."
+          message: "Unable to load customer information for this session."
         });
       }
     } catch (error) {
@@ -2517,7 +2549,7 @@ function TicketLookupPage({
 
     const result = lookupState.data;
     if (!result.parkingSessionId) {
-      setDraftState({ status: "error", message: "Unable to start the statutory discount request for this ticket." });
+      setDraftState({ status: "error", message: "Unable to start the statutory discount request for this session." });
       return;
     }
 
@@ -2648,40 +2680,63 @@ function TicketLookupPage({
     <>
       <section className="pageTitle">
         <div>
-          <h2>Ticket Lookup</h2>
+          <h2>Session Lookup</h2>
         </div>
       </section>
 
-      <section className="panel" aria-labelledby="ticket-lookup-title">
+      <section className="panel" aria-labelledby="session-lookup-title">
         <div className="panelHeader">
-          <h3 id="ticket-lookup-title">Ticket number</h3>
+          <h3 id="session-lookup-title">Find parking session</h3>
           <span className="statusPill">Read-only lookup</span>
         </div>
 
+        <div className="sessionLookupModes" role="group" aria-label="Session lookup method">
+          <button type="button" aria-pressed={lookupMode === "TICKET_REFERENCE"} onClick={() => changeLookupMode("TICKET_REFERENCE")}>Ticket</button>
+          <button type="button" aria-pressed={lookupMode === "PLATE_LICENSE"} onClick={() => changeLookupMode("PLATE_LICENSE")}>Plate</button>
+        </div>
+
         <form className="ticketLookupForm" onSubmit={submitLookup}>
-          <label>
-            Ticket number
+          {lookupMode === "TICKET_REFERENCE" ? <div className="sessionLookupIdentifier">
+            <label>
+              Ticket number
+              <input
+                autoComplete="off"
+                autoFocus
+                inputMode="text"
+                name="ticketReference"
+                placeholder="Scan or enter HikCentral ticket number"
+                value={ticketReference}
+                onChange={(event) => setTicketReference(event.target.value)}
+              />
+            </label>
+            <button type="button" className="secondaryButton" onClick={() => setScannerOpen(true)}>Scan QR</button>
+          </div> : <label>
+            Plate number
             <input
               autoComplete="off"
               autoFocus
               inputMode="text"
-              name="ticketReference"
-              placeholder="Scan or enter HikCentral ticket number"
-              value={ticketReference}
-              onChange={(event) => setTicketReference(event.target.value)}
+              name="plateNumber"
+              placeholder="Enter plate number"
+              value={plateNumber}
+              onChange={(event) => setPlateNumber(event.target.value)}
             />
-          </label>
+          </label>}
           <button type="submit" disabled={lookupState.status === "loading"}>
             {lookupState.status === "loading" ? "Looking up" : "Lookup"}
           </button>
         </form>
 
+        {lookupMode === "TICKET_REFERENCE" && scannerOpen && (
+          <SessionQrScanner onDecoded={handleQrDecoded} onCancel={() => setScannerOpen(false)} />
+        )}
+
       </section>
 
-      {lookupState.status === "loading" && <StateMessage title="Looking up ticket" message="Retrieving Operator Console session status." />}
-      {lookupState.status === "not-found" && <StateMessage title="Ticket not found" message="No active session was found for this ticket." />}
+      {lookupState.status === "loading" && <StateMessage title="Looking up session" message="Retrieving Operator Console session status." />}
+      {lookupState.status === "not-found" && <StateMessage title="Session not found" message="No active session was found for this identifier." />}
       {lookupState.status === "access-denied" && <StateMessage title="Access denied" message={lookupState.message} />}
-      {lookupState.status === "error" && <StateMessage title="Unable to look up ticket" message={lookupState.message} />}
+      {lookupState.status === "error" && <StateMessage title="Unable to look up session" message={lookupState.message} />}
       {lookupState.status === "loaded" && (
         <>
           <TicketLookupSummary result={lookupState.data} />
@@ -2695,11 +2750,11 @@ function TicketLookupPage({
             {draftState.status === "error" && <p className="errorMessage">{draftState.message}</p>}
             {draftState.status === "loaded" && <p className="successMessage">{draftState.data}</p>}
             {currentDraftState.status === "loading" && <p role="status">Checking for an existing statutory request...</p>}
-            {currentDraftState.status === "error" && <p className="errorMessage">Unable to load the existing statutory request for this ticket.</p>}
+            {currentDraftState.status === "error" && <p className="errorMessage">Unable to load the existing statutory request for this session.</p>}
             {currentDraftState.status === "empty" && (isCompletedTransaction(lookupState.data) ? (
               <p className="notice">Statutory discount request is no longer available because payment has been completed and exit authorization has been issued.</p>
             ) : !lookupState.data.parkingSessionId ? (
-              <p className="errorMessage">Unable to start the statutory discount request for this ticket.</p>
+              <p className="errorMessage">Unable to start the statutory discount request for this session.</p>
             ) : <form className="draftStartForm" onSubmit={createDraft}>
               <label>
                 Entitlement type

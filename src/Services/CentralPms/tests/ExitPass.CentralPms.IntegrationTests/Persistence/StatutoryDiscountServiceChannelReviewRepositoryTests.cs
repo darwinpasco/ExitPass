@@ -1,6 +1,7 @@
 using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Infrastructure.ManagementPlatform;
+using ExitPass.CentralPms.Infrastructure.StatutoryDiscounts;
 using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
@@ -345,6 +346,110 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
     }
 
     [Fact]
+    public async Task OperatorConsoleReview_MaterializesDecisionAuthorityFromExactFrozenValidationIdempotently()
+    {
+        var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            nameof(OperatorConsoleReview_MaterializesDecisionAuthorityFromExactFrozenValidationIdempotently),
+            StatutoryDiscountSourceChannels.WebPay);
+
+        try
+        {
+            var validationId = await LinkOperatorConsoleValidationAndRemoveDecisionAuthorityAsync(seeded);
+            var repository = new PostgresStatutoryDiscountParkingEligibilityRepository(
+                StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+
+            var first = await repository.EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                validationId,
+                seeded.Context.ParkingSessionId,
+                "SENIOR_CITIZEN",
+                seeded.Context.SiteId,
+                seeded.Context.SiteGroupId,
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+            var replay = await repository.EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                validationId,
+                seeded.Context.ParkingSessionId,
+                "SENIOR_CITIZEN",
+                seeded.Context.SiteId,
+                seeded.Context.SiteGroupId,
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+
+            first.Established.Should().BeTrue();
+            replay.Established.Should().BeTrue();
+            seeded.Decision.AppliedPolicyReferenceId.Should().NotBeNull();
+            first.Authority!.StatutoryDiscountPolicyVersionId.Should().Be(seeded.Decision.AppliedPolicyReferenceId!.Value);
+            replay.Authority!.PolicyAuthoritySemanticHash.Should().Be(first.Authority.PolicyAuthoritySemanticHash);
+            (await CountDecisionAuthoritiesAsync(seeded.Decision.StatutoryDiscountDecisionCommandId)).Should().Be(1);
+
+            var detail = await StatutoryDiscountReviewIntegrationTestSupport.CreateReviewRepository().GetAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+            detail!.GoverningPolicy!.StatutoryDiscountPolicyVersionId.Should().Be(seeded.Decision.AppliedPolicyReferenceId.Value);
+            detail.GoverningPolicy.BeneficiaryResidencyScope.Should().Be("RESIDENT_ONLY");
+        }
+        finally
+        {
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
+        }
+    }
+
+    [Fact]
+    public async Task OperatorConsoleReview_FrozenValidationContextMismatchFailsClosedWithoutAuthority()
+    {
+        var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            nameof(OperatorConsoleReview_FrozenValidationContextMismatchFailsClosedWithoutAuthority),
+            StatutoryDiscountSourceChannels.WebPay);
+
+        try
+        {
+            var validationId = await LinkOperatorConsoleValidationAndRemoveDecisionAuthorityAsync(seeded);
+            var repository = new PostgresStatutoryDiscountParkingEligibilityRepository(
+                StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+
+            var wrongSession = await repository.EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                validationId,
+                Guid.NewGuid(),
+                "SENIOR_CITIZEN",
+                seeded.Context.SiteId,
+                seeded.Context.SiteGroupId,
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+            var wrongEntitlement = await repository.EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                validationId,
+                seeded.Context.ParkingSessionId,
+                "PWD",
+                seeded.Context.SiteId,
+                seeded.Context.SiteGroupId,
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+            var wrongScope = await repository.EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                validationId,
+                seeded.Context.ParkingSessionId,
+                "SENIOR_CITIZEN",
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+
+            new[] { wrongSession, wrongEntitlement, wrongScope }
+                .Should().OnlyContain(result =>
+                    !result.Established && result.ErrorCode == "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED");
+            (await CountDecisionAuthoritiesAsync(seeded.Decision.StatutoryDiscountDecisionCommandId)).Should().Be(0);
+        }
+        finally
+        {
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
+        }
+    }
+
+    [Fact]
     public async Task ApprovedValidationReviewerAuthority_ReturnsCanonicalReviewOperatingContext()
     {
         var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
@@ -505,6 +610,17 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
         command.Parameters.Add("submitted_by_user_id", NpgsqlDbType.Uuid).Value = seeded.Context.RequestedByUserId;
         await command.ExecuteNonQueryAsync();
         return validationId;
+    }
+
+    private static async Task<long> CountDecisionAuthoritiesAsync(Guid decisionCommandId)
+    {
+        await using var connection = new NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM discounts.statutory_discount_decision_policy_authorities WHERE statutory_discount_decision_command_id = @decision_command_id;",
+            connection);
+        command.Parameters.Add("decision_command_id", NpgsqlDbType.Uuid).Value = decisionCommandId;
+        return (long)(await command.ExecuteScalarAsync() ?? 0L);
     }
 
     private static async Task ReplaceIntakeEvidenceWithCanonicalReviewableEvidenceAsync(

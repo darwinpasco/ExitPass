@@ -18,7 +18,7 @@ import type {
   FiscalStatusViewAuditReportResponse,
   InvoiceCustomerInformation,
   OperatorConsoleApiError,
-  OperatorTicketLookupInput,
+  OperatorSessionLookupInput,
   OperatorTicketLookupResult,
   SaveInvoiceCustomerInformationInput,
   ProductionPolicyImportDryRunInput,
@@ -73,7 +73,7 @@ export interface OperatorConsoleApiClient {
   canViewAllShifts(): boolean;
   canManageShifts(): boolean;
   evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
-  lookupSessionByTicket(input: OperatorTicketLookupInput): Promise<OperatorTicketLookupResult>;
+  lookupSession(input: OperatorSessionLookupInput): Promise<OperatorTicketLookupResult>;
   getInvoiceCustomerInformation?(parkingSessionId: string): Promise<InvoiceCustomerInformation>;
   saveInvoiceCustomerInformation?(
     parkingSessionId: string,
@@ -731,17 +731,19 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
       return parseResponse<AccessReadinessResponse>(response);
     },
 
-    async lookupSessionByTicket(input) {
+    async lookupSession(input) {
       const correlationId = newCorrelationId();
+      const ticketReference = input.lookupMode === "TICKET_REFERENCE" ? input.identifier : null;
+      const plateNumber = input.lookupMode === "PLATE_LICENSE" ? input.identifier : null;
       const response = await fetch(`${baseUrl}/v1/ops/operator-console/sessions/lookup`, {
         method: "POST",
         headers: operatorConsoleHeaders(correlationId, { json: true }),
         body: JSON.stringify({
           parkingSessionId: null,
-          ticketReference: input.ticketNumber,
-          plateNumber: null,
-          lookupMode: "TICKET_REFERENCE",
-          idempotencyKey: `operator-console-ui-session-lookup-${input.ticketNumber}-${correlationId}`,
+          ticketReference,
+          plateNumber,
+          lookupMode: input.lookupMode,
+          idempotencyKey: `operator-console-ui-session-lookup-${input.lookupMode}-${input.identifier}-${correlationId}`,
           correlationId
         })
       });
@@ -1370,7 +1372,7 @@ export function createMockOperatorConsoleApiClient(
     fiscalStatusViewAuditReportError?: OperatorConsoleApiError;
     fiscalStatusViewAuditReport?: FiscalStatusViewAuditReportResponse;
     empty?: boolean;
-    onTicketLookup?: (input: OperatorTicketLookupInput) => void;
+    onTicketLookup?: (input: OperatorSessionLookupInput) => void;
     onDraftCreate?: (input: StatutoryDiscountDraftCreateInput) => void;
     onFiscalStatusLookup?: (query: string) => void;
     onFiscalVoidActionAuditReport?: (input: FiscalVoidActionAuditReportQuery) => void;
@@ -1469,7 +1471,7 @@ export function createMockOperatorConsoleApiClient(
       return options.readiness ?? mockAccessReadiness(input);
     },
 
-    async lookupSessionByTicket(input) {
+    async lookupSession(input) {
       await delay();
       options.onTicketLookup?.(input);
       if (options.ticketLookupError) {
@@ -1477,16 +1479,19 @@ export function createMockOperatorConsoleApiClient(
       }
 
       const results = options.ticketLookupResults ?? mockTicketLookupResults;
-      const match = results.find((item) => item.ticketNumber === input.ticketNumber || item.cardNum === input.ticketNumber);
+      const match = results.find((item) => input.lookupMode === "TICKET_REFERENCE"
+        ? item.ticketNumber === input.identifier || item.cardNum === input.identifier
+        : item.plateLicense?.toUpperCase() === input.identifier.toUpperCase());
       if (match) {
-        return { ...match, ticketNumber: match.ticketNumber ?? input.ticketNumber };
+        return { ...match };
       }
 
       return {
         sessionFound: false,
-        ticketNumber: input.ticketNumber,
+        ticketNumber: input.lookupMode === "TICKET_REFERENCE" ? input.identifier : undefined,
+        plateLicense: input.lookupMode === "PLATE_LICENSE" ? input.identifier : undefined,
         correlationId: newCorrelationId(),
-        message: "Ticket not found."
+        message: "Session not found."
       };
     },
 
@@ -2287,7 +2292,7 @@ async function parseTicketLookupResponse(response: Response): Promise<OperatorTi
     return {
       sessionFound: false,
       correlationId: body.correlationId ?? undefined,
-      message: body.message ?? body.errorCode ?? "Ticket not found."
+      message: body.message ?? body.errorCode ?? "Session not found."
     };
   }
 
@@ -2297,7 +2302,7 @@ async function parseTicketLookupResponse(response: Response): Promise<OperatorTi
 
   throw {
     status: response.status === 401 || response.status === 403 ? "access-denied" : "error",
-    message: body.message ?? body.errorCode ?? "Operator Console ticket lookup failed.",
+    message: body.message ?? body.errorCode ?? "Operator Console session lookup failed.",
     errorCode: body.errorCode ?? undefined
   } satisfies OperatorConsoleApiError;
 }
