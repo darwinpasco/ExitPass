@@ -78,6 +78,7 @@ public sealed record ManagementStatutoryBenefitReviewDetail(
     string? MaskedIdReference,
     bool HasAuthoritativeIdControlReference,
     bool RequesterAttestation,
+    bool BeneficiaryResidencyRequired,
     bool? BeneficiaryResidencySatisfied,
     string? SubmissionReason,
     DateTimeOffset SubmittedAt,
@@ -139,6 +140,8 @@ public sealed record ManagementStatutoryBenefitDecisionCommand(
     DateOnly? ExpiryDate,
     DateOnly? BirthDate,
     string? IdControlReference,
+    bool ReviewerAttestation,
+    bool? BeneficiaryResidencySatisfied,
     Guid CorrelationId);
 
 public sealed record ManagementStatutoryBenefitDecisionResult(

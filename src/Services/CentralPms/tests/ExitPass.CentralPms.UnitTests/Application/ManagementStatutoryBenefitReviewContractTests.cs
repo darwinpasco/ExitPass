@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ExitPass.CentralPms.Api.Endpoints;
 using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.Security;
 using FluentAssertions;
@@ -68,12 +69,49 @@ public sealed class ManagementStatutoryBenefitReviewContractTests
     public void DecisionRequestContainsNoClientAuthoredActorOrScope()
     {
         var names = typeof(ManagementStatutoryBenefitDecisionCommand).GetProperties().Select(property => property.Name).ToArray();
+        var endpointNames = typeof(ManagementStatutoryBenefitDecisionRequest).GetProperties().Select(property => property.Name).ToArray();
         names.Should().NotContain("ReviewerUserId");
         names.Should().NotContain("SiteReference");
         names.Should().NotContain("SiteGroupReference");
         names.Should().NotContain("Role");
         names.Should().NotContain("Permission");
         names.Should().Contain("IdControlReference");
+        names.Should().Contain("ReviewerAttestation");
+        names.Should().Contain("BeneficiaryResidencySatisfied");
         names.Should().NotContain("RawIdReference");
+        endpointNames.Should().Contain("ReviewerAttestation");
+        endpointNames.Should().Contain("BeneficiaryResidencySatisfied");
+        endpointNames.Should().NotContain("ReviewerUserId");
+        endpointNames.Should().NotContain("SiteReference");
+    }
+
+    [Fact]
+    public void DecisionEndpointRequestCarriesExplicitAttestationsAndDefaultsMissingFactsClosed()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var request = new ManagementStatutoryBenefitDecisionRequest(
+            "APPROVE",
+            null,
+            7,
+            "review-7",
+            "SENIOR_CITIZEN_ID",
+            "OSCA",
+            null,
+            new DateOnly(1955, 9, 30),
+            null,
+            true,
+            true);
+
+        var serialized = JsonSerializer.Serialize(request, options);
+        using var document = JsonDocument.Parse(serialized);
+        document.RootElement.GetProperty("reviewerAttestation").GetBoolean().Should().BeTrue();
+        document.RootElement.GetProperty("beneficiaryResidencySatisfied").GetBoolean().Should().BeTrue();
+
+        var omitted = JsonSerializer.Deserialize<ManagementStatutoryBenefitDecisionRequest>(
+            "{\"decision\":\"APPROVE\",\"expectedVersion\":7,\"idempotencyKey\":\"review-7\"}",
+            options);
+        omitted.Should().NotBeNull();
+        omitted!.ReviewerAttestation.Should().BeFalse();
+        omitted.BeneficiaryResidencySatisfied.Should().BeNull();
     }
 }

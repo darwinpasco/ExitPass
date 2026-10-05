@@ -53,6 +53,8 @@
       "optimisticVersionRequired": true,
       "idempotencyKeyRequired": true,
       "reviewedMetadata": ["idDocumentType", "issuingAuthority", "expiryDate", "idControlReference"],
+      "reviewerAttestationRequiredForApproval": true,
+      "beneficiaryResidencyAttestationRequiredWhenPolicyScope": "RESIDENT_ONLY",
       "authoritativeIdControlReferenceAccepted": true,
       "omittedIdControlReferenceRetainsAuthoritativeValue": true
     }
@@ -86,6 +88,8 @@
     "CENTRAL_PMS_RBAC_FORBIDDEN",
     "STATUTORY_BENEFIT_REQUEST_NOT_FOUND_OR_DENIED",
     "STATUTORY_BENEFIT_REJECTION_REASON_REQUIRED",
+    "STATUTORY_BENEFIT_REVIEWER_ATTESTATION_REQUIRED",
+    "STATUTORY_BENEFIT_RESIDENCY_ATTESTATION_REQUIRED",
     "STATUTORY_BENEFIT_REVIEW_VERSION_CONFLICT",
     "STATUTORY_DISCOUNT_DECISION_ALREADY_COMPLETED",
     "STATUTORY_BENEFIT_CURRENCY_UNSUPPORTED",
