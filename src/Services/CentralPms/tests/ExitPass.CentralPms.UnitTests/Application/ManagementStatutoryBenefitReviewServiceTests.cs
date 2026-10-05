@@ -282,6 +282,105 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
     }
 
     [Fact]
+    public async Task Approve_OperatorConsoleRequest_WithCapturedBoundEvidence_ReachesDecisionService()
+    {
+        var validationId = Guid.Parse("72000000-0000-4000-8000-000000000701");
+        var evidenceId = Guid.Parse("72000000-0000-4000-8000-000000000702");
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                StatutoryDiscountValidationId = validationId,
+                SourceChannel = StatutoryDiscountSourceChannels.OperatorConsole
+            }
+        };
+        var evidence = OperatorConsoleEvidence(validationId, evidenceId);
+        var decisions = new FakeDecisionService();
+
+        var result = await CreateService(
+                AllowedRepository(),
+                canonical,
+                decisions,
+                operatorConsoleEvidence: evidence)
+            .DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        decisions.Calls.Should().Be(1);
+        await evidence.DidNotReceiveWithAnyArgs().CaptureAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task Approve_OperatorConsoleRequest_WithMissingRequiredEvidence_IsRejected()
+    {
+        var validationId = Guid.Parse("72000000-0000-4000-8000-000000000701");
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                StatutoryDiscountValidationId = validationId,
+                SourceChannel = StatutoryDiscountSourceChannels.OperatorConsole
+            }
+        };
+        var evidence = Substitute.For<IOperatorConsoleStatutoryDiscountEvidenceRepository>();
+        evidence.ListAsync(validationId, CorrelationId, Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountEvidenceListResult(
+                validationId, true, false, ["SENIOR_CITIZEN_ID"], 0, null, [], CorrelationId));
+        var decisions = new FakeDecisionService();
+
+        var result = await CreateService(
+                AllowedRepository(),
+                canonical,
+                decisions,
+                operatorConsoleEvidence: evidence)
+            .DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Classification.Should().Be("STATUTORY_BENEFIT_EVIDENCE_NOT_REVIEWABLE");
+        decisions.Calls.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("WRONG_SITE")]
+    [InlineData("WRONG_REQUEST")]
+    [InlineData("NOT_CAPTURED")]
+    [InlineData("NO_PREVIEW_TARGET")]
+    public async Task Approve_OperatorConsoleRequest_WithUnboundOrUnavailableEvidence_IsRejected(string defect)
+    {
+        var validationId = Guid.Parse("72000000-0000-4000-8000-000000000701");
+        var evidenceId = Guid.Parse("72000000-0000-4000-8000-000000000702");
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                StatutoryDiscountValidationId = validationId,
+                SourceChannel = StatutoryDiscountSourceChannels.OperatorConsole
+            }
+        };
+        var target = OperatorConsoleEvidenceTarget(validationId, evidenceId) with
+        {
+            SiteId = defect == "WRONG_SITE" ? SiteB : SiteA,
+            DraftId = defect == "WRONG_REQUEST" ? Guid.NewGuid() : validationId,
+            CaptureStatus = defect == "NOT_CAPTURED" ? "UNAVAILABLE" : "CAPTURED"
+        };
+        var evidence = OperatorConsoleEvidence(validationId, evidenceId, target);
+        if (defect == "NO_PREVIEW_TARGET")
+        {
+            evidence.GetPreviewTargetAsync(validationId, evidenceId, Arg.Any<CancellationToken>())
+                .Returns((OperatorConsoleStatutoryDiscountEvidencePreviewTarget?)null);
+        }
+        var decisions = new FakeDecisionService();
+
+        var result = await CreateService(
+                AllowedRepository(),
+                canonical,
+                decisions,
+                operatorConsoleEvidence: evidence)
+            .DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Classification.Should().Be("STATUTORY_BENEFIT_EVIDENCE_NOT_REVIEWABLE");
+        decisions.Calls.Should().Be(0);
+    }
+
+    [Fact]
     public async Task Approve_WhenWebPayMetadataIsMissing_UsesSafeReviewerMetadata()
     {
         var repository = AllowedRepository();
@@ -877,6 +976,56 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
                 null)],
             CorrelationId);
     }
+
+    private static IOperatorConsoleStatutoryDiscountEvidenceRepository OperatorConsoleEvidence(
+        Guid validationId,
+        Guid evidenceId,
+        OperatorConsoleStatutoryDiscountEvidencePreviewTarget? target = null)
+    {
+        var evidence = Substitute.For<IOperatorConsoleStatutoryDiscountEvidenceRepository>();
+        evidence.ListAsync(validationId, CorrelationId, Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountEvidenceListResult(
+                validationId,
+                EvidenceRequired: true,
+                EvidenceRequiredSatisfied: true,
+                RequiredEvidenceTypes: ["SENIOR_CITIZEN_ID"],
+                EvidenceCount: 1,
+                LatestEvidenceStatus: "CAPTURED",
+                Items:
+                [
+                    new OperatorConsoleStatutoryDiscountEvidenceMetadataResult(
+                        evidenceId,
+                        validationId,
+                        "SENIOR_CITIZEN_ID",
+                        "OPERATOR_CONSOLE_PHONE_CAMERA",
+                        "restricted-object-reference",
+                        "****5678",
+                        UserId,
+                        SubmittedAt,
+                        "NOT_REDACTED",
+                        "CAPTURED",
+                        CorrelationId)
+                ],
+                CorrelationId));
+        evidence.GetPreviewTargetAsync(validationId, evidenceId, Arg.Any<CancellationToken>())
+            .Returns(target ?? OperatorConsoleEvidenceTarget(validationId, evidenceId));
+        return evidence;
+    }
+
+    private static OperatorConsoleStatutoryDiscountEvidencePreviewTarget OperatorConsoleEvidenceTarget(
+        Guid validationId,
+        Guid evidenceId) =>
+        new(
+            evidenceId,
+            validationId,
+            ParkingSessionReference,
+            SiteA,
+            Guid.Parse("72000000-0000-4000-8000-000000000703"),
+            UserId,
+            "SENIOR_CITIZEN_ID",
+            "restricted-object-reference",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "CAPTURED");
 
     private static StatutoryDiscountDecisionResult DecisionResult(string applicationStatus, bool retryable) => new(
         DecisionReference,

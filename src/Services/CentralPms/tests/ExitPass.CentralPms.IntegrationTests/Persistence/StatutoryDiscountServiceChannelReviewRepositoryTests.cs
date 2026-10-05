@@ -312,6 +312,39 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
     }
 
     [Fact]
+    public async Task OperatorConsoleReview_UsesValidationFrozenPolicy_WhenDecisionAuthorityIsMissing()
+    {
+        var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            nameof(OperatorConsoleReview_UsesValidationFrozenPolicy_WhenDecisionAuthorityIsMissing),
+            StatutoryDiscountSourceChannels.WebPay);
+
+        try
+        {
+            var validationId = await LinkOperatorConsoleValidationAndRemoveDecisionAuthorityAsync(seeded);
+            var repository = StatutoryDiscountReviewIntegrationTestSupport.CreateReviewRepository();
+
+            var detail = await repository.GetAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+
+            detail.Should().NotBeNull();
+            detail!.StatutoryDiscountValidationId.Should().Be(validationId);
+            detail.GoverningPolicy.Should().NotBeNull();
+            detail.GoverningPolicy!.StatutoryDiscountPolicyVersionId
+                .Should().Be(seeded.Decision.AppliedPolicyReferenceId!.Value);
+            detail.GoverningPolicy.BeneficiaryResidencyScope.Should().Be("RESIDENT_ONLY");
+            detail.GoverningPolicy.RequiredEvidenceTypes.Should().ContainSingle(requirement =>
+                requirement.EvidenceType == "SENIOR_CITIZEN_ID" &&
+                requirement.RequirementStatus == "REQUIRED");
+        }
+        finally
+        {
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
+        }
+    }
+
+    [Fact]
     public async Task ApprovedValidationReviewerAuthority_ReturnsCanonicalReviewOperatingContext()
     {
         var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
@@ -396,6 +429,82 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
             await DeleteCanonicalEvidenceAsync(seeded.Decision.StatutoryDiscountDecisionCommandId);
             await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
         }
+    }
+
+    private static async Task<Guid> LinkOperatorConsoleValidationAndRemoveDecisionAuthorityAsync(
+        SeededServiceChannelReview seeded)
+    {
+        const string sql = """
+            UPDATE discounts.statutory_discount_policy_versions
+               SET beneficiary_residency_scope = 'RESIDENT_ONLY'
+             WHERE statutory_discount_policy_version_id = @policy_version_id;
+
+            INSERT INTO discounts.statutory_discount_validations (
+                statutory_discount_validation_id,
+                parking_session_id,
+                entitlement_type,
+                id_document_type,
+                issuing_authority,
+                statutory_discount_policy_version_id,
+                policy_resolution_basis,
+                local_ordinance_applied,
+                national_law_fallback_applied,
+                validation_channel,
+                validation_status,
+                evidence_required,
+                evidence_captured,
+                requester_attestation,
+                requested_at,
+                correlation_id)
+            VALUES (
+                @validation_id,
+                @parking_session_id,
+                'SENIOR_CITIZEN',
+                'SENIOR_CITIZEN_ID',
+                'OSCA',
+                @policy_version_id,
+                'LOCAL_ORDINANCE_APPLIED',
+                true,
+                false,
+                'OPERATOR_ASSISTED',
+                'REQUESTED',
+                true,
+                true,
+                true,
+                now(),
+                @correlation_id);
+
+            UPDATE operator_console.statutory_discount_service_channel_reviews
+               SET statutory_discount_validation_id = @validation_id,
+                   statutory_discount_policy_version_id = NULL,
+                   statutory_discount_decision_policy_authority_id = NULL,
+                   source_channel = 'OPERATOR_CONSOLE',
+                   expiry_date = NULL,
+                   birth_date = DATE '1955-09-30',
+                   submitted_by_user_id = @submitted_by_user_id
+             WHERE statutory_discount_decision_command_id = @decision_command_id;
+
+            UPDATE discounts.statutory_discount_decision_commands
+               SET statutory_discount_validation_id = @validation_id,
+                   source_channel = 'OPERATOR_CONSOLE'
+             WHERE statutory_discount_decision_command_id = @decision_command_id;
+
+            DELETE FROM discounts.statutory_discount_decision_policy_authorities
+             WHERE statutory_discount_decision_command_id = @decision_command_id;
+            """;
+
+        var validationId = Guid.NewGuid();
+        await using var connection = new NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("validation_id", NpgsqlDbType.Uuid).Value = validationId;
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = seeded.Context.ParkingSessionId;
+        command.Parameters.Add("policy_version_id", NpgsqlDbType.Uuid).Value = seeded.Decision.AppliedPolicyReferenceId!.Value;
+        command.Parameters.Add("decision_command_id", NpgsqlDbType.Uuid).Value = seeded.Decision.StatutoryDiscountDecisionCommandId;
+        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = seeded.Context.CorrelationId;
+        command.Parameters.Add("submitted_by_user_id", NpgsqlDbType.Uuid).Value = seeded.Context.RequestedByUserId;
+        await command.ExecuteNonQueryAsync();
+        return validationId;
     }
 
     private static async Task ReplaceIntakeEvidenceWithCanonicalReviewableEvidenceAsync(
