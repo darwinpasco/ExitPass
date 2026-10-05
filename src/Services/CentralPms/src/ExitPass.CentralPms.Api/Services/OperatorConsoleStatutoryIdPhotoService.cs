@@ -157,6 +157,7 @@ public sealed class OperatorConsoleStatutoryIdPhotoService : IOperatorConsoleSta
             new OperatorConsoleSessionLookupReadRequest(
                 command.ParkingSessionId,
                 TicketReference: null,
+                PlateNumber: null,
                 command.SiteId,
                 command.SiteGroupId,
                 "PARKING_SESSION_ID"),

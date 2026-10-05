@@ -1,7 +1,7 @@
 import { expect, test, type Locator } from "@playwright/test";
 
 const navigationLabels = [
-  "Ticket Lookup",
+  "Session Lookup",
   "Fiscal Status",
   "Work Queue",
   "Shift Management",
@@ -15,7 +15,7 @@ const navigationLabels = [
 ];
 
 const siteOperatorNavigationLabels = [
-  "Ticket Lookup",
+  "Session Lookup",
   "Work Queue"
 ];
 
@@ -35,7 +35,7 @@ test.describe("Operator Console responsive navigation accessibility", () => {
     await page.goto("/operator-console?auth=site-operator");
 
     await expect(page).toHaveURL(/\/operator-console\/ticket-lookup$/);
-    await expect(page.getByRole("heading", { name: "Ticket Lookup" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Session Lookup" })).toBeVisible();
 
     const menuButton = page.getByRole("button", { name: "Open navigation menu" });
     await expect(menuButton).toBeVisible();
@@ -46,11 +46,11 @@ test.describe("Operator Console responsive navigation accessibility", () => {
     await expect(items).toHaveCount(siteOperatorNavigationLabels.length);
     await expect(items).toHaveText(siteOperatorNavigationLabels);
     await expect(navigation.getByRole("button", { name: "Overview" })).toHaveCount(0);
-    await expect(navigation.getByRole("button", { name: "Ticket Lookup" })).toHaveAttribute("aria-current", "page");
+    await expect(navigation.getByRole("button", { name: "Session Lookup" })).toHaveAttribute("aria-current", "page");
     await expect(drawer.getByLabel("Mobile operator identity")).toContainText("PITX Site Operator");
 
-    await navigation.getByRole("button", { name: "Ticket Lookup" }).click();
-    const ticketHeading = page.getByRole("heading", { name: "Ticket Lookup" });
+    await navigation.getByRole("button", { name: "Session Lookup" }).click();
+    const ticketHeading = page.getByRole("heading", { name: "Session Lookup" });
     await expect(ticketHeading).toBeVisible();
     await expect(ticketHeading).toBeFocused();
 
@@ -155,15 +155,15 @@ test.describe("Operator Console responsive navigation accessibility", () => {
       expect(contrastRatio(focusedActive.foreground, focusedActive.background)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(focusedActive.outline, focusedActive.adjacentBackground)).toBeGreaterThanOrEqual(3);
 
-      const ticketLookup = navigation.getByRole("button", { name: "Ticket Lookup" });
+      const ticketLookup = navigation.getByRole("button", { name: "Session Lookup" });
       await ticketLookup.focus();
       await page.keyboard.press("Enter");
-      const destinationHeading = page.getByRole("heading", { name: "Ticket Lookup" });
+      const destinationHeading = page.getByRole("heading", { name: "Session Lookup" });
       await expect(destinationHeading).toBeVisible();
       await expect(destinationHeading).toBeFocused();
 
       if (!compact) {
-        await expect(desktopNavigation.getByRole("button", { name: "Ticket Lookup" })).toHaveAttribute("aria-current", "page");
+        await expect(desktopNavigation.getByRole("button", { name: "Session Lookup" })).toHaveAttribute("aria-current", "page");
       } else {
         await expect(page.getByRole("dialog", { name: "Navigation" })).toBeHidden();
       }

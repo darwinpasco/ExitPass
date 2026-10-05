@@ -47,7 +47,7 @@ export const statutorySupervisorPermissions = [
 export const operatorConsoleNavigation: readonly OperatorConsoleNavigationItem[] = [
   {
     route: routes.ticketLookup,
-    label: "Ticket Lookup",
+    label: "Session Lookup",
     requiredAnyPermissions: ["ticket.lookup", "statutory-discounts.session.lookup"]
   },
   {

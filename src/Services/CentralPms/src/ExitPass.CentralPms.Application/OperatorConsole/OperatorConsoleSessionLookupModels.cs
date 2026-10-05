@@ -37,6 +37,7 @@ public sealed record OperatorConsoleSessionLookupResult(
 public sealed record OperatorConsoleSessionLookupReadRequest(
     Guid? ParkingSessionId,
     string? TicketReference,
+    string? PlateNumber,
     Guid? SiteId,
     Guid? SiteGroupId,
     string LookupMode);

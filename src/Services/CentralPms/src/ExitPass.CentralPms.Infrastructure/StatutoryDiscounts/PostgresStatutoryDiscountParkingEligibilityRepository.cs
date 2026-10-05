@@ -280,6 +280,8 @@ public sealed class PostgresStatutoryDiscountParkingEligibilityRepository
             UPDATE operator_console.statutory_discount_service_channel_reviews
                SET statutory_discount_policy_version_id = COALESCE(statutory_discount_policy_version_id, @statutory_discount_policy_version_id),
                    statutory_discount_decision_policy_authority_id = COALESCE(statutory_discount_decision_policy_authority_id, @statutory_discount_decision_command_id),
+                   site_id = COALESCE(site_id, @site_id),
+                   site_group_id = COALESCE(site_group_id, @site_group_id),
                    updated_at = now()
              WHERE statutory_discount_decision_command_id = @statutory_discount_decision_command_id;
             """;
@@ -314,7 +316,94 @@ public sealed class PostgresStatutoryDiscountParkingEligibilityRepository
         command.Parameters.Add("policy_authority_semantic_hash", NpgsqlDbType.Varchar).Value =
             StatutoryDiscountDecisionPolicyAuthorityHash.Compute(availability);
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = availability.CorrelationId;
+        AddNullable(command, "site_id", NpgsqlDbType.Uuid, availability.SiteId);
+        AddNullable(command, "site_group_id", NpgsqlDbType.Uuid, availability.SiteGroupId);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<StatutoryDiscountDecisionPolicyAuthorityEnsureResult> EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid statutoryDiscountValidationId,
+        Guid expectedParkingSessionId,
+        string expectedEntitlementType,
+        Guid expectedSiteId,
+        Guid? expectedSiteGroupId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (statutoryDiscountDecisionCommandId == Guid.Empty ||
+            statutoryDiscountValidationId == Guid.Empty ||
+            expectedParkingSessionId == Guid.Empty ||
+            expectedSiteId == Guid.Empty ||
+            correlationId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(expectedEntitlementType))
+        {
+            throw new ArgumentException("Frozen validation authority context is incomplete.");
+        }
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        var context = await ReadFrozenValidationAuthorityContextAsync(
+                connection,
+                statutoryDiscountDecisionCommandId,
+                statutoryDiscountValidationId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (context is null ||
+            context.StatutoryDiscountPolicyVersionId is null ||
+            context.ParkingSessionId != expectedParkingSessionId ||
+            context.SiteId != expectedSiteId ||
+            (expectedSiteGroupId.HasValue && context.SiteGroupId != expectedSiteGroupId.Value) ||
+            !string.Equals(context.EntitlementType, expectedEntitlementType.Trim().ToUpperInvariant(), StringComparison.Ordinal))
+        {
+            return new(null, "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED");
+        }
+
+        var policy = await ReadFrozenPolicyAsync(
+                connection,
+                context.StatutoryDiscountPolicyVersionId.Value,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (policy is null || !string.Equals(policy.EntitlementType, context.EntitlementType, StringComparison.Ordinal))
+        {
+            return new(null, "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED");
+        }
+
+        var requirements = await ReadEvidenceRequirementsAsync(
+                connection,
+                policy.StatutoryDiscountPolicyVersionId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var availability = FromFrozenValidation(context, policy, requirements, correlationId);
+        var expectedHash = StatutoryDiscountDecisionPolicyAuthorityHash.Compute(availability);
+
+        var existing = await GetDecisionPolicyAuthorityAsync(statutoryDiscountDecisionCommandId, cancellationToken)
+            .ConfigureAwait(false);
+        if (existing is not null)
+        {
+            if (!AuthorityMatches(existing, policy.StatutoryDiscountPolicyVersionId, context.EntitlementType, expectedHash))
+            {
+                return new(existing, "STATUTORY_DISCOUNT_POLICY_AUTHORITY_SEMANTIC_CONFLICT");
+            }
+
+            await BindDecisionPolicyAuthorityAsync(statutoryDiscountDecisionCommandId, availability, cancellationToken)
+                .ConfigureAwait(false);
+            return new(existing, null);
+        }
+
+        await BindDecisionPolicyAuthorityAsync(statutoryDiscountDecisionCommandId, availability, cancellationToken)
+            .ConfigureAwait(false);
+        var persisted = await GetDecisionPolicyAuthorityAsync(statutoryDiscountDecisionCommandId, cancellationToken)
+            .ConfigureAwait(false);
+        if (persisted is null)
+        {
+            return new(null, "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED");
+        }
+
+        return AuthorityMatches(persisted, policy.StatutoryDiscountPolicyVersionId, context.EntitlementType, expectedHash)
+            ? new(persisted, null)
+            : new(persisted, "STATUTORY_DISCOUNT_POLICY_AUTHORITY_SEMANTIC_CONFLICT");
     }
 
     public async Task<StatutoryDiscountDecisionPolicyAuthority?> GetDecisionPolicyAuthorityAsync(
@@ -336,6 +425,124 @@ public sealed class PostgresStatutoryDiscountParkingEligibilityRepository
             .ConfigureAwait(false);
         return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
             ? ReadPolicyAuthority(reader)
+            : null;
+    }
+
+    private static async Task<FrozenValidationAuthorityContext?> ReadFrozenValidationAuthorityContextAsync(
+        NpgsqlConnection connection,
+        Guid statutoryDiscountDecisionCommandId,
+        Guid statutoryDiscountValidationId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                decision.request_reference,
+                validation.parking_session_id,
+                validation.entitlement_type::text,
+                validation.statutory_discount_policy_version_id,
+                session.site_id,
+                session.site_group_id,
+                COALESCE(session.entry_at, session.created_at) AS transaction_at
+            FROM discounts.statutory_discount_decision_commands AS decision
+            JOIN discounts.statutory_discount_validations AS validation
+              ON validation.statutory_discount_validation_id = @statutory_discount_validation_id
+             AND validation.parking_session_id = decision.parking_session_id
+             AND validation.entitlement_type::text = decision.entitlement_type
+            JOIN core.parking_sessions AS session
+              ON session.parking_session_id = validation.parking_session_id
+            LEFT JOIN operator_console.statutory_discount_service_channel_reviews AS review
+              ON review.statutory_discount_decision_command_id = decision.statutory_discount_decision_command_id
+            WHERE decision.statutory_discount_decision_command_id = @statutory_discount_decision_command_id
+              AND decision.source_channel = 'OPERATOR_CONSOLE'
+              AND (
+                    review.statutory_discount_validation_id IS NULL
+                 OR review.statutory_discount_validation_id = validation.statutory_discount_validation_id
+              )
+              AND (review.parking_session_id IS NULL OR review.parking_session_id = validation.parking_session_id)
+              AND (review.entitlement_type IS NULL OR review.entitlement_type = validation.entitlement_type::text)
+              AND (review.site_id IS NULL OR review.site_id = session.site_id)
+              AND (review.site_group_id IS NULL OR review.site_group_id IS NOT DISTINCT FROM session.site_group_id)
+              AND (
+                    review.statutory_discount_policy_version_id IS NULL
+                 OR review.statutory_discount_policy_version_id = validation.statutory_discount_policy_version_id
+              )
+              AND (
+                    review.statutory_discount_decision_policy_authority_id IS NULL
+                 OR review.statutory_discount_decision_policy_authority_id = decision.statutory_discount_decision_command_id
+              );
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 30 };
+        command.Parameters.Add("statutory_discount_decision_command_id", NpgsqlDbType.Uuid).Value =
+            statutoryDiscountDecisionCommandId;
+        command.Parameters.Add("statutory_discount_validation_id", NpgsqlDbType.Uuid).Value =
+            statutoryDiscountValidationId;
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken)
+            .ConfigureAwait(false);
+        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+            ? new FrozenValidationAuthorityContext(
+                reader.GetGuid(reader.GetOrdinal("request_reference")),
+                reader.GetGuid(reader.GetOrdinal("parking_session_id")),
+                reader.GetString(reader.GetOrdinal("entitlement_type")),
+                GetNullableGuid(reader, "statutory_discount_policy_version_id"),
+                reader.GetGuid(reader.GetOrdinal("site_id")),
+                GetNullableGuid(reader, "site_group_id"),
+                reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("transaction_at")))
+            : null;
+    }
+
+    private static async Task<PolicyCandidateRow?> ReadFrozenPolicyAsync(
+        NpgsqlConnection connection,
+        Guid statutoryDiscountPolicyVersionId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                statutory_discount_policy_version_id,
+                policy_code,
+                policy_version,
+                policy_version_label,
+                entitlement_type::text,
+                jurisdiction_id,
+                jurisdiction_code,
+                jurisdiction_display_name,
+                policy_scope_type::text,
+                site_group_id,
+                site_id,
+                source_verification_status::text,
+                transaction_publication_status::text,
+                detailed_rule_verification_status::text,
+                parking_service_applicability::text,
+                benefit_type::text,
+                policy_effect_support_status::text,
+                beneficiary_residency_scope::text,
+                official_source_available,
+                ordinance_text_available,
+                ordinance_number_available,
+                ordinance_number,
+                ordinance_title,
+                legal_basis_reference,
+                source_reference,
+                transaction_use_effective_from,
+                transaction_use_effective_to,
+                suspension_starts_at,
+                suspension_ends_at,
+                withdrawn_at,
+                retired_at,
+                superseded_by_policy_version_id,
+                precedence_rank,
+                policy_semantic_hash
+            FROM discounts.statutory_discount_policy_versions
+            WHERE statutory_discount_policy_version_id = @statutory_discount_policy_version_id;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 30 };
+        command.Parameters.Add("statutory_discount_policy_version_id", NpgsqlDbType.Uuid).Value =
+            statutoryDiscountPolicyVersionId;
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken)
+            .ConfigureAwait(false);
+        return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+            ? ReadPolicyCandidate(reader)
             : null;
     }
 
@@ -708,6 +915,61 @@ public sealed class PostgresStatutoryDiscountParkingEligibilityRepository
             policy?.PolicySemanticHash,
             request.CorrelationId);
 
+    private static StatutoryDiscountParkingAvailabilityResult FromFrozenValidation(
+        FrozenValidationAuthorityContext context,
+        PolicyCandidateRow policy,
+        IReadOnlyList<StatutoryDiscountPolicyEvidenceRequirement> evidenceRequirements,
+        Guid correlationId) =>
+        new(
+            context.RequestReference,
+            context.ParkingSessionId,
+            context.SiteId,
+            context.SiteGroupId,
+            policy.JurisdictionId,
+            policy.JurisdictionCode,
+            policy.JurisdictionDisplayName,
+            StatutoryDiscountParkingAvailabilityStatuses.Available,
+            StatutoryParkingBenefitAvailable: true,
+            [context.EntitlementType],
+            context.EntitlementType,
+            SiteJurisdictionAssignmentId: null,
+            policy.StatutoryDiscountPolicyVersionId,
+            policy.PolicyCode,
+            policy.PolicyVersion,
+            policy.OrdinanceNumber,
+            policy.OrdinanceTitle,
+            policy.PolicyVersionLabel,
+            policy.SourceVerificationStatus,
+            policy.TransactionPublicationStatus,
+            policy.DetailedRuleVerificationStatus,
+            policy.TransactionUseEffectiveFrom,
+            policy.TransactionUseEffectiveTo,
+            policy.BeneficiaryResidencyScope,
+            evidenceRequirements,
+            policy.ParkingServiceApplicability,
+            policy.BenefitType,
+            policy.PolicyEffectSupportStatus,
+            policy.OfficialSourceAvailable,
+            policy.OrdinanceTextAvailable,
+            policy.OrdinanceNumberAvailable,
+            policy.LegalBasisReference,
+            policy.SourceReference,
+            SafeReasonCode: null,
+            Retryable: false,
+            StatutoryDiscountDecisionRecoveryActions.ReadCanonicalDecision,
+            context.TransactionAt,
+            policy.PolicySemanticHash,
+            correlationId);
+
+    private static bool AuthorityMatches(
+        StatutoryDiscountDecisionPolicyAuthority authority,
+        Guid expectedPolicyVersionId,
+        string expectedEntitlementType,
+        string expectedSemanticHash) =>
+        authority.StatutoryDiscountPolicyVersionId == expectedPolicyVersionId &&
+        string.Equals(authority.EntitlementType, expectedEntitlementType, StringComparison.Ordinal) &&
+        string.Equals(authority.PolicyAuthoritySemanticHash, expectedSemanticHash, StringComparison.Ordinal);
+
     private static StatutoryDiscountParkingAvailabilityResult Unavailable(
         StatutoryDiscountParkingAvailabilityRequest request,
         string status,
@@ -856,6 +1118,15 @@ public sealed class PostgresStatutoryDiscountParkingEligibilityRepository
         Guid ParkingSessionId,
         Guid SiteId,
         Guid SiteGroupId,
+        DateTimeOffset TransactionAt);
+
+    private sealed record FrozenValidationAuthorityContext(
+        Guid RequestReference,
+        Guid ParkingSessionId,
+        string EntitlementType,
+        Guid? StatutoryDiscountPolicyVersionId,
+        Guid SiteId,
+        Guid? SiteGroupId,
         DateTimeOffset TransactionAt);
 
     private sealed record AssignmentRow(

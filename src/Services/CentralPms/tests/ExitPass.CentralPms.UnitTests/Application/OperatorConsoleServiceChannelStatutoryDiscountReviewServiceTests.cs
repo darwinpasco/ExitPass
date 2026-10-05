@@ -177,6 +177,115 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
     }
 
     [Fact]
+    public async Task DecideAsync_WhenOperatorConsoleAuthorityIsMissing_RecoversFromLinkedFrozenValidation()
+    {
+        var fixture = CreateFixture();
+        var validationId = Guid.Parse("8a000000-0000-0000-0000-00000000000c");
+        fixture.Repository.GetAsync(CommandId, Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(ReviewDetail(
+                sourceChannel: StatutoryDiscountSourceChannels.OperatorConsole,
+                statutoryDiscountValidationId: validationId));
+        fixture.Staged.GetDecisionAsync(CommandId, Arg.Any<CancellationToken>())
+            .Returns(AwaitingDecision());
+        fixture.ParkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(CommandId, Arg.Any<CancellationToken>())
+            .Returns((StatutoryDiscountDecisionPolicyAuthority?)null);
+        fixture.ParkingEligibilityRepository.EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+                CommandId,
+                validationId,
+                ParkingSessionId,
+                "SENIOR_CITIZEN",
+                SiteId,
+                SiteGroupId,
+                CorrelationId,
+                Arg.Any<CancellationToken>())
+            .Returns(new StatutoryDiscountDecisionPolicyAuthorityEnsureResult(PolicyAuthority(), null));
+        fixture.Repository.EnsureApprovedValidationLinkageAsync(
+                CommandId,
+                UserId,
+                "ELIGIBLE",
+                Arg.Any<StatutoryDiscountServiceChannelReviewedDocument>(),
+                CorrelationId,
+                Arg.Any<CancellationToken>())
+            .Returns(ValidationLinkage());
+        fixture.Staged.CompleteDecisionApprovedAsync(
+                CommandId,
+                Arg.Any<Guid?>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<string?>(),
+                Arg.Any<bool>(),
+                Arg.Any<StatutoryDiscountDecisionV2TariffFacts?>(),
+                Arg.Any<string?>(),
+                Arg.Any<Guid>(),
+                Arg.Any<CancellationToken>())
+            .Returns(CompletedDecision(StatutoryDiscountDecisionV2ResultStates.Approved));
+        fixture.Repository.RecordReviewCompletionAsync(
+                CommandId,
+                UserId,
+                DeviceBindingId,
+                ShiftId,
+                EvaluationId,
+                "APPROVE",
+                "ELIGIBLE",
+                Arg.Any<StatutoryDiscountServiceChannelReviewedDocument>(),
+                CorrelationId,
+                Arg.Any<CancellationToken>())
+            .Returns(ReviewDetail(
+                StatutoryDiscountServiceChannelReviewStatuses.Approved,
+                StatutoryDiscountSourceChannels.OperatorConsole,
+                validationId));
+
+        var result = await fixture.Sut.DecideAsync(DecisionCommand(), AccessContext(), CancellationToken.None);
+
+        result.DecisionAccepted.Should().BeTrue();
+        await fixture.ParkingEligibilityRepository.Received(1)
+            .EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+                CommandId,
+                validationId,
+                ParkingSessionId,
+                "SENIOR_CITIZEN",
+                SiteId,
+                SiteGroupId,
+                CorrelationId,
+                Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task DecideAsync_WhenFrozenAuthorityConflicts_FailsClosed()
+    {
+        var fixture = CreateFixture();
+        var validationId = Guid.Parse("8a000000-0000-0000-0000-00000000000c");
+        fixture.Repository.GetAsync(CommandId, Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(ReviewDetail(
+                sourceChannel: StatutoryDiscountSourceChannels.OperatorConsole,
+                statutoryDiscountValidationId: validationId));
+        fixture.Staged.GetDecisionAsync(CommandId, Arg.Any<CancellationToken>())
+            .Returns(AwaitingDecision());
+        fixture.ParkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(CommandId, Arg.Any<CancellationToken>())
+            .Returns((StatutoryDiscountDecisionPolicyAuthority?)null);
+        fixture.ParkingEligibilityRepository.EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+                Arg.Any<Guid>(),
+                Arg.Any<Guid>(),
+                Arg.Any<Guid>(),
+                Arg.Any<string>(),
+                Arg.Any<Guid>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<Guid>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new StatutoryDiscountDecisionPolicyAuthorityEnsureResult(
+                null,
+                "STATUTORY_DISCOUNT_POLICY_AUTHORITY_SEMANTIC_CONFLICT"));
+
+        var result = await fixture.Sut.DecideAsync(DecisionCommand(), AccessContext(), CancellationToken.None);
+
+        result.DecisionAccepted.Should().BeFalse();
+        result.ErrorCode.Should().Be("STATUTORY_DISCOUNT_POLICY_AUTHORITY_SEMANTIC_CONFLICT");
+        await fixture.Staged.DidNotReceiveWithAnyArgs().CompleteDecisionApprovedAsync(
+            default, default, default, default, default, default, default, default, default, default, default);
+    }
+
+    [Fact]
     public async Task DecideAsync_WhenRejectionAllowed_CompletesSameCanonicalDecision()
     {
         var fixture = CreateFixture();
@@ -292,7 +401,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             repository,
             staged,
             parkingEligibilityRepository);
-        return new TestFixture(accessService, repository, staged, sut);
+        return new TestFixture(accessService, repository, staged, parkingEligibilityRepository, sut);
     }
 
     private static OperatorConsoleReviewAccessContext AccessContext() =>
@@ -367,13 +476,15 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             CorrelationId);
 
     private static StatutoryDiscountServiceChannelReviewDetail ReviewDetail(
-        string reviewStatus = StatutoryDiscountServiceChannelReviewStatuses.PendingReview) =>
+        string reviewStatus = StatutoryDiscountServiceChannelReviewStatuses.PendingReview,
+        string sourceChannel = StatutoryDiscountSourceChannels.WebPay,
+        Guid? statutoryDiscountValidationId = null) =>
         new(
             CommandId,
-            null,
+            statutoryDiscountValidationId,
             RequestReference,
             ParkingSessionId,
-            StatutoryDiscountSourceChannels.WebPay,
+            sourceChannel,
             SiteId,
             SiteGroupId,
             "TICKET-001",
@@ -521,5 +632,6 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
         IOperatorConsoleAccessEvaluationService AccessService,
         IStatutoryDiscountServiceChannelReviewRepository Repository,
         IStatutoryDiscountStagedCommandService Staged,
+        IStatutoryDiscountParkingEligibilityRepository ParkingEligibilityRepository,
         OperatorConsoleServiceChannelStatutoryDiscountReviewService Sut);
 }

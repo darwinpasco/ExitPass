@@ -178,13 +178,14 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
 
         if (requestedDecision == "APPROVE")
         {
-            var policyAuthority = await _parkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(
-                    command.StatutoryDiscountDecisionCommandId,
+            var policyAuthorityError = await EnsurePolicyAuthorityForApprovalAsync(
+                    detail,
+                    command.CorrelationId,
                     cancellationToken)
                 .ConfigureAwait(false);
-            if (policyAuthority is null)
+            if (policyAuthorityError is not null)
             {
-                return NotAccepted(command, access, requestedDecision, "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED", detail);
+                return NotAccepted(command, access, requestedDecision, policyAuthorityError, detail);
             }
         }
 
@@ -358,10 +359,17 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
             return RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_DECISION_NOT_AWAITING_REVIEW", detail.ReviewStatus);
         }
 
-        if (requestedDecision == "APPROVE" &&
-            await _parkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(command.DecisionCommandReference, cancellationToken).ConfigureAwait(false) is null)
+        if (requestedDecision == "APPROVE")
         {
-            return RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED", detail.ReviewStatus);
+            var policyAuthorityError = await EnsurePolicyAuthorityForApprovalAsync(
+                    detail,
+                    command.CorrelationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (policyAuthorityError is not null)
+            {
+                return RejectedAuthorized(requestedDecision, policyAuthorityError, detail.ReviewStatus);
+            }
         }
 
         var linkage = requestedDecision == "APPROVE"
@@ -418,6 +426,40 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
         return string.Equals(review.ReviewerDecision, requestedDecision, StringComparison.Ordinal)
             ? new AuthorizedStatutoryBenefitDecisionResult(true, true, false, review.ReviewStatus, requestedDecision, review.ReviewerReasonCode, null, review.ReviewedAt)
             : RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_DECISION_ALREADY_COMPLETED", review.ReviewStatus, review.ReviewerReasonCode, review.ReviewedAt);
+    }
+
+    private async Task<string?> EnsurePolicyAuthorityForApprovalAsync(
+        StatutoryDiscountServiceChannelReviewDetail detail,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (await _parkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(
+                detail.StatutoryDiscountDecisionCommandId,
+                cancellationToken).ConfigureAwait(false) is not null)
+        {
+            return null;
+        }
+
+        if (!string.Equals(detail.SourceChannel, StatutoryDiscountSourceChannels.OperatorConsole, StringComparison.Ordinal) ||
+            !detail.StatutoryDiscountValidationId.HasValue ||
+            !detail.SiteId.HasValue)
+        {
+            return "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED";
+        }
+
+        var ensured = await _parkingEligibilityRepository.EnsureDecisionPolicyAuthorityFromFrozenValidationAsync(
+                detail.StatutoryDiscountDecisionCommandId,
+                detail.StatutoryDiscountValidationId.Value,
+                detail.ParkingSessionId,
+                detail.EntitlementType,
+                detail.SiteId.Value,
+                detail.SiteGroupId,
+                correlationId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return ensured.Established
+            ? null
+            : ensured.ErrorCode ?? "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED";
     }
 
     private static AuthorizedStatutoryBenefitDecisionResult RejectedAuthorized(

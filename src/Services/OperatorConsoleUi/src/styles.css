@@ -1130,6 +1130,40 @@ dd {
   gap: 7px;
 }
 
+.sessionLookupModes {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.sessionLookupModes button[aria-pressed="true"] {
+  background: #173f5f;
+  color: #fff;
+}
+
+.sessionLookupIdentifier {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(220px, 1fr) auto;
+}
+
+.sessionQrScanner {
+  border-top: 1px solid #d7e0e8;
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.sessionQrScanner video {
+  aspect-ratio: 4 / 3;
+  background: #101820;
+  max-height: 360px;
+  object-fit: cover;
+  width: min(100%, 480px);
+}
+
 .draftStartForm {
   display: grid;
   gap: 14px;
@@ -1748,6 +1782,7 @@ dd {
     .workflowGrid,
     .readinessDimensionGrid,
     .ticketLookupForm,
+    .sessionLookupIdentifier,
     .evidenceLayout,
     .reviewerSummaryGrid,
     .reviewerChecklistGrid,
