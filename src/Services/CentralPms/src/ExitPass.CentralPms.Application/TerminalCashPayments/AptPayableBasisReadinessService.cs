@@ -76,6 +76,11 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             },
             cancellationToken);
 
+        if (resolved.Outcome == ResolveVendorParkingOutcome.ProjectionSessionResolved)
+        {
+            return BuildProjectionSessionResult(resolved, request, correlationId);
+        }
+
         return resolved.Outcome == ResolveVendorParkingOutcome.Resolved
             ? await BuildReadinessResultAsync(
                 operation: "RESOLVE",
@@ -89,6 +94,101 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
                 forceNotReadyCode: null,
                 cancellationToken)
             : MapResolutionFailure(resolved, correlationId);
+    }
+
+    private static AptPayableBasisReadinessResult BuildProjectionSessionResult(
+        ResolveVendorParkingResult resolved,
+        AptPayableBasisResolveRequest request,
+        Guid correlationId)
+    {
+        var fallback = resolved.ProjectionFallback;
+        var projection = fallback?.Projection;
+        if (fallback is null || projection is null ||
+            projection.SiteId is null || projection.SiteGroupId is null ||
+            !Guid.TryParse(request.SitePosServerId, out var sitePosServerId))
+        {
+            return Failure(
+                "MALFORMED_PROJECTION_SESSION",
+                "Projected parking session could not be mapped safely.",
+                502,
+                true,
+                correlationId);
+        }
+
+        const string blockingCode = "PROJECTION_SESSION_PAYABLE_BASIS_UNAVAILABLE";
+        var dimensions = new[]
+        {
+            Blocked(
+                "sessionReadiness",
+                "PROJECTION_SESSION_NON_AUTHORITATIVE",
+                "Session identity was found from projection and is not live parking authority.",
+                retryable: true),
+            Blocked(
+                "tariffReadiness",
+                blockingCode,
+                "Live payable amount is temporarily unavailable.",
+                retryable: true),
+            Blocked(
+                "paymentEligibility",
+                blockingCode,
+                "Cash acceptance requires an authoritative payable basis.",
+                retryable: true),
+            Blocked(
+                "terminalCashAvailability",
+                blockingCode,
+                "Record Cash Received remains disabled until live re-resolution succeeds.",
+                retryable: true)
+        };
+
+        var response = new AptPayableBasisReadinessResponse(
+            Operation: "RESOLVE",
+            RevalidationOutcome: null,
+            ParkingSessionId: null,
+            TariffSnapshotId: null,
+            SiteGroupId: projection.SiteGroupId.Value,
+            SiteId: projection.SiteId.Value,
+            SitePosServerId: sitePosServerId,
+            TerminalId: request.TerminalId.Trim(),
+            SiteGroupName: null,
+            SiteName: resolved.SiteName,
+            TicketReference: projection.CardNum,
+            PlateNumber: projection.PlateLicense,
+            EntryTimestamp: projection.EnterTime,
+            ParkingStatus: projection.ProjectionStatus.ToString().ToUpperInvariant(),
+            PaymentStatus: null,
+            AuthoritativeAmountMinorUnits: null,
+            CustomerInformationSubmitted: null,
+            Currency: null,
+            TariffCalculatedAt: null,
+            TariffValidUntil: null,
+            FeeValidUntil: null,
+            VendorSystemId: projection.VendorSystemId?.ToString("D") ?? request.VendorSystemId,
+            ReadinessDimensions: dimensions,
+            SessionReadiness: AptPayableBasisReadinessStatuses.Blocked,
+            TariffReadiness: AptPayableBasisReadinessStatuses.Blocked,
+            PaymentEligibility: AptPayableBasisReadinessStatuses.Blocked,
+            TerminalCashAvailability: AptPayableBasisReadinessStatuses.Blocked,
+            FiscalReadiness: AptPayableBasisReadinessStatuses.Blocked,
+            SalesInvoiceConfigurationReadiness: AptPayableBasisReadinessStatuses.Blocked,
+            StatutoryDiscountReadiness: null,
+            CashAcceptanceReadiness: AptPayableBasisReadinessStatuses.Blocked,
+            ReadyForCashAcceptance: false,
+            BlockingReasonCodes: new[] { blockingCode },
+            Retryable: true,
+            SafeUserFacingClassification: blockingCode,
+            CorrelationId: resolved.CorrelationId == Guid.Empty ? correlationId : resolved.CorrelationId)
+        {
+            SessionFound = true,
+            SessionSource = "VENDOR_SESSION_PROJECTION",
+            Degraded = true,
+            PayableBasisAvailable = false,
+            VendorSessionProjectionId = projection.VendorSessionProjectionId,
+            ProjectionStatus = projection.ProjectionStatus.ToString().ToUpperInvariant(),
+            ProjectionLastRefreshedAt = fallback.LastRefreshedAt,
+            ProjectionFreshnessAgeSeconds = fallback.FreshnessAge?.TotalSeconds
+        };
+
+        return new AptPayableBasisReadinessResult(true, response, null, null, 200, true, response.CorrelationId);
     }
 
     public async Task<AptPayableBasisReadinessResult> RevalidateAsync(
@@ -926,7 +1026,6 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             ResolveVendorParkingOutcome.VendorRejected => 409,
             ResolveVendorParkingOutcome.MalformedVendorResponse => 502,
             ResolveVendorParkingOutcome.RetryableUnavailable => 503,
-            ResolveVendorParkingOutcome.ProjectionSnapshotAvailable => 503,
             _ => 502
         };
 
@@ -940,7 +1039,6 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             ResolveVendorParkingOutcome.SessionNotFound => "Parking session was not found.",
             ResolveVendorParkingOutcome.AmbiguousMatch => "Parking session lookup returned multiple matches.",
             ResolveVendorParkingOutcome.RetryableUnavailable => "Vendor PMS is temporarily unavailable.",
-            ResolveVendorParkingOutcome.ProjectionSnapshotAvailable => "Live vendor lookup is temporarily unavailable.",
             ResolveVendorParkingOutcome.MalformedVendorResponse => "Vendor parking response could not be safely mapped.",
             ResolveVendorParkingOutcome.InvalidRequest => "APT payable-basis request is invalid.",
             ResolveVendorParkingOutcome.VendorRejected => "Parking session is not payable.",

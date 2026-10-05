@@ -242,6 +242,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
         ArgumentNullException.ThrowIfNull(query);
 
         const string sql = """
+            WITH matching_routes AS (
             SELECT
                 projection.vendor_session_projection_id,
                 projection.vendor_system_id,
@@ -276,7 +277,18 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 projection.correlation_id,
                 projection.created_at,
                 projection.updated_at,
-                CASE WHEN target.enabled_flag THEN target.last_success_at ELSE NULL END AS target_last_success_at
+                CASE WHEN target.enabled_flag THEN target.last_success_at ELSE NULL END AS target_last_success_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY
+                        projection.site_id,
+                        projection.site_group_id,
+                        projection.vendor_system_id,
+                        projection.parking_lot_index_code
+                    ORDER BY
+                        projection.last_refreshed_at DESC,
+                        projection.enter_time DESC NULLS LAST,
+                        projection.created_at DESC
+                ) AS route_rank
             FROM sessions.vendor_session_projections projection
             JOIN sessions.vendor_session_projection_sync_targets target
               ON target.site_id = projection.site_id
@@ -285,6 +297,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
              AND target.parking_lot_index_code = projection.parking_lot_index_code
             WHERE (@site_id IS NULL OR projection.site_id = @site_id)
               AND (@site_group_id IS NULL OR projection.site_group_id = @site_group_id)
+              AND (@vendor_system_id IS NULL OR projection.vendor_system_id = @vendor_system_id)
               AND (@parking_lot_index_code IS NULL OR projection.parking_lot_index_code = @parking_lot_index_code)
               AND (
                     (@card_num IS NOT NULL AND projection.card_num = @card_num)
@@ -293,17 +306,21 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
               AND projection.projection_status = 'ACTIVE'
               AND projection.source_adapter_identity_id IS NOT NULL
               AND target.enabled_flag
+            )
+            SELECT *
+            FROM matching_routes
+            WHERE route_rank = 1
             ORDER BY
-                CASE projection.projection_status
+                CASE projection_status
                     WHEN 'ACTIVE' THEN 0
                     WHEN 'UNKNOWN' THEN 1
                     WHEN 'STALE' THEN 2
                     WHEN 'EXITED' THEN 3
                     ELSE 4
                 END,
-                projection.last_refreshed_at DESC,
-                projection.enter_time DESC NULLS LAST,
-                projection.created_at DESC
+                last_refreshed_at DESC,
+                enter_time DESC NULLS LAST,
+                created_at DESC
             LIMIT 2;
             """;
 
@@ -312,6 +329,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = DbValue(query.SiteId);
         command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = DbValue(query.SiteGroupId);
+        command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = DbValue(query.VendorSystemId);
         command.Parameters.Add("parking_lot_index_code", NpgsqlDbType.Text).Value = DbValue(query.ParkingLotIndexCode);
         command.Parameters.Add("card_num", NpgsqlDbType.Text).Value = DbValue(query.CardNum);
         command.Parameters.Add("plate_license", NpgsqlDbType.Text).Value = DbValue(query.PlateLicense);

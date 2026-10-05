@@ -120,6 +120,11 @@ public sealed class VendorParkingResolutionController : ControllerBase
         activity?.SetTag("parking_session_id", result.ParkingSession?.ParkingSessionId);
         activity?.SetTag("tariff_snapshot_id", result.TariffSnapshot?.TariffSnapshotId);
 
+        if (result.Outcome == ResolveVendorParkingOutcome.ProjectionSessionResolved)
+        {
+            return MapProjectionSession(result, validRequest);
+        }
+
         if (result.Outcome != ResolveVendorParkingOutcome.Resolved)
         {
             return MapFailure(result, validRequest);
@@ -159,6 +164,10 @@ public sealed class VendorParkingResolutionController : ControllerBase
         {
             ParkingSessionId = result.ParkingSession.ParkingSessionId,
             TariffSnapshotId = result.TariffSnapshot.TariffSnapshotId,
+            SessionFound = true,
+            SessionSource = "LIVE_VENDOR",
+            Degraded = false,
+            PayableBasisAvailable = true,
             SiteGroupId = result.ParkingSession.SiteGroupId,
             SiteId = result.ParkingSession.SiteId,
             SiteGroupName = result.SiteGroupName,
@@ -194,6 +203,64 @@ public sealed class VendorParkingResolutionController : ControllerBase
         });
     }
 
+    private IActionResult MapProjectionSession(
+        ResolveVendorParkingResult result,
+        ResolveVendorParkingRequest request)
+    {
+        var fallback = result.ProjectionFallback;
+        var projection = fallback?.Projection;
+        if (fallback is null || projection is null ||
+            !fallback.IsProjectionBased ||
+            fallback.IsAuthoritativeForParkingSession ||
+            fallback.IsAuthoritativeForTariff ||
+            fallback.IsAuthoritativeForPayment)
+        {
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                BuildError("MALFORMED_PROJECTION_SESSION", "Projected session response could not be mapped.", result.CorrelationId, true));
+        }
+
+        _logger.LogWarning(
+            "ResolveVendorParking returned projection continuity session. vendor_system_id={VendorSystemId} projection_id={ProjectionId} live_error_code={LiveErrorCode} freshness_age_seconds={FreshnessAgeSeconds}",
+            projection.VendorSystemId,
+            projection.VendorSessionProjectionId,
+            result.LiveLookupErrorCode,
+            fallback.FreshnessAge?.TotalSeconds);
+
+        return Ok(new ResolveVendorParkingResponse
+        {
+            ParkingSessionId = null,
+            TariffSnapshotId = null,
+            SessionFound = true,
+            SessionSource = "VENDOR_SESSION_PROJECTION",
+            Degraded = true,
+            PayableBasisAvailable = false,
+            SiteGroupId = projection.SiteGroupId?.ToString("D") ?? request.SiteGroupId,
+            SiteId = projection.SiteId?.ToString("D") ?? request.SiteId,
+            SiteGroupName = null,
+            SiteName = ParkingDisplayNameSanitizer.ResolveSiteName(result.SiteName, projection.ParkingLotName),
+            LookupOutcome = "projection_session_resolved",
+            PlateNumber = projection.PlateLicense,
+            TicketReference = projection.CardNum,
+            EntryTime = projection.EnterTime,
+            CurrentFeeCalculationTime = null,
+            NetPayableMinorUnits = null,
+            CustomerInformationSubmitted = null,
+            Currency = null,
+            TariffExpiresAt = null,
+            FeeValidUntil = null,
+            ParkingStatus = projection.ProjectionStatus.ToString().ToUpperInvariant(),
+            PaymentStatus = null,
+            VendorSessionProjectionId = projection.VendorSessionProjectionId,
+            ProjectionStatus = projection.ProjectionStatus.ToString().ToUpperInvariant(),
+            ProjectionLastRefreshedAt = fallback.LastRefreshedAt,
+            ProjectionFreshnessAgeSeconds = fallback.FreshnessAge?.TotalSeconds,
+            LiveLookupErrorCode = result.LiveLookupErrorCode,
+            VendorSystemId = projection.VendorSystemId?.ToString("D") ?? request.VendorSystemId,
+            CorrelationId = result.CorrelationId
+        });
+    }
+
     private IActionResult MapFailure(
         ResolveVendorParkingResult result,
         ResolveVendorParkingRequest request)
@@ -214,12 +281,6 @@ public sealed class VendorParkingResolutionController : ControllerBase
             result.CorrelationId,
             result.Retryable);
 
-        if (result.Outcome == ResolveVendorParkingOutcome.ProjectionSnapshotAvailable)
-        {
-            error.Details = BuildProjectionFallbackDetails(result);
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, error);
-        }
-
         return result.Outcome switch
         {
             ResolveVendorParkingOutcome.SessionNotFound => NotFound(error),
@@ -229,44 +290,6 @@ public sealed class VendorParkingResolutionController : ControllerBase
             ResolveVendorParkingOutcome.VendorRejected => Conflict(error),
             ResolveVendorParkingOutcome.AmbiguousMatch => Conflict(error),
             _ => StatusCode(StatusCodes.Status502BadGateway, error)
-        };
-    }
-
-    private static Dictionary<string, object?>? BuildProjectionFallbackDetails(ResolveVendorParkingResult result)
-    {
-        var fallback = result.ProjectionFallback;
-        var projection = fallback?.Projection;
-        if (fallback is null || projection is null)
-        {
-            return null;
-        }
-
-        return new Dictionary<string, object?>
-        {
-            ["source"] = "projection_snapshot",
-            ["projection_based"] = fallback.IsProjectionBased,
-            ["non_authoritative"] = true,
-            ["parking_session_authority"] = "Vendor PMS",
-            ["tariff_authority"] = "Vendor PMS",
-            ["payment_authority"] = "ExitPass",
-            ["is_authoritative_for_parking_session"] = fallback.IsAuthoritativeForParkingSession,
-            ["is_authoritative_for_tariff"] = fallback.IsAuthoritativeForTariff,
-            ["is_authoritative_for_payment"] = fallback.IsAuthoritativeForPayment,
-            ["vendor_session_projection_id"] = projection.VendorSessionProjectionId,
-            ["vendor_system_id"] = projection.VendorSystemId,
-            ["site_id"] = projection.SiteId,
-            ["site_group_id"] = projection.SiteGroupId,
-            ["parking_lot_index_code"] = projection.ParkingLotIndexCode,
-            ["parking_lot_name"] = projection.ParkingLotName,
-            ["card_num"] = projection.CardNum,
-            ["plate_license"] = projection.PlateLicense,
-            ["enter_time"] = projection.EnterTime,
-            ["exit_time"] = projection.ExitTime,
-            ["projection_status"] = projection.ProjectionStatus.ToString(),
-            ["last_refreshed_at"] = fallback.LastRefreshedAt,
-            ["freshness_age_seconds"] = fallback.FreshnessAge?.TotalSeconds,
-            ["correlation_id"] = fallback.CorrelationId,
-            ["message"] = "Projection snapshot is for continuity visibility only. It must not be used as tariff finality, payment finality, parking-session authority, or exit authorization."
         };
     }
 
@@ -295,7 +318,6 @@ public sealed class VendorParkingResolutionController : ControllerBase
             ResolveVendorParkingOutcome.InvalidRequest => "Vendor parking resolution request is invalid.",
             ResolveVendorParkingOutcome.VendorRejected => "Vendor parking lookup was rejected.",
             ResolveVendorParkingOutcome.AmbiguousMatch => "Vendor parking lookup returned multiple matching sessions.",
-            ResolveVendorParkingOutcome.ProjectionSnapshotAvailable => "Vendor parking lookup is temporarily unavailable; a non-authoritative projection snapshot is available.",
             _ => "Vendor parking resolution failed."
         };
     }

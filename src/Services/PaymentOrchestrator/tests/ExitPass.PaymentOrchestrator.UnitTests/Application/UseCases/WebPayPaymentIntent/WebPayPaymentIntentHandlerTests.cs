@@ -976,6 +976,88 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Null(fixture.CapturedInitiateRequest);
     }
 
+    [Fact]
+    public async Task WebPayParkingSessionResolve_WhenProjectionSessionReturned_ShowsSessionWithoutFinancialAuthority()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        var projectionId = Guid.Parse("455bfa51-98b3-4fbf-9efb-336339596a34");
+        fixture.CentralPms.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
+            new CentralPmsResolvedParking(
+                ParkingSessionId: null,
+                TariffSnapshotId: null,
+                NetPayableMinorUnits: null,
+                Currency: null,
+                VendorSystemId: "HIKCENTRAL",
+                CorrelationId,
+                SiteName: "PITX Level 3",
+                TicketReference: "1474119573147",
+                PlateNumber: "ABC1147",
+                EntryTime: DateTimeOffset.Parse("2026-10-05T08:00:00+08:00"),
+                ParkingStatus: "ACTIVE",
+                SiteGroupId: SiteGroupId,
+                SiteId: SiteId,
+                SessionFound: true,
+                SessionSource: "VENDOR_SESSION_PROJECTION",
+                Degraded: true,
+                PayableBasisAvailable: false,
+                VendorSessionProjectionId: projectionId,
+                ProjectionStatus: "ACTIVE"));
+
+        var result = await fixture.Sut.ResolveAsync(new WebPayParkingSessionResolveRequest
+        {
+            SiteGroupId = SiteGroupId,
+            SiteId = SiteId,
+            VendorSystemId = "HIKCENTRAL",
+            TicketReference = "1474119573147",
+            CorrelationId = CorrelationId
+        }, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Response!.SessionFound);
+        Assert.True(result.Response.Degraded);
+        Assert.False(result.Response.PayableBasisAvailable);
+        Assert.Equal("VENDOR_SESSION_PROJECTION", result.Response.SessionSource);
+        Assert.Equal("1474119573147", result.Response.TicketReference);
+        Assert.Equal("ABC1147", result.Response.PlateNumber);
+        Assert.Equal(projectionId, result.Response.VendorSessionProjectionId);
+        Assert.Null(result.Response.ParkingSessionId);
+        Assert.Null(result.Response.TariffSnapshotId);
+        Assert.Null(result.Response.AmountMinorUnits);
+        Assert.Null(result.Response.Currency);
+        Assert.Null(result.Response.PaymentStatus);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenProjectionSessionReturned_BlocksBeforeRoutingOrPaymentCreation()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.CentralPms.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
+            new CentralPmsResolvedParking(
+                ParkingSessionId: null,
+                TariffSnapshotId: null,
+                NetPayableMinorUnits: null,
+                Currency: null,
+                VendorSystemId: "HIKCENTRAL",
+                CorrelationId,
+                TicketReference: "1474119573147",
+                PlateNumber: "ABC1147",
+                SessionFound: true,
+                SessionSource: "VENDOR_SESSION_PROJECTION",
+                Degraded: true,
+                PayableBasisAvailable: false));
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(409, result.Error!.StatusCode);
+        Assert.Equal("PAYABLE_BASIS_UNAVAILABLE", result.Error.ErrorCode);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedRouteRequest);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
     /// <summary>
     /// Verifies fallback-looking backend site names are not exposed in the WebPay parking-session response.
     /// </summary>

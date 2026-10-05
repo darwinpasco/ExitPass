@@ -1,5 +1,7 @@
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Infrastructure.OperatorConsole;
+using ExitPass.CentralPms.Infrastructure.VendorSessions;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Npgsql;
@@ -134,6 +136,55 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task SharedProjectionLookup_WhenRepeatedRowsShareExactRoute_ReturnsLatestRouteSnapshot()
+    {
+        var fixture = await Fixture.CreateAsync();
+        try
+        {
+            await fixture.InsertEquivalentProjectionOnSameRouteAsync();
+            var repository = new PostgresVendorSessionProjectionRepository(
+                fixture.ConnectionString,
+                CentralPmsServiceIdentityId);
+
+            var result = await repository.FindLatestAsync(
+                fixture.ProjectionQuery(),
+                CancellationToken.None);
+
+            result.Should().NotBeNull();
+            result!.Projection.VendorSystemId.Should().Be(fixture.VendorSystemId);
+            result.Projection.ParkingLotIndexCode.Should().Be("LOT-1");
+        }
+        finally
+        {
+            await fixture.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task SharedProjectionLookup_WhenIdentifierMatchesDistinctParkingLotRoutes_FailsClosed()
+    {
+        var fixture = await Fixture.CreateAsync();
+        try
+        {
+            await fixture.InsertSecondProjectionAsync();
+            var repository = new PostgresVendorSessionProjectionRepository(
+                fixture.ConnectionString,
+                CentralPmsServiceIdentityId);
+
+            var action = () => repository.FindLatestAsync(
+                fixture.ProjectionQuery(),
+                CancellationToken.None);
+
+            await action.Should().ThrowAsync<VendorSessionProjectionLookupException>()
+                .Where(exception => exception.ErrorCode == "PROJECTION_IDENTIFIER_AMBIGUOUS");
+        }
+        finally
+        {
+            await fixture.DisposeAsync();
+        }
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private Fixture(string connectionString)
@@ -173,6 +224,17 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
 
         public OperatorConsoleSessionLookupReadRequest PlateRequest(Guid siteId, Guid? siteGroupId, string plateNumber) =>
             new(null, null, plateNumber, siteId, siteGroupId, "PLATE_LICENSE");
+
+        public VendorSessionProjectionLookupQuery ProjectionQuery() =>
+            new(
+                CardNum: Ticket,
+                PlateLicense: null,
+                SiteId: SiteId,
+                SiteGroupId: SiteGroupId,
+                ParkingLotIndexCode: null,
+                RequestedAt: DateTimeOffset.UtcNow,
+                CorrelationId: Guid.NewGuid(),
+                VendorSystemId: VendorSystemId);
 
         public async Task<long[]> CountBusinessRowsAsync()
         {
@@ -245,6 +307,34 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
                     gen_random_uuid(), @vendor_system_id, @site_id, @site_group_id,
                     @service_identity_id, 'LOT-2', @second_record_guid,
                     @ticket, 'XYZ2042', now() - interval '30 minutes', 'integration-test', repeat('b', 64),
+                    now() - interval '30 minutes', 'VENDOR_RECORD_GUID', @second_stable_key,
+                    now(), now(), now(), 'ACTIVE', gen_random_uuid(), @service_identity_id);
+                """,
+                connection);
+            AddScopeParameters(command);
+            command.Parameters.AddWithValue("ticket", Ticket);
+            command.Parameters.AddWithValue("second_record_guid", $"record-{Guid.NewGuid():N}");
+            command.Parameters.AddWithValue("second_stable_key", $"stable-{Guid.NewGuid():N}");
+            await command.ExecuteNonQueryAsync();
+        }
+
+        public async Task InsertEquivalentProjectionOnSameRouteAsync()
+        {
+            await using var connection = new NpgsqlConnection(ConnectionString);
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand(
+                """
+                INSERT INTO sessions.vendor_session_projections (
+                    vendor_session_projection_id, vendor_system_id, site_id, site_group_id,
+                    source_adapter_identity_id, parking_lot_index_code, vendor_record_guid,
+                    card_num, plate_license, enter_time, source_api, source_payload_hash,
+                    source_event_at, stable_identity_type, stable_identity_key,
+                    first_seen_at, last_seen_at, last_refreshed_at, projection_status,
+                    correlation_id, created_by_service_identity_id)
+                VALUES (
+                    gen_random_uuid(), @vendor_system_id, @site_id, @site_group_id,
+                    @service_identity_id, 'LOT-1', @second_record_guid,
+                    @ticket, 'ABC1041', now() - interval '30 minutes', 'integration-test', repeat('c', 64),
                     now() - interval '30 minutes', 'VENDOR_RECORD_GUID', @second_stable_key,
                     now(), now(), now(), 'ACTIVE', gen_random_uuid(), @service_identity_id);
                 """,

@@ -43,5 +43,5 @@ public enum ResolveVendorParkingOutcome
     /// <summary>
     /// Live vendor lookup was unavailable and a non-authoritative projection snapshot is available for degraded visibility.
     /// </summary>
-    ProjectionSnapshotAvailable = 7
+    ProjectionSessionResolved = 7
 }

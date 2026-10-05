@@ -106,6 +106,16 @@ public sealed class WebPayPaymentIntentHandler
             return WebPayPaymentIntentResult.Failure(MapCentralPmsError(parking.Error, correlationId));
         }
 
+        if (!HasAuthoritativePayableBasis(parking.Value))
+        {
+            return WebPayPaymentIntentResult.Failure(new WebPayPaymentIntentError(
+                409,
+                "PAYABLE_BASIS_UNAVAILABLE",
+                "The parking session was found, but the live payable amount is temporarily unavailable. Retry parking lookup before paying.",
+                true,
+                correlationId));
+        }
+
         if (!request.StatutoryDiscountDecisionCommandId.HasValue)
         {
             var payableBasisError = ValidatePayableBasis(request, parking.Value, correlationId);
@@ -135,8 +145,8 @@ public sealed class WebPayPaymentIntentHandler
                 request.SiteId,
                 request.SiteGroupId,
                 paymentMethod,
-                payableBasis.NetPayableMinorUnits,
-                payableBasis.Currency,
+                payableBasis.NetPayableMinorUnits!.Value,
+                payableBasis.Currency!,
                 request.PreferredProviderCode,
                 correlationId),
             cancellationToken);
@@ -200,7 +210,7 @@ public sealed class WebPayPaymentIntentHandler
                 FallbackProviderCode: route.FallbackProviderCode));
         }
 
-        var idempotencyKey = BuildIdempotencyKey(payableBasis.ParkingSessionId, paymentMethod, correlationId);
+        var idempotencyKey = BuildIdempotencyKey(payableBasis.ParkingSessionId!.Value, paymentMethod, correlationId);
         var attemptResolution = await CreatePaymentAttemptWithOrphanRecoveryAsync(
             payableBasis,
             centralPmsPaymentProviderRail,
@@ -304,8 +314,8 @@ public sealed class WebPayPaymentIntentHandler
                     route.SelectedProviderCode,
                     providerProduct,
                     paymentMethod,
-                    resolvedParking.NetPayableMinorUnits,
-                    resolvedParking.Currency,
+                    resolvedParking.NetPayableMinorUnits!.Value,
+                    resolvedParking.Currency!,
                     customerDescription,
                     idempotencyKey,
                     successUrl,
@@ -479,14 +489,14 @@ public sealed class WebPayPaymentIntentHandler
         return new WebPayPaymentIntentResponse
         {
             PaymentAttemptId = paymentAttemptId,
-            ParkingSessionId = resolvedParking.ParkingSessionId,
-            TariffSnapshotId = resolvedParking.TariffSnapshotId,
+            ParkingSessionId = resolvedParking.ParkingSessionId!.Value,
+            TariffSnapshotId = resolvedParking.TariffSnapshotId!.Value,
             SiteGroupId = resolvedParking.SiteGroupId,
             SiteId = resolvedParking.SiteId,
             VendorSystemId = BlankToNull(resolvedParking.VendorSystemId),
             SiteGroupName = WebPayDisplayNameSanitizer.ResolveSiteGroupName(resolvedParking.SiteGroupName),
-            AmountMinorUnits = resolvedParking.NetPayableMinorUnits,
-            Currency = resolvedParking.Currency,
+            AmountMinorUnits = resolvedParking.NetPayableMinorUnits!.Value,
+            Currency = resolvedParking.Currency!,
             SiteName = WebPayDisplayNameSanitizer.ResolveSiteName(resolvedParking.SiteName),
             TicketReference = BlankToNull(resolvedParking.TicketReference),
             PlateNumber = BlankToNull(resolvedParking.PlateNumber),
@@ -976,9 +986,9 @@ public sealed class WebPayPaymentIntentHandler
         CentralPmsStatutoryDiscountDecision? statutoryDecision = null)
     {
         var tariffSnapshotId = statutoryDecision?.AppliedTariffSnapshotId ??
-            request.TariffSnapshotId.GetValueOrDefault(parking.TariffSnapshotId);
+            request.TariffSnapshotId.GetValueOrDefault(parking.TariffSnapshotId.GetValueOrDefault());
         var amountMinorUnits = statutoryDecision?.NetPayableAmountMinorUnits ??
-            request.ExpectedAmountMinorUnits.GetValueOrDefault(parking.NetPayableMinorUnits);
+            request.ExpectedAmountMinorUnits.GetValueOrDefault(parking.NetPayableMinorUnits.GetValueOrDefault());
         var currency = string.IsNullOrWhiteSpace(statutoryDecision?.Currency)
             ? parking.Currency
             : statutoryDecision.Currency!;
@@ -999,6 +1009,10 @@ public sealed class WebPayPaymentIntentHandler
         {
             ParkingSessionId = parking.ParkingSessionId,
             TariffSnapshotId = parking.TariffSnapshotId,
+            SessionFound = parking.SessionFound,
+            SessionSource = parking.SessionSource,
+            Degraded = parking.Degraded,
+            PayableBasisAvailable = parking.PayableBasisAvailable,
             SiteGroupId = parking.SiteGroupId,
             SiteId = parking.SiteId,
             VendorSystemId = BlankToNull(parking.VendorSystemId),
@@ -1013,11 +1027,29 @@ public sealed class WebPayPaymentIntentHandler
             CurrentFeeCalculationTime = parking.CurrentFeeCalculationTime,
             TariffName = BlankToNull(parking.TariffName),
             ParkingStatus = BlankToNull(parking.ParkingStatus),
-            PaymentStatus = BlankToNull(parking.PaymentStatus) ?? "Not Started",
+            PaymentStatus = HasAuthoritativePayableBasis(parking)
+                ? BlankToNull(parking.PaymentStatus) ?? "Not Started"
+                : null,
             FeeValidUntil = parking.FeeValidUntil,
+            VendorSessionProjectionId = parking.VendorSessionProjectionId,
+            ProjectionStatus = parking.ProjectionStatus,
+            ProjectionLastRefreshedAt = parking.ProjectionLastRefreshedAt,
+            ProjectionFreshnessAgeSeconds = parking.ProjectionFreshnessAgeSeconds,
             CorrelationId = parking.CorrelationId == Guid.Empty ? fallbackCorrelationId : parking.CorrelationId
         };
     }
+
+    private static bool HasAuthoritativePayableBasis(CentralPmsResolvedParking parking) =>
+        parking.SessionFound &&
+        !parking.Degraded &&
+        parking.PayableBasisAvailable &&
+        parking.ParkingSessionId.HasValue &&
+        parking.ParkingSessionId.Value != Guid.Empty &&
+        parking.TariffSnapshotId.HasValue &&
+        parking.TariffSnapshotId.Value != Guid.Empty &&
+        parking.NetPayableMinorUnits.HasValue &&
+        parking.NetPayableMinorUnits.Value >= 0 &&
+        !string.IsNullOrWhiteSpace(parking.Currency);
 
     private static WebPayPaymentIntentError MapCentralPmsError(
         CentralPmsWebPayError? error,
@@ -1050,8 +1082,8 @@ public sealed class WebPayPaymentIntentHandler
         CancellationToken cancellationToken)
     {
         var attempt = await _centralPmsClient.CreateOrReusePaymentAttemptAsync(
-            parking.ParkingSessionId,
-            parking.TariffSnapshotId,
+            parking.ParkingSessionId!.Value,
+            parking.TariffSnapshotId!.Value,
             centralPmsPaymentProviderRail,
             paymentMethod,
             invoiceCustomerInformation,
@@ -1072,7 +1104,7 @@ public sealed class WebPayPaymentIntentHandler
         var activeAttemptId = attempt.Error?.PaymentAttemptId;
         var providerSession = await FindProviderSessionForActiveAttemptAsync(
             activeAttemptId,
-            parking.ParkingSessionId,
+            parking.ParkingSessionId!.Value,
             cancellationToken);
 
         if (providerSession is not null && !string.IsNullOrWhiteSpace(providerSession.RedirectUrl))
@@ -1128,11 +1160,21 @@ public sealed class WebPayPaymentIntentHandler
             return PaymentAttemptResolution.Failure(MapCentralPmsError(refreshedParking.Error, correlationId));
         }
 
+        if (!HasAuthoritativePayableBasis(refreshedParking.Value))
+        {
+            return PaymentAttemptResolution.Failure(new WebPayPaymentIntentError(
+                409,
+                "PAYABLE_BASIS_UNAVAILABLE",
+                "The live payable amount became unavailable during payment recovery. Retry parking lookup.",
+                true,
+                correlationId));
+        }
+
         parking = refreshedParking.Value;
 
         var retry = await _centralPmsClient.CreateOrReusePaymentAttemptAsync(
-            parking.ParkingSessionId,
-            parking.TariffSnapshotId,
+            parking.ParkingSessionId!.Value,
+            parking.TariffSnapshotId!.Value,
             centralPmsPaymentProviderRail,
             paymentMethod,
             invoiceCustomerInformation,
@@ -1353,8 +1395,8 @@ public sealed class WebPayPaymentIntentHandler
         var metadata = new Dictionary<string, string>
         {
             ["payment_attempt_id"] = paymentAttemptId.ToString(),
-            ["parking_session_id"] = parking.ParkingSessionId.ToString(),
-            ["tariff_snapshot_id"] = parking.TariffSnapshotId.ToString(),
+            ["parking_session_id"] = parking.ParkingSessionId!.Value.ToString(),
+            ["tariff_snapshot_id"] = parking.TariffSnapshotId!.Value.ToString(),
             ["payment_method"] = paymentMethod,
             ["requested_by"] = RequestedBy,
             ["correlation_id"] = correlationId.ToString()

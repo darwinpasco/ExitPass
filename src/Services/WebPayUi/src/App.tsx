@@ -153,6 +153,15 @@ type AppliedStatutoryPaymentBasis = {
   statutoryDiscountPayableBasisApplicationCommandId: string;
 };
 
+type AuthoritativeParkingSessionResolveResponse = ParkingSessionResolveResponse & {
+  parkingSessionId: string;
+  tariffSnapshotId: string;
+  amountMinorUnits: number;
+  currency: string;
+  degraded?: false;
+  payableBasisAvailable?: true;
+};
+
 const defaultStatutoryDiscountForm: StatutoryDiscountFormState = {
   entitlementType: "SENIOR_CITIZEN",
   idControlReference: "",
@@ -441,11 +450,18 @@ export function App() {
       setError("");
       setResult(null);
       setActivePaymentAttempt(null);
-      bindInvoiceCustomerInformationDraft(response.parkingSessionId);
+      if (response.parkingSessionId) {
+        bindInvoiceCustomerInformationDraft(response.parkingSessionId);
+      }
       setResolvedSession(response);
       setStage("SESSION_RESOLVED");
-      void refreshStatutoryAvailability(response);
-      void rediscoverStatutoryPendingLifecycle(response, sessionGeneration);
+      if (response.payableBasisAvailable !== false && response.degraded !== true && response.parkingSessionId) {
+        void refreshStatutoryAvailability(response);
+        void rediscoverStatutoryPendingLifecycle(response, sessionGeneration);
+      } else {
+        setStatutoryAvailabilityState(emptyStatutoryDiscountAvailabilityState);
+        setStatutoryPendingLifecycle(null);
+      }
     } catch (apiError) {
       if (statutorySessionGeneration.current !== sessionGeneration) {
         return;
@@ -591,6 +607,11 @@ export function App() {
       return;
     }
 
+    if (!hasAuthoritativePayableBasis(paymentSession)) {
+      setError("The parking session was found, but the live payable amount is temporarily unavailable. Retry live fee before paying.");
+      return;
+    }
+
     const { hasTicket, hasPlate } = currentLookup();
     if (!hasTicket && !hasPlate) {
       setError(entryMode === "ticket" ? "Enter or scan a ticket reference." : "Enter a plate number.");
@@ -632,7 +653,7 @@ export function App() {
             stage: "PAYMENT_SUBMITTING"
           },
           {
-            parkingSessionId: resolvedSession.parkingSessionId,
+            parkingSessionId: paymentSession.parkingSessionId,
             entitlementType: normalizeEntitlementType(statutoryDiscountState.decision?.entitlementType, "SENIOR_CITIZEN"),
             statutoryDiscountDecisionCommandId: appliedStatutoryBasis.statutoryDiscountDecisionCommandId,
             statutoryDiscountPayableBasisApplicationCommandId: appliedStatutoryBasis.statutoryDiscountPayableBasisApplicationCommandId,
@@ -714,7 +735,7 @@ export function App() {
   }
 
   function openRegularPaymentConfirmation() {
-    if (!resolvedSession || paymentIntentInFlight.current || isSubmitting || isResolving) {
+    if (!hasAuthoritativePayableBasis(resolvedSession) || paymentIntentInFlight.current || isSubmitting || isResolving) {
       return;
     }
 
@@ -736,7 +757,7 @@ export function App() {
   }
 
   function confirmRegularPayment() {
-    if (!resolvedSession || regularPaymentConfirmation.isRevalidating || regularPaymentConfirmation.amountMinorUnits === null) {
+    if (!hasAuthoritativePayableBasis(resolvedSession) || regularPaymentConfirmation.isRevalidating || regularPaymentConfirmation.amountMinorUnits === null) {
       return;
     }
 
@@ -752,7 +773,7 @@ export function App() {
   }
 
   async function handleCreateRegularPaymentIntent() {
-    if (!resolvedSession || !regularPaymentSelection || isResolving || isSubmitting || paymentIntentInFlight.current) {
+    if (!hasAuthoritativePayableBasis(resolvedSession) || !regularPaymentSelection || isResolving || isSubmitting || paymentIntentInFlight.current) {
       return;
     }
 
@@ -791,6 +812,12 @@ export function App() {
       const latestSession = await fetchCurrentParkingSession();
       setResolvedSession(latestSession);
       setStage("SESSION_RESOLVED");
+
+      if (!hasAuthoritativePayableBasis(latestSession)) {
+        setRegularPaymentSelection(null);
+        setError("The parking session was found, but the live payable amount is temporarily unavailable. Retry live fee before paying.");
+        return;
+      }
 
       const amountChanged =
         latestSession.amountMinorUnits !== regularPaymentSelection.amountMinorUnits ||
@@ -882,7 +909,7 @@ export function App() {
   }
 
   function buildCurrentStatutoryDiscountRequest(requestReference: string) {
-    if (!resolvedSession) {
+    if (!hasAuthoritativePayableBasis(resolvedSession)) {
       throw new Error("Resolve your parking session before requesting a statutory discount.");
     }
 
@@ -905,7 +932,7 @@ export function App() {
   }
 
   async function handleSubmitStatutoryDiscount() {
-    if (!resolvedSession || statutoryDiscountState.isSubmitting) {
+    if (!hasAuthoritativePayableBasis(resolvedSession) || statutoryDiscountState.isSubmitting) {
       return;
     }
 
@@ -1236,6 +1263,8 @@ export function App() {
   const isActiveStatutoryWorkflow = !regularPaymentSelection && Boolean(statutoryDiscountState.decision);
   const appliedStatutoryBasis = regularPaymentSelection ? null : getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision);
   const zeroPayableStatutoryCompletion = Boolean(appliedStatutoryBasis?.amountMinorUnits === 0);
+  const authoritativeSummary = hasAuthoritativePayableBasis(summary) ? summary : null;
+  const isDegradedSession = Boolean(summary && !authoritativeSummary);
   const statutoryRecoveryMutationInFlight = hasKnownInFlightStatutoryRecoveryStage(statutoryRecoveryRecord);
   const canPayRegularWhilePending =
     stage === "SESSION_RESOLVED" &&
@@ -1397,13 +1426,28 @@ export function App() {
 
         {summary && <ParkingSessionSummaryPanel result={summary} />}
 
-        {summary && (
+        {authoritativeSummary && (
           <PayableBasisPanel
-            session={summary}
+            session={authoritativeSummary}
           />
         )}
 
-        {summary && !isPaymentComplete && (
+        {summary && isDegradedSession && (
+          <section className="payable-basis-panel" aria-live="polite" aria-labelledby="degraded-session-heading">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Projection session</p>
+                <h2 id="degraded-session-heading">Live parking fee temporarily unavailable</h2>
+              </div>
+            </div>
+            <p>The parking session was found from a recent continuity projection. Payment remains disabled until the live payable amount is available.</p>
+            <button type="button" className="ghost-button status-button" onClick={() => void handleResolveParkingSession()} disabled={isResolving}>
+              Retry live fee
+            </button>
+          </section>
+        )}
+
+        {summary && !isDegradedSession && !isPaymentComplete && (
           <InvoiceCustomerInformationPanel
             value={invoiceCustomerInformation}
             showStatutoryId={showStatutoryInvoiceId}
@@ -1414,7 +1458,7 @@ export function App() {
           />
         )}
 
-        {!regularPaymentSelection && summary && !isPaymentComplete && !isPayablePending &&
+        {!isDegradedSession && !regularPaymentSelection && summary && !isPaymentComplete && !isPayablePending &&
           (stage === "SESSION_RESOLVED" || Boolean(statutoryDiscountState.decision && (stage === "HANDOFF_READY" || stage === "ACTIVE_ATTEMPT"))) && (
           <StatutoryDiscountRequestPanel
             readOnly={stage !== "SESSION_RESOLVED"}
@@ -1472,7 +1516,7 @@ export function App() {
           />
         )}
 
-        {summary && stage === "SESSION_RESOLVED" && !isPaymentComplete && !zeroPayableStatutoryCompletion && (
+        {summary && !isDegradedSession && stage === "SESSION_RESOLVED" && !isPaymentComplete && !zeroPayableStatutoryCompletion && (
         <section className="method-section" aria-labelledby="payment-method-heading">
           <h2 id="payment-method-heading">Payment method</h2>
           <div className="method-grid">
@@ -1563,7 +1607,7 @@ export function App() {
           </section>
         )}
 
-        {!zeroPayableStatutoryCompletion && !result && !activePaymentAttempt && stage !== "REDIRECTING" && <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || statutoryDiscountPaymentBlocked || statutoryRecoveryPaymentBlocked}>
+        {!isDegradedSession && !zeroPayableStatutoryCompletion && !result && !activePaymentAttempt && stage !== "REDIRECTING" && <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || statutoryDiscountPaymentBlocked || statutoryRecoveryPaymentBlocked}>
           <img src="/assets/icons/payment.svg" alt="" aria-hidden="true" />
           {isResolving
             ? "Resolving..."
@@ -2218,7 +2262,7 @@ function bindAppliedStatutoryPayableBasis(
   };
 }
 
-function PayableBasisPanel({ session }: { session: ParkingSessionResolveResponse }) {
+function PayableBasisPanel({ session }: { session: AuthoritativeParkingSessionResolveResponse }) {
   const originalAmount = session.originalAmountMinorUnits ?? session.totalFeeMinorUnits ?? session.amountMinorUnits;
   const couponAdjustment = session.couponAdjustmentMinorUnits ?? 0;
   const statutoryAdjustment = session.statutoryAdjustmentMinorUnits ?? 0;
@@ -3202,6 +3246,7 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
           <p className="eyebrow">Parking Session Summary</p>
           <h2 id="session-summary-heading">{siteName}</h2>
         </div>
+        {result.degraded && <span className="status-badge">Projection</span>}
       </div>
       <dl>
         {rows.map(([label, value]) => (
@@ -3212,6 +3257,21 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
         ))}
       </dl>
     </section>
+  );
+}
+
+function hasAuthoritativePayableBasis(
+  session?: ParkingSessionResolveResponse | null
+): session is AuthoritativeParkingSessionResolveResponse {
+  return Boolean(
+    session &&
+    session.degraded !== true &&
+    session.payableBasisAvailable !== false &&
+    session.parkingSessionId &&
+    session.tariffSnapshotId &&
+    typeof session.amountMinorUnits === "number" &&
+    session.amountMinorUnits >= 0 &&
+    session.currency?.trim()
   );
 }
 

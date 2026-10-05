@@ -35,6 +35,11 @@ public sealed record ResolveVendorParkingResult(
     VendorSessionProjectionLookupResult? ProjectionFallback)
 {
     /// <summary>
+    /// Gets the bounded live lookup failure retained when projection continuity succeeds.
+    /// </summary>
+    public string? LiveLookupErrorCode { get; init; }
+
+    /// <summary>
     /// Creates a successful vendor parking resolution result.
     /// </summary>
     /// <param name="parkingSession">Mapped Central PMS parking session.</param>
@@ -93,24 +98,27 @@ public sealed record ResolveVendorParkingResult(
     /// <summary>
     /// Creates a degraded result carrying a non-authoritative projection snapshot.
     /// </summary>
-    public static ResolveVendorParkingResult ProjectionSnapshot(
+    public static ResolveVendorParkingResult ProjectionSession(
         VendorSessionProjectionLookupResult projection,
-        string errorCode,
+        string liveLookupErrorCode,
         Guid correlationId,
         string? vendorSystemId = null)
     {
         return new ResolveVendorParkingResult(
-            ResolveVendorParkingOutcome.ProjectionSnapshotAvailable,
+            ResolveVendorParkingOutcome.ProjectionSessionResolved,
             ParkingSession: null,
             TariffSnapshot: null,
-            errorCode,
+            ErrorCode: null,
             Retryable: true,
             correlationId,
             vendorSystemId,
             SiteGroupName: null,
-            SiteName: null,
+            SiteName: projection.Projection?.ParkingLotName,
             PaymentStatus: null,
             EffectivePayableBasis: null,
-            projection);
+            projection)
+        {
+            LiveLookupErrorCode = liveLookupErrorCode
+        };
     }
 }

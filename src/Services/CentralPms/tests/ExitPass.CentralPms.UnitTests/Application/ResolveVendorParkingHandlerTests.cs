@@ -272,10 +272,10 @@ public sealed class ResolveVendorParkingHandlerTests
     }
 
     /// <summary>
-    /// Verifies live vendor unavailability can return a non-authoritative fresh projection snapshot.
+    /// Verifies live vendor unavailability can return a non-authoritative fresh projected session.
     /// </summary>
     [Fact]
-    public async Task ResolveVendorSession_WhenVendorUnavailableAndFallbackEnabled_ReturnsProjectionSnapshot()
+    public async Task ResolveVendorSession_WhenVendorUnavailableAndFallbackEnabled_ReturnsProjectionSession()
     {
         var publisher = new RecordingIntegrationEventPublisher();
         var projectionLookup = new RecordingProjectionLookupService(FreshProjection());
@@ -292,8 +292,9 @@ public sealed class ResolveVendorParkingHandlerTests
 
         var result = await sut.ExecuteAsync(TicketCommand(), CancellationToken.None);
 
-        result.Outcome.Should().Be(ResolveVendorParkingOutcome.ProjectionSnapshotAvailable);
-        result.ErrorCode.Should().Be("VENDOR_UNAVAILABLE_PROJECTION_SNAPSHOT_AVAILABLE");
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.ProjectionSessionResolved);
+        result.ErrorCode.Should().BeNull();
+        result.LiveLookupErrorCode.Should().Be("VENDOR_UNAVAILABLE");
         result.Retryable.Should().BeTrue();
         result.ParkingSession.Should().BeNull();
         result.TariffSnapshot.Should().BeNull();
@@ -302,7 +303,57 @@ public sealed class ResolveVendorParkingHandlerTests
         result.ProjectionFallback.IsAuthoritativeForParkingSession.Should().BeFalse();
         result.ProjectionFallback.IsAuthoritativeForTariff.Should().BeFalse();
         result.ProjectionFallback.IsAuthoritativeForPayment.Should().BeFalse();
+        projectionLookup.LastQuery.Should().NotBeNull();
+        projectionLookup.LastQuery!.VendorSystemId.Should().Be(Guid.Parse("45a625de-9034-4fb6-b527-0950d384e51f"));
         publisher.Published.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ResolveVendorSession_WhenVendorReturnsAdapterErrorAndFallbackEnabled_ReturnsProjectionSession()
+    {
+        var projectionLookup = new RecordingProjectionLookupService(FreshProjection());
+        var sut = CreateSut(
+            FakeVendorPmsParkingResolutionClient.AdapterError(),
+            projectionLookup: projectionLookup,
+            projectionOptions: new VendorSessionProjectionOptions
+            {
+                DegradedResolveFallbackEnabled = true,
+                MaxProjectionAgeMinutes = 1
+            },
+            clock: new FixedClock(Now));
+
+        var result = await sut.ExecuteAsync(TicketCommand(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.ProjectionSessionResolved);
+        result.LiveLookupErrorCode.Should().Be("VENDOR_PMS_ADAPTER_ERROR_HIKCENTRAL_CODE_401");
+        result.ParkingSession.Should().BeNull();
+        result.TariffSnapshot.Should().BeNull();
+        projectionLookup.Calls.Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(VendorParkingLookupStatus.NotFound)]
+    [InlineData(VendorParkingLookupStatus.ValidationError)]
+    [InlineData(VendorParkingLookupStatus.VendorRejected)]
+    [InlineData(VendorParkingLookupStatus.Ambiguous)]
+    public async Task ResolveVendorSession_WhenLiveFailureIsNotFallbackEligible_DoesNotUseProjection(
+        VendorParkingLookupStatus status)
+    {
+        var projectionLookup = new RecordingProjectionLookupService(FreshProjection());
+        var sut = CreateSut(
+            FakeVendorPmsParkingResolutionClient.WithStatus(status),
+            projectionLookup: projectionLookup,
+            projectionOptions: new VendorSessionProjectionOptions
+            {
+                DegradedResolveFallbackEnabled = true,
+                MaxProjectionAgeMinutes = 1
+            },
+            clock: new FixedClock(Now));
+
+        var result = await sut.ExecuteAsync(TicketCommand(), CancellationToken.None);
+
+        result.Outcome.Should().NotBe(ResolveVendorParkingOutcome.ProjectionSessionResolved);
+        projectionLookup.Calls.Should().Be(0);
     }
 
     /// <summary>
@@ -352,6 +403,28 @@ public sealed class ResolveVendorParkingHandlerTests
 
         result.Outcome.Should().Be(ResolveVendorParkingOutcome.RetryableUnavailable);
         result.ProjectionFallback.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ResolveVendorSession_WhenProjectionIdentifierIsAmbiguous_PreservesLiveFailure()
+    {
+        var sut = CreateSut(
+            FakeVendorPmsParkingResolutionClient.AdapterError(),
+            projectionLookup: new RejectingProjectionLookupService("PROJECTION_IDENTIFIER_AMBIGUOUS"),
+            projectionOptions: new VendorSessionProjectionOptions
+            {
+                DegradedResolveFallbackEnabled = true,
+                MaxProjectionAgeMinutes = 1
+            },
+            clock: new FixedClock(Now));
+
+        var result = await sut.ExecuteAsync(TicketCommand(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.MalformedVendorResponse);
+        result.ErrorCode.Should().Be("VENDOR_PMS_ADAPTER_ERROR_HIKCENTRAL_CODE_401");
+        result.ProjectionFallback.Should().BeNull();
+        result.ParkingSession.Should().BeNull();
+        result.TariffSnapshot.Should().BeNull();
     }
 
     /// <summary>
@@ -627,9 +700,9 @@ public sealed class ResolveVendorParkingHandlerTests
     {
         return new VendorSessionProjection(
             Guid.Parse("99999999-0000-0000-0000-000000000001"),
-            VendorSystemId: Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"),
-            SiteId: null,
-            SiteGroupId: null,
+            VendorSystemId: Guid.Parse("45a625de-9034-4fb6-b527-0950d384e51f"),
+            SiteId: Guid.Parse("35a625de-9034-4fb6-b527-0950d384e51e"),
+            SiteGroupId: Guid.Parse("25a625de-9034-4fb6-b527-0950d384e51d"),
             ParkingLotIndexCode: "LOT-1",
             ParkingLotName: "Main Lot",
             PassagewayIndexCode: "PASS-1",
@@ -705,6 +778,24 @@ public sealed class ResolveVendorParkingHandlerTests
             return new FakeVendorPmsParkingResolutionClient(
                 new VendorParkingSessionLookupResponse(VendorParkingLookupStatus.UnavailableRetryable, null, "VENDOR_UNAVAILABLE", true, CorrelationId),
                 new VendorTariffQuoteResponse(VendorParkingLookupStatus.UnavailableRetryable, null, "VENDOR_UNAVAILABLE", true, CorrelationId));
+        }
+
+        public static FakeVendorPmsParkingResolutionClient AdapterError()
+        {
+            return WithStatus(
+                VendorParkingLookupStatus.AdapterError,
+                "VENDOR_PMS_ADAPTER_ERROR_HIKCENTRAL_CODE_401");
+        }
+
+        public static FakeVendorPmsParkingResolutionClient WithStatus(
+            VendorParkingLookupStatus status,
+            string? errorCode = null)
+        {
+            var boundedError = errorCode ?? $"VENDOR_{status.ToString().ToUpperInvariant()}";
+            var retryable = status == VendorParkingLookupStatus.UnavailableRetryable;
+            return new FakeVendorPmsParkingResolutionClient(
+                new VendorParkingSessionLookupResponse(status, null, boundedError, retryable, CorrelationId),
+                new VendorTariffQuoteResponse(status, null, boundedError, retryable, CorrelationId));
         }
 
         public static FakeVendorPmsParkingResolutionClient MalformedSession()
@@ -797,12 +888,14 @@ public sealed class ResolveVendorParkingHandlerTests
         : IVendorSessionProjectionLookupService
     {
         public int Calls { get; private set; }
+        public VendorSessionProjectionLookupQuery? LastQuery { get; private set; }
 
         public Task<VendorSessionProjectionLookupResult> LookupAsync(
             VendorSessionProjectionLookupQuery query,
             CancellationToken cancellationToken)
         {
             Calls++;
+            LastQuery = query;
             return Task.FromResult(projection is null
                 ? VendorSessionProjectionLookupResult.NotFound(query.CorrelationId)
                 : VendorSessionProjectionLookupResult.FoundProjection(
@@ -810,6 +903,16 @@ public sealed class ResolveVendorParkingHandlerTests
                     hasSuccessfulCompletion ? projection.LastRefreshedAt : null,
                     query.RequestedAt,
                     query.CorrelationId));
+        }
+    }
+
+    private sealed class RejectingProjectionLookupService(string errorCode) : IVendorSessionProjectionLookupService
+    {
+        public Task<VendorSessionProjectionLookupResult> LookupAsync(
+            VendorSessionProjectionLookupQuery query,
+            CancellationToken cancellationToken)
+        {
+            throw new VendorSessionProjectionLookupException(errorCode);
         }
     }
 

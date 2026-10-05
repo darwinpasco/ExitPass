@@ -5,6 +5,7 @@ using ExitPass.CentralPms.Application.StatutoryEvidence;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Application.WebPay;
 using ExitPass.CentralPms.Contracts.TerminalCashPayments;
 using ExitPass.CentralPms.Domain.Sessions;
@@ -411,12 +412,84 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         context.StatutoryDiscounts.GetCallCount.Should().Be(1);
     }
 
+    [Fact]
+    public async Task Resolve_WhenProjectionSessionFound_ReturnsSessionWithoutCashAuthority()
+    {
+        var now = DateTimeOffset.Parse("2026-10-05T08:05:00+08:00");
+        var projection = new VendorSessionProjection(
+            Guid.Parse("455bfa51-98b3-4fbf-9efb-336339596a34"),
+            Guid.Parse("45a625de-9034-4fb6-b527-0950d384e51f"),
+            SiteId,
+            SiteGroupId,
+            "LOT-1",
+            "PITX Level 3",
+            null,
+            null,
+            null,
+            null,
+            null,
+            "REC-3147",
+            "1474119573147",
+            "ABC1147",
+            now.AddHours(-1),
+            null,
+            "TEMP",
+            "ALLOW",
+            null,
+            "projection-test",
+            new string('a', 64),
+            "REC-3147",
+            now.AddMinutes(-1),
+            "VENDOR_RECORD_GUID",
+            "HIKCENTRAL|GUID|REC-3147",
+            now.AddMinutes(-1),
+            now.AddMinutes(-1),
+            now.AddSeconds(-20),
+            VendorSessionProjectionStatus.Active,
+            CorrelationId,
+            now.AddMinutes(-1),
+            now.AddSeconds(-20));
+        var lookup = VendorSessionProjectionLookupResult.FoundProjection(
+            projection,
+            now.AddSeconds(-20),
+            now,
+            CorrelationId);
+        var projectionResult = ResolveVendorParkingResult.ProjectionSession(
+            lookup,
+            "VENDOR_PMS_ADAPTER_ERROR_HIKCENTRAL_CODE_401",
+            CorrelationId,
+            projection.VendorSystemId!.Value.ToString("D"));
+        var context = CreateContext(vendorResolutionResult: projectionResult);
+
+        var result = await context.Sut.ResolveAsync(ResolveRequest(statutoryDecisionCommandId: null), CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.HttpStatusCode.Should().Be(200);
+        result.Response.Should().NotBeNull();
+        result.Response!.SessionFound.Should().BeTrue();
+        result.Response.SessionSource.Should().Be("VENDOR_SESSION_PROJECTION");
+        result.Response.Degraded.Should().BeTrue();
+        result.Response.PayableBasisAvailable.Should().BeFalse();
+        result.Response.TicketReference.Should().Be("1474119573147");
+        result.Response.PlateNumber.Should().Be("ABC1147");
+        result.Response.ParkingSessionId.Should().BeNull();
+        result.Response.TariffSnapshotId.Should().BeNull();
+        result.Response.AuthoritativeAmountMinorUnits.Should().BeNull();
+        result.Response.Currency.Should().BeNull();
+        result.Response.PaymentStatus.Should().BeNull();
+        result.Response.ReadyForCashAcceptance.Should().BeFalse();
+        result.Response.BlockingReasonCodes.Should().Contain("PROJECTION_SESSION_PAYABLE_BASIS_UNAVAILABLE");
+        context.TerminalCashEligibility.LastRequest.Should().BeNull();
+        context.StatutoryDiscounts.GetCallCount.Should().Be(0);
+    }
+
     private static TestContext CreateContext(
         StatutoryDiscountDecisionResult? statutoryReadback = null,
         bool vendorReturnsAppliedTariff = false,
         StatutoryEvidenceChannelReadiness? evidenceReadiness = null,
         Guid? rediscoveredDecisionCommandId = null,
-        InvoiceCustomerInformationReadStatus customerInformationStatus = InvoiceCustomerInformationReadStatus.NotSupplied)
+        InvoiceCustomerInformationReadStatus customerInformationStatus = InvoiceCustomerInformationReadStatus.NotSupplied,
+        ResolveVendorParkingResult? vendorResolutionResult = null)
     {
         var session = ParkingSession.Rehydrate(
             ParkingSessionId,
@@ -436,7 +509,8 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
 
         var vendorResolution = new FixedVendorResolution(
             session,
-            vendorReturnsAppliedTariff ? appliedTariff : originalTariff);
+            vendorReturnsAppliedTariff ? appliedTariff : originalTariff,
+            vendorResolutionResult);
         return new TestContext(
             new AptPayableBasisReadinessService(
                 vendorResolution,
@@ -662,11 +736,16 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
     {
         private readonly ParkingSession _session;
         private readonly TariffSnapshot _tariff;
+        private readonly ResolveVendorParkingResult? _result;
 
-        public FixedVendorResolution(ParkingSession session, TariffSnapshot tariff)
+        public FixedVendorResolution(
+            ParkingSession session,
+            TariffSnapshot tariff,
+            ResolveVendorParkingResult? result = null)
         {
             _session = session;
             _tariff = tariff;
+            _result = result;
         }
 
         public ResolveVendorParkingCommand? LastCommand { get; private set; }
@@ -676,7 +755,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             CancellationToken cancellationToken)
         {
             LastCommand = command;
-            return Task.FromResult(ResolveVendorParkingResult.Resolved(
+            return Task.FromResult(_result ?? ResolveVendorParkingResult.Resolved(
                 _session,
                 _tariff,
                 CorrelationId,

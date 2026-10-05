@@ -8,12 +8,24 @@ public sealed class WebPayParkingSessionResolveResponse
     /// <summary>
     /// Canonical Central PMS parking session identifier for support traceability.
     /// </summary>
-    public Guid ParkingSessionId { get; set; }
+    public Guid? ParkingSessionId { get; set; }
 
     /// <summary>
     /// Canonical Central PMS tariff snapshot identifier for support traceability.
     /// </summary>
-    public Guid TariffSnapshotId { get; set; }
+    public Guid? TariffSnapshotId { get; set; }
+
+    /// <summary>Whether a safe live or projected session identity was found.</summary>
+    public bool SessionFound { get; set; }
+
+    /// <summary>Live vendor or continuity-projection source.</summary>
+    public string SessionSource { get; set; } = string.Empty;
+
+    /// <summary>Whether this is a session-only degraded response.</summary>
+    public bool Degraded { get; set; }
+
+    /// <summary>Whether authoritative tariff and payable-basis facts are present.</summary>
+    public bool PayableBasisAvailable { get; set; }
 
     /// <summary>
     /// Site group resolved with the parking session.
@@ -38,7 +50,7 @@ public sealed class WebPayParkingSessionResolveResponse
     /// <summary>
     /// Payable amount in minor currency units.
     /// </summary>
-    public long AmountMinorUnits { get; set; }
+    public long? AmountMinorUnits { get; set; }
 
     /// <summary>
     /// Indicates whether customer information has already been provided for the Sales Invoice.
@@ -49,7 +61,7 @@ public sealed class WebPayParkingSessionResolveResponse
     /// <summary>
     /// ISO currency code.
     /// </summary>
-    public string Currency { get; set; } = string.Empty;
+    public string? Currency { get; set; }
 
     /// <summary>
     /// Business-friendly site or parking location name, when supplied by the resolved context.
@@ -95,6 +107,18 @@ public sealed class WebPayParkingSessionResolveResponse
     /// Tariff snapshot expiry or fee validity timestamp, when available.
     /// </summary>
     public DateTimeOffset? FeeValidUntil { get; set; }
+
+    /// <summary>Projection identifier used for continuity lookup.</summary>
+    public Guid? VendorSessionProjectionId { get; set; }
+
+    /// <summary>Projection lifecycle status.</summary>
+    public string? ProjectionStatus { get; set; }
+
+    /// <summary>Successful projection refresh timestamp used for freshness enforcement.</summary>
+    public DateTimeOffset? ProjectionLastRefreshedAt { get; set; }
+
+    /// <summary>Age of the projection refresh in seconds.</summary>
+    public double? ProjectionFreshnessAgeSeconds { get; set; }
 
     /// <summary>
     /// End-to-end correlation identifier.

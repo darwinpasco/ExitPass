@@ -152,7 +152,15 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
             ParseGuid(payload.SiteGroupId),
             ParseGuid(payload.SiteId),
             payload.SiteGroupName,
-            payload.CustomerInformationSubmitted));
+            payload.CustomerInformationSubmitted,
+            payload.SessionFound,
+            payload.SessionSource,
+            payload.Degraded,
+            payload.PayableBasisAvailable,
+            payload.VendorSessionProjectionId,
+            payload.ProjectionStatus,
+            payload.ProjectionLastRefreshedAt,
+            payload.ProjectionFreshnessAgeSeconds));
     }
 
     /// <inheritdoc />
@@ -1269,16 +1277,16 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         Guid CorrelationId);
 
     private sealed record VendorParkingResolveResponse(
-        Guid ParkingSessionId,
-        Guid TariffSnapshotId,
+        Guid? ParkingSessionId,
+        Guid? TariffSnapshotId,
         string? SiteGroupId,
         string? SiteId,
         string LookupOutcome,
         string? PlateNumber,
         string? TicketReference,
-        long NetPayableMinorUnits,
-        string Currency,
-        DateTimeOffset TariffExpiresAt,
+        long? NetPayableMinorUnits,
+        string? Currency,
+        DateTimeOffset? TariffExpiresAt,
         DateTimeOffset? FeeValidUntil,
         string? VendorSystemId,
         Guid CorrelationId,
@@ -1289,7 +1297,15 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         string? TariffName,
         string? ParkingStatus,
         string? PaymentStatus,
-        bool? CustomerInformationSubmitted);
+        bool? CustomerInformationSubmitted,
+        bool SessionFound,
+        string SessionSource,
+        bool Degraded,
+        bool PayableBasisAvailable,
+        Guid? VendorSessionProjectionId,
+        string? ProjectionStatus,
+        DateTimeOffset? ProjectionLastRefreshedAt,
+        double? ProjectionFreshnessAgeSeconds);
 
     private sealed record CreatePaymentAttemptRequest(
         Guid ParkingSessionId,

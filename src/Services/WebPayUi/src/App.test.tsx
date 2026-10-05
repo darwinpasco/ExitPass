@@ -87,6 +87,7 @@ const activePaymentAttemptConflict = {
 
 function stubWebPayFetch(options?: {
   resolvePayload?: unknown;
+  resolvePayloads?: unknown[];
   resolveOk?: boolean;
   resolveStatus?: number;
   intentPayload?: unknown;
@@ -115,6 +116,15 @@ function stubWebPayFetch(options?: {
   statutoryEvidenceOk?: boolean;
   statutoryEvidenceStatus?: number;
 }) {
+  let resolvePayloadIndex = 0;
+  const nextResolvePayload = () => {
+    const payloads = options?.resolvePayloads;
+    if (!payloads?.length) {
+      return options?.resolvePayload ?? successResponse;
+    }
+
+    return payloads[Math.min(resolvePayloadIndex++, payloads.length - 1)];
+  };
   const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
     const isResolve = url.includes("/v1/webpay/parking-session");
     const isReceipt = url.includes("/v1/webpay/payment-attempts/") && url.includes("/receipt-presentation");
@@ -174,7 +184,7 @@ function stubWebPayFetch(options?: {
         : options?.intentStatus ?? 200,
       json: async () => (
         isResolve
-          ? options?.resolvePayload ?? successResponse
+          ? nextResolvePayload()
           : isReceipt
             ? options?.receiptPayload ?? salesInvoicePresentationResponse
           : isStatutoryReceipt
@@ -771,6 +781,61 @@ describe("ExitPass WebPay UI", () => {
     const paymentIntentBody = JSON.parse(paymentIntentCall[1]?.body as string) as Record<string, unknown>;
     expect(paymentIntentBody.tariffSnapshotId).toBe(successResponse.tariffSnapshotId);
     expect(paymentIntentBody.expectedAmountMinorUnits).toBe(successResponse.amountMinorUnits);
+  });
+
+  it("WebPay_WhenProjectionSessionResolved_ShowsSessionAndBlocksFinancialWorkUntilLiveRetrySucceeds", async () => {
+    const projectedResponse = {
+      parkingSessionId: null,
+      tariffSnapshotId: null,
+      sessionFound: true,
+      sessionSource: "VENDOR_SESSION_PROJECTION",
+      degraded: true,
+      payableBasisAvailable: false,
+      siteGroupId: successResponse.siteGroupId,
+      siteId: successResponse.siteId,
+      vendorSystemId: successResponse.vendorSystemId,
+      siteName: "PITX Level 3",
+      ticketReference: "1474119573147",
+      plateNumber: "ABC1147",
+      entryTime: "2026-10-05T08:00:00+08:00",
+      parkingStatus: "ACTIVE",
+      paymentStatus: null,
+      amountMinorUnits: null,
+      currency: null,
+      vendorSessionProjectionId: "455bfa51-98b3-4fbf-9efb-336339596a34",
+      projectionStatus: "ACTIVE",
+      correlationId: successResponse.correlationId
+    };
+    const liveResponse = {
+      ...successResponse,
+      sessionFound: true,
+      sessionSource: "LIVE_VENDOR",
+      degraded: false,
+      payableBasisAvailable: true,
+      ticketReference: "1474119573147",
+      plateNumber: "ABC1147"
+    };
+    const fetchMock = stubWebPayFetch({ resolvePayloads: [projectedResponse, liveResponse] });
+
+    render(<App />);
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "1474119573147");
+    await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+
+    expect(await screen.findByText("Projection")).toBeInTheDocument();
+    expect(screen.getByText("ABC1147")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /live parking fee temporarily unavailable/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /payment method/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /customer information/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /continue to payment/i })).not.toBeInTheDocument();
+    expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/availability")).toHaveLength(0);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole("button", { name: /retry live fee/i }));
+
+    expect(await screen.findByRole("heading", { name: /payment method/i })).toBeInTheDocument();
+    expect(screen.queryByText("Projection")).not.toBeInTheDocument();
+    expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(2);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
   });
 
   it("WebPay_WhenDisplayedPayableBasisExists_ContinueToPaymentDoesNotResolveAgain", async () => {

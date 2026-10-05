@@ -222,6 +222,62 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal(DateTimeOffset.Parse("2026-05-18T13:15:00+08:00"), result.Value.FeeValidUntil);
     }
 
+    [Fact]
+    public async Task ResolveVendorParkingAsync_WhenProjectionSessionReturned_MapsNoFinancialAuthority()
+    {
+        var projectionId = Guid.Parse("455bfa51-98b3-4fbf-9efb-336339596a34");
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(new
+            {
+                parkingSessionId = (Guid?)null,
+                tariffSnapshotId = (Guid?)null,
+                sessionFound = true,
+                sessionSource = "VENDOR_SESSION_PROJECTION",
+                degraded = true,
+                payableBasisAvailable = false,
+                siteGroupId = "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
+                siteId = "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+                siteName = "PITX Level 3",
+                lookupOutcome = "projection_session_resolved",
+                plateNumber = "ABC1147",
+                ticketReference = "1474119573147",
+                entryTime = "2026-10-05T08:00:00+08:00",
+                netPayableMinorUnits = (long?)null,
+                currency = (string?)null,
+                paymentStatus = (string?)null,
+                vendorSessionProjectionId = projectionId,
+                projectionStatus = "ACTIVE",
+                projectionLastRefreshedAt = "2026-10-05T08:05:00+08:00",
+                projectionFreshnessAgeSeconds = 20,
+                vendorSystemId = "45a625de-9034-4fb6-b527-0950d384e51f",
+                correlationId = CorrelationId
+            })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.ResolveVendorParkingAsync(
+            null,
+            null,
+            "45a625de-9034-4fb6-b527-0950d384e51f",
+            null,
+            "1474119573147",
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Value!.SessionFound);
+        Assert.True(result.Value.Degraded);
+        Assert.False(result.Value.PayableBasisAvailable);
+        Assert.Equal("VENDOR_SESSION_PROJECTION", result.Value.SessionSource);
+        Assert.Equal(projectionId, result.Value.VendorSessionProjectionId);
+        Assert.Null(result.Value.ParkingSessionId);
+        Assert.Null(result.Value.TariffSnapshotId);
+        Assert.Null(result.Value.NetPayableMinorUnits);
+        Assert.Null(result.Value.Currency);
+        Assert.Null(result.Value.PaymentStatus);
+    }
+
     /// <summary>
     /// Verifies WebPay receipt presentation is read through Central PMS by payment attempt.
     /// </summary>

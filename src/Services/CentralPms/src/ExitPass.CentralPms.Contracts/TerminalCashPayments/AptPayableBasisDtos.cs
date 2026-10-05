@@ -39,8 +39,8 @@ public sealed record AptPayableBasisRevalidateRequest(
 public sealed record AptPayableBasisReadinessResponse(
     string Operation,
     string? RevalidationOutcome,
-    Guid ParkingSessionId,
-    Guid TariffSnapshotId,
+    Guid? ParkingSessionId,
+    Guid? TariffSnapshotId,
     Guid SiteGroupId,
     Guid SiteId,
     Guid SitePosServerId,
@@ -51,13 +51,13 @@ public sealed record AptPayableBasisReadinessResponse(
     string? PlateNumber,
     DateTimeOffset? EntryTimestamp,
     string ParkingStatus,
-    string PaymentStatus,
-    long AuthoritativeAmountMinorUnits,
+    string? PaymentStatus,
+    long? AuthoritativeAmountMinorUnits,
     bool? CustomerInformationSubmitted,
-    string Currency,
-    DateTimeOffset TariffCalculatedAt,
-    DateTimeOffset TariffValidUntil,
-    DateTimeOffset FeeValidUntil,
+    string? Currency,
+    DateTimeOffset? TariffCalculatedAt,
+    DateTimeOffset? TariffValidUntil,
+    DateTimeOffset? FeeValidUntil,
     string VendorSystemId,
     IReadOnlyList<AptReadinessDimensionDto> ReadinessDimensions,
     string SessionReadiness,
@@ -72,7 +72,32 @@ public sealed record AptPayableBasisReadinessResponse(
     IReadOnlyList<string> BlockingReasonCodes,
     bool Retryable,
     string SafeUserFacingClassification,
-    Guid CorrelationId);
+    Guid CorrelationId)
+{
+    /// <summary>Whether a safe session identity was found.</summary>
+    public bool SessionFound { get; init; } = true;
+
+    /// <summary>Live vendor or continuity-projection source.</summary>
+    public string SessionSource { get; init; } = "LIVE_VENDOR";
+
+    /// <summary>Whether the response is a degraded session-only result.</summary>
+    public bool Degraded { get; init; }
+
+    /// <summary>Whether authoritative payable-basis facts accompany the session.</summary>
+    public bool PayableBasisAvailable { get; init; } = true;
+
+    /// <summary>Projection identifier retained for bounded support traceability.</summary>
+    public Guid? VendorSessionProjectionId { get; init; }
+
+    /// <summary>Projection lifecycle status.</summary>
+    public string? ProjectionStatus { get; init; }
+
+    /// <summary>Successful projection refresh timestamp used for freshness enforcement.</summary>
+    public DateTimeOffset? ProjectionLastRefreshedAt { get; init; }
+
+    /// <summary>Age of the projection refresh in seconds.</summary>
+    public double? ProjectionFreshnessAgeSeconds { get; init; }
+}
 
 /// <summary>
 /// One readiness dimension returned for APT display and support diagnostics.
