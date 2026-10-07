@@ -185,7 +185,9 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             VendorSessionProjectionId = projection.VendorSessionProjectionId,
             ProjectionStatus = projection.ProjectionStatus.ToString().ToUpperInvariant(),
             ProjectionLastRefreshedAt = fallback.LastRefreshedAt,
-            ProjectionFreshnessAgeSeconds = fallback.FreshnessAge?.TotalSeconds
+            ProjectionFreshnessAgeSeconds = fallback.FreshnessAge?.TotalSeconds,
+            TariffSource = null,
+            ManualExitRequired = false
         };
 
         return new AptPayableBasisReadinessResult(true, response, null, null, 200, true, response.CorrelationId);
@@ -439,7 +441,21 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             blockingCodes,
             retryable,
             ready ? "READY_FOR_CASH_ACCEPTANCE" : "CASH_ACCEPTANCE_BLOCKED",
-            correlationId);
+            correlationId)
+        {
+            SessionFound = true,
+            SessionSource = resolved.SessionSource,
+            Degraded = resolved.Degraded,
+            PayableBasisAvailable = true,
+            VendorSessionProjectionId = resolved.ProjectionFallback?.Projection?.VendorSessionProjectionId,
+            ProjectionStatus = resolved.ProjectionFallback?.Projection?.ProjectionStatus.ToString().ToUpperInvariant(),
+            ProjectionLastRefreshedAt = resolved.ProjectionFallback?.LastRefreshedAt,
+            ProjectionFreshnessAgeSeconds = resolved.ProjectionFallback?.FreshnessAge?.TotalSeconds,
+            TariffSource = resolved.TariffSource,
+            ManualExitRequired = resolved.ManualExitRequired,
+            VehicleTypeCode = resolved.ProjectionFallback?.Projection?.CanonicalVehicleTypeCode,
+            TariffVersion = effectiveTariff.TariffVersionReference
+        };
 
         return new AptPayableBasisReadinessResult(true, response, null, null, 200, retryable, correlationId);
     }

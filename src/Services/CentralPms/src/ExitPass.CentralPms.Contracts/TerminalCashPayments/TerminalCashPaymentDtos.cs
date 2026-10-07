@@ -106,7 +106,8 @@ public sealed record TerminalCashFiscalIssuanceResponse(
     string? SafeErrorPosture,
     bool PosServerCallAttempted,
     bool ExitAuthorizationIssued,
-    bool GateBehaviorTriggered);
+    bool GateBehaviorTriggered,
+    string? ExitHandlingStatus = null);
 
 /// <summary>
 /// Terminal cash receipt-presentation readback response.

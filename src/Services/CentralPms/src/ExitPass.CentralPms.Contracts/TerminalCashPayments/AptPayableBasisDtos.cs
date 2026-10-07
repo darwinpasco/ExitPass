@@ -86,6 +86,18 @@ public sealed record AptPayableBasisReadinessResponse(
     /// <summary>Whether authoritative payable-basis facts accompany the session.</summary>
     public bool PayableBasisAvailable { get; init; } = true;
 
+    /// <summary>Live vendor or ExitPass continuity tariff source.</summary>
+    public string? TariffSource { get; init; }
+
+    /// <summary>Whether completion requires operator-assisted manual exit.</summary>
+    public bool ManualExitRequired { get; init; }
+
+    /// <summary>Canonical vehicle classification used by Central PMS.</summary>
+    public string? VehicleTypeCode { get; init; }
+
+    /// <summary>Immutable tariff version reference used by the payable basis.</summary>
+    public string? TariffVersion { get; init; }
+
     /// <summary>Projection identifier retained for bounded support traceability.</summary>
     public Guid? VendorSessionProjectionId { get; init; }
 

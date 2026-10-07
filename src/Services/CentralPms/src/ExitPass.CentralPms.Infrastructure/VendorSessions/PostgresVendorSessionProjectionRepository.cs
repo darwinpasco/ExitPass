@@ -93,6 +93,8 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 vendor_record_guid,
                 card_num,
                 plate_license,
+                vendor_vehicle_type_code,
+                canonical_vehicle_type_code,
                 enter_time,
                 exit_time,
                 allow_type,
@@ -131,6 +133,8 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 @vendor_record_guid,
                 @card_num,
                 @plate_license,
+                @vendor_vehicle_type_code,
+                @canonical_vehicle_type_code,
                 @enter_time,
                 @exit_time,
                 @allow_type,
@@ -169,6 +173,8 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 vendor_record_guid = COALESCE(EXCLUDED.vendor_record_guid, sessions.vendor_session_projections.vendor_record_guid),
                 card_num = COALESCE(EXCLUDED.card_num, sessions.vendor_session_projections.card_num),
                 plate_license = COALESCE(EXCLUDED.plate_license, sessions.vendor_session_projections.plate_license),
+                vendor_vehicle_type_code = COALESCE(EXCLUDED.vendor_vehicle_type_code, sessions.vendor_session_projections.vendor_vehicle_type_code),
+                canonical_vehicle_type_code = COALESCE(EXCLUDED.canonical_vehicle_type_code, sessions.vendor_session_projections.canonical_vehicle_type_code),
                 enter_time = COALESCE(EXCLUDED.enter_time, sessions.vendor_session_projections.enter_time),
                 exit_time = COALESCE(EXCLUDED.exit_time, sessions.vendor_session_projections.exit_time),
                 allow_type = EXCLUDED.allow_type,
@@ -202,6 +208,8 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 vendor_record_guid,
                 card_num,
                 plate_license,
+                vendor_vehicle_type_code,
+                canonical_vehicle_type_code,
                 enter_time,
                 exit_time,
                 allow_type,
@@ -259,6 +267,8 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 projection.vendor_record_guid,
                 projection.card_num,
                 projection.plate_license,
+                projection.vendor_vehicle_type_code,
+                projection.canonical_vehicle_type_code,
                 projection.enter_time,
                 projection.exit_time,
                 projection.allow_type,
@@ -368,6 +378,8 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
         command.Parameters.Add("vendor_record_guid", NpgsqlDbType.Text).Value = DbValue(projection.VendorRecordGuid);
         command.Parameters.Add("card_num", NpgsqlDbType.Text).Value = DbValue(projection.CardNum);
         command.Parameters.Add("plate_license", NpgsqlDbType.Text).Value = DbValue(projection.PlateLicense);
+        command.Parameters.Add("vendor_vehicle_type_code", NpgsqlDbType.Varchar).Value = DbValue(projection.VendorVehicleTypeCode);
+        command.Parameters.Add("canonical_vehicle_type_code", NpgsqlDbType.Varchar).Value = DbValue(projection.CanonicalVehicleTypeCode);
         command.Parameters.Add("enter_time", NpgsqlDbType.TimestampTz).Value = DbTimestampValue(projection.EnterTime);
         command.Parameters.Add("exit_time", NpgsqlDbType.TimestampTz).Value = DbTimestampValue(projection.ExitTime);
         command.Parameters.Add("allow_type", NpgsqlDbType.Text).Value = DbValue(projection.AllowType);
@@ -425,7 +437,9 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("created_at")),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("updated_at")))
         {
-            SourceAdapterIdentityId = GetNullableGuid(reader, "source_adapter_identity_id")
+            SourceAdapterIdentityId = GetNullableGuid(reader, "source_adapter_identity_id"),
+            VendorVehicleTypeCode = GetNullableString(reader, "vendor_vehicle_type_code"),
+            CanonicalVehicleTypeCode = GetNullableString(reader, "canonical_vehicle_type_code")
         };
     }
 

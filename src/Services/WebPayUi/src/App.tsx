@@ -158,7 +158,7 @@ type AuthoritativeParkingSessionResolveResponse = ParkingSessionResolveResponse 
   tariffSnapshotId: string;
   amountMinorUnits: number;
   currency: string;
-  degraded?: false;
+  degraded?: boolean;
   payableBasisAvailable?: true;
 };
 
@@ -455,7 +455,7 @@ export function App() {
       }
       setResolvedSession(response);
       setStage("SESSION_RESOLVED");
-      if (response.payableBasisAvailable !== false && response.degraded !== true && response.parkingSessionId) {
+      if (hasAuthoritativePayableBasis(response)) {
         void refreshStatutoryAvailability(response);
         void rediscoverStatutoryPendingLifecycle(response, sessionGeneration);
       } else {
@@ -1265,6 +1265,11 @@ export function App() {
   const zeroPayableStatutoryCompletion = Boolean(appliedStatutoryBasis?.amountMinorUnits === 0);
   const authoritativeSummary = hasAuthoritativePayableBasis(summary) ? summary : null;
   const isDegradedSession = Boolean(summary && !authoritativeSummary);
+  const isContinuityPayableBasis = Boolean(
+    authoritativeSummary?.degraded === true &&
+    authoritativeSummary.tariffSource === "EXITPASS_CONTINUITY" &&
+    authoritativeSummary.manualExitRequired === true
+  );
   const statutoryRecoveryMutationInFlight = hasKnownInFlightStatutoryRecoveryStage(statutoryRecoveryRecord);
   const canPayRegularWhilePending =
     stage === "SESSION_RESOLVED" &&
@@ -1430,6 +1435,18 @@ export function App() {
           <PayableBasisPanel
             session={authoritativeSummary}
           />
+        )}
+
+        {isContinuityPayableBasis && (
+          <section className="payable-basis-panel" aria-live="polite" aria-labelledby="continuity-tariff-heading">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Site continuity tariff</p>
+                <h2 id="continuity-tariff-heading">Parking fee available</h2>
+              </div>
+            </div>
+            <p>Fee calculated using the Site parking tariff because the parking system is temporarily unavailable.</p>
+          </section>
         )}
 
         {summary && isDegradedSession && (
@@ -3179,6 +3196,7 @@ function ExitInstructionPanel({ summary }: { summary: ParkingSessionResolveRespo
   const authorizationStatus = instruction?.status ?? summary.exitAuthorizationStatus;
   const exitBy = instruction?.exitBy ?? summary.exitBy ?? instruction?.expiresAt ?? summary.exitAuthorizationExpiresAt;
   const hasExitAuthorization = isExitAuthorizationAvailable(authorizationStatus);
+  const manualExitRequired = authorizationStatus === "MANUAL_EXIT_REQUIRED";
 
   return (
     <section className={hasExitAuthorization ? "exit-instruction-panel is-ready" : "exit-instruction-panel"} aria-labelledby="exit-instruction-heading">
@@ -3189,6 +3207,12 @@ function ExitInstructionPanel({ summary }: { summary: ParkingSessionResolveRespo
           {exitBy && <p className="exit-deadline">Exit by {formatTime(exitBy)}</p>}
           <p>Additional parking charges will apply if you do not exit by the expiry time.</p>
           <p>Do not close this page until you have exited the parking lot.</p>
+        </>
+      ) : manualExitRequired ? (
+        <>
+          <strong>Manual exit assistance required</strong>
+          <p>Show your successful payment and Sales Invoice to parking personnel for manual exit.</p>
+          <p>Parking personnel will tag the vehicle as exited when the parking system is restored.</p>
         </>
       ) : (
         <>
@@ -3234,8 +3258,10 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
   const rows = [
     ["Ticket", displayValue(summary.ticketReference)],
     ["Plate", displayValue(summary.plateNumber)],
+    ["Vehicle Type", displayValue(result.vehicleTypeCode)],
     ["Entry Time", displayValue(formatDateTime(summary.entryTime))],
     ["Duration", displayValue(summary.durationParked ?? formatDuration(summary.entryTime, summary.currentFeeCalculationTime))],
+    ["Tariff Version", displayValue(result.tariffVersion)],
     ["Fee Valid Until", displayValue(formatDateTime(summary.feeValidUntil ?? summary.tariffExpiresAt))]
   ];
 
@@ -3265,8 +3291,11 @@ function hasAuthoritativePayableBasis(
 ): session is AuthoritativeParkingSessionResolveResponse {
   return Boolean(
     session &&
-    session.degraded !== true &&
     session.payableBasisAvailable !== false &&
+    (session.degraded !== true ||
+      (session.sessionSource === "VENDOR_SESSION_PROJECTION" &&
+        session.tariffSource === "EXITPASS_CONTINUITY" &&
+        session.manualExitRequired === true)) &&
     session.parkingSessionId &&
     session.tariffSnapshotId &&
     typeof session.amountMinorUnits === "number" &&

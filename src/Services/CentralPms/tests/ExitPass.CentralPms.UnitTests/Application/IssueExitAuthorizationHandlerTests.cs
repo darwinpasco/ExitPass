@@ -4,6 +4,7 @@ using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -164,6 +165,26 @@ public sealed class IssueExitAuthorizationHandlerTests
         await _gateway.Received(1).IssueAsync(
             Arg.Any<IssueExitAuthorizationDbRequest>(),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenTariffIsContinuity_BlocksBeforeGateway()
+    {
+        var provenance = Substitute.For<IContinuityTariffProvenanceReader>();
+        var command = ValidCommand();
+        provenance.IsContinuityTariffAsync(
+                command.ParkingSessionId,
+                Arg.Any<Guid?>(),
+                command.PaymentAttemptId,
+                Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        var action = () => CreateSut(continuityTariffProvenance: provenance)
+            .ExecuteAsync(command, CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(action);
+        Assert.Equal(ExitAuthorizationEligibilityBlockedReasons.ContinuityTariffManualExitRequired, exception.ErrorCode);
+        await _gateway.DidNotReceiveWithAnyArgs().IssueAsync(default!, default);
     }
 
     [Fact]
@@ -848,7 +869,8 @@ public sealed class IssueExitAuthorizationHandlerTests
         IExitAuthorizationFiscalGatingShadowEvaluator? fiscalGatingShadowEvaluator = null,
         bool isPaymentFinalityVerified = true,
         FiscalIssuanceExitAuthorizationGatingOptions? fiscalGatingOptions = null,
-        IPaymentFinalityCompletionAuthorityReader? completionAuthorityReader = null)
+        IPaymentFinalityCompletionAuthorityReader? completionAuthorityReader = null,
+        IContinuityTariffProvenanceReader? continuityTariffProvenance = null)
     {
         var effectiveFiscalGatingEvaluator = fiscalGatingShadowEvaluator ?? ReadyFiscalGatingEvaluator();
         var paymentFinalityReader = Substitute.For<IExitAuthorizationPaymentFinalityReadRepository>();
@@ -865,7 +887,8 @@ public sealed class IssueExitAuthorizationHandlerTests
             effectiveFiscalGatingEvaluator,
             paymentFinalityReader,
             fiscalGatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions(),
-            completionAuthorityReader);
+            completionAuthorityReader,
+            continuityTariffProvenance);
     }
 
     private static IExitAuthorizationFiscalGatingShadowEvaluator ReadyFiscalGatingEvaluator()

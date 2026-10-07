@@ -53,4 +53,6 @@ public sealed record OperatorConsoleSessionLookupResponse(
     string? PaymentAttemptStatus = null,
     string? PaymentConfirmationStatus = null,
     long? AmountPaidMinorUnits = null,
-    string? PaymentMethod = null);
+    string? PaymentMethod = null,
+    string? TariffSource = null,
+    string? ExitHandlingStatus = null);

@@ -197,6 +197,7 @@ app.MapManagementDashboardReportingEndpoints();
 app.MapManagementPlatformStatutoryDiscountPolicyCoverageEndpoints();
 app.MapManagementPlatformStatutoryEvidenceGovernanceEndpoints();
 app.MapManagementPlatformSalesInvoiceProfileAdministrationEndpoints();
+app.MapManagementConfigurationEndpoints();
 app.MapAptPayableBasisEndpoints();
 app.MapAptStatutoryOrdinanceAvailabilityEndpoints();
 app.MapTerminalCashPaymentEndpoints();
@@ -468,6 +469,11 @@ static void ConfigureApplicationServices(
             options => options.Validate().Count == 0,
             "Vendor session projection timing and freshness configuration is invalid.")
         .ValidateOnStart();
+    builder.Services.AddScoped<IContinuityTariffRepository>(_ =>
+        new PostgresContinuityTariffRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IContinuityTariffCalculator, ContinuityTariffCalculator>();
+    builder.Services.AddScoped<IContinuityTariffProvenanceReader>(_ =>
+        new ContinuityTariffProvenanceReader(mainDatabaseConnectionString));
     builder.Services.AddScoped<IVendorParkingResolutionPersistence>(_ =>
         new VendorParkingResolutionPersistence(mainDatabaseConnectionString));
     builder.Services.AddScoped<IVendorSessionProjectionRepository>(_ =>
@@ -711,7 +717,8 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IExitAuthorizationFiscalGatingShadowEvaluator>(),
             serviceProvider.GetRequiredService<IExitAuthorizationPaymentFinalityReadRepository>(),
             serviceProvider.GetRequiredService<IOptions<FiscalIssuanceExitAuthorizationGatingOptions>>().Value,
-            serviceProvider.GetRequiredService<IPaymentFinalityCompletionAuthorityReader>()));
+            serviceProvider.GetRequiredService<IPaymentFinalityCompletionAuthorityReader>(),
+            serviceProvider.GetRequiredService<IContinuityTariffProvenanceReader>()));
     builder.Services.AddScoped<IIssueExitAuthorizationGateway>(serviceProvider =>
         new IssueExitAuthorizationGateway(
             mainDatabaseConnectionString,
@@ -947,6 +954,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageRepository>(_ =>
         new ManagementPlatformStatutoryDiscountPolicyCoverageRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageService, ManagementPlatformStatutoryDiscountPolicyCoverageService>();
+    builder.Services.AddScoped<IManagementConfigurationRepository>(_ =>
+        new PostgresManagementConfigurationRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<ManagementConfigurationService>();
     builder.Services.AddScoped<IManagementPlatformStatutoryEvidenceGovernanceRepository>(_ =>
         new ManagementPlatformStatutoryEvidenceGovernanceRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IManagementPlatformStatutoryEvidenceGovernanceService>(serviceProvider =>

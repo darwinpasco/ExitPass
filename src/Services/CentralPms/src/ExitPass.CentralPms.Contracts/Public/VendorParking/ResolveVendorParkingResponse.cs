@@ -35,6 +35,18 @@ public sealed class ResolveVendorParkingResponse
     /// </summary>
     public bool PayableBasisAvailable { get; set; }
 
+    /// <summary>LIVE_VENDOR or EXITPASS_CONTINUITY when a payable basis exists.</summary>
+    public string? TariffSource { get; set; }
+
+    /// <summary>True when payment may complete but physical exit requires operator assistance.</summary>
+    public bool ManualExitRequired { get; set; }
+
+    /// <summary>Canonical vehicle classification used for continuity tariff selection.</summary>
+    public string? VehicleTypeCode { get; set; }
+
+    /// <summary>Immutable tariff version reference used by the payable basis.</summary>
+    public string? TariffVersion { get; set; }
+
     /// <summary>
     /// Site group that owns the resolved parking session.
     /// </summary>

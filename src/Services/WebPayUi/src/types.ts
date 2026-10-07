@@ -118,6 +118,10 @@ export type ParkingSessionResolveResponse = {
   sessionSource?: "LIVE_VENDOR" | "VENDOR_SESSION_PROJECTION" | string;
   degraded?: boolean;
   payableBasisAvailable?: boolean;
+  tariffSource?: "LIVE_VENDOR" | "EXITPASS_CONTINUITY" | string | null;
+  manualExitRequired?: boolean;
+  vehicleTypeCode?: string | null;
+  tariffVersion?: string | null;
   siteGroupId?: string | null;
   siteId?: string | null;
   vendorSystemId?: string | null;

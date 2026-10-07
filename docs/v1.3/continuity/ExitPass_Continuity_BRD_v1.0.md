@@ -13,6 +13,7 @@ Product scope: ExitPass Continuity capability
 | Version | Date | Author / owner | Summary |
 | --- | --- | --- | --- |
 | v1.0 | 2026-07-01 | ExitPass documentation stream | Initial companion BRD for ExitPass Continuity covering controlled degraded operations, activation/deactivation, projection-based resolve, Continuity Terminal use, manual/assisted release controls, fiscal exception handling, audit tagging, reconciliation tagging, and post-restoration review. |
+| v1.1 | 2026-10-06 | ExitPass v1.3 continuity implementation | Approves Central PMS Site-scoped degraded tariff calculation, continuity payment and POS fiscal issuance, mandatory manual exit, and suppression of normal ExitAuthorization and vendor acknowledgment. |
 
 ### 1.2 Approvals
 
@@ -398,6 +399,9 @@ PlantUML source: [D-04_Payment_Fiscal_Issuance_and_ExitAuthorization_Under_Conti
 | PROJ-006 | Degraded tariff shall use approved ExitPass-maintained tariff configuration or last approved tariff configuration. |
 | PROJ-007 | Passageway records alone shall not be used to invent tariffs. |
 | PROJ-008 | Exact projection freshness threshold remains open. |
+| PROJ-009 | For the v1.3 implementation slice, Central PMS shall calculate a Site-scoped block tariff from a fresh, unique projected entry timestamp using an explicitly enabled, versioned configuration and integer minor-unit arithmetic. |
+| PROJ-010 | A valid continuity calculation shall create or reuse the canonical parking session and create an immutable canonical TariffSnapshot marked `EXITPASS-CONTINUITY:<site-tariff-version>`. |
+| PROJ-011 | Missing or invalid Site tariff configuration shall preserve session visibility but shall not establish a payable basis or enable payment. |
 
 ## 21. Continuity Terminal Requirements
 
@@ -439,6 +443,11 @@ Central PMS / Discount workflow remains authority for policy resolution and stat
 | PFE-006 | Fiscal issuance failure shall not automatically authorize exit. |
 | PFE-007 | Central PMS shall issue ExitAuthorization only when payment, fiscal, and other eligibility requirements are satisfied or a formally approved manual emergency process applies. |
 | PFE-008 | Customer/operator message shall show pending verification, fiscal exception, or exit pending state clearly. |
+| PFE-009 | WebPay and APT may collect payment against a valid canonical continuity TariffSnapshot using their existing payment paths. |
+| PFE-010 | POS Server Sales Invoice issuance shall proceed through the existing fiscal path for paid or zero-payable continuity transactions. |
+| PFE-011 | A continuity-derived payable basis shall never produce normal ExitAuthorization; successful completion shall report `MANUAL_EXIT_REQUIRED`. |
+| PFE-012 | A continuity-derived transaction shall not create or queue automatic Vendor PMS/HikCentral payment acknowledgment or session-close work. |
+| PFE-013 | Authorized parking personnel shall handle physical exit manually and later tag the session exited in HikCentral after restoration. |
 
 ## 24. Manual Release and Supervisor Escalation
 
@@ -579,14 +588,11 @@ These questions do not reopen approved decisions.
 | CON-OQ-001 | What is the exact BCP / continuity activation authority? |
 | CON-OQ-002 | What is the exact activation approval workflow? |
 | CON-OQ-003 | What is the exact projection freshness threshold? |
-| CON-OQ-004 | Who owns exact degraded tariff configuration? |
-| CON-OQ-005 | What are exact degraded tariff rounding and grace rules? |
 | CON-OQ-006 | What is the exact Continuity Terminal activation/deactivation workflow? |
 | CON-OQ-007 | What is the exact offline payment policy, if any? |
 | CON-OQ-008 | What is the exact offline fiscal issuance policy, if any? |
 | CON-OQ-009 | What is the exact fiscal issuance exception release policy? |
 | CON-OQ-010 | What is the exact manual release policy and emergency override boundary? |
-| CON-OQ-011 | What is the exact vendor acknowledgment retry policy? |
 | CON-OQ-012 | What is the exact reconciliation SLA after restoration? |
 | CON-OQ-013 | What are exact dashboard fields and alert thresholds? |
 | CON-OQ-014 | What is the exact evidence retention policy for continuity-mode exceptions? |

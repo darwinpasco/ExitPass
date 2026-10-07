@@ -3,6 +3,7 @@ using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
+using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry.Trace;
@@ -46,6 +47,7 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
     private readonly ISystemClock _systemClock;
     private readonly ILogger<ReportVerifiedPaymentOutcomeHandler> _logger;
     private readonly CentralPmsMetrics _metrics;
+    private readonly IContinuityTariffProvenanceReader? _continuityTariffProvenance;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ReportVerifiedPaymentOutcomeHandler"/> class.
@@ -69,7 +71,8 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
         IVendorPaymentAcknowledgmentWorkflow? vendorPaymentAcknowledgmentWorkflow = null,
         IDigitalPaymentFiscalIssuanceService? digitalPaymentFiscalIssuanceService = null,
         FiscalIssuancePosServerIntegrationOptions? posServerOptions = null,
-        IDigitalPaymentFiscalRecoveryContextReader? digitalPaymentFiscalRecoveryContextReader = null)
+        IDigitalPaymentFiscalRecoveryContextReader? digitalPaymentFiscalRecoveryContextReader = null,
+        IContinuityTariffProvenanceReader? continuityTariffProvenance = null)
     {
         _recordPaymentConfirmationGateway = recordPaymentConfirmationGateway;
         _finalizePaymentAttemptUseCase = finalizePaymentAttemptUseCase;
@@ -82,6 +85,7 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
         _systemClock = systemClock;
         _logger = logger;
         _metrics = metrics ?? new CentralPmsMetrics();
+        _continuityTariffProvenance = continuityTariffProvenance;
     }
 
     /// <summary>
@@ -187,6 +191,19 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
             cancellationToken);
 
         await EnsureDigitalFiscalIssuanceAsync(command, confirmation, cancellationToken);
+
+        if (await IsContinuityTariffAsync(command, cancellationToken))
+        {
+            await PublishBestEffortAsync(
+                CreatePaymentFinalityReportedEvent(command, confirmation, finalized),
+                cancellationToken);
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            activity?.SetTag("attempt_status", finalized.AttemptStatus);
+            activity?.SetTag("outcome", "manual_exit_required");
+
+            return ManualExitRequiredResult(confirmation, finalized);
+        }
 
         var issued = await _issueExitAuthorizationUseCase.ExecuteAsync(
             new IssueExitAuthorizationCommand(
@@ -305,6 +322,18 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
 
         await EnsureDigitalFiscalIssuanceAsync(command, confirmation, cancellationToken);
 
+        if (await IsContinuityTariffAsync(command, cancellationToken))
+        {
+            if (!recovery.IsCompleted)
+            {
+                await PublishBestEffortAsync(
+                    CreatePaymentFinalityReportedEvent(command, confirmation, finalized),
+                    cancellationToken);
+            }
+
+            return ManualExitRequiredResult(confirmation, finalized);
+        }
+
         var issued = await _issueExitAuthorizationUseCase.ExecuteAsync(
             new IssueExitAuthorizationCommand(
                 command.ParkingSessionId,
@@ -356,6 +385,30 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
                 "The final payment request does not match its persisted fiscal recovery context.");
         }
     }
+
+    private async Task<bool> IsContinuityTariffAsync(
+        ReportVerifiedPaymentOutcomeCommand command,
+        CancellationToken cancellationToken) =>
+        _continuityTariffProvenance is not null &&
+        await _continuityTariffProvenance.IsContinuityTariffAsync(
+            command.ParkingSessionId,
+            tariffSnapshotId: null,
+            command.PaymentAttemptId,
+            cancellationToken);
+
+    private static ReportVerifiedPaymentOutcomeResult ManualExitRequiredResult(
+        RecordPaymentConfirmationResult confirmation,
+        FinalizePaymentAttemptResult finalized) =>
+        new(
+            confirmation.PaymentConfirmationId,
+            finalized.PaymentAttemptId,
+            finalized.AttemptStatus,
+            ExitAuthorizationId: null,
+            AuthorizationToken: null,
+            AuthorizationStatus: ExitAuthorizationEligibilityStatuses.ManualExitRequired,
+            confirmation.VerifiedTimestamp,
+            IssuedAt: null,
+            ExpirationTimestamp: null);
 
     /// <summary>
     /// Validates the verified payment outcome command.

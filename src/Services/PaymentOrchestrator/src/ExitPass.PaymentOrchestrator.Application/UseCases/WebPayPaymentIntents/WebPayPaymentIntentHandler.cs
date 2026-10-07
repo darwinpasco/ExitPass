@@ -1013,6 +1013,10 @@ public sealed class WebPayPaymentIntentHandler
             SessionSource = parking.SessionSource,
             Degraded = parking.Degraded,
             PayableBasisAvailable = parking.PayableBasisAvailable,
+            TariffSource = parking.TariffSource,
+            ManualExitRequired = parking.ManualExitRequired,
+            VehicleTypeCode = parking.VehicleTypeCode,
+            TariffVersion = parking.TariffVersion,
             SiteGroupId = parking.SiteGroupId,
             SiteId = parking.SiteId,
             VendorSystemId = BlankToNull(parking.VendorSystemId),
@@ -1041,8 +1045,11 @@ public sealed class WebPayPaymentIntentHandler
 
     private static bool HasAuthoritativePayableBasis(CentralPmsResolvedParking parking) =>
         parking.SessionFound &&
-        !parking.Degraded &&
         parking.PayableBasisAvailable &&
+        (!parking.Degraded ||
+            (string.Equals(parking.SessionSource, "VENDOR_SESSION_PROJECTION", StringComparison.Ordinal) &&
+             string.Equals(parking.TariffSource, "EXITPASS_CONTINUITY", StringComparison.Ordinal) &&
+             parking.ManualExitRequired)) &&
         parking.ParkingSessionId.HasValue &&
         parking.ParkingSessionId.Value != Guid.Empty &&
         parking.TariffSnapshotId.HasValue &&

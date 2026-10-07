@@ -1058,6 +1058,38 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Null(fixture.CapturedInitiateRequest);
     }
 
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenProjectionHasContinuityPayableBasis_UsesNormalPaymentFlow()
+    {
+        var fixture = CreateFixture("GCASH", "PAYMONGO", null);
+        fixture.CentralPms.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
+            new CentralPmsResolvedParking(
+                ParkingSessionId,
+                TariffSnapshotId,
+                10000,
+                "PHP",
+                "HIKCENTRAL",
+                CorrelationId,
+                TicketReference: "1474119573147",
+                PlateNumber: "ABC1147",
+                SiteGroupId: SiteGroupId,
+                SiteId: SiteId,
+                SessionFound: true,
+                SessionSource: "VENDOR_SESSION_PROJECTION",
+                Degraded: true,
+                PayableBasisAvailable: true,
+                TariffSource: "EXITPASS_CONTINUITY",
+                ManualExitRequired: true));
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("GCASH"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.True(fixture.CreatePaymentAttemptWasCalled);
+        Assert.NotNull(fixture.CapturedRouteRequest);
+        Assert.Equal(10000, fixture.CapturedRouteRequest!.AmountMinorUnits);
+        Assert.NotNull(fixture.CapturedInitiateRequest);
+    }
+
     /// <summary>
     /// Verifies fallback-looking backend site names are not exposed in the WebPay parking-session response.
     /// </summary>

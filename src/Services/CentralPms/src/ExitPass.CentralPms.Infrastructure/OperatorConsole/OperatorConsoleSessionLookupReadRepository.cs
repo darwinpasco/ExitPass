@@ -75,6 +75,7 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                 ps.session_status::text AS session_status,
                 active_tariff.currency_code AS tariff_currency_code,
                 active_tariff.net_amount AS current_payable_amount,
+                active_tariff.tariff_version_reference,
                 CASE
                     WHEN active_tariff.tariff_snapshot_id IS NULL THEN NULL
                     WHEN active_tariff.statutory_discount_amount > 0 OR active_tariff.coupon_discount_amount > 0 THEN 'APPLIED'
@@ -94,6 +95,11 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                     COALESCE(latest_confirmation.confirmed_at, now()) - COALESCE(ps.entry_at, ps.created_at)
                 )))::bigint AS parking_duration_seconds,
                 latest_exit.authorization_status::text AS exit_authorization_status,
+                CASE
+                    WHEN active_tariff.tariff_version_reference LIKE 'EXITPASS-CONTINUITY:%'
+                    THEN 'MANUAL_EXIT_REQUIRED'
+                    ELSE NULL
+                END AS exit_handling_status,
                 vendor.vendor_code AS vendor_system_code
             FROM core.parking_sessions AS ps
             INNER JOIN sites.sites AS site ON site.site_id = ps.site_id
@@ -104,7 +110,8 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                     currency_code,
                     net_amount,
                     statutory_discount_amount,
-                    coupon_discount_amount
+                    coupon_discount_amount,
+                    tariff_version_reference
                 FROM core.tariff_snapshots
                 WHERE parking_session_id = ps.parking_session_id
                   AND snapshot_status = 'ACTIVE'
@@ -206,7 +213,11 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
             PaymentAttemptStatus: GetNullableString(reader, "payment_attempt_status"),
             PaymentConfirmationStatus: GetNullableString(reader, "payment_confirmation_status"),
             AmountPaidMinorUnits: GetNullableInt64(reader, "amount_paid_minor_units"),
-            PaymentMethod: GetNullableString(reader, "payment_method_code"));
+            PaymentMethod: GetNullableString(reader, "payment_method_code"),
+            TariffSource: GetNullableString(reader, "tariff_version_reference")?.StartsWith("EXITPASS-CONTINUITY:", StringComparison.Ordinal) == true
+                ? "EXITPASS_CONTINUITY"
+                : "LIVE_VENDOR",
+            ExitHandlingStatus: GetNullableString(reader, "exit_handling_status"));
 
         if (await reader.ReadAsync(cancellationToken))
         {

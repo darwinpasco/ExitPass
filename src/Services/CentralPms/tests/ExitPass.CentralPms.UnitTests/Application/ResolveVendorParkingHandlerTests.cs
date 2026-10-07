@@ -332,6 +332,65 @@ public sealed class ResolveVendorParkingHandlerTests
     }
 
     [Theory]
+    [InlineData(VendorParkingLookupStatus.AdapterError)]
+    [InlineData(VendorParkingLookupStatus.UnavailableRetryable)]
+    public async Task ResolveVendorSession_WhenProjectionAndSiteTariffAreAvailable_ReturnsContinuityPayableBasis(
+        VendorParkingLookupStatus liveStatus)
+    {
+        var persistence = new RecordingVendorParkingResolutionPersistence();
+        var sut = CreateSut(
+            FakeVendorPmsParkingResolutionClient.WithStatus(liveStatus),
+            projectionLookup: new RecordingProjectionLookupService(FreshProjection()),
+            projectionOptions: new VendorSessionProjectionOptions
+            {
+                DegradedResolveFallbackEnabled = true,
+                MaxProjectionAgeMinutes = 1
+            },
+            clock: new FixedClock(Now),
+            persistence: persistence,
+            continuityTariffCalculator: SyntheticContinuityCalculator());
+
+        var result = await sut.ExecuteAsync(TicketCommand(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.Resolved);
+        result.SessionSource.Should().Be("VENDOR_SESSION_PROJECTION");
+        result.Degraded.Should().BeTrue();
+        result.TariffSource.Should().Be("EXITPASS_CONTINUITY");
+        result.ManualExitRequired.Should().BeTrue();
+        result.ParkingSession.Should().NotBeNull();
+        result.TariffSnapshot.Should().NotBeNull();
+        result.TariffSnapshot!.NetPayable.Should().Be(75m);
+        result.TariffSnapshot.TariffVersionReference.Should().Be("EXITPASS-CONTINUITY:SYNTHETIC-V1");
+        persistence.LastRequest.Should().NotBeNull();
+        persistence.LastRequest!.TariffOrigin.Should().Be(VendorParkingTariffOrigin.ExitPassContinuity);
+        persistence.LastRequest.ReferencesAlreadyExist.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ResolveVendorSession_WhenProjectionHasNoApprovedSiteTariff_RemainsProjectionOnly()
+    {
+        var persistence = new RecordingVendorParkingResolutionPersistence();
+        var sut = CreateSut(
+            FakeVendorPmsParkingResolutionClient.AdapterError(),
+            projectionLookup: new RecordingProjectionLookupService(FreshProjection()),
+            projectionOptions: new VendorSessionProjectionOptions
+            {
+                DegradedResolveFallbackEnabled = true,
+                MaxProjectionAgeMinutes = 1
+            },
+            clock: new FixedClock(Now),
+            persistence: persistence,
+            continuityTariffCalculator: new ContinuityTariffCalculator(new StubContinuityTariffRepository(null)));
+
+        var result = await sut.ExecuteAsync(TicketCommand(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.ProjectionSessionResolved);
+        result.ParkingSession.Should().BeNull();
+        result.TariffSnapshot.Should().BeNull();
+        persistence.LastRequest.Should().BeNull();
+    }
+
+    [Theory]
     [InlineData(VendorParkingLookupStatus.NotFound)]
     [InlineData(VendorParkingLookupStatus.ValidationError)]
     [InlineData(VendorParkingLookupStatus.VendorRejected)]
@@ -581,7 +640,8 @@ public sealed class ResolveVendorParkingHandlerTests
         IVendorSessionProjectionLookupService? projectionLookup = null,
         VendorSessionProjectionOptions? projectionOptions = null,
         ISystemClock? clock = null,
-        IVendorParkingResolutionPersistence? persistence = null)
+        IVendorParkingResolutionPersistence? persistence = null,
+        IContinuityTariffCalculator? continuityTariffCalculator = null)
     {
         return new ResolveVendorParkingHandler(
             vendorClient,
@@ -591,7 +651,8 @@ public sealed class ResolveVendorParkingHandlerTests
             NullLogger<ResolveVendorParkingHandler>.Instance,
             projectionLookup,
             Options.Create(projectionOptions ?? new VendorSessionProjectionOptions()),
-            clock);
+            clock,
+            continuityTariffCalculator);
     }
 
     private static CreateOrReusePaymentAttemptHandler CreatePaymentAttemptSut(
@@ -730,7 +791,47 @@ public sealed class ResolveVendorParkingHandlerTests
             ProjectionStatus: VendorSessionProjectionStatus.Active,
             CorrelationId: CorrelationId,
             CreatedAt: Now.AddMinutes(-5),
-            UpdatedAt: Now.AddMinutes(-5));
+            UpdatedAt: Now.AddMinutes(-5))
+        {
+            SourceAdapterIdentityId = Guid.Parse("55a625de-9034-4fb6-b527-0950d384e510"),
+            VendorVehicleTypeCode = "5",
+            CanonicalVehicleTypeCode = ContinuityVehicleTypes.Car
+        };
+    }
+
+    private static IContinuityTariffCalculator SyntheticContinuityCalculator() =>
+        new ContinuityTariffCalculator(new StubContinuityTariffRepository(
+            new ContinuityTariffDefinition(
+                Guid.Parse("b6ec5a68-828d-5f0a-8f5c-f79926279736"),
+                Guid.Parse("35a625de-9034-4fb6-b527-0950d384e51e"),
+                "Asia/Manila",
+                ContinuityVehicleTypes.Car,
+                "SYNTHETIC",
+                "SYNTHETIC-V1",
+                "PHP",
+                10,
+                null,
+                null,
+                5,
+                Now.AddDays(-1),
+                null,
+                [
+                    new ContinuityTariffRule(Guid.NewGuid(), 1, "DURATION", "FLAT_RATE", 0, 20, null, null, 5000, null, null),
+                    new ContinuityTariffRule(Guid.NewGuid(), 2, "DURATION", "UNIT_DURATION", 20, null, null, null, 2500, 30, "WHOLE_STARTED_HOUR")
+                ])));
+
+    private sealed class StubContinuityTariffRepository(ContinuityTariffDefinition? definition) : IContinuityTariffRepository
+    {
+        public Task<ContinuityTariffDefinition?> FindActiveAsync(
+            Guid siteId,
+            string vehicleTypeCode,
+            DateTimeOffset at,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(definition is not null &&
+                definition.SiteId == siteId &&
+                definition.VehicleTypeCode == vehicleTypeCode
+                    ? definition
+                    : null);
     }
 
     private sealed class FakeVendorPmsParkingResolutionClient : IVendorPmsParkingResolutionClient
@@ -938,6 +1039,26 @@ public sealed class ResolveVendorParkingHandlerTests
                 VendorSystemId = "45a625de-9034-4fb6-b527-0950d384e51f",
                 SiteGroupName = siteGroupName,
                 SiteName = siteName
+            });
+        }
+    }
+
+    private sealed class RecordingVendorParkingResolutionPersistence : IVendorParkingResolutionPersistence
+    {
+        public PersistVendorParkingResolutionRequest? LastRequest { get; private set; }
+
+        public Task<PersistVendorParkingResolutionResult> PersistAsync(
+            PersistVendorParkingResolutionRequest request,
+            CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            return Task.FromResult(new PersistVendorParkingResolutionResult
+            {
+                ParkingSession = request.ParkingSession,
+                TariffSnapshot = request.TariffSnapshot,
+                VendorSystemId = request.RequestedVendorSystemId?.ToString("D") ?? string.Empty,
+                SiteGroupName = "PITX",
+                SiteName = "PITX Level 3"
             });
         }
     }

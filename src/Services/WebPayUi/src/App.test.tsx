@@ -838,6 +838,38 @@ describe("ExitPass WebPay UI", () => {
     expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
   });
 
+  it("WebPay_WhenProjectionHasContinuityPayableBasis_ShowsFeeAndAllowsNormalPayment", async () => {
+    const continuityResponse = {
+      ...successResponse,
+      sessionFound: true,
+      sessionSource: "VENDOR_SESSION_PROJECTION",
+      degraded: true,
+      payableBasisAvailable: true,
+      tariffSource: "EXITPASS_CONTINUITY",
+      manualExitRequired: true,
+      ticketReference: "1474119573147",
+      plateNumber: "ABC1147",
+      amountMinorUnits: 10000,
+      currency: "PHP"
+    };
+    const fetchMock = stubWebPayFetch({ resolvePayload: continuityResponse });
+
+    render(<App />);
+    await resolveTicket("1474119573147", "100.00");
+
+    expect(screen.getByRole("heading", { name: /parking fee available/i })).toBeInTheDocument();
+    expect(screen.getByText(/fee calculated using the site parking tariff/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /payment method/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /live parking fee temporarily unavailable/i })).not.toBeInTheDocument();
+
+    await continueToPayment();
+
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1));
+    const paymentIntentBody = JSON.parse(firstRouteCall(fetchMock, "/v1/webpay/payment-intents")[1]?.body as string) as Record<string, unknown>;
+    expect(paymentIntentBody.tariffSnapshotId).toBe(continuityResponse.tariffSnapshotId);
+    expect(paymentIntentBody.expectedAmountMinorUnits).toBe(10000);
+  });
+
   it("WebPay_WhenDisplayedPayableBasisExists_ContinueToPaymentDoesNotResolveAgain", async () => {
     const displayedBasis = {
       ...successResponse,

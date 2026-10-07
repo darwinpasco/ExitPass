@@ -326,6 +326,8 @@ export interface OperatorTicketLookupResult {
   vendorConfirmationTimestamp?: string;
   vendorMessage?: string;
   sessionSource?: string;
+  tariffSource?: string;
+  exitHandlingStatus?: string;
   projectionStatus?: string;
   projectionSourceEventAt?: string;
   projectionLastRefreshedAt?: string;

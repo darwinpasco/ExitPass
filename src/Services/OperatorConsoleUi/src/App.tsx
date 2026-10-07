@@ -2953,7 +2953,9 @@ function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult })
           ["Site", displayValue(result.siteName)],
           ["Parking in time", result.parkingInTime ? formatDateTime(result.parkingInTime) : "Not available"],
           ["Parking duration", formatParkingDuration(result.parkingDurationSeconds)],
+          ["Tariff source", result.tariffSource === "EXITPASS_CONTINUITY" ? "ExitPass Continuity" : displayValue(result.tariffSource)],
           ["Exit Authorization", displayValue(result.exitAuthorizationStatus)],
+          ["Exit handling", displayValue(result.exitHandlingStatus)],
           ["Current payable amount", formatTicketLookupMoney(result.feeMinorUnits, result.currencyCode)],
           ["Payment attempt status", displayValue(result.paymentAttemptStatus)],
           ["Payment Status", displayValue(result.paymentStatus)],
@@ -2961,6 +2963,9 @@ function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult })
           ["Payment method", displayValue(result.paymentMethod)]
         ]}
       />
+      {result.exitHandlingStatus === "MANUAL_EXIT_REQUIRED" && (
+        <p className="notice">Verify payment and allow manual exit. When HikCentral service is restored, tag the vehicle as EXITED in HikCentral.</p>
+      )}
     </section>
   );
 }

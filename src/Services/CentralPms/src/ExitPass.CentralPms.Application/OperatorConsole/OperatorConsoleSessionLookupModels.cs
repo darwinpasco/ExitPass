@@ -70,4 +70,6 @@ public sealed record OperatorConsoleSessionReadModel(
     string? PaymentConfirmationStatus = null,
     long? AmountPaidMinorUnits = null,
     string? PaymentMethod = null,
-    Guid? VendorSystemId = null);
+    Guid? VendorSystemId = null,
+    string? TariffSource = null,
+    string? ExitHandlingStatus = null);

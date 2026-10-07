@@ -291,6 +291,14 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "statutory-discounts.evidence.delete-request"
             ],
+            ["ManagementSiteRead"] = ["site.view"],
+            ["ManagementSiteManage"] = ["site.manage"],
+            ["ManagementJurisdictionRead"] = ["jurisdiction.view"],
+            ["ManagementJurisdictionManage"] = ["jurisdiction.manage"],
+            ["ManagementStatutoryPolicyRead"] = ["statutory-discount-policy.view"],
+            ["ManagementStatutoryPolicyManage"] = ["statutory-discount-policy.manage"],
+            ["ManagementSiteTariffRead"] = ["site-tariff.view"],
+            ["ManagementSiteTariffManage"] = ["site-tariff.manage"],
 
             ["OperatorConsolePolicyImportReviewSubmit"] = ["operator-console.policy-import-review.submit", "operator-console.policy-import-review.manage"],
             ["OperatorConsolePolicyImportReviewViewer"] =

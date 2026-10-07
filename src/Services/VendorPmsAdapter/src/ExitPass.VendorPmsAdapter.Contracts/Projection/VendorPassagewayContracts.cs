@@ -30,7 +30,11 @@ public sealed record VendorPassagewayRecordDto(
     string? AllowResult,
     string SourceApi,
     string SourcePayloadHash,
-    DateTimeOffset SourceTimestamp);
+    DateTimeOffset SourceTimestamp)
+{
+    public string? VendorVehicleTypeCode { get; init; }
+    public string? CanonicalVehicleTypeCode { get; init; }
+}
 
 /// <summary>Provider-neutral passageway synchronization response.</summary>
 public sealed record VendorPassagewaySyncResponse(

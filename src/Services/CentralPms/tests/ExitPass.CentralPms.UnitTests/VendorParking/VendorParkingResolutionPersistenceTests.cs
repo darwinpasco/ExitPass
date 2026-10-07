@@ -37,9 +37,11 @@ public sealed class VendorParkingResolutionPersistenceTests
             Guid.Parse("cccccccc-1000-0000-0000-000000000001"),
             Guid.Parse("dddddddd-1000-0000-0000-000000000001"),
             Guid.Parse("ffffffff-1000-0000-0000-000000000001"),
+            "CAR",
             Guid.Parse("eeeeeeee-1000-0000-0000-000000000001"));
 
         Assert.Equal(entryTimestamp.ToUniversalTime(), TimestampParameter(command, "entry_at"));
+        Assert.Equal("CAR", command.Parameters["canonical_vehicle_type_code"].Value);
         AssertNoNonUtcDateTimeOffsetParameters(command);
     }
 

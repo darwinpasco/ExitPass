@@ -26,8 +26,26 @@ public sealed class PersistVendorParkingResolutionRequest
     /// <summary>Immutable Site Adapter identity that supplied the session and tariff evidence.</summary>
     public Guid? SourceAdapterIdentityId { get; init; }
 
+    /// <summary>Origin of the incoming tariff used to preserve live-first replacement semantics.</summary>
+    public VendorParkingTariffOrigin TariffOrigin { get; init; } = VendorParkingTariffOrigin.LiveVendor;
+
+    /// <summary>
+    /// True when Site/vendor/adapter references are already proven by a persisted projection and
+    /// must not be synthesized by the compatibility fixture path.
+    /// </summary>
+    public bool ReferencesAlreadyExist { get; init; }
+
+    /// <summary>Canonical vehicle type retained with a projection-materialized parking session.</summary>
+    public string? CanonicalVehicleTypeCode { get; init; }
+
     /// <summary>
     /// Correlation identifier for the vendor-to-payment flow.
     /// </summary>
     public Guid CorrelationId { get; init; }
+}
+
+public enum VendorParkingTariffOrigin
+{
+    LiveVendor = 0,
+    ExitPassContinuity = 1
 }

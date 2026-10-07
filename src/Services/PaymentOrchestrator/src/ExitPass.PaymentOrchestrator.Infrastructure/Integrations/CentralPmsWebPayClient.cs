@@ -160,7 +160,11 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
             payload.VendorSessionProjectionId,
             payload.ProjectionStatus,
             payload.ProjectionLastRefreshedAt,
-            payload.ProjectionFreshnessAgeSeconds));
+            payload.ProjectionFreshnessAgeSeconds,
+            payload.TariffSource,
+            payload.ManualExitRequired,
+            payload.VehicleTypeCode,
+            payload.TariffVersion));
     }
 
     /// <inheritdoc />
@@ -1305,7 +1309,11 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
         Guid? VendorSessionProjectionId,
         string? ProjectionStatus,
         DateTimeOffset? ProjectionLastRefreshedAt,
-        double? ProjectionFreshnessAgeSeconds);
+        double? ProjectionFreshnessAgeSeconds,
+        string? TariffSource,
+        bool ManualExitRequired,
+        string? VehicleTypeCode,
+        string? TariffVersion);
 
     private sealed record CreatePaymentAttemptRequest(
         Guid ParkingSessionId,

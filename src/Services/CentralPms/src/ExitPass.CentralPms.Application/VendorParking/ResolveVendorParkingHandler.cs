@@ -30,6 +30,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
     private readonly IVendorSessionProjectionLookupService? _projectionLookupService;
     private readonly VendorSessionProjectionOptions _projectionOptions;
     private readonly ISystemClock? _clock;
+    private readonly IContinuityTariffCalculator? _continuityTariffCalculator;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ResolveVendorParkingHandler"/> class.
@@ -50,7 +51,8 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
         ILogger<ResolveVendorParkingHandler> logger,
         IVendorSessionProjectionLookupService? projectionLookupService = null,
         IOptions<VendorSessionProjectionOptions>? projectionOptions = null,
-        ISystemClock? clock = null)
+        ISystemClock? clock = null,
+        IContinuityTariffCalculator? continuityTariffCalculator = null)
     {
         _vendorClient = vendorClient;
         _persistence = persistence;
@@ -60,6 +62,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
         _projectionLookupService = projectionLookupService;
         _projectionOptions = projectionOptions?.Value ?? new VendorSessionProjectionOptions();
         _clock = clock;
+        _continuityTariffCalculator = continuityTariffCalculator;
     }
 
     /// <inheritdoc />
@@ -379,15 +382,154 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
         }
 
         _logger.LogWarning(
-            "Vendor parking live lookup unavailable; returning non-authoritative projection snapshot metadata. projection_id={ProjectionId} freshness_age_seconds={FreshnessAgeSeconds}",
+            "Vendor parking live lookup unavailable; projection fallback is eligible. projection_id={ProjectionId} freshness_age_seconds={FreshnessAgeSeconds}",
             lookup.Projection.VendorSessionProjectionId,
             lookup.FreshnessAge.Value.TotalSeconds);
+
+        var continuity = await TryCreateContinuityPayableBasisAsync(
+            command,
+            sessionResponse,
+            lookup,
+            requestedAt,
+            cancellationToken);
+        if (continuity is not null)
+        {
+            return continuity;
+        }
 
         return ResolveVendorParkingResult.ProjectionSession(
             lookup,
             sessionResponse.ErrorCode ?? sessionResponse.Status.ToString().ToUpperInvariant(),
             sessionResponse.CorrelationId,
             lookup.Projection.VendorSystemId?.ToString("D") ?? command.VendorSystemId);
+    }
+
+    private async Task<ResolveVendorParkingResult?> TryCreateContinuityPayableBasisAsync(
+        ResolveVendorParkingCommand command,
+        VendorParkingSessionLookupResponse liveResponse,
+        VendorSessionProjectionLookupResult lookup,
+        DateTimeOffset calculatedAt,
+        CancellationToken cancellationToken)
+    {
+        var projection = lookup.Projection;
+        if (_continuityTariffCalculator is null || projection is null ||
+            projection.ProjectionStatus != VendorSessionProjectionStatus.Active ||
+            projection.SiteId is null || projection.SiteGroupId is null ||
+            projection.VendorSystemId is null || projection.SourceAdapterIdentityId is null ||
+            projection.EnterTime is null)
+        {
+            return null;
+        }
+
+        var calculation = await _continuityTariffCalculator.CalculateAsync(
+            projection.SiteId.Value,
+            projection.CanonicalVehicleTypeCode,
+            projection.EnterTime.Value,
+            calculatedAt,
+            cancellationToken);
+        if (!calculation.Success || calculation.AmountMinorUnits is null ||
+            calculation.Currency is null || calculation.TariffVersionReference is null ||
+            calculation.CalculatedAt is null || calculation.ExpiresAt is null)
+        {
+            _logger.LogWarning(
+                "Continuity tariff was unavailable; returning projection-only session. projection_id={ProjectionId} failure_code={FailureCode}",
+                projection.VendorSessionProjectionId,
+                calculation.FailureCode);
+            return null;
+        }
+
+        var vendorSessionReference = Normalize(projection.VendorRecordGuid) ??
+            Normalize(projection.StableIdentityKey);
+        if (vendorSessionReference is null)
+        {
+            return null;
+        }
+
+        var parkingSessionId = Guid.NewGuid();
+        var parkingSession = ParkingSession.Rehydrate(
+            parkingSessionId,
+            projection.SiteGroupId.Value.ToString("D"),
+            projection.SiteId.Value.ToString("D"),
+            projection.VendorSystemId.Value.ToString("D"),
+            vendorSessionReference,
+            ResolveIdentifierType(command),
+            Normalize(projection.PlateLicense),
+            Normalize(projection.CardNum),
+            projection.EnterTime.Value,
+            ParkingSessionStatus.PaymentRequired);
+        var amount = decimal.Divide(calculation.AmountMinorUnits.Value, 100m);
+        var tariff = TariffSnapshot.Rehydrate(
+            Guid.NewGuid(),
+            parkingSessionId,
+            TariffSnapshotSourceType.Base,
+            amount,
+            0m,
+            0m,
+            amount,
+            calculation.Currency,
+            amount,
+            calculation.TariffVersionReference,
+            null,
+            calculation.CalculatedAt.Value,
+            calculation.ExpiresAt.Value,
+            TariffSnapshotStatus.Active,
+            null,
+            null);
+
+        try
+        {
+            var persisted = await _persistence.PersistAsync(
+                new PersistVendorParkingResolutionRequest
+                {
+                    ParkingSession = parkingSession,
+                    TariffSnapshot = tariff,
+                    RequestedVendorSystemId = projection.VendorSystemId,
+                    SourceAdapterIdentityId = projection.SourceAdapterIdentityId,
+                    TariffOrigin = VendorParkingTariffOrigin.ExitPassContinuity,
+                    ReferencesAlreadyExist = true,
+                    CanonicalVehicleTypeCode = calculation.VehicleTypeCode,
+                    CorrelationId = liveResponse.CorrelationId
+                },
+                cancellationToken);
+
+            await _eventPublisher.PublishAsync(
+                new IntegrationEventEnvelope
+                {
+                    EventType = IntegrationEventTypes.VendorParkingResolved,
+                    OccurredAtUtc = calculatedAt,
+                    CorrelationId = liveResponse.CorrelationId,
+                    AggregateId = persisted.ParkingSession.ParkingSessionId.ToString(),
+                    AggregateType = nameof(ParkingSession),
+                    Payload = new VendorParkingResolvedPayload
+                    {
+                        ParkingSessionId = persisted.ParkingSession.ParkingSessionId,
+                        TariffSnapshotId = persisted.TariffSnapshot.TariffSnapshotId,
+                        SiteId = persisted.ParkingSession.SiteId,
+                        SiteGroupId = persisted.ParkingSession.SiteGroupId,
+                        VendorSystemId = persisted.VendorSystemId,
+                        LookupReferenceType = ResolveIdentifierType(command).ToLowerInvariant(),
+                        LookupOutcome = ResolveVendorParkingOutcome.Resolved.ToString(),
+                        NetPayableMinorUnits = ToMinorUnits(persisted.TariffSnapshot.NetPayable),
+                        Currency = persisted.TariffSnapshot.CurrencyCode,
+                        TariffExpiresAt = persisted.TariffSnapshot.ExpiresAt
+                    }
+                },
+                cancellationToken);
+
+            return ResolveVendorParkingResult.ContinuityResolved(
+                persisted,
+                lookup,
+                liveResponse.ErrorCode ?? liveResponse.Status.ToString().ToUpperInvariant(),
+                liveResponse.CorrelationId);
+        }
+        catch (VendorParkingResolutionPersistenceException exception)
+        {
+            _logger.LogWarning(
+                "Continuity payable basis persistence failed safely. projection_id={ProjectionId} error_code={ErrorCode}",
+                projection.VendorSessionProjectionId,
+                exception.ErrorCode);
+            return null;
+        }
     }
 
     private static ResolveVendorParkingOutcome MapOutcome(VendorParkingLookupStatus status)

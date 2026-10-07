@@ -460,7 +460,8 @@ public static class TerminalCashPaymentEndpoints
             result.SafeErrorPosture,
             result.PosServerCallAttempted,
             result.ExitAuthorizationIssued,
-            result.GateBehaviorTriggered);
+            result.GateBehaviorTriggered,
+            result.ExitHandlingStatus);
     }
 
     private static TerminalCashReceiptPresentationResponse ToReceiptPresentationResponse(
