@@ -13,7 +13,7 @@ type ShellState =
   | { status: "bootstrapping" }
   | { status: "unauthenticated"; message?: string; supportReference?: string }
   | { status: "authenticating" }
-  | { status: "authenticated"; session: OperatorConsoleHumanSession }
+  | { status: "authenticated"; session: OperatorConsoleHumanSession; operatingContextError?: HumanAuthenticationError }
   | { status: "restricted"; session: OperatorConsoleHumanSession };
 
 interface OperatorConsoleAuthenticationShellProps {
@@ -44,6 +44,9 @@ export function OperatorConsoleAuthenticationShell({
   const [passwordChangeError, setPasswordChangeError] = useState<string | undefined>();
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutMessage, setLogoutMessage] = useState<string | undefined>();
+  const [deviceProof, setDeviceProof] = useState("");
+  const [deviceProvisioningPending, setDeviceProvisioningPending] = useState(false);
+  const [deviceProvisioningMessage, setDeviceProvisioningMessage] = useState<string | undefined>();
   const activeRef = useRef(true);
 
   const requireAuthentication = useCallback((message = "Your session ended. Sign in again.") => {
@@ -57,8 +60,29 @@ export function OperatorConsoleAuthenticationShell({
     setPasswordChangeError(undefined);
     setLogoutPending(false);
     setLogoutMessage(undefined);
+    setDeviceProof("");
+    setDeviceProvisioningPending(false);
+    setDeviceProvisioningMessage(undefined);
     setState({ status: "unauthenticated", message });
   }, [authClient]);
+
+  async function resolveOperatingContext(session: OperatorConsoleHumanSession) {
+    if (session.passwordChangeRequired || hasOperatingContext(session)) {
+      setState(session.passwordChangeRequired
+        ? { status: "restricted", session }
+        : { status: "authenticated", session });
+      return;
+    }
+
+    try {
+      const rebound = await authClient.bindDeviceSession();
+      if (activeRef.current) setState({ status: "authenticated", session: rebound });
+    } catch (error) {
+      if (!activeRef.current) return;
+      const mapped = operatingContextMessage(error);
+      setState({ status: "authenticated", session, operatingContextError: mapped });
+    }
+  }
 
   useEffect(() => {
     activeRef.current = true;
@@ -66,11 +90,7 @@ export function OperatorConsoleAuthenticationShell({
       .getCurrentSession()
       .then((session) => {
         if (!activeRef.current) return;
-        if (session.passwordChangeRequired) {
-          setState({ status: "restricted", session });
-          return;
-        }
-        setState({ status: "authenticated", session });
+        void resolveOperatingContext(session);
       })
       .catch((error) => {
         if (!activeRef.current) return;
@@ -114,11 +134,7 @@ export function OperatorConsoleAuthenticationShell({
     try {
       const session = await authClient.login(submittedUsername, password);
       setPassword("");
-      if (session.passwordChangeRequired) {
-        setState({ status: "restricted", session });
-        return;
-      }
-      setState({ status: "authenticated", session });
+      await resolveOperatingContext(session);
     } catch (error) {
       authClient.clearRuntimeState();
       setPassword("");
@@ -192,6 +208,30 @@ export function OperatorConsoleAuthenticationShell({
     }
   }
 
+  async function establishDeviceBinding(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (deviceProvisioningPending || deviceProof.length < 32) return;
+    setDeviceProvisioningPending(true);
+    setDeviceProvisioningMessage(undefined);
+    const proof = deviceProof;
+    setDeviceProof("");
+    try {
+      await authClient.establishDeviceBinding(proof);
+      setDeviceProvisioningMessage("Workstation trust established.");
+      if (state.status === "authenticated") await resolveOperatingContext(state.session);
+    } catch (error) {
+      setDeviceProvisioningMessage(operatingContextMessage(error).message);
+    } finally {
+      setDeviceProof("");
+      setDeviceProvisioningPending(false);
+    }
+  }
+
+  async function refreshOperatingContext() {
+    if (state.status !== "authenticated") return;
+    await resolveOperatingContext(state.session);
+  }
+
   const workspaceClient = useMemo(() => {
     if (state.status !== "authenticated") return null;
     return createWorkspaceClient
@@ -205,17 +245,35 @@ export function OperatorConsoleAuthenticationShell({
 
   if (state.status === "authenticated" && workspaceClient) {
     return (
-      <App
-        apiClient={workspaceClient}
-        fiscalReportingClient={import.meta.env.DEV && new URLSearchParams(window.location.search).get("operatorFiscalReportingScenario") === "ready"
-          ? undefined
-          : createOperatorFiscalReportingClient(fetch, () => authClient.getCsrfToken())}
-        initialPath={initialPath}
-        session={state.session}
-        logoutPending={logoutPending}
-        logoutMessage={logoutMessage}
-        onLogout={logout}
-      />
+      <>
+        {state.operatingContextError && (
+          <section className="operatingContextNotice" role="status" aria-live="polite">
+            <strong>Operator context required</strong>
+            <span>{state.operatingContextError.message}</span>
+            {state.operatingContextError.errorCode === "OPERATOR_DEVICE_BINDING_REQUIRED" && (
+              <DeviceProvisioningForm
+                proof={deviceProof}
+                pending={deviceProvisioningPending}
+                message={deviceProvisioningMessage}
+                onProofChange={setDeviceProof}
+                onSubmit={establishDeviceBinding}
+              />
+            )}
+          </section>
+        )}
+        <App
+          apiClient={workspaceClient}
+          fiscalReportingClient={import.meta.env.DEV && new URLSearchParams(window.location.search).get("operatorFiscalReportingScenario") === "ready"
+            ? undefined
+            : createOperatorFiscalReportingClient(fetch, () => authClient.getCsrfToken())}
+          initialPath={initialPath}
+          session={state.session}
+          logoutPending={logoutPending}
+          logoutMessage={logoutMessage}
+          onLogout={logout}
+          onOwnShiftStarted={refreshOperatingContext}
+        />
+      </>
     );
   }
 
@@ -333,8 +391,65 @@ export function OperatorConsoleAuthenticationShell({
             {busy ? "Signing in" : "Sign in"}
           </button>
         </form>
+        <DeviceProvisioningForm
+          proof={deviceProof}
+          pending={deviceProvisioningPending}
+          message={deviceProvisioningMessage}
+          onProofChange={setDeviceProof}
+          onSubmit={establishDeviceBinding}
+        />
       </section>
     </main>
+  );
+}
+
+function DeviceProvisioningForm({
+  proof,
+  pending,
+  message,
+  onProofChange,
+  onSubmit
+}: {
+  proof: string;
+  pending: boolean;
+  message?: string;
+  onProofChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form className="deviceProvisioningForm" autoComplete="off" onSubmit={onSubmit} aria-busy={pending}>
+      <label>
+        Workstation provisioning proof
+        <input
+          type="password"
+          autoComplete="off"
+          value={proof}
+          onChange={(event) => onProofChange(event.target.value)}
+          disabled={pending}
+        />
+      </label>
+      <button type="submit" disabled={pending || proof.length < 32}>
+        {pending ? "Establishing trust" : "Trust workstation"}
+      </button>
+      {message && <span role="status">{message}</span>}
+    </form>
+  );
+}
+
+function hasOperatingContext(session: OperatorConsoleHumanSession) {
+  return Boolean(
+    session.operatorDeviceBindingReference &&
+    session.operatorShiftReference &&
+    session.effectiveSiteReference &&
+    session.effectiveSiteGroupReference
+  );
+}
+
+function operatingContextMessage(error: unknown) {
+  if (error instanceof HumanAuthenticationError) return error;
+  return new HumanAuthenticationError(
+    "operating-context",
+    "The trusted Operator Console operating context is not available."
   );
 }
 

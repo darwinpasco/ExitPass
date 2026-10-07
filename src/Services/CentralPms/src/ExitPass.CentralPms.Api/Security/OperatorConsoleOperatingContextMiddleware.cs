@@ -54,7 +54,8 @@ public sealed class OperatorConsoleOperatingContextMiddleware(RequestDelegate ne
     {
         var value = request.Path.Value ?? string.Empty;
         if (HttpMethods.IsPost(request.Method) &&
-            string.Equals(value, "/v1/operator-console/device-binding/establish", StringComparison.OrdinalIgnoreCase))
+            (string.Equals(value, "/v1/operator-console/device-binding/establish", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(value, "/v1/operator-console/device-binding/bind-session", StringComparison.OrdinalIgnoreCase)))
         {
             return false;
         }

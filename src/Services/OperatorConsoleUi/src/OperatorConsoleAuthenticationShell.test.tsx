@@ -53,6 +53,64 @@ describe("Operator Console authentication shell", () => {
     expect(document.body).not.toHaveTextContent("operator-password");
   });
 
+  it("exchanges an opaque workstation proof without browser persistence", async () => {
+    const client = authenticationClient({
+      currentError: new HumanAuthenticationError("unauthenticated", "Sign in to continue.")
+    });
+    const storageSetItem = vi.spyOn(Storage.prototype, "setItem");
+    render(<OperatorConsoleAuthenticationShell authenticationClient={client} />);
+
+    const proofInput = await screen.findByLabelText("Workstation provisioning proof");
+    const proof = "controlled-workstation-proof-1234567890";
+    await userEvent.type(proofInput, proof);
+    await userEvent.click(screen.getByRole("button", { name: "Trust workstation" }));
+
+    await waitFor(() => expect(client.establishDeviceBinding).toHaveBeenCalledWith(proof));
+    expect(proofInput).toHaveValue("");
+    expect(document.body).not.toHaveTextContent(proof);
+    expect(storageSetItem).not.toHaveBeenCalled();
+    storageSetItem.mockRestore();
+  });
+
+  it("rebinds an authenticated session through the canonical operating-context endpoint", async () => {
+    const unbound = { ...session(), operatorDeviceBindingReference: undefined };
+    const client = authenticationClient({ currentSession: unbound, bindSession: session() });
+    render(
+      <OperatorConsoleAuthenticationShell
+        authenticationClient={client}
+        createWorkspaceClient={() => createMockOperatorConsoleApiClient()}
+      />
+    );
+
+    expect(await screen.findByText("Ordinary Operator")).toBeInTheDocument();
+    expect(client.bindDeviceSession).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Operator context required")).not.toBeInTheDocument();
+  });
+
+  it("keeps read-only workspace available while an unbound browser remains denied", async () => {
+    const unbound = { ...session(), operatorDeviceBindingReference: undefined };
+    const client = authenticationClient({
+      currentSession: unbound,
+      bindError: new HumanAuthenticationError(
+        "operating-context",
+        "This workstation must be provisioned before governed Operator Console actions are available.",
+        false,
+        undefined,
+        "OPERATOR_DEVICE_BINDING_REQUIRED"
+      )
+    });
+    render(
+      <OperatorConsoleAuthenticationShell
+        authenticationClient={client}
+        createWorkspaceClient={() => createMockOperatorConsoleApiClient()}
+      />
+    );
+
+    expect(await screen.findByText("Operator context required")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Session Lookup" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Workstation provisioning proof")).toHaveAttribute("type", "password");
+  });
+
   it("disables login credential autocomplete and presents no persistence option", async () => {
     const client = authenticationClient({
       currentError: new HumanAuthenticationError("unauthenticated", "Sign in to continue.")
@@ -338,6 +396,9 @@ function authenticationClient(options: {
   currentError?: Error;
   loginSession?: OperatorConsoleHumanSession;
   loginError?: Error;
+  bindSession?: OperatorConsoleHumanSession;
+  bindError?: Error;
+  establishError?: Error;
   changePasswordError?: Error;
   logoutError?: Error;
 }): HumanAuthenticationClient {
@@ -352,6 +413,13 @@ function authenticationClient(options: {
     }),
     changePassword: vi.fn(async () => {
       if (options.changePasswordError) throw options.changePasswordError;
+    }),
+    establishDeviceBinding: vi.fn(async () => {
+      if (options.establishError) throw options.establishError;
+    }),
+    bindDeviceSession: vi.fn(async () => {
+      if (options.bindError) throw options.bindError;
+      return options.bindSession ?? session();
     }),
     logout: vi.fn(async () => {
       if (options.logoutError) throw options.logoutError;
@@ -386,6 +454,10 @@ function session(): OperatorConsoleHumanSession {
     siteReferences: ["13000000-0000-0000-0000-000000000001"],
     siteGroupReferences: ["14000000-0000-0000-0000-000000000001"],
     hasGlobalScope: false,
+    operatorDeviceBindingReference: "16000000-0000-0000-0000-000000000001",
+    operatorShiftReference: "17000000-0000-0000-0000-000000000001",
+    effectiveSiteReference: "13000000-0000-0000-0000-000000000001",
+    effectiveSiteGroupReference: "14000000-0000-0000-0000-000000000001",
     correlationId: "15000000-0000-0000-0000-000000000001"
   };
 }

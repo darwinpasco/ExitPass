@@ -67,6 +67,19 @@ describe("ShiftManagement", () => {
     expect(api.startOwnShift).toHaveBeenCalledWith(secondSite.siteId);
   });
 
+  it("refreshes the trusted operating context after starting the operator's own shift", async () => {
+    const api = client();
+    const onOwnShiftStarted = vi.fn().mockResolvedValue(undefined);
+    render(<ShiftManagement client={api} onOwnShiftStarted={onOwnShiftStarted} />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Start Shift" }));
+
+    await waitFor(() => expect(onOwnShiftStarted).toHaveBeenCalledTimes(1));
+    expect(api.startOwnShift).toHaveBeenCalledWith(authorizedSite().siteId);
+    expect(vi.mocked(api.startOwnShift).mock.invocationCallOrder[0])
+      .toBeLessThan(onOwnShiftStarted.mock.invocationCallOrder[0]);
+  });
+
   it("shows a controlled not-authorized state without loading shift data", async () => {
     const api = client({ view: false });
     render(<ShiftManagement client={api} />);

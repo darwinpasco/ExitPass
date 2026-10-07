@@ -44,7 +44,7 @@ public sealed class HumanAuthenticationServiceTests
     }
 
     [Fact]
-    public void SessionResponse_DoesNotSerializeCanonicalOperatingContextStorageReferences()
+    public void SessionResponse_SerializesEffectiveOperatingContextReferencesWithoutSecurityVersions()
     {
         var session = new HumanSessionDto(
             Guid.NewGuid(), Guid.NewGuid(), "operator", "Operator", HumanSessionAudiences.OperatorConsole,
@@ -54,10 +54,10 @@ public sealed class HumanAuthenticationServiceTests
 
         var json = JsonSerializer.Serialize(session);
 
-        json.Should().NotContain("OperatorDeviceBindingReference")
-            .And.NotContain("OperatorShiftReference")
-            .And.NotContain("EffectiveSiteReference")
-            .And.NotContain("EffectiveSiteGroupReference")
+        json.Should().Contain("OperatorDeviceBindingReference")
+            .And.Contain("OperatorShiftReference")
+            .And.Contain("EffectiveSiteReference")
+            .And.Contain("EffectiveSiteGroupReference")
             .And.NotContain("AuthorizationEpoch")
             .And.NotContain("CredentialVersion");
     }
