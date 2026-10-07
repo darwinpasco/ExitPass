@@ -608,7 +608,7 @@ export function App() {
     }
 
     if (!hasAuthoritativePayableBasis(paymentSession)) {
-      setError("The parking session was found, but the live payable amount is temporarily unavailable. Retry live fee before paying.");
+      setError("The parking session was found, but the amount due is temporarily unavailable. Please try again before paying.");
       return;
     }
 
@@ -815,7 +815,7 @@ export function App() {
 
       if (!hasAuthoritativePayableBasis(latestSession)) {
         setRegularPaymentSelection(null);
-        setError("The parking session was found, but the live payable amount is temporarily unavailable. Retry live fee before paying.");
+        setError("The parking session was found, but the amount due is temporarily unavailable. Please try again before paying.");
         return;
       }
 
@@ -1265,11 +1265,6 @@ export function App() {
   const zeroPayableStatutoryCompletion = Boolean(appliedStatutoryBasis?.amountMinorUnits === 0);
   const authoritativeSummary = hasAuthoritativePayableBasis(summary) ? summary : null;
   const isDegradedSession = Boolean(summary && !authoritativeSummary);
-  const isContinuityPayableBasis = Boolean(
-    authoritativeSummary?.degraded === true &&
-    authoritativeSummary.tariffSource === "EXITPASS_CONTINUITY" &&
-    authoritativeSummary.manualExitRequired === true
-  );
   const statutoryRecoveryMutationInFlight = hasKnownInFlightStatutoryRecoveryStage(statutoryRecoveryRecord);
   const canPayRegularWhilePending =
     stage === "SESSION_RESOLVED" &&
@@ -1438,29 +1433,17 @@ export function App() {
           />
         )}
 
-        {isContinuityPayableBasis && (
-          <section className="payable-basis-panel" aria-live="polite" aria-labelledby="continuity-tariff-heading">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">Site continuity tariff</p>
-                <h2 id="continuity-tariff-heading">Parking fee available</h2>
-              </div>
-            </div>
-            <p>Fee calculated using the Site parking tariff because the parking system is temporarily unavailable.</p>
-          </section>
-        )}
-
         {summary && isDegradedSession && (
-          <section className="payable-basis-panel" aria-live="polite" aria-labelledby="degraded-session-heading">
+          <section className="payable-basis-panel" aria-live="polite" aria-labelledby="fee-unavailable-heading">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">Projection session</p>
-                <h2 id="degraded-session-heading">Live parking fee temporarily unavailable</h2>
+                <p className="eyebrow">Parking fee</p>
+                <h2 id="fee-unavailable-heading">Parking fee temporarily unavailable</h2>
               </div>
             </div>
-            <p>The parking session was found from a recent continuity projection. Payment remains disabled until the live payable amount is available.</p>
+            <p>We could not retrieve the amount due. Please try again.</p>
             <button type="button" className="ghost-button status-button" onClick={() => void handleResolveParkingSession()} disabled={isResolving}>
-              Retry live fee
+              Try again
             </button>
           </section>
         )}
@@ -3211,9 +3194,8 @@ function ExitInstructionPanel({ summary }: { summary: ParkingSessionResolveRespo
         </>
       ) : manualExitRequired ? (
         <>
-          <strong>Manual exit assistance required</strong>
-          <p>Show your successful payment and Sales Invoice to parking personnel for manual exit.</p>
-          <p>Parking personnel will tag the vehicle as exited when the parking system is restored.</p>
+          <strong>Payment complete</strong>
+          <p>Keep your Sales Invoice available and follow the parking site's exit instructions.</p>
         </>
       ) : (
         <>
@@ -3262,7 +3244,6 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
     ["Vehicle Type", displayValue(result.vehicleTypeCode)],
     ["Entry Time", displayValue(formatDateTime(summary.entryTime))],
     ["Duration", displayValue(summary.durationParked ?? formatDuration(summary.entryTime, summary.currentFeeCalculationTime))],
-    ["Tariff Version", displayValue(result.tariffVersion)],
     ["Fee Valid Until", displayValue(formatDateTime(summary.feeValidUntil ?? summary.tariffExpiresAt))]
   ];
 
@@ -3273,7 +3254,6 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
           <p className="eyebrow">Parking Session Summary</p>
           <h2 id="session-summary-heading">{siteName}</h2>
         </div>
-        {result.degraded && <span className="status-badge">Projection</span>}
       </div>
       <dl>
         {rows.map(([label, value]) => (

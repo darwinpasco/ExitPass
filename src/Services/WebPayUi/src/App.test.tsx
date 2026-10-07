@@ -797,13 +797,28 @@ describe("ExitPass WebPay UI", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("WebPay_WhenSummaryResolved_ContinueToPaymentCreatesPaymentIntent", async () => {
-    const fetchMock = stubWebPayFetch();
+  it("WebPay_WhenLiveTariffResolved_ShowsNormalCustomerPresentationAndCreatesPaymentIntent", async () => {
+    const liveResponse = {
+      ...successResponse,
+      sessionSource: "LIVE_VENDOR",
+      degraded: false,
+      payableBasisAvailable: true,
+      tariffSource: "LIVE_VENDOR",
+      tariffVersion: "PITX-L3-CAR-V1",
+      manualExitRequired: false,
+      vehicleTypeCode: "CAR"
+    };
+    const fetchMock = stubWebPayFetch({ resolvePayload: liveResponse });
 
     render(<App />);
 
     await resolveTicket("TICKET-TEST-027");
     expect(screen.getByText("Parking Session Summary")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /parking fee/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /customer information/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /payment method/i })).toBeInTheDocument();
+    expect(screen.queryByText("Tariff Version")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/projection|continuity|degraded|fallback|hikcentral|tariff source|manual exit required/i);
     expect(screen.queryByText("PaymentRequired")).not.toBeInTheDocument();
     await continueToPayment();
 
@@ -811,8 +826,8 @@ describe("ExitPass WebPay UI", () => {
     expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(1);
     const paymentIntentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
     const paymentIntentBody = JSON.parse(paymentIntentCall[1]?.body as string) as Record<string, unknown>;
-    expect(paymentIntentBody.tariffSnapshotId).toBe(successResponse.tariffSnapshotId);
-    expect(paymentIntentBody.expectedAmountMinorUnits).toBe(successResponse.amountMinorUnits);
+    expect(paymentIntentBody.tariffSnapshotId).toBe(liveResponse.tariffSnapshotId);
+    expect(paymentIntentBody.expectedAmountMinorUnits).toBe(liveResponse.amountMinorUnits);
   });
 
   it("WebPay_WhenProjectionSessionResolved_ShowsSessionAndBlocksFinancialWorkUntilLiveRetrySucceeds", async () => {
@@ -853,19 +868,19 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.type(await selectTicketInput(), "1474119573147");
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
 
-    expect(await screen.findByText("Projection")).toBeInTheDocument();
-    expect(screen.getByText("ABC1147")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /live parking fee temporarily unavailable/i })).toBeInTheDocument();
+    expect(await screen.findByText("ABC1147")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^parking fee temporarily unavailable$/i })).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/projection|continuity|degraded|fallback|hikcentral|tariff source|manual exit required/i);
     expect(screen.queryByRole("heading", { name: /payment method/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /customer information/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /continue to payment/i })).not.toBeInTheDocument();
     expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/availability")).toHaveLength(0);
     expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
 
-    await userEvent.click(screen.getByRole("button", { name: /retry live fee/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^try again$/i }));
 
     expect(await screen.findByRole("heading", { name: /payment method/i })).toBeInTheDocument();
-    expect(screen.queryByText("Projection")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/projection|continuity|degraded|fallback|hikcentral|tariff source|manual exit required/i);
     expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(2);
     expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
   });
@@ -878,7 +893,10 @@ describe("ExitPass WebPay UI", () => {
       degraded: true,
       payableBasisAvailable: true,
       tariffSource: "EXITPASS_CONTINUITY",
+      tariffVersion: "EXITPASS-CONTINUITY:PITX-L3-CAR-V1",
       manualExitRequired: true,
+      siteName: "PITX Level 3",
+      vehicleTypeCode: "CAR",
       ticketReference: "1474119573147",
       plateNumber: "ABC1147",
       amountMinorUnits: 10000,
@@ -889,10 +907,23 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
     await resolveTicket("1474119573147", "100.00");
 
-    expect(screen.getByRole("heading", { name: /parking fee available/i })).toBeInTheDocument();
-    expect(screen.getByText(/fee calculated using the site parking tariff/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "PITX Level 3" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^parking fee$/i })).toBeInTheDocument();
+    expect(screen.getByText("CAR")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /customer information/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /payment method/i })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: /live parking fee temporarily unavailable/i })).not.toBeInTheDocument();
+    expect(screen.getAllByText("PHP 100.00").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Tariff Version")).not.toBeInTheDocument();
+    expect(screen.queryByText("EXITPASS-CONTINUITY:PITX-L3-CAR-V1")).not.toBeInTheDocument();
+    expect(screen.queryByText(/site continuity tariff/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/fee calculated using the site parking tariff/i)).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/projection|continuity|degraded|fallback|hikcentral|tariff source|manual exit required/i);
+
+    expect(continuityResponse.sessionSource).toBe("VENDOR_SESSION_PROJECTION");
+    expect(continuityResponse.tariffSource).toBe("EXITPASS_CONTINUITY");
+    expect(continuityResponse.tariffVersion).toBe("EXITPASS-CONTINUITY:PITX-L3-CAR-V1");
+    expect(continuityResponse.degraded).toBe(true);
+    expect(continuityResponse.manualExitRequired).toBe(true);
 
     await continueToPayment();
 
@@ -3590,6 +3621,30 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByText("Exit authorization is being prepared")).toBeInTheDocument();
     expect(screen.getByText("Please try again shortly.")).toBeInTheDocument();
     expect(screen.queryByText("Proceed to exit")).not.toBeInTheDocument();
+  });
+
+  it("WebPayReturnPage_WhenContinuityRequiresOperationalHandling_KeepsInternalStateOutOfCustomerPresentation", async () => {
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        paymentStatus: "Paid",
+        sessionSource: "VENDOR_SESSION_PROJECTION",
+        tariffSource: "EXITPASS_CONTINUITY",
+        tariffVersion: "EXITPASS-CONTINUITY:PITX-L3-CAR-V1",
+        degraded: true,
+        manualExitRequired: true,
+        exitInstruction: null,
+        exitAuthorizationStatus: "MANUAL_EXIT_REQUIRED"
+      }
+    });
+    window.history.pushState({}, "", "/webpay/payment-return?paymentAttemptId=44444444-4444-4444-4444-444444444444");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: /^exit instruction$/i })).toBeInTheDocument();
+    expect(screen.getByText("Keep your Sales Invoice available and follow the parking site's exit instructions.")).toBeInTheDocument();
+    expect(screen.queryByText("Exit authorization is being prepared")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/projection|continuity|degraded|fallback|hikcentral|tariff source|manual exit/i);
   });
 
   it("WebPayCancelledPage_AllowsRetryAndStatusRefresh", async () => {
