@@ -134,7 +134,8 @@ public sealed record TerminalCashFiscalIssuanceResult(
     string? SafeErrorPosture,
     bool PosServerCallAttempted,
     bool ExitAuthorizationIssued,
-    bool GateBehaviorTriggered);
+    bool GateBehaviorTriggered,
+    string? ExitHandlingStatus = null);
 
 /// <summary>
 /// Controlled terminal cash fiscal issuance rejection.

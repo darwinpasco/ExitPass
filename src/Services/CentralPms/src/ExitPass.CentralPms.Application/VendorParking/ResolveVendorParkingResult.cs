@@ -39,6 +39,18 @@ public sealed record ResolveVendorParkingResult(
     /// </summary>
     public string? LiveLookupErrorCode { get; init; }
 
+    /// <summary>Session identity source exposed to channel clients.</summary>
+    public string SessionSource { get; init; } = "LIVE_VENDOR";
+
+    /// <summary>True when live Vendor PMS resolution did not supply the payable basis.</summary>
+    public bool Degraded { get; init; }
+
+    /// <summary>Stable payable-basis source classification.</summary>
+    public string? TariffSource { get; init; }
+
+    /// <summary>True when normal ExitAuthorization is prohibited for this payable basis.</summary>
+    public bool ManualExitRequired { get; init; }
+
     /// <summary>
     /// Creates a successful vendor parking resolution result.
     /// </summary>
@@ -73,7 +85,10 @@ public sealed record ResolveVendorParkingResult(
             siteName,
             paymentStatus,
             effectivePayableBasis,
-            ProjectionFallback: null);
+            ProjectionFallback: null)
+        {
+            TariffSource = "LIVE_VENDOR"
+        };
     }
 
     /// <summary>
@@ -118,7 +133,35 @@ public sealed record ResolveVendorParkingResult(
             EffectivePayableBasis: null,
             projection)
         {
-            LiveLookupErrorCode = liveLookupErrorCode
+            LiveLookupErrorCode = liveLookupErrorCode,
+            SessionSource = "VENDOR_SESSION_PROJECTION",
+            Degraded = true
+        };
+    }
+
+    /// <summary>Creates a canonical continuity payable basis derived from projection plus approved Site tariff.</summary>
+    public static ResolveVendorParkingResult ContinuityResolved(
+        PersistVendorParkingResolutionResult persisted,
+        VendorSessionProjectionLookupResult projection,
+        string liveLookupErrorCode,
+        Guid correlationId)
+    {
+        return Resolved(
+            persisted.ParkingSession,
+            persisted.TariffSnapshot,
+            correlationId,
+            persisted.VendorSystemId,
+            persisted.SiteGroupName,
+            persisted.SiteName,
+            persisted.PaymentStatus,
+            persisted.EffectivePayableBasis) with
+        {
+            ProjectionFallback = projection,
+            LiveLookupErrorCode = liveLookupErrorCode,
+            SessionSource = "VENDOR_SESSION_PROJECTION",
+            Degraded = true,
+            TariffSource = "EXITPASS_CONTINUITY",
+            ManualExitRequired = true
         };
     }
 }

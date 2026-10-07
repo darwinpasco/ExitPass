@@ -72,6 +72,18 @@ public sealed class VendorPaymentAcknowledgmentWorkflow : IVendorPaymentAcknowle
             return;
         }
 
+        if (basis.TariffVersionReference.StartsWith(
+                ContinuityTariffCalculator.TariffVersionPrefix,
+                StringComparison.Ordinal))
+        {
+            _logger.LogInformation(
+                "Vendor PMS acknowledgment skipped for an ExitPass continuity tariff. payment_attempt_id={PaymentAttemptId} payment_confirmation_id={PaymentConfirmationId} correlation_id={CorrelationId}",
+                basis.PaymentAttemptId,
+                basis.PaymentConfirmationId,
+                command.CorrelationId);
+            return;
+        }
+
         var acknowledgment = await CreateOrReuseAsync(basis, command.CorrelationId, cancellationToken);
         if (string.Equals(acknowledgment.AcknowledgmentStatus, VendorPaymentAcknowledgmentStatuses.Confirmed, StringComparison.Ordinal))
         {

@@ -19,12 +19,15 @@ public static class ExitAuthorizationEligibilityStatuses
     public const string ZeroPayableCompletionAuthorityReady = "ZERO_PAYABLE_COMPLETION_AUTHORITY_READY";
     public const string ZeroPayableFiscalPrerequisiteSatisfied = "ZERO_PAYABLE_FISCAL_PREREQUISITE_SATISFIED";
     public const string ZeroPayableExitAuthorizationReady = "ZERO_PAYABLE_EXIT_AUTHORIZATION_READY";
+    public const string ManualExitRequired = "MANUAL_EXIT_REQUIRED";
 }
 
 public static class ExitAuthorizationEligibilityBlockedReasons
 {
     public const string ZeroPayableFiscalPrerequisiteUnresolved =
         "ZERO_PAYABLE_FISCAL_PREREQUISITE_UNRESOLVED";
+    public const string ContinuityTariffManualExitRequired =
+        "CONTINUITY_TARIFF_MANUAL_EXIT_REQUIRED";
 }
 
 public sealed record CompletionAuthority(

@@ -101,6 +101,11 @@ public sealed class SiteVendorAdapterProjectionSyncService(
             $"vendor:passageway-record:{record.VendorRecordReference}", record.SourceTimestamp,
             identityType, identityKey, observedAt, observedAt, observedAt,
             record.ExitTime.HasValue ? VendorSessionProjectionStatus.Exited : VendorSessionProjectionStatus.Active,
-            correlationId, observedAt, observedAt) { SourceAdapterIdentityId = route.AdapterIdentityId };
+            correlationId, observedAt, observedAt)
+        {
+            SourceAdapterIdentityId = route.AdapterIdentityId,
+            VendorVehicleTypeCode = record.VendorVehicleTypeCode,
+            CanonicalVehicleTypeCode = record.CanonicalVehicleTypeCode
+        };
     }
 }

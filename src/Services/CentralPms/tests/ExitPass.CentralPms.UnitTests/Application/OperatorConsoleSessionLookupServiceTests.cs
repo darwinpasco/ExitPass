@@ -100,109 +100,22 @@ public sealed class OperatorConsoleSessionLookupServiceTests
     }
 
     [Fact]
-    public async Task LookupAsync_WhenProjectionCanBeResolved_BindsCanonicalParkingSessionInternally()
+    public async Task LookupAsync_WhenPlateModeSelected_UsesExactPlateWithoutFinancialResolution()
     {
         var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
         repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
-            .Returns(call =>
-            {
-                var request = call.Arg<OperatorConsoleSessionLookupReadRequest>();
-                return request.LookupMode == "PARKING_SESSION_ID" ? Session("ACTIVE") : ProjectionSession(VendorSystemId);
-            });
-        var resolver = Substitute.For<IResolveVendorParkingUseCase>();
-        var canonical = ParkingSession.Rehydrate(
-            ParkingSessionId,
-            SiteGroupId.ToString("D"),
-            SiteId.ToString("D"),
-            "HIKCENTRAL",
-            "VENDOR-SESSION-001",
-            "TICKET",
-            "ABC-1234",
-            "TICKET-001",
-            EntryTime,
-            ParkingSessionStatus.PaymentRequired);
-        resolver.ExecuteAsync(Arg.Any<ResolveVendorParkingCommand>(), Arg.Any<CancellationToken>())
-            .Returns(new ResolveVendorParkingResult(
-                ResolveVendorParkingOutcome.Resolved,
-                canonical,
-                TariffSnapshot: null,
-                ErrorCode: null,
-                Retryable: false,
-                CorrelationId: CorrelationId,
-                VendorSystemId: VendorSystemId.ToString("D"),
-                SiteGroupName: "PITX",
-                SiteName: "PITX Level 3",
-                PaymentStatus: "UNPAID",
-                EffectivePayableBasis: null,
-                ProjectionFallback: null));
-
-        var sut = CreateSut(AccessResult(allowed: true, []), repository, resolver);
-
-        var result = await sut.LookupAsync(
-            Command(parkingSessionId: null, lookupMode: "TICKET_REFERENCE"),
-            CancellationToken.None);
-
-        result.Session.Should().NotBeNull();
-        result.Session!.ParkingSessionId.Should().Be(ParkingSessionId);
-        result.Session.SessionSource.Should().Be("CORE_PARKING_SESSION");
-        result.SessionEligible.Should().BeTrue();
-        await resolver.Received(1).ExecuteAsync(
-            Arg.Is<ResolveVendorParkingCommand>(command =>
-                command.SiteId == SiteId.ToString("D") &&
-                command.VendorSystemId == VendorSystemId.ToString("D") &&
-                command.TicketReference == "TICKET-001"),
-            Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task LookupAsync_WhenPlateModeSelected_UsesExactPlateForCanonicalResolution()
-    {
-        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
-        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
-            .Returns(call =>
-            {
-                var request = call.Arg<OperatorConsoleSessionLookupReadRequest>();
-                return request.LookupMode == "PARKING_SESSION_ID" ? Session("ACTIVE") : ProjectionSession(VendorSystemId);
-            });
-        var resolver = Substitute.For<IResolveVendorParkingUseCase>();
-        resolver.ExecuteAsync(Arg.Any<ResolveVendorParkingCommand>(), Arg.Any<CancellationToken>())
-            .Returns(new ResolveVendorParkingResult(
-                ResolveVendorParkingOutcome.Resolved,
-                ParkingSession.Rehydrate(
-                    ParkingSessionId,
-                    SiteGroupId.ToString("D"),
-                    SiteId.ToString("D"),
-                    "HIKCENTRAL",
-                    "VENDOR-SESSION-001",
-                    "TICKET",
-                    "ABC1102",
-                    "TICKET-002",
-                    EntryTime,
-                    ParkingSessionStatus.PaymentRequired),
-                null,
-                null,
-                false,
-                CorrelationId,
-                VendorSystemId.ToString("D"),
-                "PITX",
-                "PITX Level 3",
-                "UNPAID",
-                null,
-                null));
-        var sut = CreateSut(AccessResult(allowed: true, []), repository, resolver);
+            .Returns(ProjectionSession(VendorSystemId));
+        var sut = CreateSut(AccessResult(allowed: true, []), repository);
 
         var result = await sut.LookupAsync(
             Command(parkingSessionId: null, ticketReference: null, plateNumber: " abc1102 ", lookupMode: "PLATE_LICENSE"),
             CancellationToken.None);
 
-        result.Session!.ParkingSessionId.Should().Be(ParkingSessionId);
+        result.Session!.ParkingSessionId.Should().BeNull();
+        result.Session.SessionSource.Should().Be("VENDOR_SESSION_PROJECTION");
         await repository.Received().FindAsync(
             Arg.Is<OperatorConsoleSessionLookupReadRequest>(request =>
                 request.LookupMode == "PLATE_LICENSE" && request.PlateNumber == "ABC1102" && request.TicketReference == null),
-            Arg.Any<CancellationToken>());
-        await resolver.Received(1).ExecuteAsync(
-            Arg.Is<ResolveVendorParkingCommand>(command =>
-                command.PlateNumber == "ABC1102" && command.TicketReference == null),
             Arg.Any<CancellationToken>());
     }
 
@@ -278,8 +191,7 @@ public sealed class OperatorConsoleSessionLookupServiceTests
 
     private static OperatorConsoleSessionLookupService CreateSut(
         OperatorConsoleAccessEvaluationResult accessResult,
-        IOperatorConsoleSessionLookupReadRepository sessionRepository,
-        IResolveVendorParkingUseCase? vendorParkingResolver = null)
+        IOperatorConsoleSessionLookupReadRepository sessionRepository)
     {
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
@@ -289,7 +201,7 @@ public sealed class OperatorConsoleSessionLookupServiceTests
         writer.PersistAsync(Arg.Any<OperatorConsoleAccessEvaluationResult>(), Arg.Any<CancellationToken>())
             .Returns(accessResult with { EvaluationId = EvaluationId, Persisted = true });
 
-        return new OperatorConsoleSessionLookupService(accessService, writer, sessionRepository, vendorParkingResolver);
+        return new OperatorConsoleSessionLookupService(accessService, writer, sessionRepository);
     }
 
     private static OperatorConsoleSessionLookupCommand Command(

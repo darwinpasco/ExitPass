@@ -2,6 +2,7 @@ using System.Diagnostics;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Observability;
+using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry.Trace;
@@ -45,6 +46,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
     private readonly IExitAuthorizationPaymentFinalityReadRepository _paymentFinalityReadRepository;
     private readonly IPaymentFinalityCompletionAuthorityReader? _completionAuthorityReader;
     private readonly FiscalIssuanceExitAuthorizationGatingOptions _fiscalGatingOptions;
+    private readonly IContinuityTariffProvenanceReader? _continuityTariffProvenance;
 
     /// <summary>
     /// Creates a handler for issuing exit authorizations through the canonical DB routine.
@@ -66,7 +68,8 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         IExitAuthorizationFiscalGatingShadowEvaluator? fiscalGatingShadowEvaluator = null,
         IExitAuthorizationPaymentFinalityReadRepository? paymentFinalityReadRepository = null,
         FiscalIssuanceExitAuthorizationGatingOptions? fiscalGatingOptions = null,
-        IPaymentFinalityCompletionAuthorityReader? completionAuthorityReader = null)
+        IPaymentFinalityCompletionAuthorityReader? completionAuthorityReader = null,
+        IContinuityTariffProvenanceReader? continuityTariffProvenance = null)
     {
         _gateway = gateway;
         _eventPublisher = eventPublisher;
@@ -79,6 +82,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             paymentFinalityReadRepository ?? OptimisticExitAuthorizationPaymentFinalityReadRepository.Instance;
         _fiscalGatingOptions = fiscalGatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions();
         _completionAuthorityReader = completionAuthorityReader;
+        _continuityTariffProvenance = continuityTariffProvenance;
     }
 
     /// <summary>
@@ -115,6 +119,18 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         try
         {
             ValidateCommand(command);
+
+            if (_continuityTariffProvenance is not null &&
+                await _continuityTariffProvenance.IsContinuityTariffAsync(
+                    command.ParkingSessionId,
+                    command.CompletionAuthority?.TariffSnapshotId,
+                    command.PaymentAttemptId,
+                    cancellationToken))
+            {
+                throw new ExitAuthorizationIssuanceConflictException(
+                    ExitAuthorizationEligibilityBlockedReasons.ContinuityTariffManualExitRequired,
+                    "Normal ExitAuthorization is prohibited for an ExitPass continuity tariff.");
+            }
 
             await EvaluateFiscalGatingPreflightAsync(command, activity, cancellationToken);
 

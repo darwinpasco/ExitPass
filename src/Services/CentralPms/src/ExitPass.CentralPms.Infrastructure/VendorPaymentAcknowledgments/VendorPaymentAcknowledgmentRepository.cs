@@ -68,7 +68,8 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
                 ps.ticket_number_masked AS ticket_number,
                 COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS card_num,
                 FLOOR(pa.amount * 100)::bigint AS request_fee_minor_units,
-                pa.currency_code::text AS request_currency_code
+                pa.currency_code::text AS request_currency_code,
+                ts.tariff_version_reference
             FROM core.payment_attempts AS pa
             INNER JOIN core.payment_confirmations AS pc
                 ON pc.payment_attempt_id = pa.payment_attempt_id
@@ -77,6 +78,8 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
             INNER JOIN core.parking_sessions AS ps
                 ON ps.parking_session_id = pa.parking_session_id
                AND ps.parking_session_id = @parking_session_id
+            INNER JOIN core.tariff_snapshots AS ts
+                ON ts.tariff_snapshot_id = pa.tariff_snapshot_id
             INNER JOIN integration.vendor_systems AS vs
                 ON vs.vendor_system_id = ps.vendor_system_id
             WHERE pa.payment_attempt_id = @payment_attempt_id
@@ -107,7 +110,8 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
             TicketNumber: GetNullableString(reader, "ticket_number"),
             CardNum: GetNullableString(reader, "card_num"),
             RequestFeeMinorUnits: reader.GetInt64(reader.GetOrdinal("request_fee_minor_units")),
-            RequestCurrencyCode: reader.GetString(reader.GetOrdinal("request_currency_code")).Trim())
+            RequestCurrencyCode: reader.GetString(reader.GetOrdinal("request_currency_code")).Trim(),
+            TariffVersionReference: GetNullableString(reader, "tariff_version_reference") ?? string.Empty)
         {
             PlateNumber = GetNullableString(reader, "plate_number"),
             SiteId = reader.GetGuid(reader.GetOrdinal("site_id")),

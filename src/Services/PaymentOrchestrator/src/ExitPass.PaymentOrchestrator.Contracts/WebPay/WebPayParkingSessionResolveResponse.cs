@@ -27,6 +27,18 @@ public sealed class WebPayParkingSessionResolveResponse
     /// <summary>Whether authoritative tariff and payable-basis facts are present.</summary>
     public bool PayableBasisAvailable { get; set; }
 
+    /// <summary>Live vendor or ExitPass continuity tariff source.</summary>
+    public string? TariffSource { get; set; }
+
+    /// <summary>Whether payment completion requires operator-assisted manual exit.</summary>
+    public bool ManualExitRequired { get; set; }
+
+    /// <summary>Canonical vehicle classification used by Central PMS.</summary>
+    public string? VehicleTypeCode { get; set; }
+
+    /// <summary>Immutable tariff version reference supplied by Central PMS.</summary>
+    public string? TariffVersion { get; set; }
+
     /// <summary>
     /// Site group resolved with the parking session.
     /// </summary>

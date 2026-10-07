@@ -110,7 +110,8 @@ public sealed record VendorPaymentAcknowledgmentBasis(
     string? TicketNumber,
     string? CardNum,
     long RequestFeeMinorUnits,
-    string RequestCurrencyCode)
+    string RequestCurrencyCode,
+    string TariffVersionReference = "")
 {
     /// <summary>Canonical masked plate retained by the immutable parking session.</summary>
     public string? PlateNumber { get; init; }

@@ -107,6 +107,8 @@ public sealed record VendorSessionProjection(
 {
     /// <summary>Service identity of the Site Adapter that supplied this projection.</summary>
     public Guid? SourceAdapterIdentityId { get; init; }
+    public string? VendorVehicleTypeCode { get; init; }
+    public string? CanonicalVehicleTypeCode { get; init; }
 }
 
 /// <summary>

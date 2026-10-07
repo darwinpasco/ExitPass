@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.VendorParking;
 
 namespace ExitPass.CentralPms.Application.StatutoryDiscounts;
 
@@ -30,6 +31,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
     private readonly IStatutoryDiscountZeroPayableFinalityReader _zeroPayableFinalityReader;
     private readonly IZeroPayableStatutoryFiscalIssuanceService? _zeroPayableFiscalIssuanceService;
     private readonly IIssueExitAuthorizationUseCase? _issueExitAuthorizationUseCase;
+    private readonly IContinuityTariffProvenanceReader? _continuityTariffProvenance;
 
     public StatutoryDiscountDecisionFacadeService(
         IStatutoryDiscountStagedCommandService stagedCommandService,
@@ -45,7 +47,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         IStatutoryDiscountPayableBasisRevalidationService payableBasisRevalidationService,
         IStatutoryDiscountZeroPayableFinalityReader zeroPayableFinalityReader,
         IZeroPayableStatutoryFiscalIssuanceService? zeroPayableFiscalIssuanceService = null,
-        IIssueExitAuthorizationUseCase? issueExitAuthorizationUseCase = null)
+        IIssueExitAuthorizationUseCase? issueExitAuthorizationUseCase = null,
+        IContinuityTariffProvenanceReader? continuityTariffProvenance = null)
     {
         _stagedCommandService = stagedCommandService ?? throw new ArgumentNullException(nameof(stagedCommandService));
         _historicalRepository = historicalRepository ?? throw new ArgumentNullException(nameof(historicalRepository));
@@ -61,6 +64,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         _zeroPayableFinalityReader = zeroPayableFinalityReader ?? throw new ArgumentNullException(nameof(zeroPayableFinalityReader));
         _zeroPayableFiscalIssuanceService = zeroPayableFiscalIssuanceService;
         _issueExitAuthorizationUseCase = issueExitAuthorizationUseCase;
+        _continuityTariffProvenance = continuityTariffProvenance;
     }
 
     public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAvailabilityAsync(
@@ -355,6 +359,21 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         var eligibility = CompletionAuthorityResolver.EvaluateZeroPayableExitAuthorizationEligibility(
             authorityResolution.Authority,
             fiscalCompletion?.FiscalPrerequisiteSatisfied == true);
+
+        if (_continuityTariffProvenance is not null &&
+            await _continuityTariffProvenance.IsContinuityTariffAsync(
+                authorityResolution.Authority.ParkingSessionId,
+                authorityResolution.Authority.TariffSnapshotId,
+                paymentAttemptId: null,
+                cancellationToken))
+        {
+            eligibility = new ExitAuthorizationEligibility(
+                CompletionAuthorityEligible: true,
+                ExitAuthorizationIssuanceAllowed: false,
+                Status: ExitAuthorizationEligibilityStatuses.ManualExitRequired,
+                BlockedReason: ExitAuthorizationEligibilityBlockedReasons.ContinuityTariffManualExitRequired,
+                CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality);
+        }
 
         IssueExitAuthorizationResult? exitAuthorization = null;
         if (progressCompletion &&

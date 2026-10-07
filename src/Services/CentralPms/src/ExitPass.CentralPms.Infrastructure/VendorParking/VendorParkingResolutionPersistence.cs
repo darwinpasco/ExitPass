@@ -46,7 +46,10 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         await connection.OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
-        await EnsureReferenceRowsAsync(connection, transaction, request, siteGroupId, siteId, cancellationToken);
+        if (!request.ReferencesAlreadyExist)
+        {
+            await EnsureReferenceRowsAsync(connection, transaction, request, siteGroupId, siteId, cancellationToken);
+        }
 
         var vendorSystemId = await ResolveVendorSystemIdAsync(
             connection,
@@ -87,8 +90,17 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             connection,
             transaction,
             parkingSession.ParkingSessionId,
-            parkingSessionWasReused ? null : vendorTariffRef,
+            parkingSessionWasReused && request.TariffOrigin == VendorParkingTariffOrigin.LiveVendor
+                ? null
+                : vendorTariffRef,
             cancellationToken);
+
+        if (request.TariffOrigin == VendorParkingTariffOrigin.LiveVendor &&
+            existingTariff is not null &&
+            IsContinuityTariff(existingTariff))
+        {
+            existingTariff = null;
+        }
 
         if (existingTariff is null && parkingSessionWasReused)
         {
@@ -105,7 +117,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 cancellationToken))
             {
                 if (latestExistingTariff is null ||
-                    !await HasCurrentCompletedZeroPayableStatutoryExitAsync(
+                    !await HasCurrentCompletedZeroPayableStatutoryFinalityAsync(
                         connection,
                         transaction,
                         latestExistingTariff.TariffSnapshotId,
@@ -120,15 +132,29 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             }
             else
             {
-                existingTariff = latestExistingTariff is not null &&
+                if (latestExistingTariff is not null &&
+                    await HasActiveOrConfirmedPaymentAttemptAsync(
+                        connection,
+                        transaction,
+                        latestExistingTariff.TariffSnapshotId,
+                        cancellationToken))
+                {
+                    existingTariff = latestExistingTariff;
+                }
+
+                var latestCanBeReused = latestExistingTariff is not null &&
+                    existingTariff is null &&
                     latestExistingTariff.ExpiresAt > DateTimeOffset.UtcNow &&
                     !await WasConsumedOnlyByFailedPaymentAttemptAsync(
                         connection,
                         transaction,
                         latestExistingTariff.TariffSnapshotId,
-                        cancellationToken)
-                        ? latestExistingTariff
-                        : null;
+                        cancellationToken);
+
+                if (latestCanBeReused && !IsContinuityTariff(latestExistingTariff!))
+                {
+                    existingTariff = latestExistingTariff;
+                }
             }
         }
 
@@ -556,6 +582,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 site_id,
                 vendor_system_id,
                 source_adapter_identity_id,
+                canonical_vehicle_type_code,
                 vendor_session_ref,
                 plate_number_hash,
                 plate_number_masked,
@@ -577,6 +604,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 @site_id,
                 @vendor_system_id,
                 @source_adapter_identity_id,
+                @canonical_vehicle_type_code,
                 @vendor_session_ref,
                 @plate_number_hash,
                 @plate_number_masked,
@@ -598,7 +626,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         AddParkingSessionInsertParameters(command, session, siteGroupId, siteId, vendorSystemId,
-            request.SourceAdapterIdentityId, request.CorrelationId);
+            request.SourceAdapterIdentityId, request.CanonicalVehicleTypeCode, request.CorrelationId);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -610,6 +638,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         Guid siteId,
         Guid vendorSystemId,
         Guid? sourceAdapterIdentityId,
+        string? canonicalVehicleTypeCode,
         Guid correlationId)
     {
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = session.ParkingSessionId;
@@ -618,6 +647,8 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = vendorSystemId;
         command.Parameters.Add("source_adapter_identity_id", NpgsqlDbType.Uuid).Value =
             (object?)sourceAdapterIdentityId ?? DBNull.Value;
+        command.Parameters.Add("canonical_vehicle_type_code", NpgsqlDbType.Varchar).Value =
+            DbValue(canonicalVehicleTypeCode);
         command.Parameters.AddWithValue("vendor_session_ref", session.VendorSessionRef);
         command.Parameters.Add("plate_number_hash", NpgsqlDbType.Text).Value = DbValue(HashIdentifier(session.PlateNumber));
         command.Parameters.Add("plate_number_masked", NpgsqlDbType.Text).Value = DbValue(session.PlateNumber);
@@ -855,7 +886,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             MapPaymentStatus(attemptStatus));
     }
 
-    private static async Task<bool> HasCurrentCompletedZeroPayableStatutoryExitAsync(
+    private static async Task<bool> HasCurrentCompletedZeroPayableStatutoryFinalityAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Guid tariffSnapshotId,
@@ -878,7 +909,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                  AND fiscal.electronic_journal_event_reference IS NOT NULL
                  AND fiscal.payment_attempt_id IS NULL
                  AND fiscal.payment_confirmation_id IS NULL
-                JOIN core.exit_authorizations AS exit_auth
+                LEFT JOIN core.exit_authorizations AS exit_auth
                   ON exit_auth.statutory_discount_payable_basis_application_command_id = application.statutory_discount_payable_basis_application_command_id
                  AND exit_auth.parking_session_id = tariff.parking_session_id
                  AND exit_auth.tariff_snapshot_id = tariff.tariff_snapshot_id
@@ -895,11 +926,25 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                   AND NOT EXISTS (
                       SELECT 1 FROM core.payment_attempts AS attempt
                       WHERE attempt.tariff_snapshot_id = tariff.tariff_snapshot_id)
+                  AND (
+                      (
+                          tariff.tariff_version_reference LIKE @continuity_tariff_prefix
+                          AND exit_auth.exit_authorization_id IS NULL
+                      )
+                      OR
+                      (
+                          tariff.tariff_version_reference NOT LIKE @continuity_tariff_prefix
+                          AND exit_auth.exit_authorization_id IS NOT NULL
+                      )
+                  )
             );
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = tariffSnapshotId;
+        command.Parameters.AddWithValue(
+            "continuity_tariff_prefix",
+            $"{ContinuityTariffCalculator.TariffVersionPrefix}%");
         return await command.ExecuteScalarAsync(cancellationToken) is true;
     }
 
@@ -1173,6 +1218,36 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             ? $"VTAR-{tariffSnapshot.TariffSnapshotId:N}"
             : tariffSnapshot.TariffVersionReference;
     }
+
+    private static async Task<bool> HasActiveOrConfirmedPaymentAttemptAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid tariffSnapshotId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM core.payment_attempts AS pa
+                WHERE pa.tariff_snapshot_id = @tariff_snapshot_id
+                  AND pa.attempt_status IN (
+                      'REQUESTED'::core.payment_attempt_status_enum,
+                      'PENDING_PROVIDER'::core.payment_attempt_status_enum,
+                      'PENDING_FINALIZATION'::core.payment_attempt_status_enum,
+                      'CONFIRMED'::core.payment_attempt_status_enum
+                  )
+            );
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = tariffSnapshotId;
+        return await command.ExecuteScalarAsync(cancellationToken) is true;
+    }
+
+    private static bool IsContinuityTariff(TariffSnapshot tariffSnapshot) =>
+        tariffSnapshot.TariffVersionReference?.StartsWith(
+            ContinuityTariffCalculator.TariffVersionPrefix,
+            StringComparison.Ordinal) == true;
 
     private static string? HashIdentifier(string? value)
     {

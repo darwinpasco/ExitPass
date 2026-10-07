@@ -135,6 +135,23 @@ public sealed class VendorPaymentAcknowledgmentWorkflowTests
         repository.Record!.AcknowledgmentStatus.Should().Be(VendorPaymentAcknowledgmentStatuses.Confirmed);
     }
 
+    [Fact]
+    public async Task ProcessAsync_WhenTariffIsContinuity_DoesNotCreateOrSendVendorAcknowledgment()
+    {
+        var repository = new FakeAcknowledgmentRepository
+        {
+            Basis = Basis() with { TariffVersionReference = "EXITPASS-CONTINUITY:SYNTHETIC-V1" }
+        };
+        var vendorClient = new FakeVendorClient();
+        var sut = CreateSut(repository, vendorClient, enabled: true);
+
+        await sut.ProcessAsync(Command(), CancellationToken.None);
+
+        repository.CreatePendingCalls.Should().Be(0);
+        repository.Record.Should().BeNull();
+        vendorClient.ConfirmParkingFeeCalls.Should().Be(0);
+    }
+
     private static VendorPaymentAcknowledgmentWorkflow CreateSut(
         FakeAcknowledgmentRepository repository,
         FakeVendorClient vendorClient,

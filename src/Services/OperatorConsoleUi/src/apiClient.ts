@@ -510,6 +510,8 @@ interface OperatorTicketLookupResponseDto {
   vendorConfirmationTimestamp?: string | null;
   vendorMessage?: string | null;
   sessionSource?: string | null;
+  tariffSource?: string | null;
+  exitHandlingStatus?: string | null;
   projectionStatus?: string | null;
   projectionSourceEventAt?: string | null;
   projectionLastRefreshedAt?: string | null;
@@ -2341,6 +2343,8 @@ function toTicketLookupResult(body: OperatorTicketLookupResponseDto): OperatorTi
     vendorConfirmationTimestamp: body.vendorConfirmationTimestamp ?? undefined,
     vendorMessage: body.vendorMessage ?? undefined,
     sessionSource: body.sessionSource ?? undefined,
+    tariffSource: body.tariffSource ?? undefined,
+    exitHandlingStatus: body.exitHandlingStatus ?? undefined,
     projectionStatus: body.projectionStatus ?? undefined,
     projectionSourceEventAt: body.projectionSourceEventAt ?? undefined,
     projectionLastRefreshedAt: body.projectionLastRefreshedAt ?? undefined,

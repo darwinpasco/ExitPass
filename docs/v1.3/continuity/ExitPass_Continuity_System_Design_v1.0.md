@@ -9,6 +9,7 @@ Status: Draft companion technical design for v1.3
 | Version | Date | Description |
 | --- | --- | --- |
 | v1.0 | 2026-07-02 | Initial Continuity companion System Design covering controlled degraded operation, conceptual operating states, activation, projection eligibility, Continuity Terminal restricted operation, payment/fiscal/exit exceptions, manual release governance, reconciliation, observability, and authority guardrails. |
+| v1.1 | 2026-10-06 | Resolves the v1.3 degraded tariff implementation slice: Central PMS owns Site-scoped block-tariff calculation, payment and POS fiscal issuance may proceed, normal ExitAuthorization and vendor acknowledgment are prohibited, and exit handling is manual. |
 
 ### Document Ownership
 
@@ -335,11 +336,14 @@ Normal tariff computation remains Vendor PMS/HCP authority.
 If live tariff is unavailable and continuity policy allows degraded operation:
 
 - Central PMS owns degraded payable-basis decisioning.
-- Degraded tariff/payable basis must use approved tariff configuration or approved continuity basis.
+- Degraded tariff/payable basis uses the canonical, versioned Site + Vehicle Type tariff catalog in `sites.site_tariff_definitions` and `sites.site_tariff_rules`. Application configuration may gate the capability, but it is not tariff authority.
+- Central PMS calculates elapsed duration from a fresh, unique projected entry timestamp and its current time. The supported v1.3 model applies configurable grace, ordered duration or clock-time rules, whole-started-unit rounding, and optional daily caps with integer minor-unit arithmetic.
+- A successful calculation materializes or reuses the canonical parking session and records an immutable canonical TariffSnapshot with the `EXITPASS-CONTINUITY:<site-tariff-version>` provenance marker.
 - Degraded basis must not be invented from projection, passageway records, terminal history, dashboard values, connector heuristics, or cashier judgment.
 - Degraded payable-basis use must be incident-tagged, audit-tagged, reconciliation-tagged, and distinguishable from normal vendor tariff calculation.
+- Missing, disabled, malformed, unsupported, stale, ambiguous, or scope-mismatched inputs retain projection visibility but fail closed for payment.
 
-Exact configuration owner, rounding, grace rules, freshness threshold, and discount interaction remain open.
+The existing statutory-discount workflow may apply against the canonical continuity TariffSnapshot. It remains the only statutory calculation authority.
 
 ## 21. Continuity Terminal Restricted Operation
 
@@ -381,6 +385,7 @@ Rules:
 - Connector reports acknowledgment outcome only.
 - Vendor state does not create ExitPass payment finality.
 - HCP `parkingfee/confirm` is conditional vendor acknowledgment only and remains disabled unless explicitly approved.
+- Continuity-derived transactions do not create or queue vendor payment acknowledgments; restored HikCentral session state is corrected manually by authorized parking personnel.
 - Unknown acknowledgment must not be retried blindly without later-approved idempotency and safe confirmation posture.
 - Acknowledgment failures are audit-tagged and reconciliation-tagged.
 
@@ -408,7 +413,7 @@ Workflow:
 
 1. Central PMS records payment finality after verified outcome.
 2. Central PMS requests fiscal issuance from the resolved Site POS Server.
-3. If POS Server issuance succeeds, Central PMS records fiscal reference and evaluates normal ExitAuthorization.
+3. If POS Server issuance succeeds, Central PMS records fiscal reference. A live-vendor basis may proceed to normal ExitAuthorization evaluation; a continuity-derived basis proceeds to `MANUAL_EXIT_REQUIRED` without ExitAuthorization.
 4. If fiscal issuance fails or remains pending/unknown, Central PMS blocks normal ExitAuthorization and starts controlled fiscal exception review.
 5. APT/Continuity Terminal may display backend status only.
 6. Operator Console or approved operations workflow may support review/escalation where policy allows.
@@ -417,14 +422,14 @@ Workflow:
 
 Central PMS remains the only ExitAuthorization issuer.
 
-Continuity does not alter the base rule:
+For live-vendor payable bases, continuity does not alter the base rule:
 
 - Payment finality must be recorded by Central PMS.
 - Fiscal prerequisites must be satisfied unless approved exception/manual-release policy applies.
 - Session/payable-basis state must be safe under normal or approved degraded rules.
 - ExitAuthorization must be issued by Central PMS before gate/exit execution consumes it.
 
-Manual release, where allowed, is not normal ExitAuthorization.
+For an `EXITPASS-CONTINUITY:` payable basis, Central PMS must not issue normal ExitAuthorization even after payment finality and successful fiscal issuance. The successful financial/fiscal result is returned with `MANUAL_EXIT_REQUIRED`; parking personnel verify payment, allow physical exit manually, and later tag the vehicle/session as exited in HikCentral after service restoration. Manual exit is not normal ExitAuthorization.
 
 ## 27. Gate / Exit Issue Handling
 
@@ -621,13 +626,10 @@ Exact infrastructure, topology, permissions, service boundaries, retry mechanics
 | CON-SD-OQ-002 | Exact activation/deactivation workflow. |
 | CON-SD-OQ-003 | Exact projection freshness threshold. |
 | CON-SD-OQ-004 | Exact connector health states, freshness labels, stale thresholds, and alert rules. |
-| CON-SD-OQ-005 | Degraded tariff configuration owner. |
-| CON-SD-OQ-006 | Degraded tariff rounding and grace rules. |
 | CON-SD-OQ-007 | Offline payment policy. |
 | CON-SD-OQ-008 | Offline fiscal issuance policy. |
 | CON-SD-OQ-009 | Fiscal issuance exception release policy. |
 | CON-SD-OQ-010 | Manual release policy and emergency override boundary. |
-| CON-SD-OQ-011 | Vendor payment acknowledgment sync/async/queue/retry/exit-block policy. |
 | CON-SD-OQ-012 | Unknown vendor acknowledgment safe confirmation method. |
 | CON-SD-OQ-013 | Reconciliation SLA, closure authority, and closure labels. |
 | CON-SD-OQ-014 | HCP `cardNum` meaning and ticket-only lookup key. |

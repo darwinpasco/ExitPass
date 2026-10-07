@@ -169,5 +169,7 @@ public static class OperatorConsoleSessionLookupEndpoints
             result.Session?.PaymentAttemptStatus,
             result.Session?.PaymentConfirmationStatus,
             result.Session?.AmountPaidMinorUnits,
-            result.Session?.PaymentMethod);
+            result.Session?.PaymentMethod,
+            result.Session?.TariffSource,
+            result.Session?.ExitHandlingStatus);
 }

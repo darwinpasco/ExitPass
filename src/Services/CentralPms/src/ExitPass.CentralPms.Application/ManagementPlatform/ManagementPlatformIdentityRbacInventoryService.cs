@@ -53,6 +53,7 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
                 "assignment.manage",
                 "access-audit.view",
                 "site.view", "site.manage", "site-group.view", "site-group.manage",
+                "jurisdiction.view", "jurisdiction.manage", "site-tariff.view", "site-tariff.manage",
                 "device.view", "device.manage", "device-binding.view", "device-binding.manage",
                 "shift.view", "shift.manage", "pos-server-config.view", "pos-server-config.manage",
                 "connector-config.view", "connector-config.manage", "platform-config.view", "platform-config.manage"
@@ -161,6 +162,7 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
                 "policy-import.manage",
                 "statutory-discount-policy.view",
                 "statutory-discount-policy.manage",
+                "jurisdiction.view",
                 "evidence-rule-policy.view",
                 "evidence-rule-policy.manage"
             ],
@@ -343,6 +345,10 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
         ("site.manage", "Site manage", "Administration"),
         ("site-group.view", "Site group view", "Administration"),
         ("site-group.manage", "Site group manage", "Administration"),
+        ("jurisdiction.view", "Jurisdiction view", "Administration"),
+        ("jurisdiction.manage", "Jurisdiction manage", "Administration"),
+        ("site-tariff.view", "Site tariff view", "Administration"),
+        ("site-tariff.manage", "Site tariff manage", "Administration"),
         ("device.view", "Device view", "Administration"),
         ("device.manage", "Device manage", "Administration"),
         ("device-binding.view", "Device binding view", "Administration"),

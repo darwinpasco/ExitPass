@@ -1,6 +1,7 @@
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
+using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
@@ -40,6 +41,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     private readonly ISitePosServerBindingResolver _sitePosServerBindingResolver;
     private readonly IIssueExitAuthorizationUseCase _issueExitAuthorizationUseCase;
     private readonly IVendorPaymentAcknowledgmentWorkflow? _vendorPaymentAcknowledgmentWorkflow;
+    private readonly IContinuityTariffProvenanceReader? _continuityTariffProvenance;
     private readonly FiscalIssuancePosServerIntegrationOptions _posServerOptions;
     private readonly IPosServerFiscalDocumentRequestMapper _requestMapper;
     private readonly IFiscalSemanticRequestHashCalculator _semanticRequestHashCalculator;
@@ -63,7 +65,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         IFiscalExceptionControlledRetryExecutionAuditRepository recoveryAuditRepository,
         ITerminalCashFiscalConflictRecoveryGuardRepository recoveryGuardRepository,
         ITerminalCashFiscalConflictRecoveryLock recoveryLock,
-        IVendorPaymentAcknowledgmentWorkflow? vendorPaymentAcknowledgmentWorkflow = null)
+        IVendorPaymentAcknowledgmentWorkflow? vendorPaymentAcknowledgmentWorkflow = null,
+        IContinuityTariffProvenanceReader? continuityTariffProvenance = null)
     {
         _terminalCashPayments = terminalCashPayments;
         _fiscalReferences = fiscalReferences;
@@ -73,6 +76,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         _sitePosServerBindingResolver = sitePosServerBindingResolver;
         _issueExitAuthorizationUseCase = issueExitAuthorizationUseCase;
         _vendorPaymentAcknowledgmentWorkflow = vendorPaymentAcknowledgmentWorkflow;
+        _continuityTariffProvenance = continuityTariffProvenance;
         _posServerOptions = posServerOptions;
         _requestMapper = requestMapper;
         _semanticRequestHashCalculator = semanticRequestHashCalculator;
@@ -110,7 +114,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 existingByConfirmation,
                 command.CorrelationId,
                 posServerCallAttempted: false,
-                exitAuthorizationIssued: existingExitAuthorizationIssued);
+                exitAuthorizationIssued: existingExitAuthorizationIssued.Issued,
+                exitHandlingStatus: existingExitAuthorizationIssued.Status);
         }
 
         var existingByUpstream = await _fiscalReferences.FindByUpstreamFinalityReferenceAsync(
@@ -133,7 +138,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 existingByUpstream,
                 command.CorrelationId,
                 posServerCallAttempted: false,
-                exitAuthorizationIssued: existingExitAuthorizationIssued);
+                exitAuthorizationIssued: existingExitAuthorizationIssued.Issued,
+                exitHandlingStatus: existingExitAuthorizationIssued.Status);
         }
 
         var statutoryFiscalLinkage = await _statutoryFiscalLinkageReader
@@ -181,7 +187,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 ? issueResult.PosServerResult.Code
                 : issueResult.Status is FiscalIssuancePosServerLiveIntegrationStatus.Applied ? null : issueResult.Code,
             safeErrorPosture: issueResult.PosServerResult?.ErrorPosture?.ToString(),
-            exitAuthorizationIssued: exitAuthorizationIssued);
+            exitAuthorizationIssued: exitAuthorizationIssued.Issued,
+            exitHandlingStatus: exitAuthorizationIssued.Status);
     }
 
     public async Task<TerminalCashFiscalConflictRecoveryResult> RecoverConfigurationFailureAsync(
@@ -258,7 +265,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                     reference,
                     command.RecoveryCorrelationId,
                     posServerCallAttempted: false,
-                    exitAuthorizationIssued: existingExitAuthorizationIssued));
+                    exitAuthorizationIssued: existingExitAuthorizationIssued.Issued,
+                    exitHandlingStatus: existingExitAuthorizationIssued.Status));
         }
 
         EnsureApprovedRecoveryState(command, reference, recoveryClass);
@@ -396,10 +404,11 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                     ? liveResult.PosServerResult.Code
                     : null,
                 safeErrorPosture: liveResult.PosServerResult?.ErrorPosture?.ToString(),
-                exitAuthorizationIssued: exitAuthorizationIssued));
+                exitAuthorizationIssued: exitAuthorizationIssued.Issued,
+                exitHandlingStatus: exitAuthorizationIssued.Status));
     }
 
-    private async Task<bool> ContinueAfterVerifiedFiscalEvidenceAsync(
+    private async Task<(bool Issued, string? Status)> ContinueAfterVerifiedFiscalEvidenceAsync(
         TerminalCashPaymentReadback cashPayment,
         FiscalIssuanceReferenceRecord reference,
         Guid correlationId,
@@ -410,7 +419,17 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             new FiscalIssuanceGatingEvaluationContext(IsPaymentFinalityVerified: true));
         if (!gate.IsReadyForNormalExitAuthorization)
         {
-            return false;
+            return (false, null);
+        }
+
+        if (_continuityTariffProvenance is not null &&
+            await _continuityTariffProvenance.IsContinuityTariffAsync(
+                cashPayment.ParkingSessionId,
+                cashPayment.TariffSnapshotId,
+                cashPayment.PaymentAttemptId,
+                cancellationToken))
+        {
+            return (false, ExitAuthorizationEligibilityStatuses.ManualExitRequired);
         }
 
         if (!Guid.TryParse(cashPayment.CashierId, out var cashierUserId) || cashierUserId == Guid.Empty)
@@ -453,7 +472,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             }
         }
 
-        return true;
+        return (true, "ISSUED");
     }
 
     public async Task<TerminalCashFiscalIssuanceResult?> GetByTerminalCashTenderIdAsync(
@@ -998,7 +1017,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         bool posServerCallAttempted,
         string? safeErrorCode = null,
         string? safeErrorPosture = null,
-        bool exitAuthorizationIssued = false) =>
+        bool exitAuthorizationIssued = false,
+        string? exitHandlingStatus = null) =>
         new(
             TerminalCashTenderId: cashPayment.TerminalCashTenderId,
             PaymentAttemptId: reference.PaymentAttemptId!.Value,
@@ -1017,7 +1037,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             SafeErrorPosture: safeErrorPosture ?? reference.LatestErrorPosture?.ToString(),
             PosServerCallAttempted: posServerCallAttempted,
             ExitAuthorizationIssued: exitAuthorizationIssued,
-            GateBehaviorTriggered: false);
+            GateBehaviorTriggered: false,
+            ExitHandlingStatus: exitHandlingStatus);
 
     private static void EnsureRecoveryExpectedFacts(
         TerminalCashFiscalConflictRecoveryCommand command,

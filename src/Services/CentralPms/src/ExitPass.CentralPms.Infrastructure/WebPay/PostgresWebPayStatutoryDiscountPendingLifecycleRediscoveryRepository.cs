@@ -503,11 +503,19 @@ public sealed class PostgresWebPayPaymentAttemptStatusRepository : IWebPayPaymen
                 pa.attempt_status::text AS payment_status,
                 ps.session_status::text AS parking_status,
                 ea.exit_authorization_id,
-                ea.authorization_status::text AS exit_authorization_status,
+                CASE
+                    WHEN ea.authorization_status IS NOT NULL THEN ea.authorization_status::text
+                    WHEN pa.attempt_status = 'CONFIRMED'::core.payment_attempt_status_enum
+                     AND ts.tariff_version_reference LIKE 'EXITPASS-CONTINUITY:%'
+                    THEN 'MANUAL_EXIT_REQUIRED'
+                    ELSE NULL
+                END AS exit_authorization_status,
                 ea.expires_at AS exit_authorization_expires_at
             FROM core.payment_attempts AS pa
             INNER JOIN core.parking_sessions AS ps
                 ON ps.parking_session_id = pa.parking_session_id
+            INNER JOIN core.tariff_snapshots AS ts
+                ON ts.tariff_snapshot_id = pa.tariff_snapshot_id
             LEFT JOIN payments.payment_rails AS rail
                 ON rail.payment_rail_id = pa.payment_rail_id
             LEFT JOIN sites.sites AS s

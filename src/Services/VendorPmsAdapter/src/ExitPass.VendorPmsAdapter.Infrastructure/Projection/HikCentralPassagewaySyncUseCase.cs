@@ -122,6 +122,7 @@ public sealed class HikCentralPassagewaySyncUseCase(
         var sourceTimestamp = exit ?? entry ?? DateTimeOffset.UtcNow;
         var hashInput = string.Join('|', vendorRecord, parkingLot, card, plate, entry?.ToString("O"), exit?.ToString("O"));
 
+        var vendorVehicleType = First(record.CarInfo?.CarType);
         normalized = new VendorPassagewayRecordDto(
             vendorRecord,
             card,
@@ -139,7 +140,11 @@ public sealed class HikCentralPassagewaySyncUseCase(
             First(record.AllowResult),
             HikCentralPassagewayRecordClient.PassagewayRecordPath,
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(hashInput))).ToLowerInvariant(),
-            sourceTimestamp);
+            sourceTimestamp)
+        {
+            VendorVehicleTypeCode = vendorVehicleType,
+            CanonicalVehicleTypeCode = NormalizePassagewayVehicleType(vendorVehicleType)
+        };
         return true;
     }
 
@@ -171,4 +176,15 @@ public sealed class HikCentralPassagewaySyncUseCase(
         DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var parsed)
             ? parsed
             : null;
+
+    private static string? NormalizePassagewayVehicleType(string? value) => value?.Trim() switch
+    {
+        "0" => "OTHER",
+        "3" => "BUS",
+        "4" => "TRUCK",
+        "5" => "CAR",
+        "6" => "VAN",
+        "7" => "LIGHT_TRUCK",
+        _ => null
+    };
 }

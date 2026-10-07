@@ -1,6 +1,8 @@
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -301,7 +303,43 @@ public sealed class ReportVerifiedPaymentOutcomeFiscalRecoveryTests
         await fixture.ExitAuthorization.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
     }
 
-    private static Fixture CreateFixture(DigitalPaymentFiscalRecoveryContext? recovery = null)
+    [Fact]
+    public async Task ConfirmedContinuityPayment_PreservesFinalityAndFiscalButRequiresManualExit()
+    {
+        var provenance = Substitute.For<IContinuityTariffProvenanceReader>();
+        provenance.IsContinuityTariffAsync(SessionId, null, AttemptId, Arg.Any<CancellationToken>())
+            .Returns(true);
+        var acknowledgment = Substitute.For<IVendorPaymentAcknowledgmentWorkflow>();
+        var fixture = CreateFixture(continuityTariffProvenance: provenance, acknowledgment: acknowledgment);
+        fixture.FiscalIssuance.IssueOrReadAsync(
+                Arg.Any<DigitalPaymentFiscalIssuanceCommand>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new DigitalPaymentFiscalIssuanceResult(
+                FiscalReferenceId,
+                true,
+                false,
+                null,
+                Guid.NewGuid(),
+                "IST-POS-A"));
+
+        var result = await fixture.Sut.ExecuteAsync(Command(), CancellationToken.None);
+
+        Assert.Equal("CONFIRMED", result.AttemptStatus);
+        Assert.Equal(ExitAuthorizationEligibilityStatuses.ManualExitRequired, result.AuthorizationStatus);
+        Assert.Null(result.ExitAuthorizationId);
+        Assert.Null(result.AuthorizationToken);
+        await fixture.Confirmation.Received(1).RecordAsync(
+            Arg.Any<RecordPaymentConfirmationCommand>(), VerifiedAt, Arg.Any<CancellationToken>());
+        await fixture.FiscalIssuance.Received(1).IssueOrReadAsync(
+            Arg.Any<DigitalPaymentFiscalIssuanceCommand>(), Arg.Any<CancellationToken>());
+        await fixture.ExitAuthorization.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+        await acknowledgment.DidNotReceiveWithAnyArgs().ProcessAsync(default!, default);
+    }
+
+    private static Fixture CreateFixture(
+        DigitalPaymentFiscalRecoveryContext? recovery = null,
+        IContinuityTariffProvenanceReader? continuityTariffProvenance = null,
+        IVendorPaymentAcknowledgmentWorkflow? acknowledgment = null)
     {
         var confirmation = Substitute.For<IRecordPaymentConfirmationGateway>();
         var finalization = Substitute.For<IFinalizePaymentAttemptUseCase>();
@@ -349,7 +387,9 @@ public sealed class ReportVerifiedPaymentOutcomeFiscalRecoveryTests
             {
                 EnableLiveFiscalIssuanceFromPaymentFlow = true
             },
-            digitalPaymentFiscalRecoveryContextReader: recoveryReader);
+            digitalPaymentFiscalRecoveryContextReader: recoveryReader,
+            vendorPaymentAcknowledgmentWorkflow: acknowledgment,
+            continuityTariffProvenance: continuityTariffProvenance);
 
         return new Fixture(sut, confirmation, finalization, exitAuthorization, fiscalIssuance);
     }

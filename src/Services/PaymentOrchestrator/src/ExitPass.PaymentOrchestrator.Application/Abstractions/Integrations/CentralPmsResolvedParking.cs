@@ -57,4 +57,8 @@ public sealed record CentralPmsResolvedParking(
     Guid? VendorSessionProjectionId = null,
     string? ProjectionStatus = null,
     DateTimeOffset? ProjectionLastRefreshedAt = null,
-    double? ProjectionFreshnessAgeSeconds = null);
+    double? ProjectionFreshnessAgeSeconds = null,
+    string? TariffSource = null,
+    bool ManualExitRequired = false,
+    string? VehicleTypeCode = null,
+    string? TariffVersion = null);
