@@ -175,6 +175,7 @@ app.MapOperatorConsoleAccessEvaluationEndpoints();
 app.MapOperatorConsoleAccessReadinessEndpoints();
 app.MapOperatorConsoleDeviceBindingEndpoints();
 app.MapOperatorConsoleSessionLookupEndpoints();
+app.MapOperatorConsoleCanonicalSessionEndpoints();
 app.MapOperatorConsoleInvoiceCustomerInformationEndpoints();
 app.MapOperatorConsoleFiscalIssuanceStatusEndpoints();
 app.MapFiscalReportingEndpoints();
@@ -801,6 +802,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleSessionLookupReadRepository>(_ =>
         new OperatorConsoleSessionLookupReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleSessionLookupService, OperatorConsoleSessionLookupService>();
+    builder.Services.AddScoped<IOperatorConsoleCanonicalSessionRepository>(_ =>
+        new OperatorConsoleCanonicalSessionRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleCanonicalSessionService, OperatorConsoleCanonicalSessionService>();
     builder.Services.AddScoped<IParkingSessionInvoiceCustomerInformationRepository>(_ =>
         new PostgresParkingSessionInvoiceCustomerInformationRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IParkingSessionInvoiceCustomerInformationService, ParkingSessionInvoiceCustomerInformationService>();

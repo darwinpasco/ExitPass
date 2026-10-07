@@ -55,4 +55,5 @@ public sealed record OperatorConsoleSessionLookupResponse(
     long? AmountPaidMinorUnits = null,
     string? PaymentMethod = null,
     string? TariffSource = null,
-    string? ExitHandlingStatus = null);
+    string? ExitHandlingStatus = null,
+    Guid? VendorSystemId = null);

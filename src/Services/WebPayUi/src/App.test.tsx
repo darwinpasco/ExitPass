@@ -502,8 +502,15 @@ afterEach(() => {
 });
 
 describe("ExitPass WebPay UI", () => {
+  async function selectTicketInput() {
+    if (!screen.queryByLabelText(/ticket reference/i)) {
+      await userEvent.click(screen.getByRole("button", { name: /^ticket$/i }));
+    }
+    return screen.getByLabelText(/ticket reference/i);
+  }
+
   async function resolveTicket(ticketReference = "TICKET-001", expectedAmount = "125.00") {
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), ticketReference);
+    await userEvent.type(await selectTicketInput(), ticketReference);
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
     expect((await screen.findAllByText(expectedAmount)).length).toBeGreaterThan(0);
   }
@@ -520,6 +527,31 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
   }
+
+  it("defaults to Plate lookup and focuses the plate input while preserving Ticket selection", async () => {
+    stubWebPayFetch();
+
+    render(<App />);
+
+    const plateInput = screen.getByLabelText(/plate number/i);
+    expect(plateInput).toHaveFocus();
+    expect(screen.queryByLabelText(/ticket reference/i)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /^ticket$/i }));
+
+    expect(screen.getByLabelText(/ticket reference/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/plate number/i)).not.toBeInTheDocument();
+  });
+
+  it("uses Ticket lookup when an explicit ticket deep link is present", () => {
+    window.history.pushState({}, "", "/?ticketReference=DEEPLINK-TICKET-001");
+    stubWebPayFetch();
+
+    render(<App />);
+
+    expect(screen.getByLabelText(/ticket reference/i)).toHaveValue("DEEPLINK-TICKET-001");
+    expect(screen.queryByLabelText(/plate number/i)).not.toBeInTheDocument();
+  });
 
   it("WebPay_WhenStatutoryFormOpens_ExplainsAutomaticMaskingWithoutManualAsteriskInstructions", async () => {
     stubWebPayFetch();
@@ -622,7 +654,7 @@ describe("ExitPass WebPay UI", () => {
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-TEST-027{Enter}");
+    await userEvent.type(await selectTicketInput(), "TICKET-TEST-027{Enter}");
 
     expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/webpay/parking-session"))).toHaveLength(1);
@@ -647,7 +679,7 @@ describe("ExitPass WebPay UI", () => {
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-TEST-027");
+    await userEvent.type(await selectTicketInput(), "TICKET-TEST-027");
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
 
     expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
@@ -758,7 +790,7 @@ describe("ExitPass WebPay UI", () => {
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "@@");
+    await userEvent.type(await selectTicketInput(), "@@");
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Enter a valid ticket reference.");
@@ -818,7 +850,7 @@ describe("ExitPass WebPay UI", () => {
     const fetchMock = stubWebPayFetch({ resolvePayloads: [projectedResponse, liveResponse] });
 
     render(<App />);
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "1474119573147");
+    await userEvent.type(await selectTicketInput(), "1474119573147");
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
 
     expect(await screen.findByText("Projection")).toBeInTheDocument();
@@ -2900,7 +2932,7 @@ describe("ExitPass WebPay UI", () => {
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "UNKNOWN");
+    await userEvent.type(await selectTicketInput(), "UNKNOWN");
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("could not find an active parking session");

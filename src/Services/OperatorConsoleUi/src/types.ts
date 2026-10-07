@@ -295,6 +295,19 @@ export interface OperatorSessionLookupInput {
   identifier: string;
 }
 
+export type OperatorCanonicalSessionPurpose = "statutory-discount" | "invoice-customer-information";
+
+export interface OperatorCanonicalSessionInput extends OperatorSessionLookupInput {
+  vendorSystemId: string;
+}
+
+export interface OperatorCanonicalSessionResult {
+  parkingSessionId: string;
+  reusedExistingSession: boolean;
+  vendorSessionProjectionId: string;
+  correlationId: string;
+}
+
 export interface OperatorTicketLookupResult {
   sessionFound: boolean;
   accessAllowed?: boolean;
@@ -321,6 +334,7 @@ export interface OperatorTicketLookupResult {
   amountPaidMinorUnits?: number;
   paymentMethod?: string;
   vendorSystemCode?: string;
+  vendorSystemId?: string;
   vendorConfirmationCode?: string;
   vendorConfirmationStatus?: string | null;
   vendorConfirmationTimestamp?: string;
