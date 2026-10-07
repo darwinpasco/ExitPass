@@ -33,6 +33,25 @@ public sealed class OperatorConsoleOperatingContextMiddlewareTests
     }
 
     [Fact]
+    public async Task Authenticated_device_binding_session_bind_is_not_intercepted_before_handler_validation()
+    {
+        var service = Substitute.For<IOperatorConsoleOperatingContextService>();
+        var nextCalled = false;
+        var middleware = new OperatorConsoleOperatingContextMiddleware(
+            _ => { nextCalled = true; return Task.CompletedTask; },
+            NullLogger<OperatorConsoleOperatingContextMiddleware>.Instance);
+        var context = AuthenticatedContext(
+            Guid.NewGuid(),
+            HttpMethods.Post,
+            "/v1/operator-console/device-binding/bind-session");
+
+        await middleware.InvokeAsync(context, service);
+
+        nextCalled.Should().BeTrue();
+        service.ReceivedCalls().Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Protected_operator_console_request_without_bound_context_remains_denied()
     {
         var sessionId = Guid.NewGuid();

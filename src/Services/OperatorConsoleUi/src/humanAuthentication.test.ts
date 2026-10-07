@@ -53,6 +53,43 @@ describe("Operator Console I-020 authentication client", () => {
     expect(window.sessionStorage).toHaveLength(0);
   });
 
+  it("exchanges the opaque device proof and binds the authenticated session with CSRF", async () => {
+    const boundSession = {
+      ...sessionDto(),
+      operatorDeviceBindingReference: "16000000-0000-0000-0000-000000000001",
+      operatorShiftReference: "17000000-0000-0000-0000-000000000001",
+      effectiveSiteReference: "13000000-0000-0000-0000-000000000001",
+      effectiveSiteGroupReference: "14000000-0000-0000-0000-000000000001"
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(authenticationResponse(sessionDto(), { csrf: "csrf-bind" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(authenticationResponse(boundSession));
+    const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
+    const proof = "controlled-workstation-proof-1234567890";
+
+    await client.establishDeviceBinding(proof);
+    await client.getCurrentSession();
+    const result = await client.bindDeviceSession();
+
+    const establish = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(establish[0]).toBe(humanAuthenticationRoutes.establishDeviceBinding);
+    expect(JSON.parse(establish[1].body as string)).toEqual({ proof });
+    const bind = fetchMock.mock.calls[2] as unknown as [string, RequestInit];
+    expect(bind[0]).toBe(humanAuthenticationRoutes.bindDeviceSession);
+    expect(bind[1].headers).toEqual(expect.objectContaining({ "X-CSRF-Token": "csrf-bind" }));
+    expect(result).toEqual(expect.objectContaining({
+      operatorDeviceBindingReference: boundSession.operatorDeviceBindingReference,
+      operatorShiftReference: boundSession.operatorShiftReference,
+      effectiveSiteReference: boundSession.effectiveSiteReference,
+      effectiveSiteGroupReference: boundSession.effectiveSiteGroupReference
+    }));
+    expect(window.localStorage).toHaveLength(0);
+    expect(window.sessionStorage).toHaveLength(0);
+  });
+
   it("changes a restricted-session password with CSRF and the governed TOTP request", async () => {
     const fetchMock = vi
       .fn()

@@ -4,7 +4,9 @@ export const humanAuthenticationRoutes = {
   login: "/v1/human-authentication/login",
   session: "/v1/human-authentication/session",
   logout: "/v1/human-authentication/logout",
-  passwordChange: "/v1/human-authentication/password/change"
+  passwordChange: "/v1/human-authentication/password/change",
+  establishDeviceBinding: "/v1/operator-console/device-binding/establish",
+  bindDeviceSession: "/v1/operator-console/device-binding/bind-session"
 } as const;
 
 export interface ChangePasswordCommand {
@@ -33,6 +35,10 @@ export interface OperatorConsoleHumanSession {
   siteReferences: string[];
   siteGroupReferences: string[];
   hasGlobalScope: boolean;
+  operatorDeviceBindingReference?: string;
+  operatorShiftReference?: string;
+  effectiveSiteReference?: string;
+  effectiveSiteGroupReference?: string;
   correlationId: string;
 }
 
@@ -49,6 +55,7 @@ export type AuthenticationErrorKind =
   | "totp-invalid"
   | "password-policy"
   | "unexpected-mfa"
+  | "operating-context"
   | "unavailable"
   | "malformed";
 
@@ -57,7 +64,8 @@ export class HumanAuthenticationError extends Error {
     public readonly kind: AuthenticationErrorKind,
     message: string,
     public readonly retryable = false,
-    public readonly supportReference?: string
+    public readonly supportReference?: string,
+    public readonly errorCode?: string
   ) {
     super(message);
     this.name = "HumanAuthenticationError";
@@ -68,6 +76,8 @@ export interface HumanAuthenticationClient {
   login(username: string, password: string): Promise<OperatorConsoleHumanSession>;
   getCurrentSession(): Promise<OperatorConsoleHumanSession>;
   changePassword(command: ChangePasswordCommand): Promise<void>;
+  establishDeviceBinding(proof: string): Promise<void>;
+  bindDeviceSession(): Promise<OperatorConsoleHumanSession>;
   logout(): Promise<void>;
   clearRuntimeState(): void;
   getCsrfToken(): string | null;
@@ -93,11 +103,7 @@ export function createHumanAuthenticationClient(
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   let csrfToken: string | null = null;
 
-  async function request(
-    route: string,
-    init: RequestInit,
-    operation: "authentication" | "password-change" = "authentication"
-  ): Promise<AuthenticationResponseDto> {
+  async function send(route: string, init: RequestInit): Promise<Response> {
     let response: Response;
     try {
       response = await fetchImpl(route, {
@@ -118,9 +124,16 @@ export function createHumanAuthenticationClient(
     }
 
     const responseCsrfToken = response.headers.get("X-CSRF-Token");
-    if (responseCsrfToken) {
-      csrfToken = responseCsrfToken;
-    }
+    if (responseCsrfToken) csrfToken = responseCsrfToken;
+    return response;
+  }
+
+  async function request(
+    route: string,
+    init: RequestInit,
+    operation: "authentication" | "password-change" = "authentication"
+  ): Promise<AuthenticationResponseDto> {
+    const response = await send(route, init);
 
     const dto = await parseAuthenticationResponse(response);
     if (!response.ok) {
@@ -168,6 +181,41 @@ export function createHumanAuthenticationClient(
         throw malformedSession();
       }
       csrfToken = null;
+    },
+
+    async establishDeviceBinding(proof) {
+      const response = await send(humanAuthenticationRoutes.establishDeviceBinding, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proof })
+      });
+      if (!response.ok) {
+        throw mapOperatingContextFailure(response.status, await parseAuthenticationResponse(response));
+      }
+      if (response.status !== 204) throw malformedSession();
+    },
+
+    async bindDeviceSession() {
+      if (!csrfToken) {
+        throw new HumanAuthenticationError(
+          "malformed",
+          "The secure operating-context request could not be prepared. Sign in again."
+        );
+      }
+      const response = await send(humanAuthenticationRoutes.bindDeviceSession, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken
+        },
+        body: "{}"
+      });
+      if (!response.ok) {
+        throw mapOperatingContextFailure(response.status, await parseAuthenticationResponse(response));
+      }
+      if (response.status !== 204) throw malformedSession();
+      const dto = await request(humanAuthenticationRoutes.session, { method: "GET" });
+      return requireAuthenticatedSession(dto);
     },
 
     async logout() {
@@ -244,6 +292,10 @@ function requireAuthenticatedSession(dto: AuthenticationResponseDto): OperatorCo
     !isStringArray(session.siteReferences) ||
     !isStringArray(session.siteGroupReferences) ||
     !isBoolean(session.hasGlobalScope) ||
+    (session.operatorDeviceBindingReference !== undefined && !isString(session.operatorDeviceBindingReference)) ||
+    (session.operatorShiftReference !== undefined && !isString(session.operatorShiftReference)) ||
+    (session.effectiveSiteReference !== undefined && !isString(session.effectiveSiteReference)) ||
+    (session.effectiveSiteGroupReference !== undefined && !isString(session.effectiveSiteGroupReference)) ||
     !isString(session.correlationId)
   ) {
     throw malformedSession();
@@ -276,8 +328,29 @@ function requireAuthenticatedSession(dto: AuthenticationResponseDto): OperatorCo
     siteReferences: [...session.siteReferences],
     siteGroupReferences: [...session.siteGroupReferences],
     hasGlobalScope: session.hasGlobalScope,
+    operatorDeviceBindingReference: optionalString(session.operatorDeviceBindingReference),
+    operatorShiftReference: optionalString(session.operatorShiftReference),
+    effectiveSiteReference: optionalString(session.effectiveSiteReference),
+    effectiveSiteGroupReference: optionalString(session.effectiveSiteGroupReference),
     correlationId: session.correlationId
   };
+}
+
+function mapOperatingContextFailure(status: number, dto: AuthenticationResponseDto) {
+  const errorCode = isString(dto.errorCode) ? dto.errorCode.toUpperCase() : "OPERATOR_CONTEXT_UNAVAILABLE";
+  const supportReference = isString(dto.correlationId) ? dto.correlationId : undefined;
+  const message = errorCode === "OPERATOR_DEVICE_BINDING_REQUIRED"
+    ? "This workstation must be provisioned before governed Operator Console actions are available."
+    : errorCode === "OPERATOR_ACTIVE_SHIFT_REQUIRED"
+      ? "Start an authorized shift before performing governed Operator Console actions."
+      : "The trusted Operator Console operating context is not available.";
+  return new HumanAuthenticationError(
+    status >= 500 ? "unavailable" : "operating-context",
+    message,
+    status >= 500,
+    supportReference,
+    errorCode
+  );
 }
 
 function mapAuthenticationFailure(
@@ -416,4 +489,8 @@ function isBoolean(value: unknown): value is boolean {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function optionalString(value: unknown): string | undefined {
+  return isString(value) ? value : undefined;
 }

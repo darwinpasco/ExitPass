@@ -6,6 +6,7 @@ using System.Security.Cryptography.X509Certificates;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.HumanAuthentication;
 using ExitPass.CentralPms.Application.ManagementPlatform;
+using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.HumanAuthentication;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
@@ -44,16 +45,33 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         using var review = WebClient(factory);
 
         var managementLogin = await LoginWebAsync(management, seed, HumanSessionAudiences.ManagementPlatform);
-        await EstablishOperatorDeviceAsync(review, seed);
-        var reviewLogin = await LoginWebAsync(review, seed, HumanSessionAudiences.OperatorConsole);
+        var operatorDevice = await EstablishOperatorDeviceAsync(review, seed);
+        var reviewLoginWithCsrf = await LoginWebWithCsrfAsync(review, seed, HumanSessionAudiences.OperatorConsole);
+        var reviewLogin = reviewLoginWithCsrf.Response;
 
         managementLogin.Session!.Permissions.Should().Contain("statutory-discounts.evidence.review.view");
         managementLogin.Session.SiteReferences.Should().Contain(seed.SiteId);
         managementLogin.Session.HasGlobalScope.Should().BeFalse();
         reviewLogin.Session!.Audience.Should().Be(HumanSessionAudiences.OperatorConsole);
         reviewLogin.Session.SessionReference.Should().NotBe(managementLogin.Session.SessionReference);
-        reviewLogin.Session.OperatorDeviceBindingReference.Should().BeNull();
-        reviewLogin.Session.OperatorShiftReference.Should().BeNull();
+        reviewLogin.Session.OperatorDeviceBindingReference.Should().Be(operatorDevice.DeviceId);
+        reviewLogin.Session.OperatorShiftReference.Should().Be(operatorDevice.ShiftId);
+        reviewLogin.Session.EffectiveSiteReference.Should().Be(seed.SiteId);
+        reviewLogin.Session.EffectiveSiteGroupReference.Should().Be(seed.SiteGroupId);
+
+        using (var rebind = new HttpRequestMessage(HttpMethod.Post, "/v1/operator-console/device-binding/bind-session")
+        {
+            Content = JsonContent.Create(new { })
+        })
+        {
+            rebind.Headers.Add("Origin", "https://localhost");
+            rebind.Headers.Add("X-CSRF-Token", reviewLoginWithCsrf.Csrf);
+            (await review.SendAsync(rebind)).StatusCode.Should().Be(HttpStatusCode.NoContent);
+        }
+
+        var reboundSession = (await ReadCurrentSessionAsync(review)).Session!;
+        reboundSession.OperatorDeviceBindingReference.Should().Be(operatorDevice.DeviceId);
+        reboundSession.OperatorShiftReference.Should().Be(operatorDevice.ShiftId);
         (await ScalarAsync<int>("""
             SELECT count(*)::integer
             FROM operator_console.operator_session_contexts
@@ -61,6 +79,31 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
               AND context_status='ACTIVE';
             """, ("user_id", seed.UserId), ("site_id", seed.SiteId), ("site_group_id", seed.SiteGroupId)))
             .Should().Be(1);
+
+        using (var missingCsrf = new HttpRequestMessage(HttpMethod.Post, "/v1/operator-console/device-binding/bind-session")
+        {
+            Content = JsonContent.Create(new { })
+        })
+        {
+            missingCsrf.Headers.Add("Origin", "https://localhost");
+            var response = await review.SendAsync(missingCsrf);
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            (await response.Content.ReadAsStringAsync()).Should().Contain("HUMAN_SESSION_CSRF_INVALID");
+        }
+
+        using (var unboundBrowser = WebClient(factory))
+        {
+            var unboundLogin = await LoginWebWithCsrfAsync(unboundBrowser, seed, HumanSessionAudiences.OperatorConsole);
+            using var unboundRebind = new HttpRequestMessage(HttpMethod.Post, "/v1/operator-console/device-binding/bind-session")
+            {
+                Content = JsonContent.Create(new { })
+            };
+            unboundRebind.Headers.Add("Origin", "https://localhost");
+            unboundRebind.Headers.Add("X-CSRF-Token", unboundLogin.Csrf);
+            var response = await unboundBrowser.SendAsync(unboundRebind);
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            (await response.Content.ReadAsStringAsync()).Should().Contain(OperatorConsoleOperatingContextFailureCodes.DeviceBindingRequired);
+        }
 
         (await management.GetAsync($"/v1/operator-console/statutory-discounts/review-requests/{Guid.NewGuid():D}/evidence"))
             .StatusCode.Should().BeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden, HttpStatusCode.NotFound);

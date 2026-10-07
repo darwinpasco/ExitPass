@@ -98,6 +98,37 @@ body {
   width: 100%;
 }
 
+.deviceProvisioningForm {
+  border-top: 1px solid #d7e0e6;
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 20px;
+}
+
+.deviceProvisioningForm label {
+  display: grid;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.operatingContextNotice {
+  align-items: center;
+  background: #fff8db;
+  border-bottom: 1px solid #d7a51e;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 12px 24px;
+}
+
+.operatingContextNotice .deviceProvisioningForm {
+  border-top: 0;
+  grid-template-columns: minmax(220px, 360px) auto;
+  margin: 0;
+  padding: 0;
+}
+
 .authenticationError {
   background: #fff4f1;
   border-left: 4px solid #a83924;

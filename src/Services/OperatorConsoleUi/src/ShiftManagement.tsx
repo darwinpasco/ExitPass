@@ -4,7 +4,13 @@ import { mapApiError } from "./apiClient";
 import { formatPhpMoney } from "./phpCurrency";
 import type { OperationalShift, ShiftAuthorizedSite } from "./types";
 
-export function ShiftManagement({ client }: { client: OperatorConsoleApiClient }) {
+export function ShiftManagement({
+  client,
+  onOwnShiftStarted
+}: {
+  client: OperatorConsoleApiClient;
+  onOwnShiftStarted?: () => Promise<void>;
+}) {
   const [view, setView] = useState<"open" | "recently-closed">("open");
   const [sites, setSites] = useState<ShiftAuthorizedSite[]>([]);
   const [siteId, setSiteId] = useState("");
@@ -54,6 +60,7 @@ export function ShiftManagement({ client }: { client: OperatorConsoleApiClient }
     if (!selectedSite) return;
     try {
       await client.startOwnShift(selectedSite);
+      await onOwnShiftStarted?.();
       load();
     } catch (error) { setMessage(mapApiError(error).message); }
   }

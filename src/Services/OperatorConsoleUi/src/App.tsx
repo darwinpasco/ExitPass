@@ -76,10 +76,11 @@ interface AppProps {
   logoutPending?: boolean;
   logoutMessage?: string;
   onLogout?: () => void;
+  onOwnShiftStarted?: () => Promise<void>;
   fiscalReportingClient?: OperatorFiscalReportingClient;
 }
 
-export function App({ apiClient, initialPath, session, logoutPending = false, logoutMessage, onLogout, fiscalReportingClient }: AppProps) {
+export function App({ apiClient, initialPath, session, logoutPending = false, logoutMessage, onLogout, onOwnShiftStarted, fiscalReportingClient }: AppProps) {
   const client = useMemo(() => apiClient ?? createOperatorConsoleApiClient(), [apiClient]);
   const fiscalClient = useMemo(() => fiscalReportingClient ?? (
     import.meta.env.DEV && new URLSearchParams(window.location.search).get("operatorFiscalReportingScenario") === "ready"
@@ -342,7 +343,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
               />
             )
           ) : path === routes.shiftManagement ? (
-            <ShiftManagement client={client} />
+            <ShiftManagement client={client} onOwnShiftStarted={onOwnShiftStarted} />
           ) : path === routes.ticketLookup ? (
             <SessionLookupPage client={client} />
           ) : path === routes.fiscalStatus ? (
