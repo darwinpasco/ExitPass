@@ -617,9 +617,13 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     {
         var currency = cashPayment.Currency.Trim().ToUpperInvariant();
         var amount = statutoryContext?.FinalPayableAmountMinorUnits ?? cashPayment.AmountDueMinorUnits;
-        var lineGrossAmount = statutoryContext?.VatExclusiveBasisAmountMinorUnits ?? amount;
+        var ordinaryVat = statutoryContext is null
+            ? OrdinaryVatInclusiveFiscalTreatment.Calculate(amount)
+            : null;
+        var lineGrossAmount = statutoryContext?.VatExclusiveBasisAmountMinorUnits
+            ?? ordinaryVat!.VatableSalesMinorUnits;
         var discountAmount = statutoryContext?.StatutoryDiscountAmountMinorUnits ?? 0;
-        var taxAmount = 0;
+        var taxAmount = ordinaryVat?.VatAmountMinorUnits ?? 0;
         var paymentAttemptRef = cashPayment.PaymentAttemptId.ToString("D");
         var paymentConfirmationRef = cashPayment.PaymentConfirmationId.ToString("D");
         var payableBasisContext = BuildPayableBasisReferenceContext(cashPayment, statutoryContext);
@@ -678,7 +682,9 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                     ProviderRef: "CASH",
                     TenderContext: tenderContext)
             ],
-            TaxDetails: Array.Empty<CentralPmsFiscalTaxDetailContext>(),
+            TaxDetails: statutoryContext is null
+                ? [OrdinaryVatInclusiveFiscalTreatment.CreateTaxDetail(ordinaryVat!, currency)]
+                : Array.Empty<CentralPmsFiscalTaxDetailContext>(),
             DiscountPrivilegeDetails: BuildDiscountPrivilegeDetails(statutoryContext, currency),
             Totals:
             [
