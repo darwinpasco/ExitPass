@@ -28,6 +28,8 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
     private static readonly Guid FiscalReferenceId = Guid.Parse("76000000-0000-4000-8000-000000000013");
 
     [Theory]
+    [InlineData(10_000, 8_929, 1_071)]
+    [InlineData(35_000, 31_250, 3_750)]
     [InlineData(2500, 2232, 268)]
     [InlineData(3000, 2679, 321)]
     [InlineData(4000, 3571, 429)]

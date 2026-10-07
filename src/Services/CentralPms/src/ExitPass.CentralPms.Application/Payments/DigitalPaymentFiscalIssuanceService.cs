@@ -24,11 +24,8 @@ public interface IDigitalPaymentFiscalIssuanceService
 public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalIssuanceService
 {
     private const string FiscalDocumentTypeCodeKey = "sales_invoice";
-    private const decimal OrdinaryVatRate = 0.12m;
     private static readonly Guid FiscalLineTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000201");
     private static readonly Guid FiscalTenderTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000301");
-    private static readonly Guid FiscalTaxTypeCodeId = Guid.Parse("328dcb64-584a-5f59-a304-2e5189a2aa83");
-    private static readonly Guid FiscalTaxClassificationCodeId = Guid.Parse("ab180f41-e181-5579-b9f1-5ae7a840a946");
     private static readonly Guid FiscalTotalTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000601");
     private readonly IDigitalPaymentFiscalContextReader _contextReader;
     private readonly IFiscalIssuanceReferenceRepository _references;
@@ -133,7 +130,9 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
         var statutory = context.AppliedStatutoryFiscalContext;
         EnsureStatutoryContextMatches(context, command, statutory);
         var amount = statutory?.FinalPayableAmountMinorUnits ?? context.AmountMinorUnits;
-        var ordinaryVat = statutory is null ? BuildOrdinaryVatFacts(amount) : null;
+        var ordinaryVat = statutory is null
+            ? OrdinaryVatInclusiveFiscalTreatment.Calculate(amount)
+            : null;
         var lineGrossAmount = statutory?.VatExclusiveBasisAmountMinorUnits ?? ordinaryVat!.VatableSalesMinorUnits;
         var discountAmount = statutory?.StatutoryDiscountAmountMinorUnits ?? 0;
         var attemptRef = command.PaymentAttemptId.ToString("D");
@@ -345,40 +344,27 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
                 }
             ];
 
-    private static OrdinaryVatFacts BuildOrdinaryVatFacts(long grossAmountMinorUnits)
-    {
-        var vatableSalesMinorUnits = decimal.ToInt64(decimal.Round(
-            grossAmountMinorUnits / (1m + OrdinaryVatRate),
-            0,
-            MidpointRounding.AwayFromZero));
-
-        return new OrdinaryVatFacts(
-            vatableSalesMinorUnits,
-            grossAmountMinorUnits - vatableSalesMinorUnits);
-    }
-
     private static IReadOnlyList<CentralPmsFiscalTaxDetailContext> BuildTaxDetails(
         TerminalCashStatutoryFiscalLinkageContext? statutory,
-        OrdinaryVatFacts? ordinaryVat,
+        OrdinaryVatInclusiveFiscalFacts? ordinaryVat,
         string currency)
     {
-        var taxableAmountMinorUnits = statutory?.VatExclusiveBasisAmountMinorUnits
-            ?? ordinaryVat!.VatableSalesMinorUnits;
-        var taxAmountMinorUnits = statutory?.VatAmountMinorUnits
-            ?? ordinaryVat!.VatAmountMinorUnits;
-        var basis = statutory?.VatTreatment ?? "VAT_INCLUSIVE_NO_EXEMPTION";
+        if (statutory is null)
+        {
+            return [OrdinaryVatInclusiveFiscalTreatment.CreateTaxDetail(ordinaryVat!, currency)];
+        }
 
         return
         [
             new CentralPmsFiscalTaxDetailContext(
-                FiscalTaxTypeCodeId,
-                FiscalTaxClassificationCodeId,
-                taxableAmountMinorUnits,
-                taxAmountMinorUnits,
+                OrdinaryVatInclusiveFiscalTreatment.VatTaxTypeCodeId,
+                OrdinaryVatInclusiveFiscalTreatment.VatableTaxClassificationCodeId,
+                statutory.VatExclusiveBasisAmountMinorUnits,
+                statutory.VatAmountMinorUnits,
                 currency,
                 1,
                 12m,
-                new Dictionary<string, string> { ["basis"] = basis })
+                new Dictionary<string, string> { ["basis"] = statutory.VatTreatment })
         ];
     }
 
@@ -522,9 +508,6 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             reference.FiscalIssuanceState == FiscalIssuanceIntegrationState.FiscalIssuanceFailedService &&
             reference.LatestErrorPosture == FiscalIssuanceErrorPosture.RetryAfterServiceRecovery);
 
-    private sealed record OrdinaryVatFacts(
-        long VatableSalesMinorUnits,
-        long VatAmountMinorUnits);
 }
 
 public sealed record DigitalPaymentFiscalIssuanceCommand(

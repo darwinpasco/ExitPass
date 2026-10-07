@@ -84,6 +84,53 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal(1, acknowledgment.CallCount);
     }
 
+    [Theory]
+    [InlineData(10_000, 8_929, 1_071)]
+    [InlineData(35_000, 31_250, 3_750)]
+    public async Task TerminalCashFiscalIssuance_OrdinaryPayment_MapsDigitalEquivalentVatInclusiveFacts(
+        long grossAmountMinorUnits,
+        long expectedVatableSalesMinorUnits,
+        long expectedVatAmountMinorUnits)
+    {
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var service = CreateService(
+            CashPayment(amountDueMinorUnits: grossAmountMinorUnits),
+            repo,
+            posIntegration);
+
+        await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        var request = new PosServerFiscalDocumentRequestMapper().Map(posIntegration.LastFiscalContext!);
+        var line = Assert.Single(request.DocumentLines);
+        Assert.Equal(expectedVatableSalesMinorUnits, line.UnitAmountMinorUnits);
+        Assert.Equal(expectedVatableSalesMinorUnits, line.GrossAmountMinorUnits);
+        Assert.Equal(0, line.DiscountAmountMinorUnits);
+        Assert.Equal(expectedVatAmountMinorUnits, line.TaxAmountMinorUnits);
+        Assert.Equal(grossAmountMinorUnits, line.NetAmountMinorUnits);
+
+        var tax = Assert.Single(request.TaxDetails);
+        Assert.Equal(expectedVatableSalesMinorUnits, tax.TaxableAmountMinorUnits);
+        Assert.Equal(expectedVatAmountMinorUnits, tax.TaxAmountMinorUnits);
+        Assert.Equal(12m, tax.TaxRate);
+        Assert.Equal("VAT_INCLUSIVE_NO_EXEMPTION", tax.TaxContext["basis"]);
+        Assert.Equal(grossAmountMinorUnits, tax.TaxableAmountMinorUnits + tax.TaxAmountMinorUnits);
+        Assert.Equal(grossAmountMinorUnits, Assert.Single(request.Totals).AmountMinorUnits);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_NegativeOrdinaryAmount_IsRejectedBeforePosServerCall()
+    {
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var service = CreateService(CashPayment(amountDueMinorUnits: -1), repo, posIntegration);
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => service.IssueOrReadAsync(Command(), CancellationToken.None));
+
+        Assert.Equal(0, posIntegration.IssueCallCount);
+    }
+
     [Fact]
     public async Task TerminalCashFiscalIssuance_RecordedFiscalEvidence_ContinuesToExitAuthorization()
     {
@@ -130,6 +177,15 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal(1, posIntegration.IssueCallCount);
         Assert.Equal(0, exitAuthorization.CallCount);
         Assert.Equal(0, acknowledgment.CallCount);
+        var request = new PosServerFiscalDocumentRequestMapper().Map(posIntegration.LastFiscalContext!);
+        var line = Assert.Single(request.DocumentLines);
+        Assert.Equal(8_929, line.GrossAmountMinorUnits);
+        Assert.Equal(1_071, line.TaxAmountMinorUnits);
+        Assert.Equal(10_000, line.NetAmountMinorUnits);
+        var tax = Assert.Single(request.TaxDetails);
+        Assert.Equal(8_929, tax.TaxableAmountMinorUnits);
+        Assert.Equal(1_071, tax.TaxAmountMinorUnits);
+        Assert.Equal(10_000, tax.TaxableAmountMinorUnits + tax.TaxAmountMinorUnits);
     }
 
     [Fact]
@@ -242,6 +298,12 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal(8_929, fiscalContext.PayableBasis.PayableAmountMinorUnits);
         Assert.Equal(8_929, fiscalContext.Tenders.Single().AmountMinorUnits);
         Assert.Equal(8_929, fiscalContext.Totals.Single().AmountMinorUnits);
+        var line = Assert.Single(fiscalContext.DocumentLines);
+        Assert.Equal(11_161, line.GrossAmountMinorUnits);
+        Assert.Equal(2_232, line.DiscountAmountMinorUnits);
+        Assert.Equal(0, line.TaxAmountMinorUnits);
+        Assert.Equal(8_929, line.NetAmountMinorUnits);
+        Assert.Empty(fiscalContext.TaxDetails);
         var discountReference = Assert.Single(fiscalContext.PayableBasis.DiscountReferences);
         Assert.Equal(StatutoryValidationId.ToString("D"), discountReference.DiscountValidationRef);
         Assert.Equal("approved", discountReference.Status);
