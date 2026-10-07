@@ -539,7 +539,7 @@ function Invoke-CreatorExpectFailure([string[]] $Arguments) {
 }
 
 function Invoke-SmokeTest([string] $CentralUrl, [string] $AdminUrl) {
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $creatorPath -Ticket 'MOCK-SESSION-001' -Plate 'MOCK001' -Fee 25 -VendorRecordGuid '19000000-0000-0000-0000-000000000001' | Out-Null
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $creatorPath -Ticket 'MOCK-SESSION-001' -Plate 'MOCK001' -Fee 25 -VehicleType 'CAR' -VendorRecordGuid '19000000-0000-0000-0000-000000000001' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Failed to create MOCK-SESSION-001.' }
     $first = Resolve-MockSession 'MOCK-SESSION-001' $CentralUrl
 
@@ -573,6 +573,39 @@ function Invoke-SmokeTest([string] $CentralUrl, [string] $AdminUrl) {
     }
 
     $evidence = Test-WireMockEvidence $AdminUrl
+
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $creatorPath -Ticket 'MOCK-CONTINUITY-CAR-001' -Plate 'MOCKCAR1' -VehicleType 'CAR' -ProjectionOnly -Fee 0 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to create MOCK-CONTINUITY-CAR-001.' }
+
+    $projectionRegistry = @((ConvertFrom-Json -InputObject (Get-Content -LiteralPath $sessionsPath -Raw)) | ForEach-Object { $_ })
+    $projectionFixture = @($projectionRegistry | Where-Object { $_.ticketReference -eq 'MOCK-CONTINUITY-CAR-001' })
+    if ($projectionFixture.Count -ne 1 -or
+        $projectionFixture[0].vehicleType -ne 'CAR' -or
+        $projectionFixture[0].carType -ne '5' -or
+        -not [bool]$projectionFixture[0].projectionOnly) {
+        throw 'Projection-only CAR fixture registry state is incorrect.'
+    }
+
+    $projectionMappingsResult = Invoke-RestMethod -Method Get -Uri "$($AdminUrl.TrimEnd('/'))/__admin/mappings" -TimeoutSec 15
+    $projectionMappings = @($projectionMappingsResult.mappings)
+    $passagewayMapping = @($projectionMappings | Where-Object { (Get-ObjectProperty $_.request 'urlPath') -eq '/artemis/api/vehicle/v1/parkinglot/passageway/record' })
+    $projectionRecord = @($passagewayMapping[0].response.jsonBody.data.list | Where-Object { $_.personInfo.cardNum -eq 'MOCK-CONTINUITY-CAR-001' })
+    if ($projectionRecord.Count -ne 1 -or $projectionRecord[0].carInfo.carType -ne '5') {
+        throw 'Projection-only CAR fixture was not exposed as HikCentral carType 5.'
+    }
+
+    $projectionCalculate = @($projectionMappings | Where-Object {
+        (Get-ObjectProperty $_.request 'urlPath') -eq '/artemis/api/vehicle/v1/parkingfee/calculate' -and
+        $_.name -match 'MOCK-CONTINUITY-CAR-001'
+    })
+    $projectionConfirm = @($projectionMappings | Where-Object {
+        (Get-ObjectProperty $_.request 'urlPath') -eq '/artemis/api/vehicle/v1/parkingfee/confirm' -and
+        $_.name -match 'MOCK-CONTINUITY-CAR-001'
+    })
+    if ($projectionCalculate.Count -ne 0 -or $projectionConfirm.Count -ne 0) {
+        throw 'Projection-only CAR fixture unexpectedly exposes live fee or confirm mappings.'
+    }
+
     return [pscustomobject]@{
         First=$first
         Second=$second
@@ -581,6 +614,7 @@ function Invoke-SmokeTest([string] $CentralUrl, [string] $AdminUrl) {
         NegativeFeeRejected=$true
         DefaultsGenerated=$true
         AddedWithoutRestart=$true
+        ProjectionOnlyCarFixture=$true
     }
 }
 
@@ -723,6 +757,17 @@ function Invoke-SelfTest {
         $foreign = New-TestContainer -Name $wireMockContainer -AdditionalLabels @{ $wrapperLabel = 'true'; $invocationLabel = [Guid]::NewGuid().ToString('D') }
         Assert-Throws { Assert-WrapperResourceOwnership $foreign } 'Refusing to remove non-wrapper resource'
     }
+    $testCount += Invoke-TestCase 'creator supports canonical vehicle type fixtures' {
+        $source = Get-Content -LiteralPath $creatorPath -Raw
+        Assert-Test ($source -match "ValidateSet\('UNKNOWN', 'OTHER', 'BUS', 'TRUCK', 'CAR', 'VAN', 'LIGHT_TRUCK'\)") 'Creator vehicle-type allowlist is missing.'
+        Assert-Test ($source -match "'CAR'\s*\{\s*return '5'\s*\}") 'Creator no longer maps CAR to HikCentral carType 5.'
+        Assert-Test ($source -match '\$carInfo\.carType') 'Creator no longer emits carInfo.carType.'
+    }
+    $testCount += Invoke-TestCase 'creator supports projection-only continuity fixtures' {
+        $source = Get-Content -LiteralPath $creatorPath -Raw
+        Assert-Test ($source -match '\[switch\]\s*\$ProjectionOnly') 'Creator projection-only switch is missing.'
+        Assert-Test ($source -match '(?s)if \(-not \$projectionOnly\).*New-CalculateMapping.*New-ConfirmMapping') 'Projection-only fixtures are not suppressing live calculate and confirm mappings.'
+    }
     Write-Output "MOCK_HIKCENTRAL_SELF_TEST_PASS ($testCount tests)"
 }
 
@@ -803,7 +848,7 @@ try {
     Write-Output 'SIMULATED HIKCENTRAL SESSION - NOT REAL PITX ACCEPTANCE'
     Write-Output ''
     Write-Output 'Create a session from another terminal with:'
-    Write-Output '.\scripts\v1.3\hikcentral\New-MockHikCentralSession.ps1 -Ticket MOCK-SESSION-001 -Plate MOCK001 -Fee 25'
+    Write-Output '.\scripts\v1.3\hikcentral\New-MockHikCentralSession.ps1 -Ticket MOCK-CAR-001 -Plate MOCKCAR1 -VehicleType CAR -ProjectionOnly'
     Write-Output ''
 
     if ($SmokeTest) {

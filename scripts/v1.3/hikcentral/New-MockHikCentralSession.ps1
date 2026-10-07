@@ -8,6 +8,11 @@ param(
 
     [datetime] $EntryTime,
 
+    [ValidateSet('UNKNOWN', 'OTHER', 'BUS', 'TRUCK', 'CAR', 'VAN', 'LIGHT_TRUCK')]
+    [string] $VehicleType = 'UNKNOWN',
+
+    [switch] $ProjectionOnly,
+
     [string] $VendorRecordGuid,
 
     [switch] $RefreshMappings
@@ -94,9 +99,32 @@ function New-CommonHeaders([string] $AppKey) {
     }
 }
 
+function Resolve-HikCentralCarType([string] $CanonicalVehicleType) {
+    switch ($CanonicalVehicleType.Trim().ToUpperInvariant()) {
+        'UNKNOWN' { return $null }
+        'OTHER' { return '0' }
+        'BUS' { return '3' }
+        'TRUCK' { return '4' }
+        'CAR' { return '5' }
+        'VAN' { return '6' }
+        'LIGHT_TRUCK' { return '7' }
+        default { throw "Unsupported canonical vehicle type '$CanonicalVehicleType'." }
+    }
+}
+
 function New-PassagewayMapping($Sessions, [string] $AppKey, [string] $ParkingLot) {
     $records = @()
     foreach ($session in $Sessions) {
+        $carInfo = [ordered]@{
+            plateLicense = $session.plateLicense
+            EnterTime = $session.entryTime
+            ExitTime = $null
+        }
+        $carType = Get-ObjectProperty $session 'carType'
+        if (-not [string]::IsNullOrWhiteSpace([string]$carType)) {
+            $carInfo.carType = [string]$carType
+        }
+
         $records += @{
             guid = $session.vendorRecordGuid
             parkingLotInfo = @{
@@ -113,11 +141,7 @@ function New-PassagewayMapping($Sessions, [string] $AppKey, [string] $ParkingLot
                 direction = 'ENTRY'
             }
             personInfo = @{ cardNum = $session.ticketReference }
-            carInfo = @{
-                plateLicense = $session.plateLicense
-                EnterTime = $session.entryTime
-                ExitTime = $null
-            }
+            carInfo = $carInfo
             allowType = '1'
             allowResult = '1'
         }
@@ -246,9 +270,12 @@ function Set-WireMockMappings($Sessions, [string] $AppKey, $State) {
         (New-PassagewayMapping $Sessions $AppKey $State.parkingLotIndexCode)
     )
     foreach ($session in $Sessions) {
-        $mappings += New-CalculateMapping $session $AppKey 'cardNum'
-        $mappings += New-CalculateMapping $session $AppKey 'plateLicense'
-        $mappings += New-ConfirmMapping $session $AppKey
+        $projectionOnly = [bool](Get-ObjectProperty $session 'projectionOnly')
+        if (-not $projectionOnly) {
+            $mappings += New-CalculateMapping $session $AppKey 'cardNum'
+            $mappings += New-CalculateMapping $session $AppKey 'plateLicense'
+            $mappings += New-ConfirmMapping $session $AppKey
+        }
     }
     $mappings += New-AuthenticationFailureMapping
 
@@ -355,6 +382,9 @@ try {
         }
     }
 
+    $normalizedVehicleType = $VehicleType.Trim().ToUpperInvariant()
+    $hikCentralCarType = Resolve-HikCentralCarType $normalizedVehicleType
+
     $session = [ordered]@{
         ticketReference = $Ticket
         plateLicense = $Plate
@@ -362,6 +392,9 @@ try {
         entryTime = $entry.ToString('o', $invariant)
         fee = $Fee.ToString('0.00', $invariant)
         parkingLotIndexCode = $state.parkingLotIndexCode
+        vehicleType = $normalizedVehicleType
+        carType = $hikCentralCarType
+        projectionOnly = [bool]$ProjectionOnly
     }
     $updated = @($existing) + @([pscustomobject]$session)
 
@@ -383,6 +416,9 @@ try {
     Write-Output ("Ticket:       {0}" -f $session.ticketReference)
     Write-Output ("Plate:        {0}" -f $session.plateLicense)
     Write-Output ("Entry time:   {0}" -f $entry.ToString('yyyy-MM-dd HH:mm:ss zzz', $invariant))
+    Write-Output ("Vehicle type: {0}" -f $session.vehicleType)
+    Write-Output ("HCP carType:  {0}" -f $(if ($null -eq $session.carType) { '<omitted>' } else { $session.carType }))
+    Write-Output ("Mode:         {0}" -f $(if ($session.projectionOnly) { 'PROJECTION_ONLY' } else { 'LIVE_FEE_AND_PROJECTION' }))
     Write-Output ("Fee:          PHP {0}" -f $session.fee)
     Write-Output ("Vendor GUID:  {0}" -f $session.vendorRecordGuid)
     Write-Output ("Parking lot:  {0}" -f $session.parkingLotIndexCode)
