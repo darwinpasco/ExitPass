@@ -2413,7 +2413,7 @@ function SessionLookupPage({
 }: {
   client: OperatorConsoleApiClient;
 }) {
-  const [lookupMode, setLookupMode] = useState<"TICKET_REFERENCE" | "PLATE_LICENSE">("TICKET_REFERENCE");
+  const [lookupMode, setLookupMode] = useState<"TICKET_REFERENCE" | "PLATE_LICENSE">("PLATE_LICENSE");
   const [ticketReference, setTicketReference] = useState("");
   const [plateNumber, setPlateNumber] = useState("");
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -2526,10 +2526,7 @@ function SessionLookupPage({
           });
         }
       } else if (result.sessionFound) {
-        setCustomerInformationState({
-          status: "error",
-          message: "Unable to load customer information for this session."
-        });
+        setCustomerInformationState({ status: "idle" });
       }
     } catch (error) {
       const mapped = mapApiError(error);
@@ -2548,10 +2545,6 @@ function SessionLookupPage({
     }
 
     const result = lookupState.data;
-    if (!result.parkingSessionId) {
-      setDraftState({ status: "error", message: "Unable to start the statutory discount request for this session." });
-      return;
-    }
 
     const normalizedIdReference = idReference.trim();
     const maskedIdReference = maskStatutoryIdReference(normalizedIdReference);
@@ -2576,8 +2569,9 @@ function SessionLookupPage({
 
     setDraftState({ status: "loading" });
     try {
+      const parkingSessionId = await ensureCanonicalSession(result, "statutory-discount");
       const draft = await client.createStatutoryDiscountDraft({
-        parkingSessionId: result.parkingSessionId,
+        parkingSessionId,
         ticketReference: result.ticketNumber ?? result.cardNum,
         plateNumber: result.plateLicense,
         siteId: result.siteId,
@@ -2601,7 +2595,7 @@ function SessionLookupPage({
       }
 
       setDraftState({ status: "loaded", data: draft.message });
-      const currentDraft = await client.getCurrentStatutoryDiscountDraft(result.parkingSessionId);
+      const currentDraft = await client.getCurrentStatutoryDiscountDraft(parkingSessionId);
       setCurrentDraftState(currentDraft ? { status: "loaded", data: currentDraft } : { status: "error", message: "The submitted statutory request could not be reloaded." });
       setIdReference("");
       setOperatorAttestation(false);
@@ -2615,6 +2609,25 @@ function SessionLookupPage({
     }
   }
 
+  async function ensureCanonicalSession(
+    result: OperatorTicketLookupResult,
+    purpose: "statutory-discount" | "invoice-customer-information"
+  ): Promise<string> {
+    if (result.parkingSessionId) return result.parkingSessionId;
+    if (!result.vendorSystemId) {
+      throw new Error("The projected session does not include an authoritative vendor route.");
+    }
+
+    const identifier = lookupMode === "TICKET_REFERENCE"
+      ? ticketReference.trim()
+      : plateNumber.trim().toUpperCase();
+    const ensured = await client.ensureCanonicalSession(
+      { lookupMode, identifier, vendorSystemId: result.vendorSystemId },
+      purpose);
+    setLookupState({ status: "loaded", data: { ...result, parkingSessionId: ensured.parkingSessionId } });
+    return ensured.parkingSessionId;
+  }
+
   function applyCustomerInformation(value: InvoiceCustomerInformation) {
     setCustomerName(value.customerName ?? "");
     setCustomerAddress(value.address ?? "");
@@ -2624,11 +2637,12 @@ function SessionLookupPage({
 
   async function saveCustomerInformation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (lookupState.status !== "loaded" || !lookupState.data.parkingSessionId || !client.saveInvoiceCustomerInformation) return;
+    if (lookupState.status !== "loaded" || !client.saveInvoiceCustomerInformation) return;
     const current = customerInformationState.status === "loaded" ? customerInformationState.data : undefined;
     setCustomerInformationSaveState({ status: "loading" });
     try {
-      const saved = await client.saveInvoiceCustomerInformation(lookupState.data.parkingSessionId, {
+      const parkingSessionId = await ensureCanonicalSession(lookupState.data, "invoice-customer-information");
+      const saved = await client.saveInvoiceCustomerInformation(parkingSessionId, {
         customerName: customerName.trim() || undefined,
         address: customerAddress.trim() || undefined,
         tin: customerTin.trim() || undefined,
@@ -2638,7 +2652,7 @@ function SessionLookupPage({
       applyCustomerInformation(saved);
       setCustomerInformationState({ status: "loaded", data: saved });
       if (client.getInvoiceCustomerInformation) {
-        const verified = await client.getInvoiceCustomerInformation(lookupState.data.parkingSessionId);
+        const verified = await client.getInvoiceCustomerInformation(parkingSessionId);
         applyCustomerInformation(verified);
         setCustomerInformationState({ status: "loaded", data: verified });
       }
@@ -2656,13 +2670,28 @@ function SessionLookupPage({
     }
   }
 
+  async function beginCustomerInformationEditing() {
+    if (lookupState.status !== "loaded" || !client.getInvoiceCustomerInformation) return;
+    setCustomerInformationState({ status: "loading" });
+    setCustomerInformationSaveState({ status: "idle" });
+    try {
+      const parkingSessionId = await ensureCanonicalSession(lookupState.data, "invoice-customer-information");
+      const current = await client.getInvoiceCustomerInformation(parkingSessionId);
+      applyCustomerInformation(current);
+      setCustomerInformationState({ status: "loaded", data: current });
+    } catch (error) {
+      setCustomerInformationState({ status: "error", message: mapApiError(error).message });
+    }
+  }
+
   async function reloadCustomerInformation() {
-    if (lookupState.status !== "loaded" || !lookupState.data.parkingSessionId || !client.getInvoiceCustomerInformation) return;
+    if (lookupState.status !== "loaded" || !client.getInvoiceCustomerInformation) return;
     const previous = customerInformationState.status === "loaded" ? customerInformationState.data : undefined;
     setCustomerInformationState({ status: "loading" });
     setCustomerInformationSaveState({ status: "idle" });
     try {
-      const current = await client.getInvoiceCustomerInformation(lookupState.data.parkingSessionId);
+      const parkingSessionId = await ensureCanonicalSession(lookupState.data, "invoice-customer-information");
+      const current = await client.getInvoiceCustomerInformation(parkingSessionId);
       applyCustomerInformation(current);
       setCustomerInformationState({ status: "loaded", data: current });
     } catch (error) {
@@ -2753,8 +2782,6 @@ function SessionLookupPage({
             {currentDraftState.status === "error" && <p className="errorMessage">Unable to load the existing statutory request for this session.</p>}
             {currentDraftState.status === "empty" && (isCompletedTransaction(lookupState.data) ? (
               <p className="notice">Statutory discount request is no longer available because payment has been completed and exit authorization has been issued.</p>
-            ) : !lookupState.data.parkingSessionId ? (
-              <p className="errorMessage">Unable to start the statutory discount request for this session.</p>
             ) : <form className="draftStartForm" onSubmit={createDraft}>
               <label>
                 Entitlement type
@@ -2832,7 +2859,8 @@ function SessionLookupPage({
               <span className="statusPill">Optional</span>
             </div>
             {customerInformationState.status === "loading" && <p role="status">Loading authoritative customer information...</p>}
-            {customerInformationState.status === "error" && <div className="errorMessage" role="alert"><p>{customerInformationState.message}</p><button type="button" onClick={() => void reloadCustomerInformation()}>Retry customer information</button></div>}
+            {customerInformationState.status === "idle" && <button type="button" onClick={() => void beginCustomerInformationEditing()}>Enter Customer Information</button>}
+            {customerInformationState.status === "error" && <div className="errorMessage" role="alert"><p>{customerInformationState.message}</p><button type="button" onClick={() => void beginCustomerInformationEditing()}>Retry customer information</button></div>}
             {(() => {
               const locked = customerInformationState.status === "loaded" && customerInformationState.data.fiscalSnapshotLocked;
               const authoritativeReady = customerInformationState.status === "loaded";

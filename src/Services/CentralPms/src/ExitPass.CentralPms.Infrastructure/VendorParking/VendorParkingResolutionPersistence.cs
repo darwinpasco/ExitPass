@@ -58,6 +58,15 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             request.ParkingSession.VendorSystemCode,
             cancellationToken);
 
+        await AcquireParkingSessionIdentityLockAsync(
+            connection,
+            transaction,
+            siteGroupId,
+            siteId,
+            vendorSystemId,
+            request.ParkingSession.VendorSessionRef,
+            cancellationToken);
+
         var existingSession = await FindExistingSessionAsync(
             connection,
             transaction,
@@ -466,6 +475,24 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         return result is Guid id
             ? id
             : throw new InvalidOperationException($"Vendor system '{vendorSystemCode}' was not persisted.");
+    }
+
+    private static async Task AcquireParkingSessionIdentityLockAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid siteGroupId,
+        Guid siteId,
+        Guid vendorSystemId,
+        string vendorSessionReference,
+        CancellationToken cancellationToken)
+    {
+        var identityKey = $"{siteGroupId:D}:{siteId:D}:{vendorSystemId:D}:{vendorSessionReference.Trim()}";
+        await using var command = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(hashtextextended(@identity_key, 0));",
+            connection,
+            transaction);
+        command.Parameters.AddWithValue("identity_key", identityKey);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<ParkingSession?> FindExistingSessionAsync(

@@ -201,7 +201,7 @@ const emptyStatutoryDiscountAvailabilityState: StatutoryDiscountAvailabilityUiSt
 export function App() {
   const initialTicketReference = getQueryParam("ticketReference");
   const resetStatutoryRecoveryForLocalValidation = shouldResetStatutoryRecoveryForLocalValidation();
-  const [entryMode, setEntryMode] = useState<EntryMode>("ticket");
+  const [entryMode, setEntryMode] = useState<EntryMode>(initialTicketReference ? "ticket" : "plate");
   const [ticketReference, setTicketReference] = useState(initialTicketReference);
   const [scannedContext, setScannedContext] = useState<Partial<PaymentIntentRequest>>({});
   const [plateNumber, setPlateNumber] = useState("");
@@ -1305,7 +1305,7 @@ export function App() {
         <p>Find your parking session, review the amount due, then choose how you want to pay.</p>
       </section>
 
-      <QrScanner onDecoded={handleQrDecoded} />
+      <QrScanner onDecoded={handleQrDecoded} onScanStarted={() => setEntryMode("ticket")} />
 
       {!regularPaymentSelection && statutoryRecoveryMessage && (
         <section className="statutory-recovery-panel" aria-live="polite" aria-labelledby="statutory-recovery-heading">
@@ -1412,6 +1412,7 @@ export function App() {
               placeholder="ABC 1234"
               autoCapitalize="characters"
               autoComplete="off"
+              autoFocus
             />
           </label>
         )}

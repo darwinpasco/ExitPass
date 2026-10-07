@@ -11,33 +11,41 @@ export function createOperatorConsoleViteConfig(
 ): UserConfig {
   const trimmedApiProxyTarget = apiProxyTarget.trim().replace(/\/+$/, "") || defaultApiProxyTarget;
   const trimmedWebPayUiProxyTarget = webPayUiProxyTarget.trim().replace(/\/+$/, "") || defaultWebPayUiProxyTarget;
+  const allowedHosts = [
+    ".ngrok-free.app",
+    ".ngrok-free.dev",
+    "operator-console-exitpass.ngrok.dev"
+  ];
+  const proxy = {
+    "/webpay-app": {
+      target: trimmedWebPayUiProxyTarget,
+      changeOrigin: true
+    },
+    "/webpay": {
+      target: trimmedWebPayUiProxyTarget,
+      changeOrigin: true,
+      rewrite: (path: string) => `/webpay-app${path}`
+    },
+    "/v1": {
+      target: trimmedApiProxyTarget,
+      changeOrigin: true,
+      secure: trimmedApiProxyTarget !== defaultApiProxyTarget
+    }
+  };
 
   return {
     plugins: [react()],
     server: {
       port: 5175,
       strictPort: true,
-      allowedHosts: [
-        ".ngrok-free.app",
-        ".ngrok-free.dev",
-        "operator-console-exitpass.ngrok.dev"
-      ],
-      proxy: {
-        "/webpay-app": {
-          target: trimmedWebPayUiProxyTarget,
-          changeOrigin: true
-        },
-        "/webpay": {
-          target: trimmedWebPayUiProxyTarget,
-          changeOrigin: true,
-          rewrite: path => `/webpay-app${path}`
-        },
-        "/v1": {
-          target: trimmedApiProxyTarget,
-          changeOrigin: true,
-          secure: trimmedApiProxyTarget !== defaultApiProxyTarget
-        }
-      }
+      allowedHosts,
+      proxy
+    },
+    preview: {
+      port: 5175,
+      strictPort: true,
+      allowedHosts,
+      proxy
     },
     test: {
       environment: "jsdom",

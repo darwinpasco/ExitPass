@@ -6,22 +6,30 @@ const defaultApiProxyTarget = "http://127.0.0.1:56063";
 
 export function createWebPayViteConfig(apiProxyTarget = defaultApiProxyTarget): UserConfig {
   const trimmedApiProxyTarget = apiProxyTarget.trim() || defaultApiProxyTarget;
+  const proxy = {
+    "/v1": {
+      target: trimmedApiProxyTarget,
+      changeOrigin: true
+    }
+  };
+  const allowedHosts = [
+    ".ngrok-free.app",
+    ".ngrok-free.dev"
+  ];
 
   return {
     plugins: [react()],
     server: {
       port: 5174,
       strictPort: true,
-      allowedHosts: [
-        ".ngrok-free.app",
-        ".ngrok-free.dev"
-      ],
-      proxy: {
-        "/v1": {
-          target: trimmedApiProxyTarget,
-          changeOrigin: true
-        }
-      }
+      allowedHosts,
+      proxy
+    },
+    preview: {
+      port: 5174,
+      strictPort: true,
+      allowedHosts,
+      proxy
     },
     test: {
       environment: "jsdom",

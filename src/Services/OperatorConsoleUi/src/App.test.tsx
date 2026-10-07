@@ -83,6 +83,14 @@ function setVideoDimensions(video: HTMLElement) {
   Object.defineProperty(video, "videoHeight", { configurable: true, value: 720 });
 }
 
+async function selectTicketInput() {
+  const ticketMode = await screen.findByRole("button", { name: "Ticket" });
+  if (ticketMode.getAttribute("aria-pressed") !== "true") {
+    await userEvent.click(ticketMode);
+  }
+  return screen.findByPlaceholderText("Scan or enter HikCentral ticket number");
+}
+
 describe("ExitPass Operator Console statutory discount foundation", () => {
   it("OperatorConsoleNavigation_ExposesExactlyOneCurrentRouteAndTransfersItOnSelection", async () => {
     const user = userEvent.setup();
@@ -288,6 +296,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       canManageShifts: vi.fn(() => true),
       evaluateAccessReadiness: vi.fn(async () => readyReadiness()),
       lookupSession: vi.fn(),
+      ensureCanonicalSession: vi.fn(),
       getFiscalIssuanceStatus: vi.fn(),
       lookupFiscalIssuanceStatus: vi.fn(),
       getDigitalSalesInvoice: vi.fn(),
@@ -1000,7 +1009,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "STAT-OP-SESSION-0001");
+    await userEvent.type(await selectTicketInput(), "STAT-OP-SESSION-0001");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     expect(await screen.findByRole("heading", { name: "Session Summary" })).toBeInTheDocument();
@@ -1046,7 +1055,9 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
   it("SessionLookup_SafelySeparatesModesAndOffersQrOnlyForTicket", async () => {
     render(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />);
 
-    const ticketInput = await screen.findByPlaceholderText("Scan or enter HikCentral ticket number");
+    expect(await screen.findByRole("button", { name: "Plate" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByPlaceholderText("Enter plate number")).toHaveFocus();
+    const ticketInput = await selectTicketInput();
     await userEvent.type(ticketInput, "1474119573131");
     expect(screen.getByRole("button", { name: "Scan QR" })).toBeInTheDocument();
 
@@ -1068,6 +1079,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
+    await selectTicketInput();
     await userEvent.click(await screen.findByRole("button", { name: "Scan QR" }));
     await userEvent.click(screen.getByRole("button", { name: "Decode test QR" }));
     expect(screen.getByPlaceholderText("Scan or enter HikCentral ticket number")).toHaveValue("1474119573131");
@@ -1084,20 +1096,20 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       <App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />
     );
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "STAT-OP-SESSION-0002");
+    await userEvent.type(await selectTicketInput(), "STAT-OP-SESSION-0002");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
     expect(await screen.findByRole("heading", { name: "Session Summary" })).toBeInTheDocument();
     expect(screen.queryByText("Vendor confirmation unavailable")).not.toBeInTheDocument();
 
     rerender(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />);
-    await userEvent.clear(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"));
+    await userEvent.clear(await selectTicketInput());
     await userEvent.type(screen.getByPlaceholderText("Scan or enter HikCentral ticket number"), "STAT-OP-SESSION-PENDING");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
     expect(await screen.findByRole("heading", { name: "Session Summary" })).toBeInTheDocument();
     expect(screen.queryByText("Payment confirmed in ExitPass. Vendor confirmation pending.")).not.toBeInTheDocument();
 
     rerender(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />);
-    await userEvent.clear(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"));
+    await userEvent.clear(await selectTicketInput());
     await userEvent.type(screen.getByPlaceholderText("Scan or enter HikCentral ticket number"), "STAT-OP-SESSION-VENDOR-FAILED");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
     expect(await screen.findByRole("heading", { name: "Session Summary" })).toBeInTheDocument();
@@ -1105,7 +1117,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.queryByText("Escalate to supervisor.")).not.toBeInTheDocument();
 
     rerender(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />);
-    await userEvent.clear(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"));
+    await userEvent.clear(await selectTicketInput());
     await userEvent.type(screen.getByPlaceholderText("Scan or enter HikCentral ticket number"), "MISSING-TICKET");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
     expect(await screen.findByText("Session not found")).toBeInTheDocument();
@@ -1115,7 +1127,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     render(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />);
 
     await userEvent.type(
-      await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"),
+      await selectTicketInput(),
       "1474119573041"
     );
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
@@ -1127,8 +1139,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByText("ABC****")).toBeInTheDocument();
     expect(screen.queryByText("VENDOR_SESSION_PROJECTION")).not.toBeInTheDocument();
     expect(screen.queryByText("PHP 0.00")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Submit Request" })).not.toBeInTheDocument();
-    expect(await screen.findByText("Unable to start the statutory discount request for this session.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Submit Request" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Enter Customer Information" })).toBeInTheDocument();
     expect(screen.queryByText(/parking session ID is required/i)).not.toBeInTheDocument();
   });
 
@@ -1481,7 +1493,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       }]
     })} initialPath="/operator-console/ticket-lookup" />);
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "PAID-EXITED-001");
+    await userEvent.type(await selectTicketInput(), "PAID-EXITED-001");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     expect(await screen.findByText(/Statutory discount request is no longer available because payment has been completed/i)).toBeInTheDocument();
@@ -1496,10 +1508,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
     const phoneCamera = installPhoneCamera();
     const onDraftCreate = vi.fn();
-    render(<App apiClient={createMockOperatorConsoleApiClient({
+    const client = createMockOperatorConsoleApiClient({
       onDraftCreate,
       ticketLookupResults: [{
         ...mockCompletedTicketLookup(),
+        parkingSessionId: undefined,
+        vendorSystemId: "31bde78a-5dfc-45c3-a1f3-e48abaf90927",
         ticketNumber: "PHOTO-ELIGIBLE-001",
         cardNum: "PHOTO-ELIGIBLE-001",
         paymentAttemptStatus: undefined,
@@ -1507,9 +1521,11 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
         paymentConfirmationStatus: "NONE",
         exitAuthorizationStatus: undefined
       }]
-    })} initialPath="/operator-console/ticket-lookup" />);
+    });
+    const ensureCanonicalSession = vi.spyOn(client, "ensureCanonicalSession");
+    render(<App apiClient={client} initialPath="/operator-console/ticket-lookup" />);
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "PHOTO-ELIGIBLE-001");
+    await userEvent.type(await selectTicketInput(), "PHOTO-ELIGIBLE-001");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     const submit = await screen.findByRole("button", { name: "Submit Request" });
@@ -1549,6 +1565,11 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(submit).toBeEnabled();
     await userEvent.click(submit);
 
+    await waitFor(() => expect(ensureCanonicalSession).toHaveBeenCalledWith({
+      lookupMode: "TICKET_REFERENCE",
+      identifier: "PHOTO-ELIGIBLE-001",
+      vendorSystemId: "31bde78a-5dfc-45c3-a1f3-e48abaf90927"
+    }, "statutory-discount"));
     await waitFor(() => expect(onDraftCreate).toHaveBeenCalledWith(expect.objectContaining({
       idPhoto: expect.any(File),
       evidenceCaptureRequested: true,
@@ -1584,7 +1605,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     apiClient.createStatutoryDiscountDraft = vi.fn().mockRejectedValue(new Error("controlled test failure"));
     render(<App apiClient={apiClient} initialPath="/operator-console/ticket-lookup" />);
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "PHOTO-FAILURE-001");
+    await userEvent.type(await selectTicketInput(), "PHOTO-FAILURE-001");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
     await userEvent.click(await screen.findByRole("button", { name: "Take ID Photo" }));
     const livePreview = await screen.findByLabelText("Live rear camera preview");
@@ -1664,7 +1685,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     const getPreview = vi.spyOn(client, "getSubmittedStatutoryEvidencePreview");
     render(<App apiClient={client} initialPath="/operator-console/ticket-lookup" />);
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "1474119573102");
+    await userEvent.type(await selectTicketInput(), "1474119573102");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     const summary = await screen.findByRole("region", { name: "Senior Citizen" });
@@ -1728,7 +1749,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "1474119573102");
+    await userEvent.type(await selectTicketInput(), "1474119573102");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     expect(await screen.findByText("ABC1102")).toBeInTheDocument();
@@ -1763,7 +1784,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       }]
     })} initialPath="/operator-console/ticket-lookup" />);
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "PWD-DOCUMENT-MAPPING-001");
+    await userEvent.type(await selectTicketInput(), "PWD-DOCUMENT-MAPPING-001");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
     await userEvent.selectOptions(await screen.findByLabelText("Entitlement type"), "PWD");
 
@@ -1803,7 +1824,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     });
     render(<App apiClient={client} initialPath="/operator-console/ticket-lookup" />);
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "CUSTOMER-INFO-001");
+    await userEvent.type(await selectTicketInput(), "CUSTOMER-INFO-001");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     const statutoryHeading = await screen.findByRole("heading", { name: "Request Statutory Discount" });
@@ -1834,11 +1855,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByLabelText("Business Style / Business Name")).toHaveValue("ABC Retail");
   });
 
-  it("TicketLookup_WhenCanonicalSessionBindingUnexpectedlyFails_DoesNotExposeInternalIdPrerequisites", async () => {
+  it("SessionLookup_ProjectionCustomerInformationExplicitlyMaterializesAndLoadsEditableEmptyState", async () => {
     const client = createMockOperatorConsoleApiClient({
       ticketLookupResults: [{
         ...mockCompletedTicketLookup(),
         parkingSessionId: undefined,
+        vendorSystemId: "31bde78a-5dfc-45c3-a1f3-e48abaf90927",
         ticketNumber: "UNBOUND-SESSION-001",
         cardNum: "UNBOUND-SESSION-001",
         paymentAttemptStatus: undefined,
@@ -1847,16 +1869,30 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
         exitAuthorizationStatus: undefined
       }]
     });
+    const ensureCanonicalSession = vi.spyOn(client, "ensureCanonicalSession");
+    client.getInvoiceCustomerInformation = vi.fn(async (parkingSessionId) => ({
+      parkingSessionId,
+      hasCustomerInformation: false,
+      fiscalSnapshotLocked: false
+    }));
     render(<App apiClient={client} initialPath="/operator-console/ticket-lookup" />);
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "UNBOUND-SESSION-001");
+    await userEvent.type(await selectTicketInput(), "UNBOUND-SESSION-001");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     expect(await screen.findByText("UNBOUND-SESSION-001")).toBeInTheDocument();
-    expect(await screen.findByText("Unable to start the statutory discount request for this session.")).toBeInTheDocument();
-    expect(await screen.findByText("Unable to load customer information for this session.")).toBeInTheDocument();
-    expect(screen.queryByText(/parking session ID is required/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Submit Request" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Submit Request" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Enter Customer Information" }));
+
+    await waitFor(() => expect(ensureCanonicalSession).toHaveBeenCalledWith({
+      lookupMode: "TICKET_REFERENCE",
+      identifier: "UNBOUND-SESSION-001",
+      vendorSystemId: "31bde78a-5dfc-45c3-a1f3-e48abaf90927"
+    }, "invoice-customer-information"));
+    expect(await screen.findByLabelText("Name")).toBeEnabled();
+    expect(screen.getByLabelText("Address")).toBeEnabled();
+    expect(screen.getByLabelText("TIN")).toBeEnabled();
+    expect(screen.getByLabelText("Business Style / Business Name")).toBeEnabled();
   });
 
   it("TicketLookup_MakesCustomerInformationReadOnlyAfterTheFiscalSnapshot", async () => {
@@ -1873,7 +1909,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     }));
     render(<App apiClient={client} initialPath="/operator-console/ticket-lookup" />);
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "PAID-EXITED-001");
+    await userEvent.type(await selectTicketInput(), "PAID-EXITED-001");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     expect(await screen.findByText(/Customer information can no longer be changed/i)).toBeInTheDocument();
@@ -1913,7 +1949,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     }));
     render(<App apiClient={client} initialPath="/operator-console/ticket-lookup" />);
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "1474119573103");
+    await userEvent.type(await selectTicketInput(), "1474119573103");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     expect(await screen.findByText("1474119573103")).toBeInTheDocument();
@@ -1944,7 +1980,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     }));
     render(<App apiClient={client} initialPath="/operator-console/ticket-lookup" />);
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "1474119573081");
+    await userEvent.type(await selectTicketInput(), "1474119573081");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     expect(await screen.findByText("1474119573081")).toBeInTheDocument();
@@ -1964,7 +2000,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     });
     render(<App apiClient={client} initialPath="/operator-console/ticket-lookup" />);
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "1474119573081");
+    await userEvent.type(await selectTicketInput(), "1474119573081");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     expect(await screen.findByText("1474119573081")).toBeInTheDocument();

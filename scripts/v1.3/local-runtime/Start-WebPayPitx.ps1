@@ -34,7 +34,11 @@ if ($PreflightOnly) {
 
 Push-Location $uiRoot
 try {
-    & npm.cmd run dev -- --host localhost --port 5174 --strictPort
+    & npm.cmd run build
+    if ($LASTEXITCODE -ne 0) {
+        throw "WebPay production build failed with exit code $LASTEXITCODE."
+    }
+    & npm.cmd run preview -- --host localhost --port 5174 --strictPort
     exit $LASTEXITCODE
 } finally {
     Pop-Location

@@ -5,6 +5,7 @@ type CameraState = "idle" | "starting" | "scanning" | "denied" | "unavailable" |
 
 type QrScannerProps = {
   onDecoded: (value: string) => void;
+  onScanStarted?: () => void;
 };
 
 function isPermissionDenied(error: unknown): boolean {
@@ -15,7 +16,7 @@ function isPermissionDenied(error: unknown): boolean {
   return error.name === "NotAllowedError" || error.name === "SecurityError" || error.name === "PermissionDeniedError";
 }
 
-export function QrScanner({ onDecoded }: QrScannerProps) {
+export function QrScanner({ onDecoded, onScanStarted }: QrScannerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
   const [cameraState, setCameraState] = useState<CameraState>("idle");
@@ -27,6 +28,7 @@ export function QrScanner({ onDecoded }: QrScannerProps) {
   }, []);
 
   async function startScanner() {
+    onScanStarted?.();
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraState("unavailable");
       return;

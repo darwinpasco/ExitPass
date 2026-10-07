@@ -1,5 +1,7 @@
 // @vitest-environment node
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createOperatorConsoleViteConfig } from "../vite.config";
 
@@ -33,6 +35,12 @@ describe("Operator Console Vite dev server config", () => {
       target: "http://127.0.0.1:5174",
       changeOrigin: true
     });
+    expect(config.preview).toMatchObject({ port: 5175, strictPort: true });
+    expect(config.preview?.proxy?.["/v1"]).toMatchObject({
+      target: "https://localhost:56064",
+      secure: false
+    });
+    expect(config.preview?.proxy?.["/webpay-app"]).toMatchObject({ target: "http://127.0.0.1:5174" });
   });
 
   it("OperatorConsoleDevServer_WhenWebPayTargetIsProvided_UsesItOnlyForCustomerPageRoutes", () => {
@@ -41,6 +49,7 @@ describe("Operator Console Vite dev server config", () => {
     expect(config.server?.proxy?.["/webpay"]).toMatchObject({ target: "http://localhost:19084" });
     expect(config.server?.proxy?.["/webpay-app"]).toMatchObject({ target: "http://localhost:19084" });
     expect(config.server?.proxy?.["/v1"]).toMatchObject({ target: "http://localhost:19082" });
+    expect(config.preview?.proxy?.["/v1"]).toMatchObject({ target: "http://localhost:19082" });
   });
 
   it("OperatorConsoleDevServer_WhenProxyTargetEnvIsProvided_UsesConfiguredTarget", () => {
@@ -60,5 +69,15 @@ describe("Operator Console Vite dev server config", () => {
       target: "https://localhost:56064",
       secure: false
     });
+  });
+
+  it("OperatorConsoleRepeatableLauncher_BuildsAndUsesStablePreviewHosting", () => {
+    const launcher = readFileSync(
+      resolve(process.cwd(), "../../../scripts/v1.3/local-runtime/Start-OperatorConsole.ps1"),
+      "utf8");
+
+    expect(launcher).toContain("npm.cmd run build");
+    expect(launcher).toContain("npm.cmd run preview");
+    expect(launcher).not.toMatch(/npm(?:\.cmd)?\s+run\s+dev/i);
   });
 });

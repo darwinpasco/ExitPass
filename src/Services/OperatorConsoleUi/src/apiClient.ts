@@ -17,6 +17,9 @@ import type {
   FiscalStatusViewAuditReportQuery,
   FiscalStatusViewAuditReportResponse,
   InvoiceCustomerInformation,
+  OperatorCanonicalSessionInput,
+  OperatorCanonicalSessionPurpose,
+  OperatorCanonicalSessionResult,
   OperatorConsoleApiError,
   OperatorSessionLookupInput,
   OperatorTicketLookupResult,
@@ -74,6 +77,10 @@ export interface OperatorConsoleApiClient {
   canManageShifts(): boolean;
   evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
   lookupSession(input: OperatorSessionLookupInput): Promise<OperatorTicketLookupResult>;
+  ensureCanonicalSession(
+    input: OperatorCanonicalSessionInput,
+    purpose: OperatorCanonicalSessionPurpose
+  ): Promise<OperatorCanonicalSessionResult>;
   getInvoiceCustomerInformation?(parkingSessionId: string): Promise<InvoiceCustomerInformation>;
   saveInvoiceCustomerInformation?(
     parkingSessionId: string,
@@ -505,6 +512,7 @@ interface OperatorTicketLookupResponseDto {
   exitAuthorizationStatus?: string | null;
   alerts?: string[] | null;
   vendorSystemCode?: string | null;
+  vendorSystemId?: string | null;
   vendorConfirmationCode?: string | null;
   vendorConfirmationStatus?: string | null;
   vendorConfirmationTimestamp?: string | null;
@@ -751,6 +759,28 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
       });
 
       return parseTicketLookupResponse(response);
+    },
+
+    async ensureCanonicalSession(input, purpose) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/sessions/ensure-for-${purpose}`,
+        {
+          method: "POST",
+          headers: {
+            ...operatorConsoleHeaders(correlationId, { json: true }),
+            "X-CSRF-Token": requireCsrfToken(options.csrfToken)
+          },
+          body: JSON.stringify({
+            vendorSystemId: input.vendorSystemId,
+            lookupMode: input.lookupMode,
+            ticketReference: input.lookupMode === "TICKET_REFERENCE" ? input.identifier : null,
+            plateNumber: input.lookupMode === "PLATE_LICENSE" ? input.identifier : null,
+            correlationId
+          })
+        }
+      );
+      return parseResponse<OperatorCanonicalSessionResult>(response);
     },
 
     async getInvoiceCustomerInformation(parkingSessionId) {
@@ -1494,6 +1524,20 @@ export function createMockOperatorConsoleApiClient(
         plateLicense: input.lookupMode === "PLATE_LICENSE" ? input.identifier : undefined,
         correlationId: newCorrelationId(),
         message: "Session not found."
+      };
+    },
+
+    async ensureCanonicalSession(input) {
+      await delay();
+      const existing = (options.ticketLookupResults ?? mockTicketLookupResults).find((item) =>
+        input.lookupMode === "TICKET_REFERENCE"
+          ? item.ticketNumber === input.identifier || item.cardNum === input.identifier
+          : item.plateLicense?.toUpperCase() === input.identifier.toUpperCase());
+      return {
+        parkingSessionId: existing?.parkingSessionId ?? "25000000-0000-0000-0000-000000000099",
+        reusedExistingSession: Boolean(existing?.parkingSessionId),
+        vendorSessionProjectionId: "b1000000-0000-0000-0000-000000000099",
+        correlationId: newCorrelationId()
       };
     },
 
@@ -2338,6 +2382,7 @@ function toTicketLookupResult(body: OperatorTicketLookupResponseDto): OperatorTi
     amountPaidMinorUnits: body.amountPaidMinorUnits ?? undefined,
     paymentMethod: body.paymentMethod ?? undefined,
     vendorSystemCode: body.vendorSystemCode ?? undefined,
+    vendorSystemId: body.vendorSystemId ?? undefined,
     vendorConfirmationCode: body.vendorConfirmationCode ?? undefined,
     vendorConfirmationStatus: body.vendorConfirmationStatus ?? undefined,
     vendorConfirmationTimestamp: body.vendorConfirmationTimestamp ?? undefined,
@@ -3967,12 +4012,15 @@ const mockTicketLookupResults: OperatorTicketLookupResult[] = [
     sessionFound: true,
     accessAllowed: true,
     sessionEligible: false,
+    siteId: mockSiteId,
+    siteGroupId: mockSiteGroupId,
     ticketNumber: "1474119573041",
     cardNum: "1474119573041",
     plateLicense: "ABC****",
     siteName: "PITX Level 3",
     parkingInTime: "2026-09-19T09:00:00+08:00",
     vendorSystemCode: "HIKCENTRAL",
+    vendorSystemId: "31bde78a-5dfc-45c3-a1f3-e48abaf90927",
     sessionSource: "VENDOR_SESSION_PROJECTION",
     projectionStatus: "ACTIVE",
     projectionSourceEventAt: "2026-09-19T09:00:00+08:00",

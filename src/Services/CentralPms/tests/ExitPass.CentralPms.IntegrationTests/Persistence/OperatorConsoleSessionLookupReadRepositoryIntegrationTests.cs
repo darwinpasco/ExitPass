@@ -15,6 +15,37 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
         Guid.Parse("8063c159-dae6-57af-9f1f-e0a07d519fb2");
 
     [Fact]
+    public async Task ExplicitOperatorMutation_MaterializesOneCanonicalSessionWithoutFinancialState()
+    {
+        var fixture = await Fixture.CreateAsync();
+        try
+        {
+            var projectionRepository = new PostgresVendorSessionProjectionRepository(
+                fixture.ConnectionString,
+                CentralPmsServiceIdentityId);
+            var projection = await projectionRepository.FindLatestAsync(fixture.ProjectionQuery(), CancellationToken.None);
+            projection.Should().NotBeNull();
+            var repository = new OperatorConsoleCanonicalSessionRepository(fixture.ConnectionString);
+
+            var first = await repository.EnsureAsync(
+                new OperatorConsoleCanonicalSessionPersistenceCommand(projection!.Projection, Guid.NewGuid()),
+                CancellationToken.None);
+            var replay = await repository.EnsureAsync(
+                new OperatorConsoleCanonicalSessionPersistenceCommand(projection.Projection, Guid.NewGuid()),
+                CancellationToken.None);
+
+            first.ReusedExistingSession.Should().BeFalse();
+            replay.ReusedExistingSession.Should().BeTrue();
+            replay.ParkingSessionId.Should().Be(first.ParkingSessionId);
+            (await fixture.CountMaterializedBusinessRowsAsync(first.ParkingSessionId)).Should().Equal(1, 0, 0, 0, 0);
+        }
+        finally
+        {
+            await fixture.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task TicketLookup_UsesScopedProjectionWithoutMutation_ThenPrefersCoreSession()
     {
         var fixture = await Fixture.CreateAsync();
@@ -256,6 +287,28 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
                 connection);
             command.Parameters.AddWithValue("ticket", Ticket);
             command.Parameters.AddWithValue("parking_session_id", ParkingSessionId);
+            await using var reader = await command.ExecuteReaderAsync();
+            (await reader.ReadAsync()).Should().BeTrue();
+            return Enumerable.Range(0, 5).Select(reader.GetInt64).ToArray();
+        }
+
+        public async Task<long[]> CountMaterializedBusinessRowsAsync(Guid parkingSessionId)
+        {
+            await using var connection = new NpgsqlConnection(ConnectionString);
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM core.parking_sessions WHERE parking_session_id = @parking_session_id),
+                    (SELECT COUNT(*) FROM core.tariff_snapshots WHERE parking_session_id = @parking_session_id),
+                    (SELECT COUNT(*) FROM core.payment_attempts WHERE parking_session_id = @parking_session_id),
+                    (SELECT COUNT(*) FROM core.payment_confirmations confirmation
+                     INNER JOIN core.payment_attempts attempt ON attempt.payment_attempt_id = confirmation.payment_attempt_id
+                     WHERE attempt.parking_session_id = @parking_session_id),
+                    (SELECT COUNT(*) FROM core.exit_authorizations WHERE parking_session_id = @parking_session_id);
+                """,
+                connection);
+            command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
             await using var reader = await command.ExecuteReaderAsync();
             (await reader.ReadAsync()).Should().BeTrue();
             return Enumerable.Range(0, 5).Select(reader.GetInt64).ToArray();
