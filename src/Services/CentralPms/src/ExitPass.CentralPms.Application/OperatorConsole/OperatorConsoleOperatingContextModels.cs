@@ -20,7 +20,7 @@ public sealed record OperatorConsoleOperatingContext(
     Guid HumanSessionId,
     Guid UserId,
     Guid OperatorDeviceBindingId,
-    Guid OperatorShiftId,
+    Guid? OperatorShiftId,
     Guid SiteId,
     Guid SiteGroupId,
     long AuthorizationEpoch,
@@ -41,13 +41,6 @@ public sealed record OperatorConsoleDeviceBindingCandidate(
     Guid? AssignmentSiteId,
     Guid? AssignmentSiteGroupId);
 
-public sealed record OperatorConsoleShiftResolution(
-    int CompatibleActiveShiftCount,
-    Guid? OperatorShiftId,
-    bool HasClosedOrExpiredShift,
-    bool HasActiveShiftOutsideDevice,
-    bool HasActiveShiftOutsideUserScope);
-
 public sealed record OperatorConsoleSessionBindingSnapshot(
     long AuthorizationEpoch,
     long CredentialVersion,
@@ -65,13 +58,6 @@ public sealed record OperatorConsoleOperatingContextValidationFacts(
     int ActiveAssignmentCount,
     Guid? AssignmentSiteId,
     Guid? AssignmentSiteGroupId,
-    string? ShiftStatus,
-    Guid? ShiftUserId,
-    Guid? ShiftSiteId,
-    Guid? ShiftSiteGroupId,
-    DateTimeOffset? ShiftActiveFrom,
-    DateTimeOffset? ShiftActiveTo,
-    DateTimeOffset? ShiftRevokedAt,
     string? SessionStatus,
     DateTimeOffset? SessionIdleExpiresAt,
     DateTimeOffset? SessionAbsoluteExpiresAt,
@@ -103,9 +89,8 @@ public interface IOperatorConsoleOperatingContextRepository
 {
     Task<OperatorConsoleDeviceBindingCandidate?> FindDeviceByProofAsync(string proofThumbprint, DateTimeOffset now, CancellationToken cancellationToken);
     Task<bool> RotateDeviceProofAsync(Guid operatorDeviceBindingId, string expectedThumbprint, string replacementThumbprint, DateTimeOffset now, Guid correlationId, CancellationToken cancellationToken);
-    Task<OperatorConsoleShiftResolution> ResolveShiftAsync(Guid userId, Guid siteId, Guid siteGroupId, IReadOnlyList<Guid> authorizedSiteIds, IReadOnlyList<Guid> authorizedSiteGroupIds, bool hasGlobalScope, DateTimeOffset now, CancellationToken cancellationToken);
     Task<OperatorConsoleSessionBindingSnapshot?> ReadSessionBindingSnapshotAsync(Guid humanSessionId, Guid userId, CancellationToken cancellationToken);
-    Task<OperatorConsoleOperatingContext> BindSessionAsync(Guid humanSessionId, Guid userId, Guid operatorDeviceBindingId, Guid operatorShiftId, Guid siteId, Guid siteGroupId, long authorizationEpoch, long credentialVersion, DateTimeOffset now, Guid correlationId, CancellationToken cancellationToken);
+    Task<OperatorConsoleOperatingContext> BindSessionAsync(Guid humanSessionId, Guid userId, Guid operatorDeviceBindingId, Guid siteId, Guid siteGroupId, long authorizationEpoch, long credentialVersion, DateTimeOffset now, Guid correlationId, CancellationToken cancellationToken);
     Task<OperatorConsoleOperatingContextValidationFacts> ReadValidationFactsAsync(Guid humanSessionId, CancellationToken cancellationToken);
     Task InvalidateAsync(Guid humanSessionId, string reasonCode, DateTimeOffset now, Guid correlationId, CancellationToken cancellationToken);
     Task TouchAsync(Guid humanSessionId, DateTimeOffset now, Guid correlationId, CancellationToken cancellationToken);

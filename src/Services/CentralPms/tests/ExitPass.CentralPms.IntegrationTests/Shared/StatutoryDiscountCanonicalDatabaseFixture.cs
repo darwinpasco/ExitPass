@@ -534,6 +534,10 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_OperatorConsoleOperatingContext_v1.3.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_OperatorConsoleOperatingContext_v1.3.sql")),
                 new ApplicationSchemaSource(
+                    "Operator Console shift-control deferment",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_OperatorConsoleDeferShiftControl_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_OperatorConsoleDeferShiftControl_v1.3.sql")),
+                new ApplicationSchemaSource(
                     "approved Identity/RBAC role catalog",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_IdentityRbacApprovedRoleCatalog_v1.3.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_IdentityRbacApprovedRoleCatalog_v1.3.sql")),

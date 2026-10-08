@@ -132,21 +132,6 @@ public sealed class OperatorConsoleOperatingContextService : IOperatorConsoleOpe
             return Denied(OperatorConsoleOperatingContextFailureCodes.DeviceOutsideAuthorizedSite, correlationId);
         }
 
-        var shift = await _repository.ResolveShiftAsync(
-            userId,
-            resolvedDevice.SiteId,
-            resolvedDevice.SiteGroupId,
-            authorizedSiteIds,
-            authorizedSiteGroupIds,
-            hasGlobalScope,
-            now,
-            cancellationToken);
-        var shiftFailure = ClassifyShift(shift);
-        if (shiftFailure is not null)
-        {
-            return Denied(shiftFailure, correlationId);
-        }
-
         var snapshot = await _repository.ReadSessionBindingSnapshotAsync(humanSessionId, userId, cancellationToken);
         if (snapshot is null || !string.Equals(snapshot.SessionStatus, "ACTIVE", StringComparison.Ordinal) ||
             snapshot.IdleExpiresAt <= now || snapshot.AbsoluteExpiresAt <= now)
@@ -158,7 +143,6 @@ public sealed class OperatorConsoleOperatingContextService : IOperatorConsoleOpe
             humanSessionId,
             userId,
             resolvedDevice.OperatorDeviceBindingId,
-            shift.OperatorShiftId!.Value,
             resolvedDevice.SiteId,
             resolvedDevice.SiteGroupId,
             snapshot.AuthorizationEpoch,
@@ -168,10 +152,9 @@ public sealed class OperatorConsoleOperatingContextService : IOperatorConsoleOpe
             cancellationToken);
 
         _logger.LogInformation(
-            "Operator Console operating context bound for session {HumanSessionId}, device {OperatorDeviceBindingId}, shift {OperatorShiftId}, site {SiteId}, and correlation {CorrelationId}.",
+            "Operator Console operating context bound for session {HumanSessionId}, device {OperatorDeviceBindingId}, site {SiteId}, and correlation {CorrelationId}.",
             humanSessionId,
             context.OperatorDeviceBindingId,
-            context.OperatorShiftId,
             context.SiteId,
             correlationId);
         return OperatorConsoleOperatingContextResult.Success(context);
@@ -240,19 +223,6 @@ public sealed class OperatorConsoleOperatingContextService : IOperatorConsoleOpe
         {
             failure = OperatorConsoleOperatingContextFailureCodes.SessionExpiredOrRevoked;
         }
-        else if (facts.ShiftStatus != "ACTIVE" || facts.ShiftRevokedAt.HasValue || !facts.ShiftActiveFrom.HasValue || facts.ShiftActiveFrom > now || facts.ShiftActiveTo <= now)
-        {
-            failure = OperatorConsoleOperatingContextFailureCodes.ShiftClosedOrExpired;
-        }
-        else if (facts.ShiftUserId != context.UserId)
-        {
-            failure = OperatorConsoleOperatingContextFailureCodes.ShiftOutsideUserScope;
-        }
-        else if (facts.ShiftSiteId != context.SiteId || facts.ShiftSiteGroupId != context.SiteGroupId)
-        {
-            failure = OperatorConsoleOperatingContextFailureCodes.ShiftIncompatibleWithDevice;
-        }
-
         if (failure is not null)
         {
             await _repository.InvalidateAsync(humanSessionId, failure, now, correlationId, cancellationToken);
@@ -287,29 +257,6 @@ public sealed class OperatorConsoleOperatingContextService : IOperatorConsoleOpe
             device.AssignmentSiteGroupId == device.SiteGroupId
             ? null
             : OperatorConsoleOperatingContextFailureCodes.DeviceOutsideAuthorizedSite;
-    }
-
-    private static string? ClassifyShift(OperatorConsoleShiftResolution shift)
-    {
-        if (shift.CompatibleActiveShiftCount > 1)
-        {
-            return OperatorConsoleOperatingContextFailureCodes.ActiveShiftConflict;
-        }
-        if (shift.CompatibleActiveShiftCount == 1 && shift.OperatorShiftId.HasValue)
-        {
-            return null;
-        }
-        if (shift.HasActiveShiftOutsideUserScope)
-        {
-            return OperatorConsoleOperatingContextFailureCodes.ShiftOutsideUserScope;
-        }
-        if (shift.HasActiveShiftOutsideDevice)
-        {
-            return OperatorConsoleOperatingContextFailureCodes.ShiftIncompatibleWithDevice;
-        }
-        return shift.HasClosedOrExpiredShift
-            ? OperatorConsoleOperatingContextFailureCodes.ShiftClosedOrExpired
-            : OperatorConsoleOperatingContextFailureCodes.ActiveShiftRequired;
     }
 
     private bool TryHash(string? proof, out string thumbprint)

@@ -85,7 +85,7 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
             command.OperatorDeviceBindingId,
             command.SiteId,
             command.SiteGroupId,
-            command.OperatorShiftId,
+            null,
             command.ParkingSessionId,
             Normalize(command.WorkflowCode),
             Normalize(command.ControlledActionCode),
@@ -132,8 +132,6 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
         {
             EvaluateDeviceBinding(context, evaluatedAt, reasons);
             EvaluateDeviceAssignment(context, evaluatedAt, reasons);
-            EvaluateShift(context, command.UserId, evaluatedAt, reasons);
-            EvaluateShiftTakeover(context, command.UserId, reasons);
         }
 
         var allowed = reasons.Count == 0;
@@ -144,7 +142,7 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
             DenialReasons: reasons,
             EffectiveRole: allowed ? "OPERATOR" : null,
             DeviceTrust: ToDeviceTrust(context),
-            ShiftContext: ToShiftContext(context, command.UserId, evaluatedAt),
+            ShiftContext: new OperatorConsoleShiftContextResult(null, "NOT_REQUIRED", Active: true),
             SiteContext: ToSiteContext(context, usesDirectSiteScope),
             EvaluatedAt: evaluatedAt,
             Persisted: false,
@@ -254,64 +252,6 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
         }
     }
 
-    private static void EvaluateShift(
-        OperatorConsoleAccessEvaluationReadContext context,
-        Guid userId,
-        DateTimeOffset evaluatedAt,
-        List<string> reasons)
-    {
-        var shift = context.ActiveShift;
-        if (shift is null)
-        {
-            AddReason(reasons, "NO_ACTIVE_SHIFT");
-            return;
-        }
-
-        if (shift.RevokedAt.HasValue ||
-            string.Equals(shift.OperationalStatus, "REVOKED", StringComparison.Ordinal) ||
-            context.LatestShiftRevocation is { RevocationStatus: "APPROVED" or "EFFECTIVE" })
-        {
-            AddReason(reasons, "SHIFT_REVOKED");
-            return;
-        }
-
-        var invalid =
-            !IsActive(shift.OperationalStatus) ||
-            shift.OperatorUserId != userId ||
-            !shift.ActiveFrom.HasValue ||
-            shift.ActiveFrom.Value > evaluatedAt ||
-            (shift.ActiveTo.HasValue && shift.ActiveTo.Value <= evaluatedAt) ||
-            (context.Request.SiteId.HasValue && shift.SiteId != context.Request.SiteId.Value) ||
-            (context.Request.SiteGroupId.HasValue && shift.SiteGroupId != context.Request.SiteGroupId.Value);
-
-        if (invalid)
-        {
-            AddReason(reasons, "NO_ACTIVE_SHIFT");
-        }
-    }
-
-    private static void EvaluateShiftTakeover(
-        OperatorConsoleAccessEvaluationReadContext context,
-        Guid userId,
-        List<string> reasons)
-    {
-        var takeover = context.ActiveShiftTakeover;
-        if (takeover is null)
-        {
-            return;
-        }
-
-        if (!string.Equals(takeover.TakeoverStatus, "ACTIVE", StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        if (takeover.TakeoverOperatorUserId != userId)
-        {
-            AddReason(reasons, "SHIFT_TAKEOVER_ACTIVE");
-        }
-    }
-
     private static OperatorConsoleDeviceTrustResult ToDeviceTrust(OperatorConsoleAccessEvaluationReadContext context)
     {
         var binding = context.DeviceBinding;
@@ -323,24 +263,6 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
                 IsActive(binding.DeviceStatus) &&
                 TrustedDeviceLevels.Contains(binding.TrustLevel) &&
                 !binding.RevokedAt.HasValue);
-    }
-
-    private static OperatorConsoleShiftContextResult ToShiftContext(
-        OperatorConsoleAccessEvaluationReadContext context,
-        Guid userId,
-        DateTimeOffset evaluatedAt)
-    {
-        var shift = context.ActiveShift;
-        return new OperatorConsoleShiftContextResult(
-            shift?.OperatorShiftId ?? context.Request.OperatorShiftId,
-            shift?.OperationalStatus ?? "NOT_FOUND",
-            shift is not null &&
-                shift.OperatorUserId == userId &&
-                IsActive(shift.OperationalStatus) &&
-                !shift.RevokedAt.HasValue &&
-                shift.ActiveFrom.HasValue &&
-                shift.ActiveFrom.Value <= evaluatedAt &&
-                (!shift.ActiveTo.HasValue || shift.ActiveTo.Value > evaluatedAt));
     }
 
     private static OperatorConsoleSiteContextResult ToSiteContext(
@@ -367,10 +289,10 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
             command.UserId,
             context.HrIdentityMapping?.HrIdentityMappingId,
             context.DeviceBinding?.OperatorDeviceBindingId,
-            context.ActiveShift?.OperatorShiftId,
-            context.ActiveShiftTakeover?.ShiftTakeoverId,
-            context.DeviceAssignment?.SiteGroupId ?? context.DeviceBinding?.SiteGroupId ?? context.ActiveShift?.SiteGroupId ?? command.SiteGroupId,
-            context.DeviceAssignment?.SiteId ?? context.DeviceBinding?.SiteId ?? context.ActiveShift?.SiteId ?? command.SiteId,
+            null,
+            null,
+            context.DeviceAssignment?.SiteGroupId ?? context.DeviceBinding?.SiteGroupId ?? command.SiteGroupId,
+            context.DeviceAssignment?.SiteId ?? context.DeviceBinding?.SiteId ?? command.SiteId,
             actionCode,
             workflowCode,
             command.ParkingSessionId.HasValue ? "PARKING_SESSION" : null,

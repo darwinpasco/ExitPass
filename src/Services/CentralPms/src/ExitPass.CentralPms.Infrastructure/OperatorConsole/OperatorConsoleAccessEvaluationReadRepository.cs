@@ -60,14 +60,12 @@ public sealed class OperatorConsoleAccessEvaluationReadRepository : IOperatorCon
 
         var device = BuildDeviceBinding(request, site);
         var assignment = device is null ? null : BuildDeviceAssignment(request, device);
-        var shift = BuildShift(request, mapping, site);
-
         return new OperatorConsoleAccessEvaluationReadContext(
             request,
             mapping,
             device,
             assignment,
-            shift,
+            ActiveShift: null,
             LatestShiftVersion: null,
             LatestShiftRevocation: null,
             ActiveShiftTakeover: null,
@@ -218,40 +216,6 @@ public sealed class OperatorConsoleAccessEvaluationReadRepository : IOperatorCon
             DateTimeOffset.MinValue,
             DateTimeOffset.MaxValue,
             EndedAt: null);
-
-    private static OperatorShiftReadModel? BuildShift(
-        OperatorConsoleAccessEvaluationReadRequest request,
-        OperatorHrIdentityMappingReadModel mapping,
-        SiteRow? site)
-    {
-        if (!request.OperatorShiftId.HasValue)
-        {
-            return null;
-        }
-
-        var siteId = site?.SiteId ?? request.SiteId;
-        var siteGroupId = site?.SiteGroupId ?? request.SiteGroupId;
-        if (!siteId.HasValue || !siteGroupId.HasValue)
-        {
-            return null;
-        }
-
-        return new OperatorShiftReadModel(
-            request.OperatorShiftId.Value,
-            mapping.HrIdentityMappingId,
-            request.UserId,
-            siteGroupId.Value,
-            siteId.Value,
-            "IDENTITY_USERS",
-            "ACTIVE",
-            DateTimeOffset.MinValue,
-            DateTimeOffset.MaxValue,
-            DateTimeOffset.MinValue,
-            DateTimeOffset.MaxValue,
-            RevokedAt: null,
-            RevocationReasonCode: null,
-            CurrentTakeoverId: null);
-    }
 
     private static DateTimeOffset? GetNullableDateTimeOffset(NpgsqlDataReader reader, string columnName)
     {

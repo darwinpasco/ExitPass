@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS operator_console.operator_session_contexts (
     human_session_id uuid NOT NULL,
     operator_user_id uuid NOT NULL,
     operator_device_binding_id uuid NOT NULL,
-    operator_shift_id uuid NOT NULL,
+    operator_shift_id uuid,
     site_group_id uuid NOT NULL,
     site_id uuid NOT NULL,
     authorization_epoch_snapshot bigint NOT NULL,
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS operator_console.operator_session_contexts (
 );
 
 COMMENT ON TABLE operator_console.operator_session_contexts IS
-    'Server-owned H-006 Operator Console device, active-shift, and effective Site/Site Group binding; contains no browser proof or session secret.';
+    'Server-owned H-006 Operator Console device and effective Site/Site Group binding; an optional shift reference is retained only for historical compatibility.';
 
 CREATE INDEX IF NOT EXISTS ix_operator_session_contexts__active_device
     ON operator_console.operator_session_contexts (operator_device_binding_id, last_validated_at DESC)

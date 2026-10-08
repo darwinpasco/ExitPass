@@ -36,6 +36,8 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
         result.EffectiveRole.Should().Be("OPERATOR");
         result.DeviceTrust.Trusted.Should().BeTrue();
         result.ShiftContext.Active.Should().BeTrue();
+        result.ShiftContext.OperatorShiftId.Should().BeNull();
+        result.ShiftContext.Status.Should().Be("NOT_REQUIRED");
         result.SiteContext.Assigned.Should().BeTrue();
         result.Persisted.Should().BeFalse();
         result.CorrelationId.Should().Be(CorrelationId);
@@ -87,7 +89,7 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
     [InlineData(OperatorConsoleActionCodes.ViewPolicyResolution)]
     [InlineData(OperatorConsoleActionCodes.ViewFiscalIssuanceStatus)]
     [InlineData(OperatorConsoleActionCodes.CreateStatutoryDiscountDraft)]
-    public async Task EvaluateAsync_WhenDirectSiteScopedActionHasNoDeviceOrShift_AllowsAction(string actionCode)
+    public async Task EvaluateAsync_WhenDirectSiteScopedActionHasNoDevice_AllowsAction(string actionCode)
     {
         var sut = CreateSut(ReadOnlyContext);
 
@@ -96,7 +98,7 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
         result.Allowed.Should().BeTrue();
         result.SiteContext.Assigned.Should().BeTrue();
         result.DeviceTrust.Trusted.Should().BeFalse();
-        result.ShiftContext.Active.Should().BeFalse();
+        result.ShiftContext.Active.Should().BeTrue();
     }
 
     [Fact]
@@ -124,7 +126,7 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
     }
 
     [Fact]
-    public async Task EvaluateAsync_WhenControlledWriteHasNoDeviceOrShift_RemainsDenied()
+    public async Task EvaluateAsync_WhenControlledWriteHasNoDevice_RemainsDenied()
     {
         var sut = CreateSut(ReadOnlyContext);
 
@@ -134,7 +136,35 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
 
         result.Allowed.Should().BeFalse();
         result.DenialReasons.Should().Contain("DEVICE_BINDING_NOT_FOUND");
-        result.DenialReasons.Should().Contain("NO_ACTIVE_SHIFT");
+        result.DenialReasons.Should().NotContain(reason => reason.Contains("SHIFT", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("MISSING")]
+    [InlineData("EXPIRED")]
+    [InlineData("ENDED")]
+    [InlineData("REVOKED")]
+    [InlineData("CONFLICTING_TAKEOVER")]
+    public async Task EvaluateAsync_ShiftLifecycleDoesNotAffectGovernedAction(string scenario)
+    {
+        var sut = CreateSut(request => scenario switch
+        {
+            "MISSING" => ValidContext(request) with { ActiveShift = null },
+            "EXPIRED" => ValidContext(request) with { ActiveShift = ValidContext(request).ActiveShift! with { ActiveTo = Now.AddMinutes(-1) } },
+            "ENDED" => ValidContext(request) with { ActiveShift = ValidContext(request).ActiveShift! with { OperationalStatus = "ENDED" } },
+            "REVOKED" => RevokedShift(request),
+            "CONFLICTING_TAKEOVER" => ActiveConflictingTakeover(request),
+            _ => throw new InvalidOperationException("Unsupported shift scenario.")
+        });
+
+        var result = await sut.EvaluateAsync(
+            Command(actionCode: OperatorConsoleActionCodes.DecideStatutoryDiscount),
+            CancellationToken.None);
+
+        result.Allowed.Should().BeTrue();
+        result.DenialReasons.Should().NotContain(reason => reason.Contains("SHIFT", StringComparison.Ordinal));
+        result.PersistenceContext.OperatorShiftId.Should().BeNull();
+        result.PersistenceContext.ShiftTakeoverId.Should().BeNull();
     }
 
     /// <summary>
@@ -170,9 +200,6 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)UntrustedDevice, controlledWrite, "DEVICE_NOT_TRUSTED"];
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)MissingDeviceAssignment, controlledWrite, "DEVICE_SITE_ASSIGNMENT_NOT_FOUND"];
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)InvalidDeviceAssignment, controlledWrite, "DEVICE_SITE_ASSIGNMENT_INVALID"];
-        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)MissingShift, controlledWrite, "NO_ACTIVE_SHIFT"];
-        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)RevokedShift, controlledWrite, "SHIFT_REVOKED"];
-        yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)ActiveConflictingTakeover, controlledWrite, "SHIFT_TAKEOVER_ACTIVE"];
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)ValidContext, Command(workflowCode: "UNKNOWN_WORKFLOW"), "WORKFLOW_NOT_SUPPORTED"];
         yield return [(Func<OperatorConsoleAccessEvaluationReadRequest, OperatorConsoleAccessEvaluationReadContext>)ValidContext, Command(actionCode: "UNKNOWN_ACTION"), "ACTION_NOT_SUPPORTED"];
     }
@@ -198,7 +225,7 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
             DeviceBindingId,
             SiteId,
             SiteGroupId,
-            ShiftId,
+            null,
             workflowCode,
             actionCode,
             ParkingSessionId: null,
@@ -303,9 +330,6 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
         {
             DeviceAssignment = ValidContext(request).DeviceAssignment! with { AssignmentStatusCode = "ENDED" }
         };
-
-    private static OperatorConsoleAccessEvaluationReadContext MissingShift(OperatorConsoleAccessEvaluationReadRequest request) =>
-        ValidContext(request) with { ActiveShift = null };
 
     private static OperatorConsoleAccessEvaluationReadContext RevokedShift(OperatorConsoleAccessEvaluationReadRequest request) =>
         ValidContext(request) with

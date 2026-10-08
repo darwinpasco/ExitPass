@@ -23,6 +23,7 @@ describe("Operator Console authentication shell", () => {
     expect(screen.getByText("1 Site, 1 Site Group")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Session Lookup" })).toBeInTheDocument();
     expect(client.getCurrentSession).toHaveBeenCalledTimes(1);
+    expect(client.bindDeviceSession).not.toHaveBeenCalled();
     expect(window.localStorage).toHaveLength(0);
     expect(window.sessionStorage).toHaveLength(0);
   });
@@ -455,7 +456,6 @@ function session(): OperatorConsoleHumanSession {
     siteGroupReferences: ["14000000-0000-0000-0000-000000000001"],
     hasGlobalScope: false,
     operatorDeviceBindingReference: "16000000-0000-0000-0000-000000000001",
-    operatorShiftReference: "17000000-0000-0000-0000-000000000001",
     effectiveSiteReference: "13000000-0000-0000-0000-000000000001",
     effectiveSiteGroupReference: "14000000-0000-0000-0000-000000000001",
     correlationId: "15000000-0000-0000-0000-000000000001"

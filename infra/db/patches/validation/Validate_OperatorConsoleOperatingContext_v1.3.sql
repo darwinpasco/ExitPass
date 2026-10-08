@@ -21,6 +21,17 @@ BEGIN
         WHERE conrelid = 'operator_console.operator_session_contexts'::regclass
           AND conname = 'fk_operator_session_contexts__operator_shift'
     ) THEN
-        RAISE EXCEPTION 'canonical device/shift foreign keys are missing';
+        RAISE EXCEPTION 'canonical device/historical-shift foreign keys are missing';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_attribute
+        WHERE attrelid = 'operator_console.operator_session_contexts'::regclass
+          AND attname = 'operator_shift_id'
+          AND attnotnull
+          AND NOT attisdropped
+    ) THEN
+        RAISE EXCEPTION 'operator_shift_id must be nullable for the v1.3 shift-deferred operating context';
     END IF;
 END $$;
