@@ -227,11 +227,6 @@ export function OperatorConsoleAuthenticationShell({
     }
   }
 
-  async function refreshOperatingContext() {
-    if (state.status !== "authenticated") return;
-    await resolveOperatingContext(state.session);
-  }
-
   const workspaceClient = useMemo(() => {
     if (state.status !== "authenticated") return null;
     return createWorkspaceClient
@@ -271,7 +266,6 @@ export function OperatorConsoleAuthenticationShell({
           logoutPending={logoutPending}
           logoutMessage={logoutMessage}
           onLogout={logout}
-          onOwnShiftStarted={refreshOperatingContext}
         />
       </>
     );
@@ -439,7 +433,6 @@ function DeviceProvisioningForm({
 function hasOperatingContext(session: OperatorConsoleHumanSession) {
   return Boolean(
     session.operatorDeviceBindingReference &&
-    session.operatorShiftReference &&
     session.effectiveSiteReference &&
     session.effectiveSiteGroupReference
   );

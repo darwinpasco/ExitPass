@@ -107,11 +107,9 @@ public sealed record OperatorConsoleAccessReadinessRepositoryCapabilities(
     bool OperatorAccessEvaluationsTableExists,
     bool OperatorAccessEvaluationReasonsTableExists)
 {
-    /// <summary>True when the tables required to read operator, device, shift, and site readiness exist.</summary>
+    /// <summary>True when the tables required to read v1.3 operator, device, and Site readiness exist.</summary>
     public bool HasReadinessTables =>
         OperatorConsoleSchemaExists &&
-        HrIdentityMappingsTableExists &&
         OperatorDeviceBindingsTableExists &&
-        OperatorDeviceAssignmentHistoryTableExists &&
-        OperatorShiftsTableExists;
+        OperatorDeviceAssignmentHistoryTableExists;
 }

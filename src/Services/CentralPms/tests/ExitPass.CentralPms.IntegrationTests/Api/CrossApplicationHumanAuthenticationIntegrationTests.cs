@@ -55,7 +55,7 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         reviewLogin.Session!.Audience.Should().Be(HumanSessionAudiences.OperatorConsole);
         reviewLogin.Session.SessionReference.Should().NotBe(managementLogin.Session.SessionReference);
         reviewLogin.Session.OperatorDeviceBindingReference.Should().Be(operatorDevice.DeviceId);
-        reviewLogin.Session.OperatorShiftReference.Should().Be(operatorDevice.ShiftId);
+        reviewLogin.Session.OperatorShiftReference.Should().BeNull();
         reviewLogin.Session.EffectiveSiteReference.Should().Be(seed.SiteId);
         reviewLogin.Session.EffectiveSiteGroupReference.Should().Be(seed.SiteGroupId);
 
@@ -71,12 +71,12 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
 
         var reboundSession = (await ReadCurrentSessionAsync(review)).Session!;
         reboundSession.OperatorDeviceBindingReference.Should().Be(operatorDevice.DeviceId);
-        reboundSession.OperatorShiftReference.Should().Be(operatorDevice.ShiftId);
+        reboundSession.OperatorShiftReference.Should().BeNull();
         (await ScalarAsync<int>("""
             SELECT count(*)::integer
             FROM operator_console.operator_session_contexts
             WHERE operator_user_id=@user_id AND site_id=@site_id AND site_group_id=@site_group_id
-              AND context_status='ACTIVE';
+              AND context_status='ACTIVE' AND operator_shift_id IS NULL;
             """, ("user_id", seed.UserId), ("site_id", seed.SiteId), ("site_group_id", seed.SiteGroupId)))
             .Should().Be(1);
 
@@ -422,8 +422,7 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
     private async Task AssertReviewAttributionAsync(
         SeededServiceChannelReview review,
         Guid reviewerUserId,
-        Guid deviceBindingId,
-        Guid shiftId)
+        Guid deviceBindingId)
     {
         (await ScalarAsync<Guid>("""
             SELECT reviewer_user_id
@@ -435,11 +434,12 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
             FROM operator_console.statutory_discount_service_channel_reviews
             WHERE statutory_discount_decision_command_id=@decision_id;
             """, ("decision_id", review.Decision.StatutoryDiscountDecisionCommandId))).Should().Be(deviceBindingId);
-        (await ScalarAsync<Guid>("""
-            SELECT reviewer_operator_shift_id
+        (await ScalarAsync<int>("""
+            SELECT count(*)::integer
             FROM operator_console.statutory_discount_service_channel_reviews
-            WHERE statutory_discount_decision_command_id=@decision_id;
-            """, ("decision_id", review.Decision.StatutoryDiscountDecisionCommandId))).Should().Be(shiftId);
+            WHERE statutory_discount_decision_command_id=@decision_id
+              AND reviewer_operator_shift_id IS NULL;
+            """, ("decision_id", review.Decision.StatutoryDiscountDecisionCommandId))).Should().Be(1);
         (await ScalarAsync<int>("""
             SELECT count(*)::integer
             FROM operator_console.statutory_discount_service_channel_reviews
@@ -554,15 +554,9 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
     private async Task<OperatorDeviceSeed> EstablishOperatorDeviceAsync(HttpClient client, Seed seed)
     {
         var deviceId = Guid.NewGuid();
-        var shiftId = Guid.NewGuid();
-        var mappingId = Guid.NewGuid();
         var proof = $"i022-provisioning-proof-{Guid.NewGuid():N}";
         var proofHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(proof))).ToLowerInvariant();
         await ExecuteAsync("""
-            INSERT INTO operator_console.hr_identity_mappings (
-                hr_identity_mapping_id,user_id,hr_provider_code,external_person_id_hash,mapping_status,
-                effective_from,correlation_id,created_by_service_identity_id,updated_by_service_identity_id)
-            VALUES (@mapping_id,@user_id,'I022',@person_hash,'ACTIVE',now()-interval '1 minute',gen_random_uuid(),@service_id,@service_id);
             INSERT INTO operator_console.operator_device_bindings (
                 operator_device_binding_id,device_binding_code,device_name,site_group_id,site_id,
                 browser_key_thumbprint,device_status,trust_level,binding_source,correlation_id,
@@ -575,21 +569,10 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
                 assigned_by_service_identity_id,created_by_service_identity_id)
             VALUES (gen_random_uuid(),@device_id,@site_group_id,@site_id,'ACTIVE','I022_PROOF',now(),
                 now()-interval '1 minute',gen_random_uuid(),@service_id,@service_id);
-            INSERT INTO operator_console.operator_shifts (
-                operator_shift_id,shift_reference,shift_origin,hr_provider_code,external_shift_id_hash,hr_identity_mapping_id,operator_user_id,
-                site_group_id,site_id,scheduled_start_at,scheduled_end_at,source_imported_at,import_status_code,
-                source_system_code,operational_status,active_from,active_to,opened_at,correlation_id,
-                created_by_service_identity_id,updated_by_service_identity_id)
-            VALUES (@shift_id,@shift_reference,'HR_IMPORT','I022',@shift_hash,@mapping_id,@user_id,@site_group_id,@site_id,
-                now()-interval '1 hour',now()+interval '8 hours',now(),'IMPORTED','I022','ACTIVE',
-                now()-interval '1 hour',now()+interval '8 hours',now()-interval '1 hour',gen_random_uuid(),@service_id,@service_id);
             """,
-            ("mapping_id", mappingId), ("user_id", seed.UserId),
-            ("person_hash", Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant()),
+            ("user_id", seed.UserId),
             ("device_id", deviceId), ("device_code", $"I022_OC_{deviceId:N}"[..32]),
             ("site_group_id", seed.SiteGroupId), ("site_id", seed.SiteId), ("proof_hash", proofHash),
-            ("shift_id", shiftId), ("shift_reference", $"I022-{shiftId:N}"),
-            ("shift_hash", Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant()),
             ("service_id", CentralPmsServiceIdentityId));
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/operator-console/device-binding/establish")
@@ -601,7 +584,7 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         response.StatusCode.Should().Be(HttpStatusCode.NoContent, await response.Content.ReadAsStringAsync());
         response.Headers.GetValues("Set-Cookie").Single().ToLowerInvariant().Should()
             .Contain("httponly").And.Contain("secure").And.Contain("samesite=strict");
-        return new OperatorDeviceSeed(deviceId, shiftId);
+        return new OperatorDeviceSeed(deviceId);
     }
 
     private async Task ExecuteAsync(string sql, params (string Name, object Value)[] parameters)
@@ -650,5 +633,5 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         Guid SiteId,
         Guid SiteGroupId,
         byte[] TotpSecret);
-    private sealed record OperatorDeviceSeed(Guid DeviceId, Guid ShiftId);
+    private sealed record OperatorDeviceSeed(Guid DeviceId);
 }

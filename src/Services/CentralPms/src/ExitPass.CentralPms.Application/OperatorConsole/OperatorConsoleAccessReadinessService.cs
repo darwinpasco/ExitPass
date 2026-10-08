@@ -6,7 +6,7 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 /// Foundational readiness evaluator for Operator Console controlled actions.
 ///
 /// Design reference: docs/operator-console/OperatorConsole_Access_Readiness_API_Backend_Design_v1.md.
-/// Invariant: Operator Console controlled actions require operator, device, shift, site, workflow-state,
+/// Invariant: Operator Console controlled actions require operator, device, site, workflow-state,
 /// and audit readiness before production enforcement. This foundation does not mutate payment/provider/gate/coupon state.
 /// </summary>
 public sealed class OperatorConsoleAccessReadinessService
@@ -86,11 +86,6 @@ public sealed class OperatorConsoleAccessReadinessService
             AddReason(dimensionReasons["device"], OperatorConsoleDenialReasonCatalog.DeviceIdMissing);
         }
 
-        if (!command.OperatorShiftId.HasValue || command.OperatorShiftId.Value == Guid.Empty)
-        {
-            AddReason(dimensionReasons["shift"], OperatorConsoleDenialReasonCatalog.ShiftIdMissing);
-        }
-
         if (!command.SiteId.HasValue || command.SiteId.Value == Guid.Empty)
         {
             AddReason(dimensionReasons["site"], OperatorConsoleDenialReasonCatalog.SiteIdMissing);
@@ -117,7 +112,7 @@ public sealed class OperatorConsoleAccessReadinessService
             .Select(pair => new OperatorConsoleReadinessDimensionResult(
                 pair.Key,
                 pair.Value.Count == 0 ? "READY" : "BLOCKED",
-                Required: true,
+                Required: pair.Key != "shift",
                 DenialReasonCodes: pair.Value))
             .ToArray();
 
@@ -140,7 +135,7 @@ public sealed class OperatorConsoleAccessReadinessService
             DenialReasons: reasons,
             OperatorReadiness: new OperatorConsoleOperatorReadiness(command.OperatorUserId, DimensionStatus(dimensionReasons["operator"]), dimensionReasons["operator"].Count == 0),
             DeviceReadiness: new OperatorConsoleDeviceReadiness(command.OperatorDeviceBindingId, DimensionStatus(dimensionReasons["device"]), dimensionReasons["device"].Count == 0),
-            ShiftReadiness: new OperatorConsoleShiftReadiness(command.OperatorShiftId, DimensionStatus(dimensionReasons["shift"]), dimensionReasons["shift"].Count == 0),
+            ShiftReadiness: new OperatorConsoleShiftReadiness(null, "NOT_REQUIRED", Ready: true),
             SiteReadiness: new OperatorConsoleSiteReadiness(command.SiteId, command.SiteGroupId, DimensionStatus(dimensionReasons["site"]), dimensionReasons["site"].Count == 0),
             WorkflowReadiness: new OperatorConsoleWorkflowReadiness(command.RequestedAction, command.WorkflowState, DimensionStatus(dimensionReasons["workflow"]), dimensionReasons["workflow"].Count == 0),
             AuditPersisted: false,
@@ -189,7 +184,6 @@ public sealed class OperatorConsoleAccessReadinessService
 
         AddReasons(dimensionReasons["operator"], repositoryResult.OperatorDenialReasons);
         AddReasons(dimensionReasons["device"], repositoryResult.DeviceDenialReasons);
-        AddReasons(dimensionReasons["shift"], repositoryResult.ShiftDenialReasons);
         AddReasons(dimensionReasons["site"], repositoryResult.SiteDenialReasons);
     }
 
@@ -198,7 +192,7 @@ public sealed class OperatorConsoleAccessReadinessService
         // Design reference: docs/operator-console/OperatorConsole_Access_Readiness_API_Backend_Design_v1.md.
         // Invariant: Local/dev fallback context must never be accepted as production trust for controlled actions.
         return reasons.Any(reason => reason.Code == OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction)
-            ? "Use production device enrollment, active shift, and site readiness records before continuing."
+            ? "Use production device enrollment and Site readiness records before continuing."
             : "Resolve the blocked Operator Console readiness checks before continuing.";
     }
 

@@ -51,6 +51,19 @@ public static class OperatorConsoleDeviceBindingCookie
 
     private static void Add(ClaimsIdentity identity, string type, Guid value) => Add(identity, type, value.ToString("D"));
 
+    private static void Add(ClaimsIdentity identity, string type, Guid? value)
+    {
+        foreach (var existing in identity.FindAll(type).ToArray())
+        {
+            identity.RemoveClaim(existing);
+        }
+
+        if (value.HasValue)
+        {
+            identity.AddClaim(new Claim(type, value.Value.ToString("D")));
+        }
+    }
+
     private static void Add(ClaimsIdentity identity, string type, string value)
     {
         foreach (var existing in identity.FindAll(type).ToArray())

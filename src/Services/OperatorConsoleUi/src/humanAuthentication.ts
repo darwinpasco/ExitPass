@@ -292,10 +292,10 @@ function requireAuthenticatedSession(dto: AuthenticationResponseDto): OperatorCo
     !isStringArray(session.siteReferences) ||
     !isStringArray(session.siteGroupReferences) ||
     !isBoolean(session.hasGlobalScope) ||
-    (session.operatorDeviceBindingReference !== undefined && !isString(session.operatorDeviceBindingReference)) ||
-    (session.operatorShiftReference !== undefined && !isString(session.operatorShiftReference)) ||
-    (session.effectiveSiteReference !== undefined && !isString(session.effectiveSiteReference)) ||
-    (session.effectiveSiteGroupReference !== undefined && !isString(session.effectiveSiteGroupReference)) ||
+    !isOptionalString(session.operatorDeviceBindingReference) ||
+    !isOptionalString(session.operatorShiftReference) ||
+    !isOptionalString(session.effectiveSiteReference) ||
+    !isOptionalString(session.effectiveSiteGroupReference) ||
     !isString(session.correlationId)
   ) {
     throw malformedSession();
@@ -341,9 +341,7 @@ function mapOperatingContextFailure(status: number, dto: AuthenticationResponseD
   const supportReference = isString(dto.correlationId) ? dto.correlationId : undefined;
   const message = errorCode === "OPERATOR_DEVICE_BINDING_REQUIRED"
     ? "This workstation must be provisioned before governed Operator Console actions are available."
-    : errorCode === "OPERATOR_ACTIVE_SHIFT_REQUIRED"
-      ? "Start an authorized shift before performing governed Operator Console actions."
-      : "The trusted Operator Console operating context is not available.";
+    : "The trusted Operator Console operating context is not available.";
   return new HumanAuthenticationError(
     status >= 500 ? "unavailable" : "operating-context",
     message,
@@ -489,6 +487,10 @@ function isBoolean(value: unknown): value is boolean {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || isString(value);
 }
 
 function optionalString(value: unknown): string | undefined {

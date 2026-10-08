@@ -57,7 +57,6 @@ describe("Operator Console I-020 authentication client", () => {
     const boundSession = {
       ...sessionDto(),
       operatorDeviceBindingReference: "16000000-0000-0000-0000-000000000001",
-      operatorShiftReference: "17000000-0000-0000-0000-000000000001",
       effectiveSiteReference: "13000000-0000-0000-0000-000000000001",
       effectiveSiteGroupReference: "14000000-0000-0000-0000-000000000001"
     };
@@ -82,12 +81,31 @@ describe("Operator Console I-020 authentication client", () => {
     expect(bind[1].headers).toEqual(expect.objectContaining({ "X-CSRF-Token": "csrf-bind" }));
     expect(result).toEqual(expect.objectContaining({
       operatorDeviceBindingReference: boundSession.operatorDeviceBindingReference,
-      operatorShiftReference: boundSession.operatorShiftReference,
+      operatorShiftReference: undefined,
       effectiveSiteReference: boundSession.effectiveSiteReference,
       effectiveSiteGroupReference: boundSession.effectiveSiteGroupReference
     }));
     expect(window.localStorage).toHaveLength(0);
     expect(window.sessionStorage).toHaveLength(0);
+  });
+
+  it("accepts a shift-deferred authenticated session with a null operator shift reference", async () => {
+    const shiftDeferredSession = {
+      ...sessionDto(),
+      operatorDeviceBindingReference: "16000000-0000-0000-0000-000000000001",
+      operatorShiftReference: null,
+      effectiveSiteReference: "13000000-0000-0000-0000-000000000001",
+      effectiveSiteGroupReference: "14000000-0000-0000-0000-000000000001"
+    };
+    const fetchMock = vi.fn(async () => authenticationResponse(shiftDeferredSession));
+    const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
+
+    const session = await client.getCurrentSession();
+
+    expect(session.operatorDeviceBindingReference).toBe(shiftDeferredSession.operatorDeviceBindingReference);
+    expect(session.operatorShiftReference).toBeUndefined();
+    expect(session.effectiveSiteReference).toBe(shiftDeferredSession.effectiveSiteReference);
+    expect(session.effectiveSiteGroupReference).toBe(shiftDeferredSession.effectiveSiteGroupReference);
   });
 
   it("changes a restricted-session password with CSRF and the governed TOTP request", async () => {

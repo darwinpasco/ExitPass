@@ -28,7 +28,7 @@ public static class OperatorConsoleDeviceBindingEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
             .WithSummary("Bind the authenticated Operator Console session to its trusted operating context")
-            .WithDescription("Revalidates the server-issued device cookie, active shift, Site and Site Group scope, authorization epoch, and credential version before binding the current human session.");
+            .WithDescription("Revalidates the server-issued device cookie, Site and Site Group scope, authorization epoch, and credential version before binding the current human session.");
         return app;
     }
 

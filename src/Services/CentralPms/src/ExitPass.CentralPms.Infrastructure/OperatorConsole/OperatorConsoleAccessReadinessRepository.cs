@@ -12,17 +12,15 @@ namespace ExitPass.CentralPms.Infrastructure.OperatorConsole;
 /// docs/operator-console/OperatorConsole_Access_Readiness_API_Backend_Design_v1.md,
 /// docs/operator-console/OperatorConsole_Device_Enrollment_Readiness_Design_v1.md, and
 /// docs/operator-console/OperatorConsole_Shift_Site_Validation_Workflow_Design_v1.md.
-/// Invariant: production controlled actions must be backed by real operator, device, shift,
+/// Invariant: production controlled actions must be backed by real operator, device,
 /// site, workflow-state, and audit readiness instead of local/dev fallback headers.
 /// </summary>
 public sealed class OperatorConsoleAccessReadinessRepository : IOperatorConsoleAccessReadinessRepository
 {
     private static readonly string[] RequiredTableNames =
     [
-        "hr_identity_mappings",
         "operator_device_bindings",
         "operator_device_assignment_history",
-        "operator_shifts",
         "operator_access_evaluations",
         "operator_access_evaluation_reasons"
     ];
@@ -58,14 +56,12 @@ public sealed class OperatorConsoleAccessReadinessRepository : IOperatorConsoleA
 
         var operatorReasons = await ReadOperatorReasonsAsync(connection, command, evaluatedAt, cancellationToken);
         var deviceReasons = await ReadDeviceReasonsAsync(connection, command, evaluatedAt, cancellationToken);
-        var shiftReasons = await ReadShiftReasonsAsync(connection, command, evaluatedAt, cancellationToken);
-
         return new OperatorConsoleAccessReadinessRepositoryResult(
             capabilities,
             operatorReasons,
             deviceReasons.Reasons,
-            shiftReasons.Reasons,
-            BuildSiteReasons(deviceReasons, shiftReasons));
+            [],
+            BuildSiteReasons(deviceReasons));
     }
 
     private async Task<OperatorConsoleAccessReadinessRepositoryCapabilities> GetCapabilitiesAsync(
@@ -131,12 +127,10 @@ public sealed class OperatorConsoleAccessReadinessRepository : IOperatorConsoleA
         }
 
         const string sql = """
-            SELECT mapping_status::text, effective_from, effective_to, revoked_at
-            FROM operator_console.hr_identity_mappings
+            SELECT user_status::text, effective_from, effective_to,
+                   COALESCE(retired_at, suspended_at, locked_at) AS unavailable_at
+            FROM identity.users
             WHERE user_id = @operator_user_id
-            ORDER BY
-                CASE WHEN mapping_status = 'ACTIVE' THEN 0 ELSE 1 END,
-                effective_from DESC
             LIMIT 1;
             """;
 
@@ -149,15 +143,15 @@ public sealed class OperatorConsoleAccessReadinessRepository : IOperatorConsoleA
             return [OperatorConsoleDenialReasonCatalog.OperatorNotFound];
         }
 
-        var status = reader.GetString("mapping_status");
+        var status = reader.GetString("user_status");
         var effectiveFrom = reader.GetFieldValue<DateTimeOffset>("effective_from");
         var effectiveTo = GetNullableDateTimeOffset(reader, "effective_to");
-        var revokedAt = GetNullableDateTimeOffset(reader, "revoked_at");
+        var unavailableAt = GetNullableDateTimeOffset(reader, "unavailable_at");
 
         return string.Equals(status, "ACTIVE", StringComparison.Ordinal) &&
             effectiveFrom <= evaluatedAt &&
             (!effectiveTo.HasValue || effectiveTo.Value > evaluatedAt) &&
-            !revokedAt.HasValue
+            !unavailableAt.HasValue
             ? []
             : [OperatorConsoleDenialReasonCatalog.OperatorInactive];
     }
@@ -249,68 +243,6 @@ public sealed class OperatorConsoleAccessReadinessRepository : IOperatorConsoleA
         return new DeviceReadinessFacts(reasons.Distinct(StringComparer.Ordinal).ToArray(), bindingSiteGroupId, bindingSiteId);
     }
 
-    private static async Task<ShiftReadinessFacts> ReadShiftReasonsAsync(
-        NpgsqlConnection connection,
-        OperatorConsoleAccessReadinessCommand command,
-        DateTimeOffset evaluatedAt,
-        CancellationToken cancellationToken)
-    {
-        if (!command.OperatorShiftId.HasValue || command.OperatorShiftId.Value == Guid.Empty)
-        {
-            return ShiftReadinessFacts.Empty;
-        }
-
-        const string sql = """
-            SELECT operator_user_id, site_group_id, site_id, operational_status::text, active_from, active_to, revoked_at
-            FROM operator_console.operator_shifts
-            WHERE operator_shift_id = @operator_shift_id;
-            """;
-
-        await using var sqlCommand = new NpgsqlCommand(sql, connection);
-        sqlCommand.Parameters.Add("operator_shift_id", NpgsqlDbType.Uuid).Value = command.OperatorShiftId.Value;
-
-        await using var reader = await sqlCommand.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            return new ShiftReadinessFacts([OperatorConsoleDenialReasonCatalog.ShiftNotFound], null, null);
-        }
-
-        var reasons = new List<string>();
-        var operatorUserId = reader.GetGuid("operator_user_id");
-        var siteGroupId = reader.GetGuid("site_group_id");
-        var siteId = reader.GetGuid("site_id");
-        var status = reader.GetString("operational_status");
-        var activeFrom = GetNullableDateTimeOffset(reader, "active_from");
-        var activeTo = GetNullableDateTimeOffset(reader, "active_to");
-        var revokedAt = GetNullableDateTimeOffset(reader, "revoked_at");
-
-        if (!string.Equals(status, "ACTIVE", StringComparison.Ordinal) ||
-            !activeFrom.HasValue ||
-            activeFrom.Value > evaluatedAt ||
-            (activeTo.HasValue && activeTo.Value <= evaluatedAt) ||
-            revokedAt.HasValue)
-        {
-            reasons.Add(OperatorConsoleDenialReasonCatalog.ShiftNotActive);
-        }
-
-        if (command.OperatorUserId.HasValue && operatorUserId != command.OperatorUserId.Value)
-        {
-            reasons.Add(OperatorConsoleDenialReasonCatalog.OperatorSiteNotAllowed);
-        }
-
-        if (command.SiteId.HasValue && siteId != command.SiteId.Value)
-        {
-            reasons.Add(OperatorConsoleDenialReasonCatalog.ShiftSiteMismatch);
-        }
-
-        if (command.SiteGroupId.HasValue && siteGroupId != command.SiteGroupId.Value)
-        {
-            reasons.Add(OperatorConsoleDenialReasonCatalog.ShiftSiteMismatch);
-        }
-
-        return new ShiftReadinessFacts(reasons.Distinct(StringComparer.Ordinal).ToArray(), siteGroupId, siteId);
-    }
-
     private static async Task<DeviceAssignmentRow?> ReadActiveDeviceAssignmentAsync(
         NpgsqlConnection connection,
         Guid operatorDeviceBindingId,
@@ -341,20 +273,12 @@ public sealed class OperatorConsoleAccessReadinessRepository : IOperatorConsoleA
             : null;
     }
 
-    private static IReadOnlyList<string> BuildSiteReasons(DeviceReadinessFacts device, ShiftReadinessFacts shift)
+    private static IReadOnlyList<string> BuildSiteReasons(DeviceReadinessFacts device)
     {
         var reasons = new List<string>();
         if (device.Reasons.Contains(OperatorConsoleDenialReasonCatalog.DeviceSiteMismatch, StringComparer.Ordinal))
         {
             reasons.Add(OperatorConsoleDenialReasonCatalog.DeviceSiteMismatch);
-        }
-
-        if (shift.Reasons.Contains(OperatorConsoleDenialReasonCatalog.ShiftSiteMismatch, StringComparer.Ordinal) ||
-            shift.Reasons.Contains(OperatorConsoleDenialReasonCatalog.OperatorSiteNotAllowed, StringComparer.Ordinal))
-        {
-            reasons.AddRange(shift.Reasons.Where(reason =>
-                reason == OperatorConsoleDenialReasonCatalog.ShiftSiteMismatch ||
-                reason == OperatorConsoleDenialReasonCatalog.OperatorSiteNotAllowed));
         }
 
         return reasons.Distinct(StringComparer.Ordinal).ToArray();
@@ -383,11 +307,4 @@ public sealed class OperatorConsoleAccessReadinessRepository : IOperatorConsoleA
         public static DeviceReadinessFacts Empty { get; } = new([], null, null);
     }
 
-    private sealed record ShiftReadinessFacts(
-        IReadOnlyList<string> Reasons,
-        Guid? SiteGroupId,
-        Guid? SiteId)
-    {
-        public static ShiftReadinessFacts Empty { get; } = new([], null, null);
-    }
 }

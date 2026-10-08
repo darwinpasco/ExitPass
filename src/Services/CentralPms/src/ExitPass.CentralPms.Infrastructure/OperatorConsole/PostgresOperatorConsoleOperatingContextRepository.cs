@@ -90,77 +90,6 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
             GetNullableGuid(reader, 10));
     }
 
-    public async Task<OperatorConsoleShiftResolution> ResolveShiftAsync(
-        Guid userId,
-        Guid siteId,
-        Guid siteGroupId,
-        IReadOnlyList<Guid> authorizedSiteIds,
-        IReadOnlyList<Guid> authorizedSiteGroupIds,
-        bool hasGlobalScope,
-        DateTimeOffset now,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            SELECT operator_shift_id, site_id, site_group_id, operational_status::text,
-                   active_from, active_to, revoked_at,
-                   EXISTS (
-                       SELECT 1 FROM sites.sites site_scope
-                       WHERE site_scope.site_id = operator_shifts.site_id
-                         AND site_scope.site_group_id = operator_shifts.site_group_id
-                   ) AS has_canonical_site_group_relationship
-            FROM operator_console.operator_shifts
-            WHERE operator_user_id = @user_id;
-            """;
-
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = userId;
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-
-        var compatible = new List<Guid>();
-        var closedOrExpired = false;
-        var outsideDevice = false;
-        var outsideScope = false;
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            var shiftId = reader.GetGuid(0);
-            var shiftSiteId = reader.GetGuid(1);
-            var shiftSiteGroupId = reader.GetGuid(2);
-            var status = reader.GetString(3);
-            var activeFrom = GetNullableDateTime(reader, 4);
-            var activeTo = GetNullableDateTime(reader, 5);
-            var revokedAt = GetNullableDateTime(reader, 6);
-            var active = status == "ACTIVE" && !revokedAt.HasValue && activeFrom.HasValue &&
-                activeFrom <= now && (!activeTo.HasValue || activeTo > now);
-            var matchesDevice = shiftSiteId == siteId && shiftSiteGroupId == siteGroupId && reader.GetBoolean(7);
-            var inScope = hasGlobalScope || authorizedSiteIds.Contains(shiftSiteId) || authorizedSiteGroupIds.Contains(shiftSiteGroupId);
-
-            if (active && matchesDevice && inScope)
-            {
-                compatible.Add(shiftId);
-            }
-            else if (active && !inScope)
-            {
-                outsideScope = true;
-            }
-            else if (active && !matchesDevice)
-            {
-                outsideDevice = true;
-            }
-            else if (matchesDevice)
-            {
-                closedOrExpired = true;
-            }
-        }
-
-        return new OperatorConsoleShiftResolution(
-            compatible.Count,
-            compatible.Count == 1 ? compatible[0] : null,
-            closedOrExpired,
-            outsideDevice,
-            outsideScope);
-    }
-
     public async Task<bool> RotateDeviceProofAsync(
         Guid operatorDeviceBindingId,
         string expectedThumbprint,
@@ -227,7 +156,6 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
         Guid humanSessionId,
         Guid userId,
         Guid operatorDeviceBindingId,
-        Guid operatorShiftId,
         Guid siteId,
         Guid siteGroupId,
         long authorizationEpoch,
@@ -266,7 +194,7 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
 
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection);
-        AddBindingParameters(command, humanSessionId, userId, operatorDeviceBindingId, operatorShiftId, siteId, siteGroupId, authorizationEpoch, credentialVersion, now, correlationId);
+        AddBindingParameters(command, humanSessionId, userId, operatorDeviceBindingId, siteId, siteGroupId, authorizationEpoch, credentialVersion, now, correlationId);
         var persistedBoundAt = await command.ExecuteScalarAsync(cancellationToken)
             ?? throw new InvalidOperationException("Operator Console session context was not persisted.");
         var boundAt = persistedBoundAt switch
@@ -275,7 +203,7 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
             DateTime value => new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc)),
             _ => throw new InvalidOperationException("Operator Console session context returned an invalid binding timestamp.")
         };
-        return new OperatorConsoleOperatingContext(humanSessionId, userId, operatorDeviceBindingId, operatorShiftId, siteId, siteGroupId, authorizationEpoch, credentialVersion, boundAt, correlationId);
+        return new OperatorConsoleOperatingContext(humanSessionId, userId, operatorDeviceBindingId, null, siteId, siteGroupId, authorizationEpoch, credentialVersion, boundAt, correlationId);
     }
 
     public async Task<OperatorConsoleOperatingContextValidationFacts> ReadValidationFactsAsync(
@@ -296,8 +224,6 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
                        ELSE NULL
                    END,
                    COALESCE(a.active_assignment_count, 0), a.site_id, a.site_group_id,
-                   s.operational_status::text, s.operator_user_id, s.site_id, s.site_group_id,
-                   s.active_from, s.active_to, s.revoked_at,
                    hs.session_status::text, hs.idle_expires_at, hs.absolute_expires_at,
                    u.authorization_epoch, u.credential_version,
                    EXISTS (
@@ -336,7 +262,6 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
                   AND (da.effective_to IS NULL OR da.effective_to > now())
                   AND da.ended_at IS NULL
             ) a ON true
-            LEFT JOIN operator_console.operator_shifts s ON s.operator_shift_id = c.operator_shift_id
             WHERE hs.human_session_id = @human_session_id;
             """;
 
@@ -356,7 +281,7 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
                 humanSessionId,
                 reader.GetGuid(0),
                 reader.GetGuid(1),
-                reader.GetGuid(2),
+                GetNullableGuid(reader, 2),
                 reader.GetGuid(3),
                 reader.GetGuid(4),
                 reader.GetInt64(5),
@@ -375,20 +300,13 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
             reader.GetInt32(14),
             GetNullableGuid(reader, 15),
             GetNullableGuid(reader, 16),
-            GetNullableString(reader, 17),
-            GetNullableGuid(reader, 18),
-            GetNullableGuid(reader, 19),
-            GetNullableGuid(reader, 20),
-            GetNullableDateTime(reader, 21),
-            GetNullableDateTime(reader, 22),
-            GetNullableDateTime(reader, 23),
-            reader.GetString(24),
-            reader.GetFieldValue<DateTimeOffset>(25),
-            reader.GetFieldValue<DateTimeOffset>(26),
-            reader.GetInt64(27),
-            reader.GetInt64(28),
-            reader.GetBoolean(29),
-            reader.GetBoolean(30));
+            reader.GetString(17),
+            reader.GetFieldValue<DateTimeOffset>(18),
+            reader.GetFieldValue<DateTimeOffset>(19),
+            reader.GetInt64(20),
+            reader.GetInt64(21),
+            reader.GetBoolean(22),
+            reader.GetBoolean(23));
     }
 
     public async Task InvalidateAsync(Guid humanSessionId, string reasonCode, DateTimeOffset now, Guid correlationId, CancellationToken cancellationToken)
@@ -435,12 +353,12 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
         return connection;
     }
 
-    private static void AddBindingParameters(NpgsqlCommand command, Guid humanSessionId, Guid userId, Guid deviceId, Guid shiftId, Guid siteId, Guid siteGroupId, long authorizationEpoch, long credentialVersion, DateTimeOffset now, Guid correlationId)
+    private static void AddBindingParameters(NpgsqlCommand command, Guid humanSessionId, Guid userId, Guid deviceId, Guid siteId, Guid siteGroupId, long authorizationEpoch, long credentialVersion, DateTimeOffset now, Guid correlationId)
     {
         command.Parameters.Add("human_session_id", NpgsqlDbType.Uuid).Value = humanSessionId;
         command.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = userId;
         command.Parameters.Add("device_id", NpgsqlDbType.Uuid).Value = deviceId;
-        command.Parameters.Add("shift_id", NpgsqlDbType.Uuid).Value = shiftId;
+        command.Parameters.Add("shift_id", NpgsqlDbType.Uuid).Value = DBNull.Value;
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = siteId;
         command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = siteGroupId;
         command.Parameters.Add("authorization_epoch", NpgsqlDbType.Bigint).Value = authorizationEpoch;
@@ -450,7 +368,7 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
     }
 
     private static OperatorConsoleOperatingContextValidationFacts EmptyValidationFacts() =>
-        new(null, null, null, null, null, null, 0, null, null, null, null, null, null, null, null, null, null, null, null, 0, 0, false, false);
+        new(null, null, null, null, null, null, 0, null, null, null, null, null, 0, 0, false, false);
 
     private static Guid? GetNullableGuid(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetGuid(ordinal);
     private static string? GetNullableString(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);

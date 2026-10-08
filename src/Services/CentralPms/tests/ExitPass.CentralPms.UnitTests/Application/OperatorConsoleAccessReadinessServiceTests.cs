@@ -89,7 +89,11 @@ public sealed class OperatorConsoleAccessReadinessServiceTests
         result.AccessDecision.Should().Be("ALLOWED");
         result.ReadinessStatus.Should().Be("READY");
         result.DenialReasons.Should().BeEmpty();
-        result.ReadinessDimensions.Should().OnlyContain(dimension => dimension.Status == "READY");
+        result.ReadinessDimensions.Where(dimension => dimension.Dimension != "shift")
+            .Should().OnlyContain(dimension => dimension.Status == "READY" && dimension.Required);
+        result.ReadinessDimensions.Single(dimension => dimension.Dimension == "shift")
+            .Should().Match<OperatorConsoleReadinessDimensionResult>(dimension => !dimension.Required && dimension.Status == "READY");
+        result.ShiftReadiness.Should().BeEquivalentTo(new OperatorConsoleShiftReadiness(null, "NOT_REQUIRED", true));
         result.CorrelationId.Should().Be(CorrelationId);
         result.EvaluatedAt.Should().Be(Now);
     }
@@ -147,12 +151,11 @@ public sealed class OperatorConsoleAccessReadinessServiceTests
         {
             OperatorConsoleDenialReasonCatalog.OperatorIdMissing,
             OperatorConsoleDenialReasonCatalog.DeviceIdMissing,
-            OperatorConsoleDenialReasonCatalog.ShiftIdMissing,
             OperatorConsoleDenialReasonCatalog.SiteIdMissing,
             OperatorConsoleDenialReasonCatalog.SiteGroupIdMissing,
             OperatorConsoleDenialReasonCatalog.CorrelationIdMissing
         });
-        result.ReadinessDimensions.Count(dimension => dimension.Status == "BLOCKED").Should().Be(5);
+        result.ReadinessDimensions.Count(dimension => dimension.Status == "BLOCKED").Should().Be(4);
     }
 
     [Fact]
@@ -170,7 +173,7 @@ public sealed class OperatorConsoleAccessReadinessServiceTests
         result.AccessDecision.Should().Be("DENIED");
         result.ReadinessStatus.Should().Be("BLOCKED");
         result.Retryable.Should().BeFalse();
-        result.NextOperatorAction.Should().Be("Use production device enrollment, active shift, and site readiness records before continuing.");
+        result.NextOperatorAction.Should().Be("Use production device enrollment and Site readiness records before continuing.");
         result.DenialReasons.Select(reason => reason.Code)
             .Should().Contain(OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
         result.DenialReasons.Single(reason => reason.Code == OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction)
@@ -221,12 +224,12 @@ public sealed class OperatorConsoleAccessReadinessServiceTests
         {
             OperatorConsoleDenialReasonCatalog.OperatorNotFound,
             OperatorConsoleDenialReasonCatalog.DeviceNotEnrolled,
-            OperatorConsoleDenialReasonCatalog.ShiftNotFound,
             OperatorConsoleDenialReasonCatalog.OperatorSiteNotAllowed
         });
         result.OperatorReadiness.Ready.Should().BeFalse();
         result.DeviceReadiness.Ready.Should().BeFalse();
-        result.ShiftReadiness.Ready.Should().BeFalse();
+        result.ShiftReadiness.Ready.Should().BeTrue();
+        result.ShiftReadiness.Status.Should().Be("NOT_REQUIRED");
         result.SiteReadiness.Ready.Should().BeFalse();
     }
 
@@ -300,7 +303,7 @@ public sealed class OperatorConsoleAccessReadinessServiceTests
         new(
             OperatorUserId,
             DeviceBindingId,
-            ShiftId,
+            null,
             SiteId,
             SiteGroupId,
             OperatorConsoleActionCodes.DecideStatutoryDiscount,
