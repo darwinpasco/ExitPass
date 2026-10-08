@@ -90,6 +90,25 @@ describe("Operator Console I-020 authentication client", () => {
     expect(window.sessionStorage).toHaveLength(0);
   });
 
+  it("accepts a shift-deferred authenticated session with a null operator shift reference", async () => {
+    const shiftDeferredSession = {
+      ...sessionDto(),
+      operatorDeviceBindingReference: "16000000-0000-0000-0000-000000000001",
+      operatorShiftReference: null,
+      effectiveSiteReference: "13000000-0000-0000-0000-000000000001",
+      effectiveSiteGroupReference: "14000000-0000-0000-0000-000000000001"
+    };
+    const fetchMock = vi.fn(async () => authenticationResponse(shiftDeferredSession));
+    const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
+
+    const session = await client.getCurrentSession();
+
+    expect(session.operatorDeviceBindingReference).toBe(shiftDeferredSession.operatorDeviceBindingReference);
+    expect(session.operatorShiftReference).toBeUndefined();
+    expect(session.effectiveSiteReference).toBe(shiftDeferredSession.effectiveSiteReference);
+    expect(session.effectiveSiteGroupReference).toBe(shiftDeferredSession.effectiveSiteGroupReference);
+  });
+
   it("changes a restricted-session password with CSRF and the governed TOTP request", async () => {
     const fetchMock = vi
       .fn()

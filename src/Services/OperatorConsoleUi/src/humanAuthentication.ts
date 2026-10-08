@@ -292,10 +292,10 @@ function requireAuthenticatedSession(dto: AuthenticationResponseDto): OperatorCo
     !isStringArray(session.siteReferences) ||
     !isStringArray(session.siteGroupReferences) ||
     !isBoolean(session.hasGlobalScope) ||
-    (session.operatorDeviceBindingReference !== undefined && !isString(session.operatorDeviceBindingReference)) ||
-    (session.operatorShiftReference !== undefined && !isString(session.operatorShiftReference)) ||
-    (session.effectiveSiteReference !== undefined && !isString(session.effectiveSiteReference)) ||
-    (session.effectiveSiteGroupReference !== undefined && !isString(session.effectiveSiteGroupReference)) ||
+    !isOptionalString(session.operatorDeviceBindingReference) ||
+    !isOptionalString(session.operatorShiftReference) ||
+    !isOptionalString(session.effectiveSiteReference) ||
+    !isOptionalString(session.effectiveSiteGroupReference) ||
     !isString(session.correlationId)
   ) {
     throw malformedSession();
@@ -489,6 +489,10 @@ function isBoolean(value: unknown): value is boolean {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || value === null || isString(value);
 }
 
 function optionalString(value: unknown): string | undefined {
