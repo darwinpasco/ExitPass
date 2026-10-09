@@ -4,6 +4,7 @@ using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.StatutoryEvidence;
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
@@ -130,6 +131,43 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
     }
 
     [Fact]
+    public async Task Detail_ForApprovedOperatorConsoleRequestWithoutApplication_RecoversCanonicalApplication()
+    {
+        var validationId = Guid.Parse("72000000-0000-4000-8000-000000000721");
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail(status: "APPROVED", reviewerDecision: "APPROVE") with
+            {
+                SourceChannel = StatutoryDiscountSourceChannels.OperatorConsole,
+                StatutoryDiscountValidationId = validationId,
+                GoverningPolicy = ResidentOnlyPolicy(),
+                IdControlReference = "ABC1234"
+            }
+        };
+        var facade = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
+        facade.GetAsync(DecisionReference, CorrelationId, Arg.Any<CancellationToken>())
+            .Returns(DecisionResult(StatutoryDiscountApplicationStageStatuses.NotRequested, retryable: true));
+        facade.SubmitAsync(Arg.Any<StatutoryDiscountDecisionCommand>(), Arg.Any<CancellationToken>())
+            .Returns(DecisionResult(StatutoryDiscountApplicationStageStatuses.Applied, retryable: false));
+        var service = CreateService(AllowedRepository(), canonical, decisionFacade: facade);
+
+        var result = await service.GetAsync(Actor(), DecisionReference, CorrelationId, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        await facade.Received(1).SubmitAsync(
+            Arg.Is<StatutoryDiscountDecisionCommand>(application =>
+                application.SourceChannel == StatutoryDiscountSourceChannels.OperatorConsole &&
+                application.ApplyPayableBasis &&
+                application.ExistingStatutoryDiscountValidationId == validationId &&
+                application.ReviewerUserId == UserId &&
+                application.ReviewerAttestation &&
+                application.BeneficiaryResidencySatisfied == true &&
+                application.ServiceChannelCaller == null &&
+                application.IdempotencyKey == $"management-review-auto-apply:{DecisionReference:N}"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Detail_WhenOnlyHistoricalMaskExists_ReportsNoAuthoritativeReference()
     {
         var canonical = new FakeCanonicalRepository
@@ -236,11 +274,49 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             Arg.Is<StatutoryDiscountDecisionCommand>(application =>
                 application.ApplyPayableBasis &&
                 application.ParkingSessionId == ParkingSessionReference &&
-                application.ReviewerAttestation &&
+                !application.ReviewerAttestation &&
+                application.ReviewerUserId == null &&
                 application.BeneficiaryResidencySatisfied == true &&
                 application.IdControlReference == "ABC1234" &&
                 application.IdempotencyKey == $"management-review-auto-apply:{DecisionReference:N}" &&
                 application.ServiceChannelCaller!.SourceChannel == "WEBPAY"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Approve_OperatorConsoleOrigin_ContinuesCanonicalPayableBasisApplicationAsDurableReviewer()
+    {
+        var validationId = Guid.Parse("72000000-0000-4000-8000-000000000711");
+        var evidenceId = Guid.Parse("72000000-0000-4000-8000-000000000712");
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                SourceChannel = StatutoryDiscountSourceChannels.OperatorConsole,
+                StatutoryDiscountValidationId = validationId,
+                GoverningPolicy = ResidentOnlyPolicy(),
+                IdControlReference = "ABC1234"
+            }
+        };
+        var facade = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
+        var service = CreateService(
+            AllowedRepository(),
+            canonical,
+            decisionFacade: facade,
+            operatorConsoleEvidence: OperatorConsoleEvidence(validationId, evidenceId));
+
+        var result = await service.DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        await facade.Received(1).SubmitAsync(
+            Arg.Is<StatutoryDiscountDecisionCommand>(application =>
+                application.SourceChannel == StatutoryDiscountSourceChannels.OperatorConsole &&
+                application.ApplyPayableBasis &&
+                application.ExistingStatutoryDiscountValidationId == validationId &&
+                application.ReviewerUserId == UserId &&
+                application.ReviewerAttestation &&
+                application.ServiceChannelCaller == null &&
+                application.IdempotencyKey == $"management-review-auto-apply:{DecisionReference:N}"),
             Arg.Any<CancellationToken>());
     }
 
@@ -535,7 +611,8 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
         await facade.Received(1).SubmitAsync(
             Arg.Is<StatutoryDiscountDecisionCommand>(application =>
-                application.ReviewerAttestation &&
+                !application.ReviewerAttestation &&
+                application.ReviewerUserId == null &&
                 application.BeneficiaryResidencySatisfied == null),
             Arg.Any<CancellationToken>());
     }
@@ -698,13 +775,18 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         var evidenceReview = Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>();
         evidenceReview.ReadAuthorizedAsync(DecisionReference, Arg.Any<StatutoryEvidenceAuthorizedReviewContext>(), Arg.Any<CancellationToken>())
             .Returns(AuthoritativeEvidence());
-        var service = CreateService(AllowedRepository(), evidenceReview: evidenceReview);
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with { MaskedIdReference = " " }
+        };
+        var service = CreateService(AllowedRepository(), canonical, evidenceReview: evidenceReview);
 
         var result = await service.GetEvidenceAsync(Actor(), DecisionReference, CorrelationId, CancellationToken.None);
 
         result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
         result.Value!.Items.Should().ContainSingle();
         result.Value.Items[0].EvidenceItemReference.Should().NotBeNull();
+        result.Value.Items[0].MaskedReference.Should().BeNull();
         result.Value.Items[0].ReviewabilityStatus.Should().Be("REVIEWABLE");
         result.Value.Items[0].PreviewPermitted.Should().BeTrue();
         result.Value.Items[0].GetType().GetProperties().Select(property => property.Name)
@@ -843,7 +925,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         metadata.Value!.Items.Should().ContainSingle(item =>
             item.EvidenceItemReference == evidenceId &&
             item.PreviewPermitted &&
-            item.ReviewabilityStatus == "PENDING_REVIEW");
+            item.ReviewabilityStatus == "REVIEWABLE");
         preview.Classification.Should().Be("ACCEPTED");
         preview.Content!.ContentType.Should().Be("image/jpeg");
         preview.AuditContext.Should().NotBeNull();
@@ -933,7 +1015,8 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
                 BucketName = "unit-test-evidence",
                 MaxContentLengthBytes = 5 * 1024 * 1024
             }),
-            audit ?? new FakeAuditRepository());
+            audit ?? new FakeAuditRepository(),
+            NullLogger<ManagementStatutoryBenefitReviewService>.Instance);
     }
 
     private static OperatorConsoleStatutoryEvidenceReviewResult AuthoritativeEvidence()

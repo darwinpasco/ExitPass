@@ -34,7 +34,7 @@ public sealed class StatutoryEvidenceScanWorkerOptions
     public int MaxDecodedWidth { get; set; } = 6000;
     public int MaxDecodedHeight { get; set; } = 6000;
     public long MaxDecodedPixelCount { get; set; } = 36_000_000;
-    public int MaxHeaderProbeBytes { get; set; } = 128 * 1024;
+    public int MaxHeaderProbeBytes { get; set; } = 1024 * 1024;
     public string ScannerProvider { get; set; } = StatutoryEvidenceScanConstants.ScannerProviderClamAvCompatible;
     public string? ScannerEndpoint { get; set; }
     public int ScannerPort { get; set; } = 3310;

@@ -15,6 +15,24 @@ const mocks = vi.hoisted(() => ({
   preview: vi.fn()
 }));
 
+const cameraMocks = vi.hoisted(() => ({
+  createPhoto: vi.fn()
+}));
+
+vi.mock("./PhoneCameraCapture", () => ({
+  PhoneCameraCapture: ({ value, disabled, onChange }: {
+    value: File | null;
+    disabled?: boolean;
+    onChange: (photo: File | null) => void;
+  }) => (
+    <div aria-label="Phone camera evidence capture">
+      <button type="button" disabled={disabled} onClick={() => onChange(cameraMocks.createPhoto())}>
+        {value ? "Retake test photo" : "Take evidence photo"}
+      </button>
+    </div>
+  )
+}));
+
 vi.mock("./statutoryEvidence", async () => {
   const actual = await vi.importActual<typeof import("./statutoryEvidence")>("./statutoryEvidence");
   return {
@@ -63,20 +81,23 @@ describe("StatutoryEvidenceCapture", () => {
     });
     mocks.finalize.mockResolvedValue(evidence({ lifecycleClassification: "VALIDATION_PENDING", replacementPosture: "REPLACEMENT_NOT_ALLOWED" }));
     mocks.preview.mockResolvedValue(new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: "image/jpeg" }));
+    cameraMocks.createPhoto.mockImplementation(() => new File(
+      [new Uint8Array([1, 2, 3])],
+      "camera-photo.jpg",
+      { type: "image/jpeg" }
+    ));
     localStorage.clear();
     sessionStorage.clear();
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:statutory-evidence") });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
   });
 
-  it("bootstraps authoritative rules and exposes a mobile-capable single file input", async () => {
+  it("bootstraps authoritative rules and exposes camera capture without a file picker", async () => {
     render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
 
-    const input = await screen.findByLabelText(/choose or take a clear photo/i);
+    expect(await screen.findByRole("button", { name: /take evidence photo/i })).toBeInTheDocument();
     expect(mocks.bootstrap).toHaveBeenCalledWith(decisionId, expect.any(Function), expect.any(AbortSignal));
-    expect(input).toHaveAttribute("accept", "image/jpeg,image/png");
-    expect(input).toHaveAttribute("capture", "environment");
-    expect(input).not.toHaveAttribute("multiple");
+    expect(document.querySelector('input[type="file"]')).not.toBeInTheDocument();
     expect(screen.getByText(/4.8 MB/i)).toBeInTheDocument();
     expect(screen.getByText(/Entitlement id front/i)).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(decisionId);
@@ -91,7 +112,7 @@ describe("StatutoryEvidenceCapture", () => {
 
       render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
 
-      expect(await screen.findByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: /take evidence photo/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /^upload photo$/i })).toBeInTheDocument();
     }
   );
@@ -105,7 +126,7 @@ describe("StatutoryEvidenceCapture", () => {
     const view = render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
 
     view.rerender(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={nextDecisionId} />);
-    expect(await screen.findByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /take evidence photo/i })).toBeInTheDocument();
 
     await act(async () => resolveObsolete?.(evidence({
       lifecycleClassification: "UNKNOWN_FAIL_CLOSED",
@@ -118,9 +139,8 @@ describe("StatutoryEvidenceCapture", () => {
 
   it("rejects PDF before requesting an upload session", async () => {
     render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
-    const input = await screen.findByLabelText(/choose or take a clear photo/i);
-
-    await userEvent.upload(input, new File(["pdf"], "proof.pdf", { type: "application/pdf" }), { applyAccept: false });
+    cameraMocks.createPhoto.mockReturnValueOnce(new File(["pdf"], "proof.pdf", { type: "application/pdf" }));
+    await userEvent.click(await screen.findByRole("button", { name: /take evidence photo/i }));
 
     expect(screen.getByRole("alert")).toHaveTextContent(/JPEG or PNG/i);
     expect(mocks.session).not.toHaveBeenCalled();
@@ -129,12 +149,11 @@ describe("StatutoryEvidenceCapture", () => {
   it.each([
     ["image/jpeg", "proof.jpg"],
     ["image/png", "proof.png"]
-  ])("uploads and finalizes a selected %s without persisting evidence authority", async (type, name) => {
+  ])("uploads and finalizes a captured %s without persisting evidence authority", async (type, name) => {
     render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
-    const input = await screen.findByLabelText(/choose or take a clear photo/i);
     const file = new File([new Uint8Array([1, 2, 3])], name, { type });
-
-    await userEvent.upload(input, file);
+    cameraMocks.createPhoto.mockReturnValueOnce(file);
+    await userEvent.click(await screen.findByRole("button", { name: /take evidence photo/i }));
     await userEvent.click(screen.getByRole("button", { name: /upload photo/i }));
 
     await waitFor(() => expect(mocks.finalize).toHaveBeenCalledWith("opaque-session"));
@@ -154,11 +173,11 @@ describe("StatutoryEvidenceCapture", () => {
     render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
 
     expect(await screen.findByText(/cannot be replaced/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/choose or take a clear photo/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /take evidence photo/i })).not.toBeInTheDocument();
   });
 
   it.each([
-    ["REVIEWABLE", "Ready for review", /does not mean.*approved/i],
+    ["REVIEWABLE", "Photo submitted", /does not mean.*approved/i],
     ["APPROVED", "Approved", /applying.*automatically/i],
     ["APPLIED", "Applied", /included in the amount due/i],
     ["MALWARE_DETECTED", "Unsafe file detected", /cannot be used/i],
@@ -197,16 +216,16 @@ describe("StatutoryEvidenceCapture", () => {
       readyForReview: true
     }));
     render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
-    const input = await screen.findByLabelText(/choose or take a clear photo/i);
+    const takePhoto = await screen.findByRole("button", { name: /take evidence photo/i });
 
     await userEvent.click(screen.getByRole("button", { name: /refresh evidence status/i }));
-    await userEvent.upload(input, new File([new Uint8Array([1, 2, 3])], "proof.jpg", { type: "image/jpeg" }));
+    await userEvent.click(takePhoto);
     await userEvent.click(screen.getByRole("button", { name: /^upload photo$/i }));
-    expect(await screen.findByText("Ready for review")).toBeInTheDocument();
+    expect(await screen.findByText("Photo submitted")).toBeInTheDocument();
 
     await act(async () => resolveStaleStatus?.(evidence({ lifecycleClassification: "REQUIRED_NOT_STARTED" })));
 
-    expect(screen.getByText("Ready for review")).toBeInTheDocument();
+    expect(screen.getByText("Photo submitted")).toBeInTheDocument();
     expect(screen.getByText(/does not mean.*approved/i)).toBeInTheDocument();
   });
 
@@ -218,13 +237,12 @@ describe("StatutoryEvidenceCapture", () => {
     ));
     mocks.status.mockResolvedValueOnce(evidence({ lifecycleClassification: "UPLOAD_SESSION_AVAILABLE" }));
     render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
-    const input = await screen.findByLabelText(/choose or take a clear photo/i);
-    await userEvent.upload(input, new File([new Uint8Array([1, 2, 3])], "proof.jpg", { type: "image/jpeg" }));
+    await userEvent.click(await screen.findByRole("button", { name: /take evidence photo/i }));
 
     await userEvent.click(screen.getByRole("button", { name: /^upload photo$/i }));
 
     await waitFor(() => expect(mocks.status).toHaveBeenCalled());
-    expect(screen.getByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retake test photo/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^upload photo$/i })).toBeInTheDocument();
     expect(screen.queryByText(/refresh the status before trying again/i)).not.toBeInTheDocument();
   });
@@ -242,7 +260,7 @@ describe("StatutoryEvidenceCapture", () => {
 
     render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
 
-    expect(await screen.findByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /take evidence photo/i })).toBeInTheDocument();
     expect(mocks.status).toHaveBeenCalledTimes(2);
     expect(screen.queryByText(/refresh the status before trying again/i)).not.toBeInTheDocument();
   });
@@ -257,15 +275,13 @@ describe("StatutoryEvidenceCapture", () => {
       }));
       render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
       await act(async () => undefined);
-      const input = screen.getByLabelText(/choose or take a clear photo/i);
-      const file = new File([new Uint8Array([1, 2, 3])], "proof.jpg", { type: "image/jpeg" });
-      fireEvent.change(input, { target: { files: { 0: file, length: 1, item: () => file } } });
+      fireEvent.click(screen.getByRole("button", { name: /take evidence photo/i }));
       await act(async () => fireEvent.click(screen.getByRole("button", { name: /^upload photo$/i })));
       expect(screen.getByText("Verification pending")).toBeInTheDocument();
 
       await act(async () => vi.advanceTimersByTimeAsync(3000));
 
-      expect(screen.getByText("Ready for review")).toBeInTheDocument();
+      expect(screen.getByText("Photo submitted")).toBeInTheDocument();
       expect(screen.getByAltText("Submitted statutory entitlement evidence")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -274,12 +290,12 @@ describe("StatutoryEvidenceCapture", () => {
 
   it("restores upload controls when the component reloads before evidence is uploaded", async () => {
     const first = render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
-    expect(await screen.findByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /take evidence photo/i })).toBeInTheDocument();
     first.unmount();
 
     render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
 
-    expect(await screen.findByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /take evidence photo/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^upload photo$/i })).toBeInTheDocument();
   });
 
@@ -308,8 +324,7 @@ describe("StatutoryEvidenceCapture", () => {
     mocks.status.mockResolvedValueOnce(evidence({ lifecycleClassification: "UPLOAD_IN_PROGRESS" }));
 
     render(<StatutoryEvidenceCapture statutoryDiscountDecisionCommandId={decisionId} />);
-    const input = await screen.findByLabelText(/choose or take a clear photo/i);
-    await userEvent.upload(input, new File([new Uint8Array([1, 2, 3])], "proof.jpg", { type: "image/jpeg" }));
+    await userEvent.click(await screen.findByRole("button", { name: /take evidence photo/i }));
     await userEvent.click(screen.getByRole("button", { name: /upload photo/i }));
     await userEvent.click(await screen.findByRole("button", { name: /cancel upload/i }));
 
@@ -319,7 +334,7 @@ describe("StatutoryEvidenceCapture", () => {
       expect.any(AbortSignal)
     ));
     expect(await screen.findByText("Upload incomplete")).toBeInTheDocument();
-    expect(screen.getByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retake test photo/i })).toBeInTheDocument();
     expect(screen.queryByText(/refresh the evidence status before trying again/i)).not.toBeInTheDocument();
   });
 });

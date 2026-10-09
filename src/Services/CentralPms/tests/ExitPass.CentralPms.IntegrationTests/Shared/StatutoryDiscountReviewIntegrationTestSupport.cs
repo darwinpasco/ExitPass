@@ -110,7 +110,17 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         await SeedDecisionPolicyAuthorityAsync(context, awaiting, policy, entitlementType);
 
         var repository = CreateReviewRepository();
-        await repository.UpsertIntakeAsync(IntakeCommand(context, awaiting, sourceChannel, entitlementType), CancellationToken.None);
+        var intake = IntakeCommand(context, awaiting, sourceChannel, entitlementType);
+        if (string.Equals(sourceChannel, StatutoryDiscountSourceChannels.OperatorConsole, StringComparison.Ordinal))
+        {
+            intake = intake with
+            {
+                BirthDate = DateOnly.Parse("1950-01-01"),
+                SubmittedByUserId = context.RequestedByUserId
+            };
+        }
+
+        await repository.UpsertIntakeAsync(intake, CancellationToken.None);
         var detail = await repository.GetAsync(awaiting.StatutoryDiscountDecisionCommandId, context.CorrelationId, CancellationToken.None);
 
         return new SeededServiceChannelReview(context, awaiting, detail!);

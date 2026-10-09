@@ -13,6 +13,7 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
     private readonly IStatutoryEvidenceProtectedObjectStorageAdapter _storageAdapter;
     private readonly IStatutoryDiscountDecisionFacadeService _decisionService;
     private readonly IOperatorConsoleStatutoryEvidenceReviewService _reviewService;
+    private readonly IOperatorConsoleStatutoryDiscountEvidenceRepository _operatorConsoleEvidenceRepository;
     private readonly StatutoryEvidenceChannelOptions _channelOptions;
     private readonly StatutoryEvidenceUploadOptions _uploadOptions;
     private readonly StatutoryEvidenceScanWorkerOptions _scanOptions;
@@ -25,6 +26,7 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
         IStatutoryEvidenceProtectedObjectStorageAdapter storageAdapter,
         IStatutoryDiscountDecisionFacadeService decisionService,
         IOperatorConsoleStatutoryEvidenceReviewService reviewService,
+        IOperatorConsoleStatutoryDiscountEvidenceRepository operatorConsoleEvidenceRepository,
         StatutoryEvidenceChannelOptions channelOptions,
         StatutoryEvidenceUploadOptions uploadOptions,
         StatutoryEvidenceScanWorkerOptions scanOptions)
@@ -36,6 +38,7 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
         _storageAdapter = storageAdapter;
         _decisionService = decisionService;
         _reviewService = reviewService;
+        _operatorConsoleEvidenceRepository = operatorConsoleEvidenceRepository;
         _channelOptions = channelOptions;
         _uploadOptions = uploadOptions;
         _scanOptions = scanOptions;
@@ -57,10 +60,9 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
             command.StatutoryDiscountDecisionCommandId,
             cancellationToken).ConfigureAwait(false);
         if (binding is null ||
-            !SourceMatches(command.SourceChannel, command.Actor, binding) ||
-            !await _metadataRepository.ActorHasScopeAsync(
+            !RouteMatchesActor(command.SourceChannel, command.Actor) ||
+            !await HasReadScopeAsync(
                 command.Actor,
-                StatutoryEvidenceScopeOperations.Capture,
                 binding.SiteId,
                 binding.SiteGroupId,
                 cancellationToken).ConfigureAwait(false))
@@ -84,7 +86,7 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
                 new StatutoryEvidenceAuthorizedReviewContext(
                     binding.SiteId,
                     binding.SiteGroupId,
-                    command.SourceChannel,
+                    binding.SourceChannel,
                     command.CorrelationId,
                     command.Actor),
                 cancellationToken)
@@ -114,8 +116,8 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
             return Rejected(command.SourceChannel, command.CorrelationId, "UNKNOWN_CONTEXT");
         }
 
-        if (!SourceMatches(command.SourceChannel, command.Actor, binding) ||
-            !await _metadataRepository.ActorHasScopeAsync(command.Actor, StatutoryEvidenceScopeOperations.Capture, binding.SiteId, binding.SiteGroupId, cancellationToken))
+        if (!RouteMatchesActor(command.SourceChannel, command.Actor) ||
+            !await HasReadScopeAsync(command.Actor, binding.SiteId, binding.SiteGroupId, cancellationToken))
         {
             await _metadataRepository.RecordAccessDeniedAsync(null, binding.SiteId, binding.SiteGroupId, binding.ParkingSessionId, command.CorrelationId, command.Actor, "SCOPE_DENIED", cancellationToken);
             return Rejected(command.SourceChannel, command.CorrelationId, "SCOPE_DENIED");
@@ -136,6 +138,22 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
         if (existing is not null)
         {
             return BuildResponse(command.SourceChannel, command.CorrelationId, existing, existing.Items.FirstOrDefault(), decision, MapLifecycle(existing, existing.Items.FirstOrDefault(), decision), true, null, false, null);
+        }
+
+        var legacyOperatorConsoleResponse = await TryBuildLegacyOperatorConsoleResponseAsync(
+            command.SourceChannel,
+            command.CorrelationId,
+            binding,
+            decision,
+            cancellationToken).ConfigureAwait(false);
+        if (legacyOperatorConsoleResponse is not null)
+        {
+            return legacyOperatorConsoleResponse;
+        }
+
+        if (!SourceMatches(command.SourceChannel, command.Actor, binding))
+        {
+            return Rejected(command.SourceChannel, command.CorrelationId, "SOURCE_CHANNEL_CONFLICT");
         }
 
         var governance = await ResolveGovernanceAsync(binding, cancellationToken);
@@ -204,7 +222,9 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
         if (query.EvidenceSetReference is Guid reference)
         {
             set = await _metadataRepository.GetEvidenceSetAsync(reference, cancellationToken);
-            if (set is not null && !await IsAuthorizedForSetAsync(set, query.Actor, query.CorrelationId, cancellationToken))
+            if (set is not null &&
+                (!RouteMatchesActor(query.SourceChannel, query.Actor) ||
+                 !await IsAuthorizedToReadSetAsync(set, query.Actor, query.CorrelationId, cancellationToken)))
             {
                 return Rejected(query.SourceChannel, query.CorrelationId, "SCOPE_DENIED");
             }
@@ -212,13 +232,26 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
         else if (query.StatutoryDiscountDecisionCommandId is Guid decisionCommandId)
         {
             set = await _metadataRepository.GetEvidenceSetByDecisionCommandIdAsync(decisionCommandId, cancellationToken);
-            if (set is not null && !await IsAuthorizedForSetAsync(set, query.Actor, query.CorrelationId, cancellationToken))
+            if (set is not null && (!RouteMatchesActor(query.SourceChannel, query.Actor) ||
+                !await IsAuthorizedToReadSetAsync(set, query.Actor, query.CorrelationId, cancellationToken)))
             {
                 return Rejected(query.SourceChannel, query.CorrelationId, "SCOPE_DENIED");
             }
         }
 
         var decisionId = query.StatutoryDiscountDecisionCommandId ?? set?.StatutoryDiscountDecisionCommandId;
+        StatutoryEvidenceDurableRequestBinding? binding = null;
+        if (decisionId is Guid scopedDecisionId)
+        {
+            binding = await _metadataRepository.ResolveRequestBindingAsync(scopedDecisionId, cancellationToken).ConfigureAwait(false);
+            if (binding is null ||
+                !RouteMatchesActor(query.SourceChannel, query.Actor) ||
+                !await HasReadScopeAsync(query.Actor, binding.SiteId, binding.SiteGroupId, cancellationToken).ConfigureAwait(false))
+            {
+                return Rejected(query.SourceChannel, query.CorrelationId, "SCOPE_DENIED");
+            }
+        }
+
         var decision = decisionId is Guid id
             ? await _decisionService.GetAsync(id, query.CorrelationId, cancellationToken)
             : null;
@@ -230,6 +263,20 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
         if (!decision.EvidenceRequired)
         {
             return BuildResponse(query.SourceChannel, query.CorrelationId, null, null, decision, "NOT_REQUIRED", false, null, false, null);
+        }
+
+        if (set is null && binding is not null)
+        {
+            var legacyOperatorConsoleResponse = await TryBuildLegacyOperatorConsoleResponseAsync(
+                query.SourceChannel,
+                query.CorrelationId,
+                binding,
+                decision,
+                cancellationToken).ConfigureAwait(false);
+            if (legacyOperatorConsoleResponse is not null)
+            {
+                return legacyOperatorConsoleResponse;
+            }
         }
 
         var item = set?.Items.FirstOrDefault();
@@ -347,7 +394,8 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
             return new StatutoryEvidenceOpaqueUploadSessionResponse("REJECTED", false, StatutoryEvidenceUploadConstants.ContentTypeMismatch, command.CorrelationId, authorization.UploadAuthorizationReference, StatutoryEvidenceUploadConstants.UploadMethodPut, authorization.ExpiresAt, authorization.ExpectedContentType, _uploadOptions.MaxContentLengthBytes);
         }
 
-        if (command.ContentLength is null || command.ContentLength != authorization.ExpectedContentLength || command.ContentLength > _uploadOptions.MaxContentLengthBytes)
+        if ((command.ContentLength.HasValue && command.ContentLength.Value != authorization.ExpectedContentLength) ||
+            authorization.ExpectedContentLength > _uploadOptions.MaxContentLengthBytes)
         {
             return new StatutoryEvidenceOpaqueUploadSessionResponse("REJECTED", false, StatutoryEvidenceUploadConstants.ContentLengthMismatch, command.CorrelationId, authorization.UploadAuthorizationReference, StatutoryEvidenceUploadConstants.UploadMethodPut, authorization.ExpiresAt, authorization.ExpectedContentType, _uploadOptions.MaxContentLengthBytes);
         }
@@ -457,6 +505,84 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
         }
 
         return true;
+    }
+
+    private async Task<bool> IsAuthorizedToReadSetAsync(
+        StatutoryEvidenceSetReadModel set,
+        StatutoryEvidenceActor actor,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (!await HasReadScopeAsync(actor, set.SiteId, set.SiteGroupId, cancellationToken).ConfigureAwait(false))
+        {
+            await _metadataRepository.RecordAccessDeniedAsync(set.EvidenceSetReference, set.SiteId, set.SiteGroupId, set.ParkingSessionId, correlationId, actor, "SCOPE_DENIED", cancellationToken);
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task<bool> HasReadScopeAsync(
+        StatutoryEvidenceActor actor,
+        Guid siteId,
+        Guid siteGroupId,
+        CancellationToken cancellationToken) =>
+        await _metadataRepository.ActorHasScopeAsync(actor, StatutoryEvidenceScopeOperations.View, siteId, siteGroupId, cancellationToken).ConfigureAwait(false) ||
+        await _metadataRepository.ActorHasScopeAsync(actor, StatutoryEvidenceScopeOperations.Capture, siteId, siteGroupId, cancellationToken).ConfigureAwait(false);
+
+    private async Task<StatutoryEvidenceChannelResponse?> TryBuildLegacyOperatorConsoleResponseAsync(
+        string responseSourceChannel,
+        Guid correlationId,
+        StatutoryEvidenceDurableRequestBinding binding,
+        StatutoryDiscountDecisionResult decision,
+        CancellationToken cancellationToken)
+    {
+        if (!StatutoryEvidenceMetadataConstants.CodeComparer.Equals(
+                binding.SourceChannel,
+                StatutoryDiscountSourceChannels.OperatorConsole))
+        {
+            return null;
+        }
+
+        var evidenceReference = binding.StatutoryDiscountValidationId ?? binding.RequestReference;
+        var evidence = await _operatorConsoleEvidenceRepository.ListAsync(evidenceReference, correlationId, cancellationToken).ConfigureAwait(false);
+        var captured = evidence.Items.FirstOrDefault(item =>
+            string.Equals(item.VerificationStatus, "CAPTURED", StringComparison.Ordinal));
+        if (!evidence.EvidenceRequiredSatisfied || captured is null)
+        {
+            return null;
+        }
+
+        var lifecycle = decision.PayableBasisReady
+            ? "APPLIED"
+            : decision.DecisionStatus switch
+            {
+                "APPROVED" => "APPROVED",
+                "REJECTED" => "REJECTED",
+                _ => "REVIEWABLE"
+            };
+        return new StatutoryEvidenceChannelResponse(
+            "ACCEPTED",
+            false,
+            null,
+            correlationId,
+            responseSourceChannel,
+            true,
+            null,
+            null,
+            _uploadOptions.AllowedContentTypes.Where(StatutoryEvidenceUploadConstants.SupportedContentTypes.Contains).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            _uploadOptions.MaxContentLengthBytes,
+            _scanOptions.MaxDecodedWidth > 0 ? _scanOptions.MaxDecodedWidth : null,
+            _scanOptions.MaxDecodedHeight > 0 ? _scanOptions.MaxDecodedHeight : null,
+            _scanOptions.MaxDecodedPixelCount > 0 ? _scanOptions.MaxDecodedPixelCount : null,
+            captured.EvidenceType,
+            _channelOptions.SingleDocumentItemRole,
+            lifecycle,
+            "REPLACEMENT_NOT_ALLOWED",
+            true,
+            lifecycle == "APPLIED",
+            BlockingReason(lifecycle),
+            DateTimeOffset.UtcNow);
     }
 
     private async Task<GovernanceSelection?> ResolveGovernanceAsync(
@@ -627,7 +753,7 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
     private static string? BlockingReason(string lifecycle) =>
         lifecycle switch
         {
-            "NOT_REQUIRED" or "APPLIED" => null,
+            "NOT_REQUIRED" or "REVIEWABLE" or "APPLIED" => null,
             "REQUIRED_NOT_STARTED" => "STATUTORY_EVIDENCE_REQUIRED_NOT_STARTED",
             "UPLOAD_SESSION_AVAILABLE" or "UPLOAD_IN_PROGRESS" => "STATUTORY_EVIDENCE_UPLOAD_PENDING",
             "VALIDATION_PENDING" => "STATUTORY_EVIDENCE_VALIDATION_PENDING",
@@ -648,8 +774,11 @@ public sealed class StatutoryEvidenceChannelService : IStatutoryEvidenceChannelS
             : throw new InvalidOperationException("Evidence upload storage bucket is not configured.");
 
     private static bool SourceMatches(string routeSourceChannel, StatutoryEvidenceActor actor, StatutoryEvidenceDurableRequestBinding binding) =>
-        StatutoryEvidenceMetadataConstants.CodeComparer.Equals(routeSourceChannel, actor.SourceChannel) &&
+        RouteMatchesActor(routeSourceChannel, actor) &&
         StatutoryEvidenceMetadataConstants.CodeComparer.Equals(routeSourceChannel, binding.SourceChannel);
+
+    private static bool RouteMatchesActor(string routeSourceChannel, StatutoryEvidenceActor actor) =>
+        StatutoryEvidenceMetadataConstants.CodeComparer.Equals(routeSourceChannel, actor.SourceChannel);
 
     private static bool IsSupportedChannel(string sourceChannel) =>
         StatutoryEvidenceChannelConstants.WebPay.Equals(sourceChannel, StringComparison.OrdinalIgnoreCase) ||

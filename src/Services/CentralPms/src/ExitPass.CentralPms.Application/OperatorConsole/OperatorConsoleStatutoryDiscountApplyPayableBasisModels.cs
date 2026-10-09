@@ -16,7 +16,8 @@ public sealed record OperatorConsoleStatutoryDiscountApplyPayableBasisCommand(
     string IdempotencyKey,
     Guid CorrelationId,
     bool AllowProcessingApplicationCompletion = false,
-    StatutoryDiscountServiceChannelCallerContext? ServiceChannelCaller = null);
+    StatutoryDiscountServiceChannelCallerContext? ServiceChannelCaller = null,
+    bool CanonicalReviewContinuation = false);
 
 /// <summary>
 /// Result for an access-gated statutory discount payable-basis application.

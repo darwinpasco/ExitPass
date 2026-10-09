@@ -651,14 +651,17 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPm
     public async Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>> UploadAsync(
         Guid opaqueUploadSessionReference,
         string contentType,
-        long contentLength,
+        long? contentLength,
         Stream content,
         Guid correlationId,
         CancellationToken cancellationToken)
     {
         using var streamContent = new StreamContent(content);
         streamContent.Headers.ContentType = new MediaTypeHeaderValue(contentType);
-        streamContent.Headers.ContentLength = contentLength;
+        if (contentLength.HasValue)
+        {
+            streamContent.Headers.ContentLength = contentLength.Value;
+        }
         using var message = new HttpRequestMessage(HttpMethod.Put, new Uri(_statutoryEvidenceBaseUri, $"upload-sessions/{opaqueUploadSessionReference:D}"))
         {
             Content = streamContent

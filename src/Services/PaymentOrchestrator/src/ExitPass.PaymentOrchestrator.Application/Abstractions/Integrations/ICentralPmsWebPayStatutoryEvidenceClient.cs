@@ -21,7 +21,7 @@ public interface ICentralPmsWebPayStatutoryEvidenceClient
     Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>> UploadAsync(
         Guid opaqueUploadSessionReference,
         string contentType,
-        long contentLength,
+        long? contentLength,
         Stream content,
         Guid correlationId,
         CancellationToken cancellationToken);

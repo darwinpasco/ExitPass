@@ -27,9 +27,13 @@ public sealed class StatutoryEvidenceMetadataRepositoryIntegrationTests
         {
             var service = CreateService();
             var before = await ReadEvidenceCountsAsync();
+            var binding = await new StatutoryEvidenceMetadataRepository(ConnectionString)
+                .ResolveRequestBindingAsync(seed.DecisionCommandId, CancellationToken.None);
 
             var result = await service.CreateOrResolveSetAsync(CreateSetCommand(context, seed), CancellationToken.None);
 
+            binding.Should().NotBeNull();
+            binding!.RequestReference.Should().Be(seed.RequestReference);
             result.Classification.Should().Be("ACCEPTED");
             result.EvidenceSet!.ParkingSessionId.Should().Be(context.ParkingSessionId);
             result.EvidenceSet.SiteId.Should().Be(context.SiteId);

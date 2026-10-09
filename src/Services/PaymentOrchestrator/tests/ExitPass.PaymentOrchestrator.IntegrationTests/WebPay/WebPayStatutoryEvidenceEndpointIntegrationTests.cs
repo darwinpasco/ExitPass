@@ -94,6 +94,25 @@ public sealed class WebPayStatutoryEvidenceEndpointIntegrationTests
     }
 
     [Fact]
+    public async Task Upload_WhenTransportContentLengthIsUnknown_StreamsRequestBodyThroughOpaqueSameOriginRoute()
+    {
+        var state = new EvidenceEndpointState();
+        using var client = CreateClient(state);
+        using var content = new StreamContent(new NonSeekableMemoryStream(new byte[] { 1, 2, 3, 4 }));
+        content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+        using var request = new HttpRequestMessage(HttpMethod.Put,
+            $"/v1/webpay/statutory-discounts/evidence/upload-sessions/{UploadSessionReference:D}") { Content = content };
+        request.Headers.TransferEncodingChunked = true;
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/jpeg", state.UploadContentType);
+        Assert.Null(state.UploadContentLength);
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, state.UploadBytes);
+    }
+
+    [Fact]
     public async Task Preview_StreamsOnlyProtectedImageContentWithRestrictiveHeaders()
     {
         var state = new EvidenceEndpointState();
@@ -186,7 +205,7 @@ public sealed class WebPayStatutoryEvidenceEndpointIntegrationTests
         public CentralPmsStatutoryEvidenceBootstrapRequest? BootstrapRequest { get; private set; }
         public byte[]? UploadBytes { get; private set; }
         public string? UploadContentType { get; private set; }
-        public long UploadContentLength { get; private set; }
+        public long? UploadContentLength { get; private set; }
         public Guid? PreviewDecisionCommandId { get; private set; }
         public Guid? PreviewEvidenceItemReference { get; private set; }
 
@@ -206,7 +225,7 @@ public sealed class WebPayStatutoryEvidenceEndpointIntegrationTests
             Task.FromResult(UploadResult());
 
         public async Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>> UploadAsync(
-            Guid opaqueUploadSessionReference, string contentType, long contentLength, Stream content, Guid correlationId, CancellationToken cancellationToken)
+            Guid opaqueUploadSessionReference, string contentType, long? contentLength, Stream content, Guid correlationId, CancellationToken cancellationToken)
         {
             using var buffer = new MemoryStream();
             await content.CopyToAsync(buffer, cancellationToken);
@@ -238,5 +257,10 @@ public sealed class WebPayStatutoryEvidenceEndpointIntegrationTests
             CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>.Success(new CentralPmsStatutoryEvidenceUploadSession(
                 "UPLOAD_AUTHORIZED", false, null, CorrelationId, UploadSessionReference, "PUT",
                 DateTimeOffset.Parse("2026-08-05T09:05:00Z"), "image/jpeg", 5_000_000));
+    }
+
+    private sealed class NonSeekableMemoryStream(byte[] buffer) : MemoryStream(buffer)
+    {
+        public override bool CanSeek => false;
     }
 }

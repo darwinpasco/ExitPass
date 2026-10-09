@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.ManagementPlatform;
+using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.SalesInvoiceCustomerInformation;
 using ExitPass.CentralPms.Application.StatutoryEvidence;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
@@ -8,6 +9,7 @@ using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Application.WebPay;
 using ExitPass.CentralPms.Contracts.TerminalCashPayments;
+using ExitPass.CentralPms.Domain.FiscalIssuance;
 using ExitPass.CentralPms.Domain.Sessions;
 using ExitPass.CentralPms.Domain.Tariffs;
 using FluentAssertions;
@@ -27,6 +29,9 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
     private static readonly Guid ApplicationCommandId = Guid.Parse("41000000-0000-0000-0000-000000000008");
     private static readonly Guid ValidationId = Guid.Parse("41000000-0000-0000-0000-000000000009");
     private static readonly Guid CorrelationId = Guid.Parse("41000000-0000-0000-0000-000000000010");
+    private static readonly Guid FiscalIssuanceReferenceId = Guid.Parse("41000000-0000-0000-0000-000000000011");
+    private static readonly Guid PosServerFiscalDocumentId = Guid.Parse("41000000-0000-0000-0000-000000000012");
+    private static readonly Guid ExitAuthorizationId = Guid.Parse("41000000-0000-0000-0000-000000000015");
 
     [Fact]
     public async Task Resolve_WhenNoStatutoryWorkflowActive_PreservesNonStatutoryReadiness()
@@ -46,7 +51,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
     }
 
     [Fact]
-    public async Task Resolve_WhenDecisionAwaitingReview_BlocksCashReadinessWithoutMutation()
+    public async Task Resolve_WhenDecisionAwaitingReview_AllowsRegularCashWithoutMutation()
     {
         var context = CreateContext(AwaitingReview());
 
@@ -54,12 +59,12 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
 
         result.Succeeded.Should().BeTrue();
         result.Response.Should().NotBeNull();
-        result.Response!.ReadyForCashAcceptance.Should().BeFalse();
+        result.Response!.ReadyForCashAcceptance.Should().BeTrue();
         result.Response.StatutoryDiscountReadiness.Should().NotBeNull();
         result.Response.StatutoryDiscountReadiness!.Applicable.Should().BeTrue();
         result.Response.StatutoryDiscountReadiness.PayableBasisReadinessStatus.Should().Be("AWAITING_REVIEW");
         result.Response.StatutoryDiscountReadiness.PayableBasisReadinessAction.Should().Be("POLL_READBACK");
-        result.Response.BlockingReasonCodes.Should().Contain("STATUTORY_DISCOUNT_AWAITING_REVIEW");
+        result.Response.BlockingReasonCodes.Should().NotContain("STATUTORY_DISCOUNT_AWAITING_REVIEW");
         result.Response.BlockingReasonCodes.Should().NotContain("AMOUNT_CHANGED");
         context.StatutoryDiscounts.GetCallCount.Should().Be(1);
         context.StatutoryDiscounts.SubmitCallCount.Should().Be(0);
@@ -103,7 +108,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
     }
 
     [Fact]
-    public async Task Resolve_WhenDecisionRejected_BlocksAsNonRetryable()
+    public async Task Resolve_WhenDecisionRejected_AllowsRegularCashAsNonRetryable()
     {
         var context = CreateContext(Rejected());
 
@@ -111,11 +116,11 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
 
         result.Succeeded.Should().BeTrue();
         result.Response.Should().NotBeNull();
-        result.Response!.ReadyForCashAcceptance.Should().BeFalse();
+        result.Response!.ReadyForCashAcceptance.Should().BeTrue();
         result.Response.StatutoryDiscountReadiness.Should().NotBeNull();
         result.Response.StatutoryDiscountReadiness!.Retryable.Should().BeFalse();
         result.Response.StatutoryDiscountReadiness.PayableBasisReadinessAction.Should().Be("DO_NOT_RETRY");
-        result.Response.BlockingReasonCodes.Should().Contain("STATUTORY_DISCOUNT_DECISION_REJECTED");
+        result.Response.BlockingReasonCodes.Should().NotContain("STATUTORY_DISCOUNT_DECISION_REJECTED");
     }
 
     [Fact]
@@ -175,6 +180,55 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         context.TerminalCashEligibility.LastRequest.Should().NotBeNull();
         context.TerminalCashEligibility.LastRequest!.TariffSnapshotId.Should().Be(AppliedTariffSnapshotId);
         context.TerminalCashEligibility.LastRequest.ExpectedAmountMinorUnits.Should().Be(8000);
+    }
+
+    [Fact]
+    public async Task Resolve_WhenZeroPayableCompletionExists_ReturnsCanonicalFiscalAndExitSummary()
+    {
+        var issuedAt = DateTimeOffset.Parse("2026-07-28T00:04:00Z");
+        var readback = Applied(
+            netPayableAmountMinorUnits: 0,
+            statutoryDiscountAmountMinorUnits: 10000) with
+        {
+            ZeroPayableFiscalCompletion = new ZeroPayableStatutoryFiscalIssuanceResult(
+                FiscalIssuanceReferenceId,
+                FiscalPrerequisiteSatisfied: true,
+                PosServerCallAttempted: true,
+                FiscalIssuanceIntegrationState.FiscalIssuanceRecorded,
+                PosServerFiscalDocumentId,
+                FiscalDocumentNumber: "SI-00000073",
+                ElectronicJournalEventReference: "EJ-00000073",
+                CompletionBasis: "ZERO_PAYABLE_STATUTORY_FINALITY",
+                CompletionAuthorityReferenceId: ApplicationCommandId,
+                SafeErrorCode: null),
+            ExitAuthorization = new IssueExitAuthorizationResult(
+                ExitAuthorizationId,
+                ParkingSessionId,
+                AppliedTariffSnapshotId,
+                CompletionBasis: "ZERO_PAYABLE_STATUTORY_FINALITY",
+                CompletionAuthorityReferenceId: ApplicationCommandId,
+                PaymentAttemptId: null,
+                PaymentConfirmationId: null,
+                AuthorizationToken: "must-not-be-exposed",
+                AuthorizationStatus: "ISSUED",
+                IssuedAt: issuedAt,
+                ExpirationTimestamp: issuedAt.AddMinutes(15))
+        };
+        var context = CreateContext(readback, zeroPayableAppliedTariff: true);
+
+        var result = await context.Sut.ResolveAsync(ResolveRequest(DecisionCommandId), CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.Response.Should().NotBeNull();
+        result.Response!.AuthoritativeAmountMinorUnits.Should().Be(0);
+        result.Response.ZeroPayableStatutoryCompletion.Should().NotBeNull();
+        result.Response.ZeroPayableStatutoryCompletion!.CompletionBasis.Should().Be("ZERO_PAYABLE_STATUTORY_FINALITY");
+        result.Response.ZeroPayableStatutoryCompletion.FiscalPrerequisiteSatisfied.Should().BeTrue();
+        result.Response.ZeroPayableStatutoryCompletion.FiscalIssuanceReferenceId.Should().Be(FiscalIssuanceReferenceId);
+        result.Response.ZeroPayableStatutoryCompletion.PosServerFiscalDocumentId.Should().Be(PosServerFiscalDocumentId);
+        result.Response.ZeroPayableStatutoryCompletion.FiscalDocumentNumber.Should().Be("SI-00000073");
+        result.Response.ZeroPayableStatutoryCompletion.ExitAuthorizationId.Should().Be(ExitAuthorizationId);
+        result.Response.ZeroPayableStatutoryCompletion.ExitAuthorizationStatus.Should().Be("ISSUED");
     }
 
     [Theory]
@@ -376,7 +430,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
     }
 
     [Fact]
-    public async Task Revalidate_WhenStatutoryPending_DoesNotReportAmountChanged()
+    public async Task Revalidate_WhenStatutoryPending_UsesRegularBasisAndReportsAmountChange()
     {
         var context = CreateContext(AwaitingReview());
 
@@ -386,10 +440,10 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
 
         result.Succeeded.Should().BeTrue();
         result.Response.Should().NotBeNull();
-        result.Response!.RevalidationOutcome.Should().Be("STATUTORY_DISCOUNT_BLOCKED");
+        result.Response!.RevalidationOutcome.Should().Be("AMOUNT_CHANGED");
         result.Response.ReadyForCashAcceptance.Should().BeFalse();
-        result.Response.BlockingReasonCodes.Should().Contain("STATUTORY_DISCOUNT_AWAITING_REVIEW");
-        result.Response.BlockingReasonCodes.Should().NotContain("AMOUNT_CHANGED");
+        result.Response.BlockingReasonCodes.Should().NotContain("STATUTORY_DISCOUNT_AWAITING_REVIEW");
+        result.Response.BlockingReasonCodes.Should().Contain("AMOUNT_CHANGED");
     }
 
     [Fact]
@@ -408,7 +462,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         result.Response.StatutoryDiscountReadiness.Should().NotBeNull();
         result.Response.StatutoryDiscountReadiness!.StatutoryDiscountDecisionCommandId.Should().Be(DecisionCommandId);
         result.Response.StatutoryDiscountReadiness.PayableBasisReadinessStatus.Should().Be("AWAITING_REVIEW");
-        result.Response.ReadyForCashAcceptance.Should().BeFalse();
+        result.Response.ReadyForCashAcceptance.Should().BeTrue();
         context.StatutoryDiscounts.GetCallCount.Should().Be(1);
     }
 
@@ -489,7 +543,8 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         StatutoryEvidenceChannelReadiness? evidenceReadiness = null,
         Guid? rediscoveredDecisionCommandId = null,
         InvoiceCustomerInformationReadStatus customerInformationStatus = InvoiceCustomerInformationReadStatus.NotSupplied,
-        ResolveVendorParkingResult? vendorResolutionResult = null)
+        ResolveVendorParkingResult? vendorResolutionResult = null,
+        bool zeroPayableAppliedTariff = false)
     {
         var session = ParkingSession.Rehydrate(
             ParkingSessionId,
@@ -503,7 +558,9 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             DateTimeOffset.Parse("2026-07-28T00:00:00Z"),
             ParkingSessionStatus.PaymentRequired);
         var originalTariff = Tariff(OriginalTariffSnapshotId, 100m, 0m, 100m);
-        var appliedTariff = Tariff(AppliedTariffSnapshotId, 100m, 20m, 80m, OriginalTariffSnapshotId);
+        var appliedTariff = zeroPayableAppliedTariff
+            ? Tariff(AppliedTariffSnapshotId, 100m, 100m, 0m, OriginalTariffSnapshotId)
+            : Tariff(AppliedTariffSnapshotId, 100m, 20m, 80m, OriginalTariffSnapshotId);
         var terminalCashEligibility = new RecordingTerminalCashEligibilityReader();
         var statutoryDiscounts = new RecordingStatutoryDiscountFacadeService(statutoryReadback);
 
@@ -671,7 +728,8 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         bool applicationRetryable = false,
         string applicationRecoveryClassification = StatutoryDiscountDecisionRecoveryClassifications.None,
         string? applicationRecoveryAction = null,
-        string? errorCode = null) =>
+        string? errorCode = null,
+        long statutoryDiscountAmountMinorUnits = 2000) =>
         new(
             DecisionCommandId,
             RequestReference: Guid.Parse("41000000-0000-0000-0000-000000000013"),
@@ -685,7 +743,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             FallbackPolicyReferenceId: null,
             LocalOrdinanceApplied: false,
             GrossAmountMinorUnits: 10000,
-            StatutoryDiscountAmountMinorUnits: 2000,
+            StatutoryDiscountAmountMinorUnits: statutoryDiscountAmountMinorUnits,
             netPayableAmountMinorUnits,
             Currency: currency,
             EvidenceRequired: true,

@@ -94,7 +94,9 @@ public static partial class WebPayStatutoryEvidenceEndpoints
         {
             var correlationId = ReadOrCreateCorrelationId(context);
             var contentType = NormalizeContentType(context.Request.ContentType);
-            if (opaqueUploadSessionReference == Guid.Empty || !AllowedContentTypes.Contains(contentType) || context.Request.ContentLength is not > 0)
+            if (opaqueUploadSessionReference == Guid.Empty ||
+                !AllowedContentTypes.Contains(contentType) ||
+                context.Request.ContentLength is <= 0)
             {
                 return Invalid(context, correlationId, "WEBPAY_STATUTORY_EVIDENCE_UPLOAD_INVALID", "The selected image could not be uploaded. Choose the file again.");
             }
@@ -102,7 +104,7 @@ public static partial class WebPayStatutoryEvidenceEndpoints
             var result = await client.UploadAsync(
                 opaqueUploadSessionReference,
                 contentType,
-                context.Request.ContentLength.Value,
+                context.Request.ContentLength,
                 context.Request.Body,
                 correlationId,
                 cancellationToken);

@@ -343,7 +343,11 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             new StatutoryEvidenceActor(null, null, StatutoryEvidenceChannelConstants.AssistedPaymentTerminal),
             correlationId,
             cancellationToken);
-        var evidenceDimension = ToEvidenceDimension(evidenceReadiness);
+        var evidenceDimension = AllowsRegularPaymentFallback(statutory.Readiness)
+            ? Ready(
+                "statutoryEvidenceReadiness",
+                "Statutory evidence remains under review; the current regular payable basis remains available.")
+            : ToEvidenceDimension(evidenceReadiness);
         var terminalCash = await _terminalCashEligibility.EvaluateAsync(
             new TerminalCashPayableBasisEligibilityRequest(
                 session.ParkingSessionId,
@@ -454,7 +458,8 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             TariffSource = resolved.TariffSource,
             ManualExitRequired = resolved.ManualExitRequired,
             VehicleTypeCode = resolved.ProjectionFallback?.Projection?.CanonicalVehicleTypeCode,
-            TariffVersion = effectiveTariff.TariffVersionReference
+            TariffVersion = effectiveTariff.TariffVersionReference,
+            ZeroPayableStatutoryCompletion = statutory.ZeroPayableCompletion
         };
 
         return new AptPayableBasisReadinessResult(true, response, null, null, 200, retryable, correlationId);
@@ -607,7 +612,8 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
                 NotApplicableStatutoryReadiness(),
                 EffectiveTariff: null,
                 FinalPayableAmountMinorUnits: null,
-                Currency: null);
+                Currency: null,
+                ZeroPayableCompletion: null);
         }
 
         StatutoryDiscountDecisionResult? readback;
@@ -720,6 +726,24 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
                 currency: readback.Currency.Trim().ToUpperInvariant());
         }
 
+        if (AllowsRegularPaymentFallback(readback))
+        {
+            return FromStatutoryReadback(
+                readback,
+                ready: true,
+                blockingReasonCode: null,
+                safeErrorCode: readback.ErrorCode,
+                message: string.Equals(
+                    readback.PayableBasisReadinessStatus,
+                    StatutoryDiscountPayableBasisReadinessStatuses.DecisionRejected,
+                    StringComparison.Ordinal)
+                    ? "Statutory-discount request was rejected; the current regular payable basis remains available."
+                    : "Statutory-discount request is awaiting review; the current regular payable basis remains available.",
+                effectiveTariff: originalTariff,
+                finalPayableAmountMinorUnits: ToMinorUnits(originalTariff.NetPayable),
+                currency: originalTariff.CurrencyCode.Trim().ToUpperInvariant());
+        }
+
         return FromStatutoryReadback(
             readback,
             ready: false,
@@ -777,7 +801,8 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
                 message),
             effectiveTariff,
             finalPayableAmountMinorUnits,
-            currency);
+            currency,
+            ToZeroPayableCompletion(readback));
     }
 
     private static StatutoryBasisReadiness BlockedStatutory(
@@ -819,7 +844,38 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
                 message),
             EffectiveTariff: null,
             FinalPayableAmountMinorUnits: null,
-            Currency: null);
+            Currency: null,
+            ZeroPayableCompletion: null);
+
+    private static AptZeroPayableStatutoryCompletionDto? ToZeroPayableCompletion(
+        StatutoryDiscountDecisionResult readback)
+    {
+        if (readback.NetPayableAmountMinorUnits != 0 ||
+            readback.ZeroPayableFiscalCompletion is null && readback.ExitAuthorization is null)
+        {
+            return null;
+        }
+
+        var fiscal = readback.ZeroPayableFiscalCompletion;
+        var exitAuthorization = readback.ExitAuthorization;
+        var completionBasis = fiscal?.CompletionBasis ?? exitAuthorization?.CompletionBasis;
+        if (string.IsNullOrWhiteSpace(completionBasis))
+        {
+            return null;
+        }
+
+        return new AptZeroPayableStatutoryCompletionDto(
+            completionBasis,
+            fiscal?.FiscalPrerequisiteSatisfied ?? false,
+            fiscal?.FiscalIssuanceReferenceId,
+            fiscal?.FiscalIssuanceState.ToString(),
+            fiscal?.PosServerFiscalDocumentId,
+            fiscal?.FiscalDocumentNumber,
+            exitAuthorization?.ExitAuthorizationId,
+            exitAuthorization?.AuthorizationStatus,
+            exitAuthorization?.IssuedAt,
+            exitAuthorization?.ExpirationTimestamp);
+    }
 
     private static AptStatutoryDiscountReadinessDto NotApplicableStatutoryReadiness() =>
         new(
@@ -870,6 +926,27 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
                 readiness.BlockingReasonCode ?? "STATUTORY_EVIDENCE_NOT_READY",
                 readiness.Message,
                 readiness.Retryable);
+
+    private static bool AllowsRegularPaymentFallback(AptStatutoryDiscountReadinessDto readiness) =>
+        readiness.Applicable &&
+        (string.Equals(
+             readiness.PayableBasisReadinessStatus,
+             StatutoryDiscountPayableBasisReadinessStatuses.AwaitingReview,
+             StringComparison.Ordinal) ||
+         string.Equals(
+             readiness.PayableBasisReadinessStatus,
+             StatutoryDiscountPayableBasisReadinessStatuses.DecisionRejected,
+             StringComparison.Ordinal));
+
+    private static bool AllowsRegularPaymentFallback(StatutoryDiscountDecisionResult readback) =>
+        string.Equals(
+            readback.PayableBasisReadinessStatus,
+            StatutoryDiscountPayableBasisReadinessStatuses.AwaitingReview,
+            StringComparison.Ordinal) ||
+        string.Equals(
+            readback.PayableBasisReadinessStatus,
+            StatutoryDiscountPayableBasisReadinessStatuses.DecisionRejected,
+            StringComparison.Ordinal);
 
     private static string MapStatutoryBlockingReason(StatutoryDiscountDecisionResult readback) =>
         readback.PayableBasisReadinessStatus switch
@@ -1113,5 +1190,6 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         AptStatutoryDiscountReadinessDto Readiness,
         TariffSnapshot? EffectiveTariff,
         long? FinalPayableAmountMinorUnits,
-        string? Currency);
+        string? Currency,
+        AptZeroPayableStatutoryCompletionDto? ZeroPayableCompletion);
 }

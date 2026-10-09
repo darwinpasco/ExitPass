@@ -357,6 +357,7 @@ public sealed class StatutoryEvidenceMetadataServiceTests
         new(
             command.StatutoryDiscountDecisionCommandId,
             command.StatutoryDiscountValidationId,
+            command.StatutoryDiscountValidationId ?? command.StatutoryDiscountDecisionCommandId,
             command.ParkingSessionId,
             command.SiteId,
             command.SiteGroupId,

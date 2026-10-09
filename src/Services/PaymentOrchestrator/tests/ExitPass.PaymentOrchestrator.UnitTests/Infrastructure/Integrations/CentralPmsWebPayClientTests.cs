@@ -1036,6 +1036,25 @@ public sealed class CentralPmsWebPayClientTests
     }
 
     [Fact]
+    public async Task UploadStatutoryEvidenceAsync_WhenTransportLengthIsUnknown_DoesNotInventContentLength()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryEvidenceUploadSessionResponse())
+        });
+        var client = CreateClient(handler);
+        var uploadSessionReference = Guid.Parse("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+        await using var stream = new NonSeekableMemoryStream(new byte[] { 1, 2, 3, 4 });
+
+        var result = await client.UploadAsync(
+            uploadSessionReference, "image/jpeg", null, stream, CorrelationId, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Null(handler.LastRequestContentLength);
+        Assert.Equal(Convert.ToBase64String(new byte[] { 1, 2, 3, 4 }), Convert.ToBase64String(Encoding.Latin1.GetBytes(handler.LastRequestBody!)));
+    }
+
+    [Fact]
     public async Task FinalizeStatutoryEvidenceAsync_UsesOpaqueRouteAndPreservesCorrelation()
     {
         var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
@@ -1371,6 +1390,8 @@ public sealed class CentralPmsWebPayClientTests
 
         public string? LastRequestBody { get; private set; }
 
+        public long? LastRequestContentLength { get; private set; }
+
         public int SendCount { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(
@@ -1379,8 +1400,14 @@ public sealed class CentralPmsWebPayClientTests
         {
             SendCount++;
             LastRequest = request;
+            LastRequestContentLength = request.Content?.Headers.ContentLength;
             LastRequestBody = request.Content?.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult();
             return Task.FromResult(_response);
         }
+    }
+
+    private sealed class NonSeekableMemoryStream(byte[] buffer) : MemoryStream(buffer)
+    {
+        public override bool CanSeek => false;
     }
 }

@@ -48,6 +48,7 @@ public static class StatutoryEvidenceScopeOperations
 public sealed record StatutoryEvidenceDurableRequestBinding(
     Guid StatutoryDiscountDecisionCommandId,
     Guid? StatutoryDiscountValidationId,
+    Guid RequestReference,
     Guid ParkingSessionId,
     Guid SiteId,
     Guid SiteGroupId,

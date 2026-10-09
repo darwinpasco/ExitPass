@@ -79,6 +79,7 @@ public sealed class StatutoryEvidenceMetadataRepository : IStatutoryEvidenceMeta
             """
             SELECT command.statutory_discount_decision_command_id,
                    command.statutory_discount_validation_id,
+                   command.request_reference,
                    command.parking_session_id,
                    session.site_id,
                    session.site_group_id,
@@ -103,8 +104,9 @@ public sealed class StatutoryEvidenceMetadataRepository : IStatutoryEvidenceMeta
             reader.GetGuid(2),
             reader.GetGuid(3),
             reader.GetGuid(4),
-            reader.GetString(5),
-            reader.GetString(6));
+            reader.GetGuid(5),
+            reader.GetString(6),
+            reader.GetString(7));
     }
 
     public async Task<bool> ActorHasScopeAsync(
