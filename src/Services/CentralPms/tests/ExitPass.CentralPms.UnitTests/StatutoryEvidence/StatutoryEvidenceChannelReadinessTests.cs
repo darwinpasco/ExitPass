@@ -134,6 +134,104 @@ public sealed class StatutoryEvidenceChannelReadinessTests
         await repository.DidNotReceive().GetEvidenceSetByDecisionCommandIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task GetStatus_WhenCanonicalEvidenceOriginatedInAnotherChannel_ReturnsCanonicalState()
+    {
+        var repository = Substitute.For<IStatutoryEvidenceMetadataRepository>();
+        var decisionService = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
+        var siteId = Guid.Parse("42000000-0000-0000-0000-000000000006");
+        var siteGroupId = Guid.Parse("42000000-0000-0000-0000-000000000007");
+        repository.GetEvidenceSetByDecisionCommandIdAsync(DecisionCommandId, Arg.Any<CancellationToken>())
+            .Returns(EvidenceSet("ACTIVE", "UPLOADED", "PASSED", "CLEAN", "REVIEWABLE", StatutoryDiscountSourceChannels.OperatorConsole));
+        repository.ResolveRequestBindingAsync(DecisionCommandId, Arg.Any<CancellationToken>())
+            .Returns(Binding(StatutoryDiscountSourceChannels.OperatorConsole));
+        repository.ActorHasScopeAsync(
+                Arg.Any<StatutoryEvidenceActor>(),
+                StatutoryEvidenceScopeOperations.View,
+                siteId,
+                siteGroupId,
+                Arg.Any<CancellationToken>())
+            .Returns(true);
+        decisionService.GetAsync(DecisionCommandId, CorrelationId, Arg.Any<CancellationToken>())
+            .Returns(Decision("AWAITING_REVIEW", evidenceRequired: true, payableBasisReady: false));
+
+        var result = await CreateService(repository, decisionService).GetStatusAsync(
+            new StatutoryEvidenceChannelStatusQuery(
+                StatutoryEvidenceChannelConstants.WebPay,
+                DecisionCommandId,
+                null,
+                CorrelationId,
+                WebPayActor()),
+            CancellationToken.None);
+
+        result.Classification.Should().Be("ACCEPTED");
+        result.LifecycleClassification.Should().Be("REVIEWABLE");
+        result.ReadyForReview.Should().BeTrue();
+        result.BlockingReasonCode.Should().BeNull();
+        result.EvidenceSetReference.Should().NotBeNull();
+        result.EvidenceItemReference.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task GetStatus_WhenOperatorConsoleLegacyEvidenceExists_ReturnsSubmittedStateWithoutCreatingDuplicateEvidence()
+    {
+        var repository = Substitute.For<IStatutoryEvidenceMetadataRepository>();
+        var decisionService = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
+        var operatorEvidence = Substitute.For<IOperatorConsoleStatutoryDiscountEvidenceRepository>();
+        var binding = Binding(StatutoryDiscountSourceChannels.OperatorConsole, hasValidation: false);
+        repository.ResolveRequestBindingAsync(DecisionCommandId, Arg.Any<CancellationToken>()).Returns(binding);
+        repository.ActorHasScopeAsync(
+                Arg.Any<StatutoryEvidenceActor>(),
+                StatutoryEvidenceScopeOperations.View,
+                binding.SiteId,
+                binding.SiteGroupId,
+                Arg.Any<CancellationToken>())
+            .Returns(true);
+        decisionService.GetAsync(DecisionCommandId, CorrelationId, Arg.Any<CancellationToken>())
+            .Returns(Decision("AWAITING_REVIEW", evidenceRequired: true, payableBasisReady: false));
+        operatorEvidence.ListAsync(binding.RequestReference, CorrelationId, Arg.Any<CancellationToken>())
+            .Returns(LegacyOperatorEvidence(binding.RequestReference));
+
+        var result = await CreateService(repository, decisionService, operatorEvidence).GetStatusAsync(
+            new StatutoryEvidenceChannelStatusQuery(
+                StatutoryEvidenceChannelConstants.WebPay,
+                DecisionCommandId,
+                null,
+                CorrelationId,
+                WebPayActor()),
+            CancellationToken.None);
+
+        result.Classification.Should().Be("ACCEPTED");
+        result.LifecycleClassification.Should().Be("REVIEWABLE");
+        result.ReadyForReview.Should().BeTrue();
+        result.BlockingReasonCode.Should().BeNull();
+        result.ReplacementPosture.Should().Be("REPLACEMENT_NOT_ALLOWED");
+        result.EvidenceSetReference.Should().BeNull();
+        result.EvidenceItemReference.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetStatus_WhenActorDoesNotHaveRequestSiteScope_FailsClosed()
+    {
+        var repository = Substitute.For<IStatutoryEvidenceMetadataRepository>();
+        var decisionService = Substitute.For<IStatutoryDiscountDecisionFacadeService>();
+        repository.GetEvidenceSetByDecisionCommandIdAsync(DecisionCommandId, Arg.Any<CancellationToken>())
+            .Returns(EvidenceSet("ACTIVE", "UPLOADED", "PASSED", "CLEAN", "REVIEWABLE", StatutoryDiscountSourceChannels.OperatorConsole));
+
+        var result = await CreateService(repository, decisionService).GetStatusAsync(
+            new StatutoryEvidenceChannelStatusQuery(
+                StatutoryEvidenceChannelConstants.WebPay,
+                DecisionCommandId,
+                null,
+                CorrelationId,
+                WebPayActor()),
+            CancellationToken.None);
+
+        result.Classification.Should().Be("REJECTED");
+        result.ErrorCode.Should().Be("SCOPE_DENIED");
+        await decisionService.DidNotReceive().GetAsync(Arg.Any<Guid>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>());
+    }
+
     private static object[] Case(
         string expectedLifecycle,
         string? setStatus,
@@ -149,7 +247,8 @@ public sealed class StatutoryEvidenceChannelReadinessTests
 
     private static StatutoryEvidenceChannelService CreateService(
         IStatutoryEvidenceMetadataRepository repository,
-        IStatutoryDiscountDecisionFacadeService decisionService) =>
+        IStatutoryDiscountDecisionFacadeService decisionService,
+        IOperatorConsoleStatutoryDiscountEvidenceRepository? operatorEvidence = null) =>
         new(
             repository,
             Substitute.For<IStatutoryEvidenceMetadataService>(),
@@ -158,6 +257,7 @@ public sealed class StatutoryEvidenceChannelReadinessTests
             Substitute.For<IStatutoryEvidenceProtectedObjectStorageAdapter>(),
             decisionService,
             Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>(),
+            operatorEvidence ?? Substitute.For<IOperatorConsoleStatutoryDiscountEvidenceRepository>(),
             new StatutoryEvidenceChannelOptions(),
             new StatutoryEvidenceUploadOptions { MaxContentLengthBytes = 1_048_576 },
             new StatutoryEvidenceScanWorkerOptions());
@@ -167,7 +267,8 @@ public sealed class StatutoryEvidenceChannelReadinessTests
         string uploadStatus,
         string validationStatus,
         string scanStatus,
-        string reviewabilityStatus)
+        string reviewabilityStatus,
+        string sourceChannel = StatutoryEvidenceChannelConstants.AssistedPaymentTerminal)
     {
         var now = DateTimeOffset.Parse("2026-08-05T00:00:00Z");
         var item = new StatutoryEvidenceItemReadModel(
@@ -197,7 +298,7 @@ public sealed class StatutoryEvidenceChannelReadinessTests
             Guid.Parse("42000000-0000-0000-0000-000000000006"),
             Guid.Parse("42000000-0000-0000-0000-000000000007"),
             "SENIOR_CITIZEN",
-            StatutoryEvidenceChannelConstants.AssistedPaymentTerminal,
+            sourceChannel,
             setStatus,
             "SENIOR_CITIZEN_ID_FRONT_BACK_V1",
             "1",
@@ -252,4 +353,46 @@ public sealed class StatutoryEvidenceChannelReadinessTests
             null,
             Guid.Parse("42000000-0000-0000-0000-000000000009"),
             StatutoryEvidenceChannelConstants.AssistedPaymentTerminal);
+
+    private static StatutoryEvidenceActor WebPayActor() =>
+        new(
+            null,
+            Guid.Parse("42000000-0000-0000-0000-000000000010"),
+            StatutoryEvidenceChannelConstants.WebPay);
+
+    private static StatutoryEvidenceDurableRequestBinding Binding(string sourceChannel, bool hasValidation = true) =>
+        new(
+            DecisionCommandId,
+            hasValidation ? Guid.Parse("42000000-0000-0000-0000-000000000011") : null,
+            Guid.Parse("42000000-0000-0000-0000-000000000012"),
+            Guid.Parse("42000000-0000-0000-0000-000000000005"),
+            Guid.Parse("42000000-0000-0000-0000-000000000006"),
+            Guid.Parse("42000000-0000-0000-0000-000000000007"),
+            "SENIOR_CITIZEN",
+            sourceChannel);
+
+    private static OperatorConsoleStatutoryDiscountEvidenceListResult LegacyOperatorEvidence(Guid validationId) =>
+        new(
+            validationId,
+            EvidenceRequired: true,
+            EvidenceRequiredSatisfied: true,
+            RequiredEvidenceTypes: ["SENIOR_CITIZEN_ID"],
+            EvidenceCount: 1,
+            LatestEvidenceStatus: "CAPTURED",
+            Items:
+            [
+                new OperatorConsoleStatutoryDiscountEvidenceMetadataResult(
+                    Guid.Parse("42000000-0000-0000-0000-000000000013"),
+                    validationId,
+                    "SENIOR_CITIZEN_ID",
+                    "OPERATOR_CONSOLE_PHONE_CAMERA",
+                    "protected/operator-console/evidence.jpg",
+                    null,
+                    Guid.Parse("42000000-0000-0000-0000-000000000014"),
+                    DateTimeOffset.Parse("2026-08-05T00:00:00Z"),
+                    "NOT_REDACTED",
+                    "CAPTURED",
+                    CorrelationId)
+            ],
+            CorrelationId);
 }

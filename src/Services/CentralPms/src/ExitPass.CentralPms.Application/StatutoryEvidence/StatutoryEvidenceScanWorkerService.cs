@@ -190,30 +190,16 @@ public sealed class StatutoryEvidenceScanWorkerService : IStatutoryEvidenceScanW
         Stream content,
         CancellationToken cancellationToken)
     {
-        var bufferLength = (int)Math.Min(Math.Max(_options.MaxHeaderProbeBytes, 64), Math.Min(item.ExpectedContentLength, 1024 * 1024));
-        var buffer = new byte[bufferLength];
-        var read = 0;
-        while (read < buffer.Length)
+        if (item.ExpectedContentType.Equals("image/png", StringComparison.OrdinalIgnoreCase))
         {
-            var current = await content.ReadAsync(buffer.AsMemory(read, buffer.Length - read), cancellationToken);
-            if (current == 0)
-            {
-                break;
-            }
-
-            read += current;
+            var header = new byte[33];
+            var read = await ReadAtMostAsync(content, header, cancellationToken).ConfigureAwait(false);
+            return ValidatePng(header.AsSpan(0, read));
         }
 
-        if (read == 0)
-        {
-            return FailedValidation("MALFORMED_IMAGE");
-        }
-
-        return item.ExpectedContentType.Equals("image/png", StringComparison.OrdinalIgnoreCase)
-            ? ValidatePng(buffer.AsSpan(0, read))
-            : item.ExpectedContentType.Equals("image/jpeg", StringComparison.OrdinalIgnoreCase)
-                ? ValidateJpeg(buffer.AsSpan(0, read))
-                : FailedValidation("UNSUPPORTED_MEDIA");
+        return item.ExpectedContentType.Equals("image/jpeg", StringComparison.OrdinalIgnoreCase)
+            ? await ValidateJpegAsync(item, content, cancellationToken).ConfigureAwait(false)
+            : FailedValidation("UNSUPPORTED_MEDIA");
     }
 
     private StatutoryEvidenceStructuralValidationResult ValidatePng(ReadOnlySpan<byte> bytes)
@@ -234,40 +220,153 @@ public sealed class StatutoryEvidenceScanWorkerService : IStatutoryEvidenceScanW
         return ValidateDimensions(width, height);
     }
 
-    private StatutoryEvidenceStructuralValidationResult ValidateJpeg(ReadOnlySpan<byte> bytes)
+    private async Task<StatutoryEvidenceStructuralValidationResult> ValidateJpegAsync(
+        StatutoryEvidenceScanWorkItem item,
+        Stream content,
+        CancellationToken cancellationToken)
     {
-        if (bytes.Length < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8)
+        var signature = new byte[2];
+        if (await ReadAtMostAsync(content, signature, cancellationToken).ConfigureAwait(false) != signature.Length ||
+            signature[0] != 0xFF || signature[1] != 0xD8)
         {
             return FailedValidation("SIGNATURE_MISMATCH");
         }
 
-        var offset = 2;
-        while (offset + 9 < bytes.Length)
+        var probeLimit = Math.Min(
+            item.ExpectedContentLength,
+            Math.Max(_options.MaxHeaderProbeBytes, 64));
+        long consumed = signature.Length;
+        var markerHeader = new byte[2];
+        var dimensions = new byte[5];
+        var skipBuffer = new byte[8192];
+
+        while (consumed + markerHeader.Length <= probeLimit)
         {
-            if (bytes[offset] != 0xFF)
+            var markerPrefix = content.ReadByte();
+            if (markerPrefix < 0)
             {
-                offset++;
+                return FailedValidation("MALFORMED_IMAGE");
+            }
+
+            consumed++;
+            if (markerPrefix != 0xFF)
+            {
                 continue;
             }
 
-            var marker = bytes[offset + 1];
-            var length = ReadInt16BigEndian(bytes.Slice(offset + 2, 2));
-            if (length < 2 || offset + 2 + length > bytes.Length)
+            int marker;
+            do
+            {
+                marker = content.ReadByte();
+                if (marker < 0)
+                {
+                    return FailedValidation("MALFORMED_IMAGE");
+                }
+
+                consumed++;
+            }
+            while (marker == 0xFF && consumed < probeLimit);
+
+            if (marker == 0x00)
+            {
+                continue;
+            }
+
+            if (marker is 0xD9 or 0xDA)
+            {
+                return FailedValidation("MALFORMED_IMAGE");
+            }
+
+            if (marker is 0x01 or >= 0xD0 and <= 0xD8)
+            {
+                continue;
+            }
+
+            if (consumed + markerHeader.Length > probeLimit ||
+                await ReadAtMostAsync(content, markerHeader, cancellationToken).ConfigureAwait(false) != markerHeader.Length)
+            {
+                return FailedValidation("MALFORMED_IMAGE");
+            }
+
+            consumed += markerHeader.Length;
+            var segmentLength = ReadInt16BigEndian(markerHeader);
+            if (segmentLength < 2 || consumed + segmentLength - 2 > item.ExpectedContentLength)
             {
                 return FailedValidation("MALFORMED_IMAGE");
             }
 
             if (marker is 0xC0 or 0xC1 or 0xC2)
             {
-                var height = ReadInt16BigEndian(bytes.Slice(offset + 5, 2));
-                var width = ReadInt16BigEndian(bytes.Slice(offset + 7, 2));
+                if (segmentLength < 7 || consumed + dimensions.Length > probeLimit ||
+                    await ReadAtMostAsync(content, dimensions, cancellationToken).ConfigureAwait(false) != dimensions.Length)
+                {
+                    return FailedValidation("MALFORMED_IMAGE");
+                }
+
+                var height = ReadInt16BigEndian(dimensions.AsSpan(1, 2));
+                var width = ReadInt16BigEndian(dimensions.AsSpan(3, 2));
                 return ValidateDimensions(width, height);
             }
 
-            offset += 2 + length;
+            var bytesToSkip = segmentLength - 2;
+            if (consumed + bytesToSkip > probeLimit)
+            {
+                return FailedValidation("HEADER_PROBE_LIMIT_EXCEEDED");
+            }
+
+            if (!await SkipExactlyAsync(content, bytesToSkip, skipBuffer, cancellationToken).ConfigureAwait(false))
+            {
+                return FailedValidation("MALFORMED_IMAGE");
+            }
+
+            consumed += bytesToSkip;
         }
 
-        return FailedValidation("MALFORMED_IMAGE");
+        return FailedValidation("HEADER_PROBE_LIMIT_EXCEEDED");
+    }
+
+    private static async Task<int> ReadAtMostAsync(
+        Stream stream,
+        Memory<byte> buffer,
+        CancellationToken cancellationToken)
+    {
+        var read = 0;
+        while (read < buffer.Length)
+        {
+            var current = await stream.ReadAsync(buffer[read..], cancellationToken).ConfigureAwait(false);
+            if (current == 0)
+            {
+                break;
+            }
+
+            read += current;
+        }
+
+        return read;
+    }
+
+    private static async Task<bool> SkipExactlyAsync(
+        Stream stream,
+        int bytesToSkip,
+        byte[] buffer,
+        CancellationToken cancellationToken)
+    {
+        var remaining = bytesToSkip;
+        while (remaining > 0)
+        {
+            var read = await stream.ReadAsync(
+                    buffer.AsMemory(0, Math.Min(remaining, buffer.Length)),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (read == 0)
+            {
+                return false;
+            }
+
+            remaining -= read;
+        }
+
+        return true;
     }
 
     private StatutoryEvidenceStructuralValidationResult ValidateDimensions(int width, int height)

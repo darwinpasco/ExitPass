@@ -31,6 +31,22 @@ vi.mock("./statutoryEvidence", async (importOriginal) => ({
   uploadEvidenceForNewStatutoryRequest: evidenceUploadMocks.upload
 }));
 
+const cameraCaptureMocks = vi.hoisted(() => ({ createPhoto: vi.fn() }));
+vi.mock("./PhoneCameraCapture", () => ({
+  PhoneCameraCapture: ({ value, disabled, onChange }: {
+    value: File | null;
+    disabled?: boolean;
+    onChange: (photo: File | null) => void;
+  }) => (
+    <div aria-label="Evidence photo camera">
+      <button type="button" disabled={disabled} onClick={() => onChange(cameraCaptureMocks.createPhoto())}>
+        {value ? "Retake evidence photo" : "Take evidence photo"}
+      </button>
+      <small>A photo of the beneficiary's ID is required for review and approval. JPEG or PNG only.</small>
+    </div>
+  )
+}));
+
 const providerCheckoutMocks = vi.hoisted(() => ({ redirect: vi.fn() }));
 vi.mock("./providerCheckout", () => ({ redirectToProviderCheckout: providerCheckoutMocks.redirect }));
 
@@ -487,6 +503,8 @@ beforeEach(() => {
   documentDownloadMocks.qrToDataUrl.mockResolvedValue("data:image/png;base64,ZXhpdC1xcg==");
   evidenceUploadMocks.upload.mockReset();
   evidenceUploadMocks.upload.mockResolvedValue(statutoryEvidenceResponse({ lifecycleClassification: "VALIDATION_PENDING" }));
+  cameraCaptureMocks.createPhoto.mockReset();
+  cameraCaptureMocks.createPhoto.mockImplementation(() => new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
   providerCheckoutMocks.redirect.mockReset();
   localStorage.clear();
   sessionStorage.clear();
@@ -519,12 +537,17 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.click(screen.getByRole("button", { name: /continue to payment/i }));
   }
 
+  async function captureEvidencePhoto(file = new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" })) {
+    cameraCaptureMocks.createPhoto.mockReturnValueOnce(file);
+    await userEvent.click(screen.getByRole("button", { name: /take evidence photo/i }));
+  }
+
   async function submitBasicStatutoryRequest() {
     await resolveTicket("TICKET-STAT-104");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
     await userEvent.type(screen.getByLabelText(/id no\. \/ control no\./i), "SC00001234");
     await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
-    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    await captureEvidencePhoto();
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
   }
 
@@ -582,11 +605,11 @@ describe("ExitPass WebPay UI", () => {
     expect(submit).toBeDisabled();
     expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions")).toHaveLength(0);
 
-    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["pdf"], "id.pdf", { type: "application/pdf" }), { applyAccept: false });
+    await captureEvidencePhoto(new File(["pdf"], "id.pdf", { type: "application/pdf" }));
     expect(submit).toBeDisabled();
     expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions")).toHaveLength(0);
 
-    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    await captureEvidencePhoto();
     expect(submit).toBeEnabled();
   });
 
@@ -598,7 +621,7 @@ describe("ExitPass WebPay UI", () => {
     await resolveTicket("TICKET-OPTIONAL-ID");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
     await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
-    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["png-bytes"], "id.png", { type: "image/png" }));
+    await captureEvidencePhoto(new File(["png-bytes"], "id.png", { type: "image/png" }));
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
 
     await waitFor(() => expect(evidenceUploadMocks.upload).toHaveBeenCalledTimes(1));
@@ -620,7 +643,7 @@ describe("ExitPass WebPay UI", () => {
     await resolveTicket("TICKET-RETRY-PHOTO");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
     await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
-    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    await captureEvidencePhoto();
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Photo upload failed safely.");
@@ -641,7 +664,7 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.type(screen.getByLabelText(/id no\. \/ control no\./i), "AB12");
     await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
     expect(screen.getByLabelText(/id no\. \/ control no\./i)).toHaveValue("AB12");
-    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    await captureEvidencePhoto();
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
     await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions").filter((call) => (call[1] as RequestInit)?.method === "POST")).toHaveLength(1));
     const body = JSON.parse((firstRouteCall(fetchMock, "/v1/webpay/statutory-discounts/decisions")[1] as RequestInit).body as string);
@@ -1063,7 +1086,7 @@ describe("ExitPass WebPay UI", () => {
 
     expect(screen.getByLabelText(/customer name/i)).toHaveValue("Juan Dela Cruz");
     await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
-    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    await captureEvidencePhoto();
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
 
     expect(await screen.findByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
@@ -1145,12 +1168,12 @@ describe("ExitPass WebPay UI", () => {
     await resolveTicket("TICKET-STAT-101");
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
     expect(screen.queryByText(/Entitlement details for review/i)).not.toBeInTheDocument();
-    expect(screen.getByLabelText(/evidence photo/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /take evidence photo/i })).toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByLabelText(/benefit type/i), "SENIOR_CITIZEN");
     await userEvent.type(screen.getByLabelText(/id no\. \/ control no\./i), "SC00001234");
     await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
-    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    await captureEvidencePhoto();
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
 
     await waitFor(() =>
@@ -1195,7 +1218,7 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
     await userEvent.type(screen.getByLabelText(/id no\. \/ control no\./i), "SC00001234");
     await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
-    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    await captureEvidencePhoto();
 
     const submit = screen.getByRole("button", { name: /submit for review/i });
     expect(submit).toBeDisabled();
@@ -1240,7 +1263,7 @@ describe("ExitPass WebPay UI", () => {
     const decisionCall = firstRouteCall(fetchMock, "/v1/webpay/statutory-discounts/decisions");
     const body = JSON.parse((decisionCall[1] as RequestInit).body as string);
     expect(body.evidenceCaptureRequested).toBe(true);
-    expect(await screen.findByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /take evidence photo/i })).toBeInTheDocument();
     expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/evidence/bootstrap")).toHaveLength(1);
     expect(screen.getByRole("button", { name: /pay regular amount/i })).toBeInTheDocument();
   });
@@ -1325,7 +1348,7 @@ describe("ExitPass WebPay UI", () => {
 
     expect(await screen.findByRole("heading", { name: /evidence processing/i })).toBeInTheDocument();
     expect(screen.getByText("Senior Citizen")).toBeInTheDocument();
-    expect(await screen.findByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /take evidence photo/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^upload photo$/i })).toBeInTheDocument();
     expect(screen.getByText(/existing statutory discount request was restored/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /this continuation link/i })).toHaveAttribute(
@@ -1370,7 +1393,7 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
 
     expect(await screen.findByRole("heading", { name: /evidence processing/i })).toBeInTheDocument();
-    expect(await screen.findByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /take evidence photo/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^upload photo$/i })).toBeInTheDocument();
   });
 
@@ -1709,7 +1732,7 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.selectOptions(screen.getByLabelText(/benefit type/i), "PWD");
     await userEvent.type(screen.getByLabelText(/id no\. \/ control no\./i), "PW00005678");
     await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
-    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    await captureEvidencePhoto();
     const submit = screen.getByRole("button", { name: /submit for review/i });
     await userEvent.dblClick(submit);
 
@@ -1732,7 +1755,7 @@ describe("ExitPass WebPay UI", () => {
     const idInput = screen.getByLabelText(/id no\. \/ control no\./i);
     await userEvent.type(idInput, "123456789012");
     await userEvent.click(screen.getByLabelText(/i confirm this request is accurate/i));
-    await userEvent.upload(screen.getByLabelText(/evidence photo/i), new File(["jpeg-bytes"], "id.jpg", { type: "image/jpeg" }));
+    await captureEvidencePhoto();
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
 
     await screen.findByRole("heading", { name: /awaiting review/i });
@@ -2154,7 +2177,7 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
 
     expect(await screen.findByText(/Existing statutory discount request restored/i)).toBeInTheDocument();
-    expect(await screen.findByLabelText(/choose or take a clear photo/i)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /take evidence photo/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^upload photo$/i })).toBeInTheDocument();
     const paths = fetchMock.mock.calls.map((call) => `${(call[1] as RequestInit | undefined)?.method ?? "GET"} ${String(call[0])}`);
     expect(paths.some((path) => path.includes(`GET /v1/webpay/statutory-discounts/decisions/${statutoryDecisionCommandId}`))).toBe(true);

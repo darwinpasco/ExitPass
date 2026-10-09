@@ -2,6 +2,7 @@ import { FormEvent, KeyboardEvent, RefObject, useEffect, useLayoutEffect, useRef
 import type { ReactNode } from "react";
 import QRCode from "qrcode";
 import { QrScanner } from "./QrScanner";
+import { PhoneCameraCapture } from "./PhoneCameraCapture";
 import { StatutoryEvidenceCapture } from "./StatutoryEvidenceCapture";
 import { AutomaticMaskedIdInput } from "./AutomaticMaskedIdInput";
 import { redirectToProviderCheckout } from "./providerCheckout";
@@ -946,7 +947,7 @@ export function App() {
       maximumContentLengthBytes: 0
     });
     if (fileError || !statutoryEvidenceFile) {
-      setStatutoryEvidenceFileError(fileError ?? "Choose a JPEG or PNG photo before submitting.");
+      setStatutoryEvidenceFileError(fileError ?? "Take a photo before submitting.");
       return;
     }
 
@@ -1820,17 +1821,11 @@ function StatutoryDiscountRequestPanel({
               </label>
             )}
 
-            <label className="field evidence-file-field">
-              <span>Evidence photo (required)</span>
-              <input
-                type="file"
-                accept="image/jpeg,image/png"
-                capture="environment"
-                onChange={(event) => onEvidenceFileChange(event.currentTarget.files?.item(0) ?? null)}
-              />
-              <small>A photo of the beneficiary's ID is required for review and approval. JPEG or PNG only.</small>
-            </label>
-            {evidenceFile && <p className="selected-file">Selected: {evidenceFile.name}</p>}
+            <PhoneCameraCapture
+              value={evidenceFile}
+              disabled={state.isSubmitting || state.isApplying || evidenceRetryPending}
+              onChange={onEvidenceFileChange}
+            />
             {evidenceFileError && <div className="form-error" role="alert">{evidenceFileError}</div>}
           </fieldset>
 

@@ -295,6 +295,48 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
             Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task ApplyAsync_CanonicalReviewContinuation_UsesDurableReviewerWithoutDeviceOrShiftEvaluation()
+    {
+        var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
+        var reviewRepository = Substitute.For<IStatutoryDiscountServiceChannelReviewRepository>();
+        reviewRepository.GetValidationReviewerAuthorityAsync(ValidationId, Arg.Any<CancellationToken>())
+            .Returns(new StatutoryDiscountServiceChannelReviewerAuthority(
+                UserId,
+                OperatorDeviceBindingId: null,
+                OperatorShiftId: null,
+                SiteId,
+                SiteGroupId));
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter>();
+        writer.ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(PersistedApplication(alreadyApplied: false));
+        var sut = CreateSut(
+            AccessResult(allowed: false, ["DEVICE_BINDING_REQUIRED", "ACTIVE_SHIFT_REQUIRED"]),
+            writer,
+            accessService: accessService,
+            reviewRepository: reviewRepository,
+            decisionSourceChannel: StatutoryDiscountSourceChannels.OperatorConsole);
+
+        var result = await sut.ApplyAsync(
+            Command() with
+            {
+                OperatorDeviceBindingId = null,
+                OperatorShiftId = null,
+                AllowProcessingApplicationCompletion = true,
+                CanonicalReviewContinuation = true
+            },
+            CancellationToken.None);
+
+        result.AccessAllowed.Should().BeTrue();
+        result.ApplicationAccepted.Should().BeTrue();
+        await accessService.DidNotReceiveWithAnyArgs().EvaluateAsync(default!, default);
+        await writer.Received(1).ApplyAsync(
+            Arg.Is<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand>(command =>
+                command.AppliedByUserId == UserId &&
+                command.AppliedByServiceIdentityId == null),
+            Arg.Any<CancellationToken>());
+    }
+
     private static OperatorConsoleStatutoryDiscountApplyPayableBasisService CreateSut(
         OperatorConsoleAccessEvaluationResult accessResult,
         IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter? writer = null,
@@ -302,6 +344,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         IStatutoryDiscountStagedCommandService? staged = null,
         IOperatorConsoleAccessEvaluationService? accessService = null,
         IStatutoryDiscountServiceChannelAuthorizationService? serviceAuthorization = null,
+        IStatutoryDiscountServiceChannelReviewRepository? reviewRepository = null,
         string? decisionSourceChannel = null)
     {
         accessService ??= Substitute.For<IOperatorConsoleAccessEvaluationService>();
@@ -347,6 +390,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
 
         ConfigureApplicationLock(staged);
         serviceAuthorization ??= Substitute.For<IStatutoryDiscountServiceChannelAuthorizationService>();
+        reviewRepository ??= Substitute.For<IStatutoryDiscountServiceChannelReviewRepository>();
 
         return new OperatorConsoleStatutoryDiscountApplyPayableBasisService(
             accessService,
@@ -354,7 +398,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
             writer,
             readService,
             staged,
-            serviceAuthorization);
+            serviceAuthorization,
+            reviewRepository);
     }
 
     private static void ConfigureApplicationLock(IStatutoryDiscountStagedCommandService staged) =>

@@ -11,6 +11,7 @@ import {
   uploadStatutoryEvidence,
   validateStatutoryEvidenceFile
 } from "./statutoryEvidence";
+import { PhoneCameraCapture } from "./PhoneCameraCapture";
 import type { WebPayStatutoryEvidenceChannelResponse } from "./types";
 
 type CaptureState = "loading" | "ready" | "authorizing" | "uploading" | "finalizing" | "idle";
@@ -219,17 +220,16 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId, o
     setCaptureState(next);
   }
 
-  function handleFileSelection(files: FileList | null) {
+  function handleCapturedPhoto(file: File | null) {
     if (!channel) {
       return;
     }
-    if (!files || files.length !== 1) {
+    if (!file) {
       setSelectedFile(null);
-      setFileError("Choose one photo to upload.");
+      setFileError("");
       return;
     }
 
-    const file = files.item(0);
     const validationError = validateStatutoryEvidenceFile(file, channel);
     setSelectedFile(validationError ? null : file);
     setFileError(validationError ?? "");
@@ -368,18 +368,15 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId, o
               {isReplacement && (
                 <p className="statutory-copy">A replacement is allowed. The server will supersede the earlier photo after the new upload is verified.</p>
               )}
-              <label className="field evidence-file-field">
-                <span>Choose or take a clear photo</span>
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png"
-                  capture="environment"
-                  onChange={(event) => handleFileSelection(event.currentTarget.files)}
-                  disabled={isBusy}
-                />
-                <small>JPEG or PNG only. The photo stays in this browser only for the active upload.</small>
-              </label>
-              {selectedFile && <p className="selected-file">Selected: {selectedFile.name} ({formatBytes(selectedFile.size)})</p>}
+              <PhoneCameraCapture
+                value={selectedFile}
+                disabled={isBusy}
+                maximumContentLengthBytes={channel.maximumContentLengthBytes}
+                maximumImageWidth={channel.maximumImageWidth}
+                maximumImageHeight={channel.maximumImageHeight}
+                onChange={handleCapturedPhoto}
+              />
+              {selectedFile && <p className="selected-file">Captured photo size: {formatBytes(selectedFile.size)}</p>}
               {fileError && <div className="form-error" role="alert">{fileError}</div>}
               {isBusy && (
                 <div className="upload-progress" role="status" aria-live="polite">
@@ -446,13 +443,13 @@ function getLifecycleCopy(channel: WebPayStatutoryEvidenceChannelResponse | null
     case "REQUIRED_NOT_STARTED":
     case "ITEM_CREATED":
     case "UPLOAD_SESSION_AVAILABLE":
-      return { label: "Photo required", message: "Choose a clear JPEG or PNG photo to continue the review request.", tone: "pending" };
+      return { label: "Photo required", message: "Take a clear photo to continue the review request.", tone: "pending" };
     case "UPLOAD_IN_PROGRESS":
-      return { label: "Upload incomplete", message: "The previous upload did not finish. Reselect the photo when the server permits another upload.", tone: "warning" };
+      return { label: "Upload incomplete", message: "The previous upload did not finish. Retake the photo when the server permits another upload.", tone: "warning" };
     case "VALIDATION_PENDING":
       return { label: "Verification pending", message: "The upload completed and photo verification is pending.", tone: "pending" };
     case "VALIDATION_FAILED":
-      return { label: "Photo not accepted", message: "The photo could not be verified. Choose another clear JPEG or PNG photo when replacement is allowed.", tone: "warning" };
+      return { label: "Photo not accepted", message: "The photo could not be verified. Retake a clear photo when replacement is allowed.", tone: "warning" };
     case "SCAN_PENDING":
       return { label: "Verification pending", message: "The photo is still being checked. Return later to check the review status.", tone: "pending" };
     case "SCAN_RETRYABLE":
@@ -461,9 +458,9 @@ function getLifecycleCopy(channel: WebPayStatutoryEvidenceChannelResponse | null
     case "NOT_REVIEWABLE":
       return { label: "Not ready for review", message: "The photo is not ready for review. Follow the available replacement or retry action.", tone: "warning" };
     case "MALWARE_DETECTED":
-      return { label: "Unsafe file detected", message: "The selected file cannot be used. Choose another photo if replacement is allowed.", tone: "error" };
+      return { label: "Unsafe file detected", message: "The captured photo cannot be used. Retake the photo if replacement is allowed.", tone: "error" };
     case "REVIEWABLE":
-      return { label: "Ready for review", message: "The photo is ready for review. This does not mean the statutory discount is approved.", tone: "success" };
+      return { label: "Photo submitted", message: "The photo is ready for review. This does not mean the statutory discount is approved.", tone: "success" };
     case "REVIEW_PENDING":
       return { label: "Awaiting review", message: "The photo was received and the statutory discount request is awaiting review.", tone: "pending" };
     case "APPROVED":

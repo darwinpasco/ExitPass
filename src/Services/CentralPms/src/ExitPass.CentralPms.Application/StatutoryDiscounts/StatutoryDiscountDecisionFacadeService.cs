@@ -80,9 +80,10 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         var normalized = NormalizeAndValidate(command);
         var decisionStageKey = DeriveStageIdempotencyKey(normalized.IdempotencyKey, "decision-v2", normalized.ParkingSessionId);
         var decisionCommand = ToDecisionV2Command(normalized, decisionStageKey);
-        var serviceChannel = IsServiceChannel(normalized.SourceChannel);
         var serviceChannelDecisionOmitted = string.IsNullOrWhiteSpace(normalized.Decision);
-        var serviceChannelApplicationIntent = serviceChannel && serviceChannelDecisionOmitted && normalized.ApplyPayableBasis;
+        var reviewMediatedApplicationIntent = IsProcessorReviewIntakeChannel(normalized.SourceChannel) &&
+            serviceChannelDecisionOmitted &&
+            normalized.ApplyPayableBasis;
         var pendingReviewIntake = IsProcessorReviewIntakeChannel(normalized.SourceChannel) &&
             serviceChannelDecisionOmitted &&
             !normalized.ApplyPayableBasis;
@@ -90,7 +91,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             normalized.SourceChannel == StatutoryDiscountSourceChannels.OperatorConsole;
         StatutoryDiscountParkingAvailabilityResult? availability = null;
 
-        if (!serviceChannelApplicationIntent && !operatorConsolePendingReviewIntake)
+        if (!reviewMediatedApplicationIntent && !operatorConsolePendingReviewIntake)
         {
             availability = await _parkingEligibilityResolver.ResolveAsync(ToAvailabilityRequest(normalized), cancellationToken)
                 .ConfigureAwait(false);
@@ -108,9 +109,9 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         StagedStatutoryDiscountCommandStartResult<StatutoryDiscountDecisionV2Record> decisionStart;
         StatutoryDiscountDecisionV2Record decision;
         var operatorConsoleIntakePrepared = false;
-        if (serviceChannelApplicationIntent)
+        if (reviewMediatedApplicationIntent)
         {
-            decision = await ResolveServiceChannelApplicationIntentDecisionAsync(normalized, decisionCommand, cancellationToken)
+            decision = await ResolveReviewedApplicationIntentDecisionAsync(normalized, decisionCommand, cancellationToken)
                 .ConfigureAwait(false);
             decisionStart = ToExistingDecisionStart(decision);
         }
@@ -156,7 +157,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
         StatutoryDiscountPayableBasisApplicationV1Record? application = null;
         var applicationResultClassification = StatutoryDiscountApplicationStageStatuses.NotRequested;
-        if (serviceChannelApplicationIntent &&
+        if (reviewMediatedApplicationIntent &&
             decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.Completed &&
             decision.DecisionResultStatus is StatutoryDiscountDecisionV2ResultStates.Rejected)
         {
@@ -183,7 +184,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             await RequireDecisionPolicyAuthorityAsync(decision.StatutoryDiscountDecisionCommandId, cancellationToken)
                 .ConfigureAwait(false);
 
-            if (serviceChannelApplicationIntent && !HasPayableBasisFacts(decision))
+            if (reviewMediatedApplicationIntent && !HasPayableBasisFacts(decision))
             {
                 normalized = await RevalidateServiceChannelPayableBasisAsync(
                         normalized,
@@ -205,7 +206,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                 application = await ResolveApplicationStageAsync(
                         normalized,
                         applicationStart,
-                        serviceChannelApplicationIntent ? decision : null,
+                        reviewMediatedApplicationIntent ? decision : null,
                         cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -287,8 +288,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
         // An approved service-channel review supplies the durable human actor for
         // idempotent fiscal/exit recovery after the original application response.
-        var reviewerUserId = string.Equals(review?.SourceChannel, "WEBPAY", StringComparison.Ordinal) &&
-            review?.ReviewerUserId is Guid reviewer && reviewer != Guid.Empty
+        var reviewerUserId = review?.ReviewerUserId is Guid reviewer && reviewer != Guid.Empty
             ? reviewer
             : (Guid?)null;
         var progressCompletion = requestFiscalIssuance || reviewerUserId.HasValue;
@@ -744,7 +744,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             .ConfigureAwait(false);
     }
 
-    private async Task<StatutoryDiscountDecisionV2Record> ResolveServiceChannelApplicationIntentDecisionAsync(
+    private async Task<StatutoryDiscountDecisionV2Record> ResolveReviewedApplicationIntentDecisionAsync(
         StatutoryDiscountDecisionCommand normalized,
         StatutoryDiscountDecisionV2Command decisionCommand,
         CancellationToken cancellationToken)
@@ -1289,7 +1289,10 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         var siteId = command.SiteId;
         var siteGroupId = command.SiteGroupId;
         var operatorShiftId = command.OperatorShiftId;
-        if (IsServiceChannel(command.SourceChannel))
+        var canonicalReviewContinuation = command.ApplyPayableBasis &&
+            string.IsNullOrWhiteSpace(command.Decision) &&
+            command.SourceChannel == StatutoryDiscountSourceChannels.OperatorConsole;
+        if (IsServiceChannel(command.SourceChannel) || canonicalReviewContinuation)
         {
             var reviewerAuthority = await _serviceChannelReviewRepository.GetValidationReviewerAuthorityAsync(
                     validationId,
@@ -1317,7 +1320,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             $"{applicationStageIdempotencyKey}:apply",
             command.CorrelationId,
             AllowProcessingApplicationCompletion: true,
-            command.ServiceChannelCaller);
+            command.ServiceChannelCaller,
+            CanonicalReviewContinuation: canonicalReviewContinuation);
     }
 
     private static StatutoryDiscountDecisionV2TariffFacts? ToTariffFacts(
@@ -1493,7 +1497,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
         if (command.ApplyPayableBasis && decision != "APPROVE")
         {
-            if (!IsServiceChannel(sourceChannel))
+            if (!IsProcessorReviewIntakeChannel(sourceChannel))
             {
                 throw Rejected("APPROVAL_REQUIRED_FOR_PAYABLE_BASIS", "Payable-basis application requires an APPROVE decision.");
             }

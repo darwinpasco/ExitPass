@@ -324,7 +324,7 @@ CentralPms__StatutoryEvidence__ScanWorker__MaxContentLengthBytes=5242880
 CentralPms__StatutoryEvidence__ScanWorker__MaxDecodedWidth=6000
 CentralPms__StatutoryEvidence__ScanWorker__MaxDecodedHeight=6000
 CentralPms__StatutoryEvidence__ScanWorker__MaxDecodedPixelCount=36000000
-CentralPms__StatutoryEvidence__ScanWorker__MaxHeaderProbeBytes=131072
+CentralPms__StatutoryEvidence__ScanWorker__MaxHeaderProbeBytes=1048576
 CentralPms__StatutoryEvidence__ScanWorker__ScannerProvider=CLAMAV_COMPATIBLE
 CentralPms__StatutoryEvidence__ScanWorker__ScannerEndpoint=$clamAvNetworkAlias
 CentralPms__StatutoryEvidence__ScanWorker__ScannerPort=3310
@@ -336,6 +336,7 @@ CentralPms__StatutoryEvidence__ScanWorker__WorkerId=central-pms-pitx-statutory-e
     Set-EnvironmentValue $centralPmsEnvironmentFile 'CentralPms__StatutoryEvidence__Upload__Endpoint' "https://${minioNetworkAlias}:9000"
     Set-EnvironmentValue $centralPmsEnvironmentFile 'CentralPms__StatutoryEvidence__Upload__PublicUploadEndpoint' "https://${minioNetworkAlias}:9000"
     Set-EnvironmentValue $centralPmsEnvironmentFile 'CentralPms__StatutoryEvidence__Upload__RequireTlsForNonLocal' 'true'
+    Set-EnvironmentValue $centralPmsEnvironmentFile 'CentralPms__StatutoryEvidence__ScanWorker__MaxHeaderProbeBytes' '1048576'
 
     $policy = @{
         Version = '2012-10-17'

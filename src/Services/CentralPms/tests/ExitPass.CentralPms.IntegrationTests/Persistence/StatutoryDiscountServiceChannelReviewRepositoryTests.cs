@@ -15,6 +15,53 @@ namespace ExitPass.CentralPms.IntegrationTests.Persistence;
 public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
 {
     [Fact]
+    public async Task GetAsync_WhenReviewHasNoOriginalSnapshot_UsesCanonicalParkingSessionVendorIdentity()
+    {
+        var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            nameof(GetAsync_WhenReviewHasNoOriginalSnapshot_UsesCanonicalParkingSessionVendorIdentity),
+            StatutoryDiscountSourceChannels.OperatorConsole);
+        try
+        {
+            await using var connection = new NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+            await connection.OpenAsync();
+            await using (var clearSnapshot = new NpgsqlCommand(
+                """
+                UPDATE operator_console.statutory_discount_service_channel_reviews
+                SET original_tariff_snapshot_id = NULL
+                WHERE statutory_discount_decision_command_id = @decision_id;
+                """,
+                connection))
+            {
+                clearSnapshot.Parameters.Add("decision_id", NpgsqlDbType.Uuid).Value =
+                    seeded.Decision.StatutoryDiscountDecisionCommandId;
+                (await clearSnapshot.ExecuteNonQueryAsync()).Should().Be(1);
+            }
+
+            Guid vendorSystemId;
+            await using (var readVendor = new NpgsqlCommand(
+                "SELECT vendor_system_id FROM core.parking_sessions WHERE parking_session_id = @parking_session_id;",
+                connection))
+            {
+                readVendor.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = seeded.Context.ParkingSessionId;
+                vendorSystemId = (Guid)(await readVendor.ExecuteScalarAsync())!;
+            }
+
+            var detail = await StatutoryDiscountReviewIntegrationTestSupport.CreateReviewRepository().GetAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+
+            detail.Should().NotBeNull();
+            detail!.OriginalTariffSnapshotId.Should().BeNull();
+            detail.VendorSystemId.Should().Be(vendorSystemId);
+        }
+        finally
+        {
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
+        }
+    }
+
+    [Fact]
     public async Task ManagementQueue_HidesEvidencePendingWebPayRequestUntilCurrentEvidenceIsReviewable()
     {
         var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(

@@ -1214,17 +1214,27 @@ summary:focus-visible {
   background: #f9fafb;
 }
 
-.evidence-file-field input[type="file"] {
-  max-width: 100%;
-  border: 1px solid #98a2b3;
-  border-radius: 4px;
-  padding: 8px;
-  background: #ffffff;
+.evidence-camera-field,
+.evidence-camera,
+.evidence-camera-preview {
+  display: grid;
+  gap: 10px;
 }
 
-.evidence-file-field input[type="file"]:focus-visible {
-  outline: 3px solid rgba(19, 167, 107, 0.28);
-  outline-offset: 2px;
+.evidence-camera-field > button,
+.evidence-camera-preview > button {
+  justify-self: start;
+}
+
+.evidence-camera video,
+.evidence-camera-preview img {
+  display: block;
+  width: min(100%, 480px);
+  max-height: 420px;
+  object-fit: contain;
+  border: 1px solid #d0d5dd;
+  border-radius: 4px;
+  background: #101828;
 }
 
 .selected-file,

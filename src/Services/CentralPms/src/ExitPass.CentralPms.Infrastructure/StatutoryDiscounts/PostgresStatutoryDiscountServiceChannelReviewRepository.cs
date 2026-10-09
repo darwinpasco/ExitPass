@@ -239,7 +239,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 payable.final_payable_amount_minor_units AS net_payable_amount_minor_units,
                 payable.currency_code,
                 COALESCE(payable.original_tariff_snapshot_id, r.original_tariff_snapshot_id) AS effective_original_tariff_snapshot_id,
-                original_tariff.vendor_system_id AS original_vendor_system_id,
+                COALESCE(original_tariff.vendor_system_id, parking_session.vendor_system_id) AS original_vendor_system_id,
                 COALESCE(dpa.statutory_discount_policy_version_id, frozen_policy.statutory_discount_policy_version_id) AS governing_policy_version_id,
                 COALESCE(dpa.jurisdiction_id, frozen_policy.jurisdiction_id) AS governing_jurisdiction_id,
                 COALESCE(dpa.jurisdiction_code, frozen_policy.jurisdiction_code) AS governing_jurisdiction_code,
@@ -264,6 +264,8 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             FROM operator_console.statutory_discount_service_channel_reviews AS r
             JOIN discounts.statutory_discount_decision_commands AS d
               ON d.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
+            JOIN core.parking_sessions AS parking_session
+              ON parking_session.parking_session_id = r.parking_session_id
             LEFT JOIN discounts.statutory_discount_decision_policy_authorities AS dpa
               ON dpa.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
             LEFT JOIN discounts.statutory_discount_validations AS validation

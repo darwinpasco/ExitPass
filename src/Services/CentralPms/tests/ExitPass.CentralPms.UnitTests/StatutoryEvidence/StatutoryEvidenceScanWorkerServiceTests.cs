@@ -22,6 +22,49 @@ public sealed class StatutoryEvidenceScanWorkerServiceTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_MobileJpegWithLargeExifSegments_ReachesScannerAndCompletesAsClean()
+    {
+        var bytes = MobileJpegBytesWithLargeMetadata();
+        var repo = new RecordingRepository(Work(expectedContentLength: bytes.Length));
+        var scanner = new RecordingScanner(new("CLEAN", true, false, null));
+        var service = CreateService(
+            repo,
+            new MemoryStorage(bytes, "image/jpeg", "abc"),
+            scanner,
+            maxContentLengthBytes: 5 * 1024 * 1024,
+            configureOptions: options => options.MaxHeaderProbeBytes = 1024 * 1024);
+
+        await service.RunOnceAsync(CancellationToken.None);
+
+        scanner.Calls.Should().Be(1);
+        repo.Completed.Should().NotBeNull();
+        repo.Completed!.ValidationStatus.Should().Be("PASSED");
+        repo.Completed.ValidationResult.Should().Be("PASSED");
+        repo.Completed.MalwareScanStatus.Should().Be("CLEAN");
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_JpegStartOfFrameBeyondConfiguredProbe_FailsClosedBeforeScanner()
+    {
+        var bytes = MobileJpegBytesWithLargeMetadata();
+        var repo = new RecordingRepository(Work(expectedContentLength: bytes.Length));
+        var scanner = new RecordingScanner(new("CLEAN", true, false, null));
+        var service = CreateService(
+            repo,
+            new MemoryStorage(bytes, "image/jpeg", "abc"),
+            scanner,
+            maxContentLengthBytes: 5 * 1024 * 1024,
+            configureOptions: options => options.MaxHeaderProbeBytes = 128 * 1024);
+
+        await service.RunOnceAsync(CancellationToken.None);
+
+        scanner.Calls.Should().Be(0);
+        repo.Completed.Should().NotBeNull();
+        repo.Completed!.ValidationResult.Should().Be("HEADER_PROBE_LIMIT_EXCEEDED");
+        repo.Completed.MalwareScanStatus.Should().Be("ERROR_TERMINAL");
+    }
+
+    [Fact]
     public async Task RunOnceAsync_CleanPng_CompletesAsClean()
     {
         var repo = new RecordingRepository(Work(contentType: "image/png"));
@@ -168,6 +211,7 @@ public sealed class StatutoryEvidenceScanWorkerServiceTests
         IStatutoryEvidenceProtectedObjectStorageAdapter storage,
         IStatutoryEvidenceScanner scanner,
         bool enabled = true,
+        long maxContentLengthBytes = 4096,
         Action<StatutoryEvidenceScanWorkerOptions>? configureOptions = null,
         IStatutoryEvidenceScanWorkerTestHook? testHook = null)
     {
@@ -175,7 +219,7 @@ public sealed class StatutoryEvidenceScanWorkerServiceTests
         {
             Enabled = enabled,
             ScannerProvider = StatutoryEvidenceScanConstants.ScannerProviderNoopTestOnly,
-            MaxContentLengthBytes = 4096,
+            MaxContentLengthBytes = maxContentLengthBytes,
             MaxAttempts = 3,
             ScannerEndpoint = "127.0.0.1"
         };
@@ -185,13 +229,17 @@ public sealed class StatutoryEvidenceScanWorkerServiceTests
             repository,
             storage,
             scanner,
-            new StatutoryEvidenceUploadOptions { BucketName = "private", MaxContentLengthBytes = 4096 },
+            new StatutoryEvidenceUploadOptions { BucketName = "private", MaxContentLengthBytes = maxContentLengthBytes },
             options,
             TimeProvider.System,
             testHook);
     }
 
-    private static StatutoryEvidenceScanWorkItem Work(string contentType = "image/jpeg", int retryCount = 0, int maxAttempts = 3) =>
+    private static StatutoryEvidenceScanWorkItem Work(
+        string contentType = "image/jpeg",
+        int retryCount = 0,
+        int maxAttempts = 3,
+        long? expectedContentLength = null) =>
         new(
             Guid.NewGuid(),
             Guid.NewGuid(),
@@ -203,7 +251,7 @@ public sealed class StatutoryEvidenceScanWorkerServiceTests
             "bucket-ref",
             "internal/object",
             contentType,
-            contentType == "image/png" ? PngBytes().Length : JpegBytes().Length,
+            expectedContentLength ?? (contentType == "image/png" ? PngBytes().Length : JpegBytes().Length),
             "abc",
             null,
             2,
@@ -245,6 +293,34 @@ public sealed class StatutoryEvidenceScanWorkerServiceTests
             0x03, 0x11, 0x01,
             0xFF, 0xD9
         ];
+    }
+
+    private static byte[] MobileJpegBytesWithLargeMetadata()
+    {
+        using var stream = new MemoryStream();
+        stream.Write([0xFF, 0xD8]);
+        WriteJpegSegment(stream, 0xE1, 51_196);
+        WriteJpegSegment(stream, 0xE2, 3_160);
+        WriteJpegSegment(stream, 0xE5, 65_406);
+        WriteJpegSegment(stream, 0xE6, 65_406);
+        WriteJpegSegment(stream, 0xE7, 65_406);
+        WriteJpegSegment(stream, 0xE8, 65_406);
+        stream.Write(
+        [
+            0xFF, 0xC0, 0x00, 0x11, 0x08, 0x07, 0x80, 0x05, 0xA0, 0x03, 0x01, 0x11, 0x00,
+            0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+            0xFF, 0xD9
+        ]);
+        return stream.ToArray();
+    }
+
+    private static void WriteJpegSegment(Stream stream, byte marker, int segmentLength)
+    {
+        stream.WriteByte(0xFF);
+        stream.WriteByte(marker);
+        stream.WriteByte((byte)(segmentLength >> 8));
+        stream.WriteByte((byte)segmentLength);
+        stream.Write(new byte[segmentLength - 2]);
     }
 
     private static void WriteBigEndian(Span<byte> target, int value)

@@ -480,6 +480,74 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         }
     }
 
+    [Fact]
+    public async Task ServiceChannel_WhenRegularPaymentFinalizesWhileReviewIsPending_LaterApprovalCannotChangePaidBasis()
+    {
+        var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
+            nameof(ServiceChannel_WhenRegularPaymentFinalizesWhileReviewIsPending_LaterApprovalCannotChangePaidBasis));
+        await SeedServiceAuthorizationAsync(context);
+
+        try
+        {
+            using var factory = CreateFactory(context);
+            using var serviceClient = factory.CreateClient();
+            using var operatorClient = factory.CreateClient();
+            AddServiceHeaders(serviceClient, StatutoryDiscountSourceChannels.WebPay);
+            AddOperatorHeaders(operatorClient, context);
+
+            var intake = await PostSharedDecisionAsync(
+                serviceClient,
+                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: false),
+                $"regular-payment-intake-{context.ParkingSessionId:N}",
+                context.CorrelationId,
+                HttpStatusCode.Created);
+
+            var paymentAttempt = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                StatutoryDiscountReviewIntegrationTestSupport.ConnectionString,
+                context,
+                $"regular-payment-before-review-{context.ParkingSessionId:N}",
+                "regular-payment-before-statutory-review-test",
+                context.TariffSnapshotId);
+            var paymentConfirmation = await PaymentRoutineTestHelper.RecordPaymentConfirmationAsync(
+                StatutoryDiscountReviewIntegrationTestSupport.ConnectionString,
+                paymentAttempt.PaymentAttemptId,
+                $"provider-regular-before-review-{context.ParkingSessionId:N}",
+                "regular-payment-before-statutory-review-test",
+                context.CorrelationId);
+
+            paymentAttempt.TariffSnapshotId.Should().Be(context.TariffSnapshotId);
+            paymentConfirmation.Should().NotBeNull();
+            await CompleteReviewAsync(operatorClient, context, intake.StatutoryDiscountDecisionCommandId, "APPROVE");
+
+            using var application = await SendSharedDecisionAsync(
+                serviceClient,
+                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
+                $"regular-payment-late-apply-{context.ParkingSessionId:N}",
+                Guid.NewGuid());
+
+            application.StatusCode.Should().Be(HttpStatusCode.BadRequest, await application.Content.ReadAsStringAsync());
+            var error = await application.Content.ReadFromJsonAsync<ErrorResponse>();
+            error.Should().NotBeNull();
+            error!.ErrorCode.Should().Be(
+                "TARIFF_SNAPSHOT_NOT_FOUND",
+                "regular payment finality consumes the original basis before a later statutory decision can alter it");
+
+            var counts = await StatutoryDiscountReviewIntegrationTestSupport.WorkflowBoundaryRowCountsAsync(
+                context.ParkingSessionId,
+                intake.StatutoryDiscountDecisionCommandId);
+            counts.PaymentAttemptCount.Should().Be(1);
+            counts.PaymentConfirmationCount.Should().Be(1);
+            counts.PayableBasisApplicationCount.Should().Be(0);
+            counts.AppliedTariffSnapshotCount.Should().Be(0);
+            paymentConfirmation!.PaymentAttemptId.Should().Be(paymentAttempt.PaymentAttemptId);
+        }
+        finally
+        {
+            await CleanupServiceAssignmentsAsync(context);
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
+        }
+    }
+
     [Theory]
     [InlineData(StatutoryDiscountSourceChannels.WebPay, StatutoryDiscountSourceChannels.AssistedPaymentTerminal)]
     [InlineData(StatutoryDiscountSourceChannels.AssistedPaymentTerminal, StatutoryDiscountSourceChannels.WebPay)]

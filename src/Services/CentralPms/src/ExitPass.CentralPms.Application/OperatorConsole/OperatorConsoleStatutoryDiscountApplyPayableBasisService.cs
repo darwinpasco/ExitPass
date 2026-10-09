@@ -25,6 +25,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
     private readonly IOperatorConsoleStatutoryDiscountReadService _readService;
     private readonly IStatutoryDiscountStagedCommandService _stagedCommandService;
     private readonly IStatutoryDiscountServiceChannelAuthorizationService _serviceChannelAuthorizationService;
+    private readonly IStatutoryDiscountServiceChannelReviewRepository _reviewRepository;
 
     /// <summary>
     /// Creates an Operator Console statutory discount payable-basis application service.
@@ -35,7 +36,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter writer,
         IOperatorConsoleStatutoryDiscountReadService readService,
         IStatutoryDiscountStagedCommandService stagedCommandService,
-        IStatutoryDiscountServiceChannelAuthorizationService serviceChannelAuthorizationService)
+        IStatutoryDiscountServiceChannelAuthorizationService serviceChannelAuthorizationService,
+        IStatutoryDiscountServiceChannelReviewRepository reviewRepository)
     {
         _accessEvaluationService = accessEvaluationService ?? throw new ArgumentNullException(nameof(accessEvaluationService));
         _accessEvaluationWriter = accessEvaluationWriter ?? throw new ArgumentNullException(nameof(accessEvaluationWriter));
@@ -44,6 +46,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         _stagedCommandService = stagedCommandService ?? throw new ArgumentNullException(nameof(stagedCommandService));
         _serviceChannelAuthorizationService = serviceChannelAuthorizationService ??
             throw new ArgumentNullException(nameof(serviceChannelAuthorizationService));
+        _reviewRepository = reviewRepository ?? throw new ArgumentNullException(nameof(reviewRepository));
     }
 
     /// <inheritdoc />
@@ -55,7 +58,26 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         Validate(command);
 
         ApplyAuthorization authorization;
-        if (command.ServiceChannelCaller is not null)
+        if (command.CanonicalReviewContinuation)
+        {
+            var reviewerAuthority = command.AllowProcessingApplicationCompletion && command.ServiceChannelCaller is null
+                ? await _reviewRepository.GetValidationReviewerAuthorityAsync(command.ValidationId, cancellationToken)
+                    .ConfigureAwait(false)
+                : null;
+            var allowed = reviewerAuthority is not null &&
+                reviewerAuthority.ReviewerUserId == command.UserId &&
+                reviewerAuthority.SiteId == command.SiteId &&
+                reviewerAuthority.SiteGroupId == command.SiteGroupId;
+            authorization = new ApplyAuthorization(
+                command.CorrelationId,
+                allowed,
+                allowed ? "ALLOWED" : "DENIED",
+                allowed ? [] : ["CANONICAL_REVIEW_AUTHORITY_REQUIRED"],
+                Persisted: true,
+                allowed ? null : "CANONICAL_REVIEW_AUTHORITY_REQUIRED",
+                command.CorrelationId);
+        }
+        else if (command.ServiceChannelCaller is not null)
         {
             var serviceAuthorization = await _serviceChannelAuthorizationService.AuthorizeAsync(
                     command.ServiceChannelCaller,

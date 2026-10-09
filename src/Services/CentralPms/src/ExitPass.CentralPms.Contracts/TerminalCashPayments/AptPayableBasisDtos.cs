@@ -98,6 +98,9 @@ public sealed record AptPayableBasisReadinessResponse(
     /// <summary>Immutable tariff version reference used by the payable basis.</summary>
     public string? TariffVersion { get; init; }
 
+    /// <summary>Canonical zero-payable fiscal and exit completion readback, when applicable.</summary>
+    public AptZeroPayableStatutoryCompletionDto? ZeroPayableStatutoryCompletion { get; init; }
+
     /// <summary>Projection identifier retained for bounded support traceability.</summary>
     public Guid? VendorSessionProjectionId { get; init; }
 
@@ -110,6 +113,21 @@ public sealed record AptPayableBasisReadinessResponse(
     /// <summary>Age of the projection refresh in seconds.</summary>
     public double? ProjectionFreshnessAgeSeconds { get; init; }
 }
+
+/// <summary>
+/// APT-safe completion summary for an applied zero-payable statutory benefit.
+/// </summary>
+public sealed record AptZeroPayableStatutoryCompletionDto(
+    string CompletionBasis,
+    bool FiscalPrerequisiteSatisfied,
+    Guid? FiscalIssuanceReferenceId,
+    string? FiscalIssuanceState,
+    Guid? PosServerFiscalDocumentId,
+    string? FiscalDocumentNumber,
+    Guid? ExitAuthorizationId,
+    string? ExitAuthorizationStatus,
+    DateTimeOffset? ExitAuthorizationIssuedAt,
+    DateTimeOffset? ExitAuthorizationExpiresAt);
 
 /// <summary>
 /// One readiness dimension returned for APT display and support diagnostics.
