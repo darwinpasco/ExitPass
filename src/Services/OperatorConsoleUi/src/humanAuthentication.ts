@@ -5,6 +5,7 @@ export const humanAuthenticationRoutes = {
   session: "/v1/human-authentication/session",
   logout: "/v1/human-authentication/logout",
   passwordChange: "/v1/human-authentication/password/change",
+  enrollDevice: "/v1/devices/enrollment",
   establishDeviceBinding: "/v1/operator-console/device-binding/establish",
   bindDeviceSession: "/v1/operator-console/device-binding/bind-session"
 } as const;
@@ -76,7 +77,7 @@ export interface HumanAuthenticationClient {
   login(username: string, password: string): Promise<OperatorConsoleHumanSession>;
   getCurrentSession(): Promise<OperatorConsoleHumanSession>;
   changePassword(command: ChangePasswordCommand): Promise<void>;
-  establishDeviceBinding(proof: string): Promise<void>;
+  enrollDevice(enrollmentPackage: string): Promise<void>;
   bindDeviceSession(): Promise<OperatorConsoleHumanSession>;
   logout(): Promise<void>;
   clearRuntimeState(): void;
@@ -183,11 +184,24 @@ export function createHumanAuthenticationClient(
       csrfToken = null;
     },
 
-    async establishDeviceBinding(proof) {
+    async enrollDevice(enrollmentPackage) {
+      const enrollment = parseOperatorConsoleEnrollmentPackage(enrollmentPackage);
+      const enrollmentResponse = await send(humanAuthenticationRoutes.enrollDevice, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(enrollment)
+      });
+      if (!enrollmentResponse.ok) {
+        throw mapOperatingContextFailure(
+          enrollmentResponse.status,
+          await parseAuthenticationResponse(enrollmentResponse)
+        );
+      }
+      const enrolled = await parseDeviceEnrollmentResponse(enrollmentResponse, enrollment.deviceReference);
       const response = await send(humanAuthenticationRoutes.establishDeviceBinding, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ proof })
+        body: JSON.stringify({ proof: enrolled.runtimeCredential })
       });
       if (!response.ok) {
         throw mapOperatingContextFailure(response.status, await parseAuthenticationResponse(response));
@@ -245,6 +259,84 @@ export function createHumanAuthenticationClient(
       return csrfToken;
     }
   };
+}
+
+interface OperatorConsoleEnrollmentPackage {
+  provisioningCredential: string;
+  deviceReference: string;
+  deviceType: "OPERATOR_CONSOLE";
+  siteId: string;
+  siteGroupId: string;
+  terminalIdentifier: string | null;
+}
+
+function parseOperatorConsoleEnrollmentPackage(value: string): OperatorConsoleEnrollmentPackage {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw malformedEnrollmentPackage();
+  }
+  if (
+    !isRecord(parsed) ||
+    !isString(parsed.provisioningCredential) || parsed.provisioningCredential.length < 48 ||
+    !isString(parsed.deviceReference) ||
+    parsed.deviceType !== operatorConsoleAudience ||
+    !isString(parsed.siteId) ||
+    !isString(parsed.siteGroupId) ||
+    !(parsed.terminalIdentifier === null || isString(parsed.terminalIdentifier))
+  ) {
+    throw malformedEnrollmentPackage();
+  }
+  return {
+    provisioningCredential: parsed.provisioningCredential,
+    deviceReference: parsed.deviceReference,
+    deviceType: "OPERATOR_CONSOLE",
+    siteId: parsed.siteId,
+    siteGroupId: parsed.siteGroupId,
+    terminalIdentifier: parsed.terminalIdentifier
+  };
+}
+
+async function parseDeviceEnrollmentResponse(response: Response, expectedDeviceReference: string) {
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    throw malformedEnrollmentResponse();
+  }
+  if (
+    !isRecord(value) ||
+    value.deviceReference !== expectedDeviceReference ||
+    value.deviceType !== operatorConsoleAudience ||
+    value.runtimeCredentialType !== "BROWSER_KEY" ||
+    !isString(value.runtimeCredential) || value.runtimeCredential.length < 32
+  ) {
+    throw malformedEnrollmentResponse(
+      isRecord(value) && isString(value.correlationId) ? value.correlationId : undefined
+    );
+  }
+  return { runtimeCredential: value.runtimeCredential };
+}
+
+function malformedEnrollmentPackage() {
+  return new HumanAuthenticationError(
+    "operating-context",
+    "The one-time enrollment package is invalid or is not for an Operator Console device.",
+    false,
+    undefined,
+    "DEVICE_ENROLLMENT_PACKAGE_INVALID"
+  );
+}
+
+function malformedEnrollmentResponse(supportReference?: string) {
+  return new HumanAuthenticationError(
+    "malformed",
+    "Central PMS accepted the enrollment, but this browser could not establish its governed workstation trust state from the response. Reload this browser profile to verify trust. Do not reuse the consumed enrollment package; contact support if the workstation remains untrusted.",
+    false,
+    supportReference,
+    "DEVICE_ENROLLMENT_RESPONSE_INVALID"
+  );
 }
 
 async function parseAuthenticationResponse(response: Response): Promise<AuthenticationResponseDto> {
