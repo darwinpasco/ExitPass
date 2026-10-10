@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { createMockOperatorConsoleApiClient } from "./apiClient";
@@ -6,7 +6,7 @@ import { OperatorConsoleAuthenticationShell } from "./OperatorConsoleAuthenticat
 import { HumanAuthenticationError, type HumanAuthenticationClient, type OperatorConsoleHumanSession } from "./humanAuthentication";
 
 describe("Operator Console authentication shell", () => {
-  it("bootstraps from current-session readback without restoring browser authority", async () => {
+  it("restores the persisted governed workstation context from current-session readback after reload", async () => {
     const client = authenticationClient({ currentSession: session() });
 
     render(
@@ -22,6 +22,7 @@ describe("Operator Console authentication shell", () => {
     expect(screen.getByText("ordinary.operator")).toBeInTheDocument();
     expect(screen.getByText("1 Site, 1 Site Group")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Session Lookup" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Governed workstation enrollment package")).not.toBeInTheDocument();
     expect(client.getCurrentSession).toHaveBeenCalledTimes(1);
     expect(client.bindDeviceSession).not.toHaveBeenCalled();
     expect(window.localStorage).toHaveLength(0);
@@ -54,21 +55,21 @@ describe("Operator Console authentication shell", () => {
     expect(document.body).not.toHaveTextContent("operator-password");
   });
 
-  it("exchanges an opaque workstation proof without browser persistence", async () => {
+  it("consumes the governed workstation enrollment package without browser persistence", async () => {
     const client = authenticationClient({
       currentError: new HumanAuthenticationError("unauthenticated", "Sign in to continue.")
     });
     const storageSetItem = vi.spyOn(Storage.prototype, "setItem");
     render(<OperatorConsoleAuthenticationShell authenticationClient={client} />);
 
-    const proofInput = await screen.findByLabelText("Workstation provisioning proof");
-    const proof = "controlled-workstation-proof-1234567890";
-    await userEvent.type(proofInput, proof);
-    await userEvent.click(screen.getByRole("button", { name: "Trust workstation" }));
+    const packageInput = await screen.findByLabelText("Governed workstation enrollment package");
+    const enrollmentPackage = JSON.stringify({ provisioningCredential: "one-time-token", deviceType: "OPERATOR_CONSOLE" });
+    fireEvent.change(packageInput, { target: { value: enrollmentPackage } });
+    await userEvent.click(screen.getByRole("button", { name: "Enroll workstation" }));
 
-    await waitFor(() => expect(client.establishDeviceBinding).toHaveBeenCalledWith(proof));
-    expect(proofInput).toHaveValue("");
-    expect(document.body).not.toHaveTextContent(proof);
+    await waitFor(() => expect(client.enrollDevice).toHaveBeenCalledWith(enrollmentPackage));
+    expect(packageInput).toHaveValue("");
+    expect(document.body).not.toHaveTextContent(enrollmentPackage);
     expect(storageSetItem).not.toHaveBeenCalled();
     storageSetItem.mockRestore();
   });
@@ -109,7 +110,7 @@ describe("Operator Console authentication shell", () => {
 
     expect(await screen.findByText("Operator context required")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Session Lookup" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Workstation provisioning proof")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("Governed workstation enrollment package")).toHaveAttribute("type", "password");
   });
 
   it("disables login credential autocomplete and presents no persistence option", async () => {
@@ -399,7 +400,7 @@ function authenticationClient(options: {
   loginError?: Error;
   bindSession?: OperatorConsoleHumanSession;
   bindError?: Error;
-  establishError?: Error;
+  enrollError?: Error;
   changePasswordError?: Error;
   logoutError?: Error;
 }): HumanAuthenticationClient {
@@ -415,8 +416,8 @@ function authenticationClient(options: {
     changePassword: vi.fn(async () => {
       if (options.changePasswordError) throw options.changePasswordError;
     }),
-    establishDeviceBinding: vi.fn(async () => {
-      if (options.establishError) throw options.establishError;
+    enrollDevice: vi.fn(async () => {
+      if (options.enrollError) throw options.enrollError;
     }),
     bindDeviceSession: vi.fn(async () => {
       if (options.bindError) throw options.bindError;

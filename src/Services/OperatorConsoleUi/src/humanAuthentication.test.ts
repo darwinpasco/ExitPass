@@ -53,7 +53,7 @@ describe("Operator Console I-020 authentication client", () => {
     expect(window.sessionStorage).toHaveLength(0);
   });
 
-  it("exchanges the opaque device proof and binds the authenticated session with CSRF", async () => {
+  it("accepts the actual BROWSER_KEY enrollment response, persists trust through the cookie endpoint, and binds the human session independently", async () => {
     const boundSession = {
       ...sessionDto(),
       operatorDeviceBindingReference: "16000000-0000-0000-0000-000000000001",
@@ -62,21 +62,26 @@ describe("Operator Console I-020 authentication client", () => {
     };
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(deviceEnrollmentResponse())
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(authenticationResponse(sessionDto(), { csrf: "csrf-bind" }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(authenticationResponse(boundSession));
     const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
-    const proof = "controlled-workstation-proof-1234567890";
+    const enrollmentPackage = operatorConsoleEnrollmentPackage();
 
-    await client.establishDeviceBinding(proof);
+    await client.enrollDevice(enrollmentPackage);
     await client.getCurrentSession();
     const result = await client.bindDeviceSession();
 
-    const establish = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const enrollment = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(enrollment[0]).toBe(humanAuthenticationRoutes.enrollDevice);
+    expect(JSON.parse(enrollment[1].body as string)).toEqual(JSON.parse(enrollmentPackage));
+    const establish = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
     expect(establish[0]).toBe(humanAuthenticationRoutes.establishDeviceBinding);
-    expect(JSON.parse(establish[1].body as string)).toEqual({ proof });
-    const bind = fetchMock.mock.calls[2] as unknown as [string, RequestInit];
+    expect(establish[1].credentials).toBe("same-origin");
+    expect(JSON.parse(establish[1].body as string)).toEqual({ proof: "server-issued-runtime-proof-12345678901234567890" });
+    const bind = fetchMock.mock.calls[3] as unknown as [string, RequestInit];
     expect(bind[0]).toBe(humanAuthenticationRoutes.bindDeviceSession);
     expect(bind[1].headers).toEqual(expect.objectContaining({ "X-CSRF-Token": "csrf-bind" }));
     expect(result).toEqual(expect.objectContaining({
@@ -87,6 +92,27 @@ describe("Operator Console I-020 authentication client", () => {
     }));
     expect(window.localStorage).toHaveLength(0);
     expect(window.sessionStorage).toHaveLength(0);
+  });
+
+  it("treats an unprocessable successful enrollment as consumed and preserves its support reference", async () => {
+    const fetchMock = vi.fn(async () => deviceEnrollmentResponse({ runtimeCredentialType: "API_KEY_REFERENCE" }));
+    const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
+
+    let failure: HumanAuthenticationError | undefined;
+    try {
+      await client.enrollDevice(operatorConsoleEnrollmentPackage());
+    } catch (error) {
+      failure = error as HumanAuthenticationError;
+    }
+    expect(failure).toMatchObject({
+      kind: "malformed",
+      errorCode: "DEVICE_ENROLLMENT_RESPONSE_INVALID",
+      supportReference: "18000000-0000-0000-0000-000000000001",
+      message: expect.stringContaining("Central PMS accepted the enrollment")
+    });
+    expect(failure?.message).toContain("Do not reuse the consumed enrollment package");
+    expect(failure?.message).not.toMatch(/rotate/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("accepts a shift-deferred authenticated session with a null operator shift reference", async () => {
@@ -273,6 +299,34 @@ function failureResponse(status: number, errorCode: string) {
     retryable: status >= 500 || status === 429,
     correlationId: "15000000-0000-0000-0000-000000000001"
   }), { status, headers: { "Content-Type": "application/json" } });
+}
+
+function operatorConsoleEnrollmentPackage() {
+  return JSON.stringify({
+    provisioningCredential: "one-time-provisioning-credential-123456789012345678901234",
+    deviceReference: "DEV-OPERATOR-CONSOLE-01",
+    deviceType: "OPERATOR_CONSOLE",
+    siteId: "13000000-0000-0000-0000-000000000001",
+    siteGroupId: "14000000-0000-0000-0000-000000000001",
+    terminalIdentifier: "OC-PITX-01"
+  });
+}
+
+function deviceEnrollmentResponse(overrides: Record<string, unknown> = {}) {
+  return new Response(JSON.stringify({
+    deviceId: "16000000-0000-0000-0000-000000000001",
+    deviceReference: "DEV-OPERATOR-CONSOLE-01",
+    serviceIdentityId: "17000000-0000-0000-0000-000000000001",
+    deviceType: "OPERATOR_CONSOLE",
+    siteId: "13000000-0000-0000-0000-000000000001",
+    siteGroupId: "14000000-0000-0000-0000-000000000001",
+    credentialVersion: 1,
+    runtimeCredential: "server-issued-runtime-proof-12345678901234567890",
+    runtimeCredentialType: "BROWSER_KEY",
+    displayPolicy: "Shown once",
+    correlationId: "18000000-0000-0000-0000-000000000001",
+    ...overrides
+  }), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
 function passwordChangedResponse() {
