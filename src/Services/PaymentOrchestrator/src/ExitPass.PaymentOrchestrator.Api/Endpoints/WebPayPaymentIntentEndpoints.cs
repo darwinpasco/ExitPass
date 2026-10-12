@@ -1,5 +1,6 @@
 using ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
+using ExitPass.PaymentOrchestrator.Application.UseCases.RecoverProviderPaymentOutcome;
 using ExitPass.PaymentOrchestrator.Contracts.WebPay;
 
 namespace ExitPass.PaymentOrchestrator.Api.Endpoints;
@@ -346,6 +347,8 @@ public static class WebPayPaymentIntentEndpoints
         app.MapGet("/v1/webpay/payment-attempts/{paymentAttemptId:guid}/status", async (
             Guid paymentAttemptId,
             ICentralPmsWebPayClient centralPmsClient,
+            RecoverProviderPaymentOutcomeHandler recoveryHandler,
+            ILoggerFactory loggerFactory,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
@@ -355,6 +358,37 @@ public static class WebPayPaymentIntentEndpoints
                     correlationId,
                     cancellationToken)
                 .ConfigureAwait(false);
+
+            if (result.Succeeded && result.Value is not null && ShouldAttemptProviderRecovery(result.Value))
+            {
+                try
+                {
+                    await recoveryHandler.HandleAsync(
+                        new RecoverProviderPaymentOutcomeCommand(
+                            result.Value.PaymentAttemptId,
+                            result.Value.ParkingSessionId,
+                            result.Value.AmountMinorUnits,
+                            result.Value.Currency,
+                            correlationId),
+                        cancellationToken);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    loggerFactory
+                        .CreateLogger("ExitPass.PaymentOrchestrator.Api.WebPayPaymentStatusRecovery")
+                        .LogWarning(
+                            exception,
+                            "Provider status recovery did not complete. PaymentAttemptId {PaymentAttemptId}, CorrelationId {CorrelationId}",
+                            paymentAttemptId,
+                            correlationId);
+                }
+
+                result = await centralPmsClient.GetPaymentAttemptStatusAsync(
+                        paymentAttemptId,
+                        correlationId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
 
             if (result.Succeeded && result.Value is not null)
             {
@@ -1247,6 +1281,22 @@ public static class WebPayPaymentIntentEndpoints
         {
             response[key] = value;
         }
+    }
+
+    private static bool ShouldAttemptProviderRecovery(CentralPmsWebPayPaymentAttemptStatus status)
+    {
+        var paymentStatus = Normalize(status.PaymentStatus);
+        if (paymentStatus is "REQUESTED" or "PENDING_PROVIDER" or "PENDING_FINALIZATION")
+        {
+            return true;
+        }
+
+        return paymentStatus == "CONFIRMED" &&
+            status.ExitAuthorizationId is null &&
+            !string.Equals(
+                status.ExitAuthorizationStatus,
+                "MANUAL_EXIT_REQUIRED",
+                StringComparison.OrdinalIgnoreCase);
     }
 
     private static string Normalize(string? value) =>

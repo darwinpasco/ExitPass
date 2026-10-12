@@ -7,6 +7,7 @@ using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Application.Observability;
 using ExitPass.PaymentOrchestrator.Application.UseCases.InitiateProviderPayment;
 using ExitPass.PaymentOrchestrator.Application.UseCases.QueryProviderSessionStatus;
+using ExitPass.PaymentOrchestrator.Application.UseCases.RecoverProviderPaymentOutcome;
 using ExitPass.PaymentOrchestrator.Application.UseCases.VerifyProviderWebhook;
 using ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents;
 using ExitPass.PaymentOrchestrator.Infrastructure.Integrations;
@@ -221,6 +222,7 @@ static void RegisterApplicationServices(IServiceCollection services)
 
     services.AddScoped<InitiateProviderPaymentHandler>();
     services.AddScoped<QueryProviderSessionStatusHandler>();
+    services.AddScoped<RecoverProviderPaymentOutcomeHandler>();
     services.AddScoped<WebPayPaymentIntentHandler>();
     services.AddScoped<IProviderPaymentHandoffInitiator, ProviderPaymentHandoffInitiator>();
     services.AddSingleton<IProviderProductResolver, ProviderProductResolver>();
@@ -236,7 +238,9 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
     services.AddHttpClient<ICentralPmsPaymentOutcomeReporter, CentralPmsPaymentOutcomeReporter>(static client =>
     {
         client.Timeout = TimeSpan.FromSeconds(30);
-    });
+    }).ConfigurePrimaryHttpMessageHandler(static serviceProvider =>
+        new CentralPmsStatutoryServicePrincipalHttpMessageHandler(
+            serviceProvider.GetRequiredService<IOptions<CentralPmsStatutoryServicePrincipalOptions>>().Value));
 
     services.AddSingleton<
         IValidateOptions<CentralPmsStatutoryServicePrincipalOptions>,
