@@ -102,7 +102,6 @@ BEGIN
        AND (
            browser_key_thumbprint IS DISTINCT FROM v_proof_hash
            OR last_seen_at IS NULL
-           OR last_seen_at <= now() - interval '12 hours'
        );
 
 END

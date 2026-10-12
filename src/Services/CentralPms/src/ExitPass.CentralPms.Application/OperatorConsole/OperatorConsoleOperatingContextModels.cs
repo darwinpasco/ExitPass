@@ -3,6 +3,8 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 public static class OperatorConsoleOperatingContextFailureCodes
 {
     public const string DeviceBindingRequired = "OPERATOR_DEVICE_BINDING_REQUIRED";
+    public const string DeviceCredentialRotationRequired = "OPERATOR_DEVICE_CREDENTIAL_ROTATION_REQUIRED";
+    public const string DeviceReplacementEnrollmentRequired = "OPERATOR_DEVICE_REPLACEMENT_ENROLLMENT_REQUIRED";
     public const string DeviceBindingInvalid = "OPERATOR_DEVICE_BINDING_INVALID";
     public const string DeviceBindingRevoked = "OPERATOR_DEVICE_BINDING_REVOKED";
     public const string DeviceBindingExpired = "OPERATOR_DEVICE_BINDING_EXPIRED";
@@ -39,7 +41,9 @@ public sealed record OperatorConsoleDeviceBindingCandidate(
     int MatchingProofCount,
     int ActiveAssignmentCount,
     Guid? AssignmentSiteId,
-    Guid? AssignmentSiteGroupId);
+    Guid? AssignmentSiteGroupId,
+    bool RotationEnrollmentAvailable,
+    bool ReplacementEnrollmentAvailable);
 
 public sealed record OperatorConsoleSessionBindingSnapshot(
     long AuthorizationEpoch,

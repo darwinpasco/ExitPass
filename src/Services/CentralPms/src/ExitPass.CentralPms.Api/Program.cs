@@ -75,6 +75,7 @@ using ExitPass.CentralPms.Infrastructure.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Infrastructure.WebPay;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -104,6 +105,7 @@ ConfigureLogging(builder, otlpEndpoint, serviceVersion);
 ConfigureOpenTelemetry(builder, otlpEndpoint, serviceVersion);
 ConfigureHealthChecks(builder);
 ConfigureInternalSecurity(builder);
+ConfigureGovernedClientCertificateAdmission(builder);
 ConfigureHumanAuthentication(builder, mainDatabaseConnectionString);
 ConfigureCustomerDigitalSalesInvoiceCapability(builder);
 ConfigureOperatorConsoleStatutoryIdPhoto(builder);
@@ -199,6 +201,7 @@ app.MapManagementPlatformStatutoryDiscountPolicyCoverageEndpoints();
 app.MapManagementPlatformStatutoryEvidenceGovernanceEndpoints();
 app.MapManagementPlatformSalesInvoiceProfileAdministrationEndpoints();
 app.MapManagementConfigurationEndpoints();
+app.MapDeviceAdministrationEndpoints();
 app.MapAptPayableBasisEndpoints();
 app.MapAptStatutoryOrdinanceAvailabilityEndpoints();
 app.MapTerminalCashPaymentEndpoints();
@@ -376,6 +379,24 @@ static void ConfigureInternalSecurity(WebApplicationBuilder builder)
     builder.Services.Configure<CentralPmsRbacOptions>(
         builder.Configuration.GetSection("CentralPms:Rbac"));
     builder.Services.AddSingleton<IInternalClientCertificateAccessor, HttpContextInternalClientCertificateAccessor>();
+}
+
+static void ConfigureGovernedClientCertificateAdmission(WebApplicationBuilder builder)
+{
+    if (!builder.Configuration.GetValue<bool>("InternalSecurity:Mtls:Enabled"))
+    {
+        return;
+    }
+
+    builder.WebHost.ConfigureKestrel(options =>
+        options.ConfigureHttpsDefaults(https =>
+        {
+            // The enrollment token authorizes the first device-generated certificate binding.
+            // Protected endpoints still reject every certificate that is not current in canonical
+            // device/service-principal state through InternalMtlsMiddleware.
+            https.ClientCertificateMode = ClientCertificateMode.AllowCertificate;
+            https.AllowAnyClientCertificate();
+        }));
 }
 
 static void ConfigureHumanAuthentication(WebApplicationBuilder builder, string mainDatabaseConnectionString)
@@ -956,6 +977,12 @@ static void ConfigureApplicationServices(
         new PostgresManagementPlatformIdentityAdministrationRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IHumanAuthenticationAdministrationGateway, HumanAuthenticationAdministrationGateway>();
     builder.Services.AddScoped<IManagementPlatformIdentityAdministrationService, ManagementPlatformIdentityAdministrationService>();
+    builder.Services.AddScoped<IDeviceAdministrationRepository>(_ =>
+        new PostgresDeviceAdministrationRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IDeviceAdministrationService>(serviceProvider =>
+        new DeviceAdministrationService(
+            serviceProvider.GetRequiredService<IDeviceAdministrationRepository>(),
+            serviceProvider.GetRequiredService<TimeProvider>()));
     builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageRepository>(_ =>
         new ManagementPlatformStatutoryDiscountPolicyCoverageRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageService, ManagementPlatformStatutoryDiscountPolicyCoverageService>();

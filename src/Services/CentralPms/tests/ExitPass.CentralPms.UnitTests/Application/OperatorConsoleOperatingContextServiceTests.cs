@@ -71,6 +71,38 @@ public sealed class OperatorConsoleOperatingContextServiceTests
     }
 
     [Fact]
+    public async Task ValidateDeviceProof_WithAvailableCredentialRotation_ReturnsActionableReenrollmentClassification()
+    {
+        var repository = ValidRepository();
+        repository.Device = repository.Device! with
+        {
+            DeviceStatus = "REVOKED",
+            RotationEnrollmentAvailable = true
+        };
+
+        var result = await Create(repository).ValidateDeviceProofAsync(Proof, CorrelationId, default);
+
+        result.Succeeded.Should().BeFalse();
+        result.ErrorCode.Should().Be(OperatorConsoleOperatingContextFailureCodes.DeviceCredentialRotationRequired);
+    }
+
+    [Fact]
+    public async Task ValidateDeviceProof_WithAvailableReplacementEnrollment_ReturnsActionableSuccessorClassification()
+    {
+        var repository = ValidRepository();
+        repository.Device = repository.Device! with
+        {
+            DeviceStatus = "REVOKED",
+            ReplacementEnrollmentAvailable = true
+        };
+
+        var result = await Create(repository).ValidateDeviceProofAsync(Proof, CorrelationId, default);
+
+        result.Succeeded.Should().BeFalse();
+        result.ErrorCode.Should().Be(OperatorConsoleOperatingContextFailureCodes.DeviceReplacementEnrollmentRequired);
+    }
+
+    [Fact]
     public async Task BindSession_WithExpiredDeviceCredential_FailsClosed()
     {
         var repository = ValidRepository();
@@ -205,7 +237,7 @@ public sealed class OperatorConsoleOperatingContextServiceTests
 
     private static FakeRepository ValidRepository() => new()
     {
-        Device = new OperatorConsoleDeviceBindingCandidate(DeviceId, "ACTIVE", "BROWSER_KEY_ONLY", SiteId, SiteGroupId, true, null, 1, 1, SiteId, SiteGroupId),
+        Device = new OperatorConsoleDeviceBindingCandidate(DeviceId, "ACTIVE", "BROWSER_KEY_ONLY", SiteId, SiteGroupId, true, null, 1, 1, SiteId, SiteGroupId, false, false),
         Snapshot = new OperatorConsoleSessionBindingSnapshot(4, 7, "ACTIVE", Now.AddMinutes(30), Now.AddHours(8))
     };
 

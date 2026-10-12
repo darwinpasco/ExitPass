@@ -23,18 +23,38 @@ public static class HumanAuthenticationEndpoints
         web.MapPost("/password-resets", ResetPasswordAsync).DisableAntiforgery();
 
         var apt = app.MapGroup("/v1/apt/human-sessions").WithTags("AptHumanAuthentication");
-        apt.MapPost("", CreateAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls();
-        apt.MapGet("/{sessionReference:guid}", GetAptSessionAsync).RequireInternalServiceMtls();
-        apt.MapPost("/{sessionReference:guid}/continue", ContinueAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls();
-        apt.MapPost("/{sessionReference:guid}/reauthenticate", ReauthenticateAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls();
-        apt.MapPost("/{sessionReference:guid}/password/change", ChangeAptPasswordAsync).DisableAntiforgery().RequireInternalServiceMtls();
-        apt.MapPost("/{sessionReference:guid}/logout", LogoutAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls();
+        apt.MapPost("", CreateAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls().AcceptGovernedAptDevicePrincipal();
+        apt.MapGet("/{sessionReference:guid}", GetAptSessionAsync).RequireInternalServiceMtls().AcceptGovernedAptDevicePrincipal();
+        apt.MapPost("/{sessionReference:guid}/continue", ContinueAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls().AcceptGovernedAptDevicePrincipal();
+        apt.MapPost("/{sessionReference:guid}/reauthenticate", ReauthenticateAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls().AcceptGovernedAptDevicePrincipal();
+        apt.MapPost("/{sessionReference:guid}/password/change", ChangeAptPasswordAsync).DisableAntiforgery().RequireInternalServiceMtls().AcceptGovernedAptDevicePrincipal();
+        apt.MapPost("/{sessionReference:guid}/logout", LogoutAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls().AcceptGovernedAptDevicePrincipal();
         return app;
     }
 
-    private static async Task<IResult> LoginAsync(HumanLoginRequest request, HttpRequest httpRequest, HttpResponse response, IHumanAuthenticationService service, IHumanAuthenticationOriginValidator originValidator, IAntiforgery antiforgery, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IOperatorConsoleOperatingContextService operatingContextService, CancellationToken cancellationToken)
+    private static async Task<IResult> LoginAsync(HumanLoginRequest request, HttpRequest httpRequest, HttpResponse response, IHumanAuthenticationService service, IHumanAuthenticationOriginValidator originValidator, IAntiforgery antiforgery, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IOperatorConsoleOperatingContextService operatingContextService, TimeProvider timeProvider, CancellationToken cancellationToken)
     {
-        if (!originValidator.IsAllowed(httpRequest) || !HumanSessionAudiences.IsWeb(NormalizeAudience(request.Audience))) return SafeFailure(400, "INVALID_LOGIN_REQUEST", HumanSessionAuthenticationHandler.ResolveCorrelationId(httpRequest));
+        var audience = NormalizeAudience(request.Audience);
+        var correlationId = HumanSessionAuthenticationHandler.ResolveCorrelationId(httpRequest);
+        if (!originValidator.IsAllowed(httpRequest) || !HumanSessionAudiences.IsWeb(audience)) return SafeFailure(400, "INVALID_LOGIN_REQUEST", correlationId);
+        if (audience == HumanSessionAudiences.OperatorConsole)
+        {
+            var deviceProof = OperatorConsoleDeviceBindingCookie.Read(httpRequest);
+            var deviceTrust = await operatingContextService.ValidateDeviceProofAsync(
+                deviceProof,
+                correlationId,
+                cancellationToken);
+            if (!deviceTrust.Succeeded)
+            {
+                OperatorConsoleDeviceBindingCookie.Delete(response);
+                SetNoStore(response);
+                return SafeFailure(
+                    StatusCodes.Status403Forbidden,
+                    deviceTrust.ErrorCode ?? OperatorConsoleOperatingContextFailureCodes.DeviceBindingRequired,
+                    correlationId);
+            }
+            OperatorConsoleDeviceBindingCookie.Issue(response, deviceProof!, timeProvider.GetUtcNow());
+        }
         var context = BuildContext(httpRequest, options.Value, tokens, null, null);
         var result = await service.LoginAsync(request.Username, request.Password, request.Audience, request.TotpCode, context, cancellationToken);
         if (result.Response.Authenticated &&
@@ -75,7 +95,7 @@ public static class HumanAuthenticationEndpoints
         return Results.Json(result.Response with { AptSessionToken = null }, statusCode: result.HttpStatusCode);
     }
 
-    private static async Task<IResult> CurrentSessionAsync(HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IAntiforgery antiforgery, IOperatorConsoleOperatingContextService operatingContextService, CancellationToken cancellationToken)
+    private static async Task<IResult> CurrentSessionAsync(HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IAntiforgery antiforgery, IOperatorConsoleOperatingContextService operatingContextService, TimeProvider timeProvider, CancellationToken cancellationToken)
     {
         var token = HumanSessionAuthenticationHandler.ResolveToken(request, options.Value);
         if (token is null)
@@ -85,7 +105,7 @@ public static class HumanAuthenticationEndpoints
 
         var authContext = BuildContext(request, options.Value, tokens, null, null);
         var result = await service.ResolveSessionAsync(token, null, null, authContext, true, cancellationToken);
-        result = await EnrichOperatorSessionAsync(result, request, operatingContextService, cancellationToken);
+        result = await EnrichOperatorSessionAsync(result, request, response, operatingContextService, timeProvider, cancellationToken);
         if (result.HttpStatusCode == StatusCodes.Status403Forbidden && !result.Response.Authenticated)
         {
             return SafeFailure(StatusCodes.Status403Forbidden, result.Response.ErrorCode ?? OperatorConsoleOperatingContextFailureCodes.SessionExpiredOrRevoked, result.Response.CorrelationId);
@@ -95,11 +115,11 @@ public static class HumanAuthenticationEndpoints
         return Results.Json(result.Response with { AptSessionToken = null }, statusCode: result.HttpStatusCode);
     }
 
-    private static Task<IResult> ContinueAsync(HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IAntiforgery antiforgery, IOperatorConsoleOperatingContextService operatingContextService, CancellationToken cancellationToken) =>
+    private static Task<IResult> ContinueAsync(HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IAntiforgery antiforgery, IOperatorConsoleOperatingContextService operatingContextService, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         ExecuteWebMutationAsync(request, response, service, tokens, options.Value, antiforgery, async (token, context) =>
         {
             var result = await service.ContinueSessionAsync(token, context, cancellationToken);
-            result = await BindRotatedOperatorSessionAsync(result, request, operatingContextService, cancellationToken);
+            result = await BindRotatedOperatorSessionAsync(result, request, response, operatingContextService, timeProvider, cancellationToken);
             if (result.Response.Authenticated && result.Credential is not null) SetWebSessionCookie(response, result.Credential.SerializedToken, options.Value);
             else
             {
@@ -125,11 +145,11 @@ public static class HumanAuthenticationEndpoints
             return result;
         });
 
-    private static Task<IResult> FreshAuthenticateAsync(HumanFreshAuthenticationRequest body, HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IAntiforgery antiforgery, IOperatorConsoleOperatingContextService operatingContextService, CancellationToken cancellationToken) =>
+    private static Task<IResult> FreshAuthenticateAsync(HumanFreshAuthenticationRequest body, HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IAntiforgery antiforgery, IOperatorConsoleOperatingContextService operatingContextService, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         ExecuteWebMutationAsync(request, response, service, tokens, options.Value, antiforgery, async (token, context) =>
         {
             var result = await service.FreshAuthenticateAsync(token, body.Password, body.TotpCode, context, cancellationToken);
-            result = await BindRotatedOperatorSessionAsync(result, request, operatingContextService, cancellationToken);
+            result = await BindRotatedOperatorSessionAsync(result, request, response, operatingContextService, timeProvider, cancellationToken);
             if (result.Response.Authenticated && result.Credential is not null) SetWebSessionCookie(response, result.Credential.SerializedToken, options.Value);
             else
             {
@@ -139,11 +159,11 @@ public static class HumanAuthenticationEndpoints
             return result;
         });
 
-    private static Task<IResult> ChangePasswordAsync(HumanPasswordChangeRequest body, HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IAntiforgery antiforgery, IOperatorConsoleOperatingContextService operatingContextService, CancellationToken cancellationToken) =>
+    private static Task<IResult> ChangePasswordAsync(HumanPasswordChangeRequest body, HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, IAntiforgery antiforgery, IOperatorConsoleOperatingContextService operatingContextService, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         ExecuteWebMutationAsync(request, response, service, tokens, options.Value, antiforgery, async (token, context) =>
         {
             var result = await service.ChangePasswordAsync(token, body.CurrentPassword, body.NewPassword, body.TotpCode, context, cancellationToken);
-            result = await BindRotatedOperatorSessionAsync(result, request, operatingContextService, cancellationToken);
+            result = await BindRotatedOperatorSessionAsync(result, request, response, operatingContextService, timeProvider, cancellationToken);
             if (result.Response.Authenticated && result.Credential is not null) SetWebSessionCookie(response, result.Credential.SerializedToken, options.Value);
             else
             {
@@ -269,7 +289,9 @@ public static class HumanAuthenticationEndpoints
     private static async Task<HumanAuthenticationResult> EnrichOperatorSessionAsync(
         HumanAuthenticationResult result,
         HttpRequest request,
+        HttpResponse response,
         IOperatorConsoleOperatingContextService operatingContextService,
+        TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
         if (!result.Response.Authenticated ||
@@ -279,13 +301,15 @@ public static class HumanAuthenticationEndpoints
             return result;
         }
 
+        var deviceProof = OperatorConsoleDeviceBindingCookie.Read(request);
         var operating = await operatingContextService.ValidateSessionAsync(
             result.InternalHumanSessionId.Value,
-            OperatorConsoleDeviceBindingCookie.Read(request),
+            deviceProof,
             result.Response.CorrelationId,
             cancellationToken);
         if (!operating.Succeeded || operating.Context is null) return result;
 
+        OperatorConsoleDeviceBindingCookie.Issue(response, deviceProof!, timeProvider.GetUtcNow());
         var context = operating.Context;
         return result with
         {
@@ -307,7 +331,9 @@ public static class HumanAuthenticationEndpoints
     private static async Task<HumanAuthenticationResult> BindRotatedOperatorSessionAsync(
         HumanAuthenticationResult result,
         HttpRequest request,
+        HttpResponse response,
         IOperatorConsoleOperatingContextService operatingContextService,
+        TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
         if (!result.Response.Authenticated ||
@@ -317,7 +343,8 @@ public static class HumanAuthenticationEndpoints
             return result;
         }
 
-        if (OperatorConsoleDeviceBindingCookie.Read(request) is null) return result;
+        var deviceProof = OperatorConsoleDeviceBindingCookie.Read(request);
+        if (deviceProof is null) return result;
 
         var operating = await operatingContextService.BindSessionAsync(
             result.InternalHumanSessionId.Value,
@@ -325,11 +352,12 @@ public static class HumanAuthenticationEndpoints
             session.SiteReferences,
             session.SiteGroupReferences,
             session.HasGlobalScope,
-            OperatorConsoleDeviceBindingCookie.Read(request),
+            deviceProof,
             result.Response.CorrelationId,
             cancellationToken);
         if (!operating.Succeeded || operating.Context is null) return result;
 
+        OperatorConsoleDeviceBindingCookie.Issue(response, deviceProof, timeProvider.GetUtcNow());
         var context = operating.Context;
         return result with
         {
@@ -362,7 +390,13 @@ public static class HumanAuthenticationEndpoints
     private static HumanAuthenticationContext BuildContext(HttpRequest request, HumanAuthenticationOptions options, IHumanSessionTokenService tokens, Guid? deviceId, Guid? siteId) =>
         HumanSessionAuthenticationHandler.BuildContext(request, HumanSessionAuthenticationHandler.ResolveCorrelationId(request), deviceId, options, tokens) with { SiteId = siteId };
 
-    private static Guid? ResolveDeviceServiceIdentity(HttpRequest request) => HumanSessionAuthenticationHandler.ResolveGuid(request.Headers["X-ExitPass-Service-Identity-Id"]);
+    private static Guid? ResolveDeviceServiceIdentity(HttpRequest request)
+    {
+        var authenticated = HumanSessionAuthenticationHandler.ResolveGuid(request.HttpContext.User.FindFirst("service_identity_id")?.Value);
+        var supplied = HumanSessionAuthenticationHandler.ResolveGuid(request.Headers["X-ExitPass-Service-Identity-Id"]);
+        if (authenticated.HasValue && supplied.HasValue && authenticated != supplied) return null;
+        return authenticated ?? supplied;
+    }
     private static bool _tokensMatchReference(IHumanSessionTokenService tokens, string token, Guid reference) => tokens.TryParse(token, out var parsed) && parsed.SessionReference == reference;
     private static string NormalizeAudience(string value) => value.Trim().Replace('-', '_').ToUpperInvariant();
 

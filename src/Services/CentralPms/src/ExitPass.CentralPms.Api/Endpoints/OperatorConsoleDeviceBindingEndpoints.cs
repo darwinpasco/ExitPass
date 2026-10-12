@@ -13,6 +13,13 @@ public static class OperatorConsoleDeviceBindingEndpoints
 {
     public static IEndpointRouteBuilder MapOperatorConsoleDeviceBindingEndpoints(this IEndpointRouteBuilder app)
     {
+        app.MapGet("/v1/operator-console/device-binding/status", StatusAsync)
+            .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
+            .WithTags("OperatorConsole")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
+            .WithSummary("Validate the current Operator Console device-binding cookie")
+            .WithDescription("Validates the existing HttpOnly device-binding cookie before staff sign-in without returning device or credential material.");
         app.MapPost("/v1/operator-console/device-binding/establish", EstablishAsync)
             .DisableAntiforgery()
             .WithTags("OperatorConsole")
@@ -30,6 +37,44 @@ public static class OperatorConsoleDeviceBindingEndpoints
             .WithSummary("Bind the authenticated Operator Console session to its trusted operating context")
             .WithDescription("Revalidates the server-issued device cookie, Site and Site Group scope, authorization epoch, and credential version before binding the current human session.");
         return app;
+    }
+
+    private static async Task<IResult> StatusAsync(
+        HttpRequest request,
+        HttpResponse response,
+        IOperatorConsoleOperatingContextService service,
+        ILoggerFactory loggerFactory,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        var correlationId = HumanSessionAuthenticationHandler.ResolveCorrelationId(request);
+        response.Headers.CacheControl = "no-store";
+        var proof = OperatorConsoleDeviceBindingCookie.Read(request);
+        var cookiePresent = !string.IsNullOrWhiteSpace(proof);
+        var result = await service.ValidateDeviceProofAsync(
+            proof,
+            correlationId,
+            cancellationToken);
+        if (result.Succeeded)
+        {
+            loggerFactory.CreateLogger("ExitPass.OperatorConsole.DeviceBindingStatus").LogInformation(
+                "Operator Console governed-workstation proof accepted. cookie_present={CookiePresent} proof_hash_matched=true correlation_id={CorrelationId}",
+                cookiePresent,
+                correlationId);
+            OperatorConsoleDeviceBindingCookie.Issue(response, proof!, timeProvider.GetUtcNow());
+            return Results.NoContent();
+        }
+
+        loggerFactory.CreateLogger("ExitPass.OperatorConsole.DeviceBindingStatus").LogWarning(
+            "Operator Console governed-workstation proof rejected. cookie_present={CookiePresent} error_code={ErrorCode} correlation_id={CorrelationId}",
+            cookiePresent,
+            result.ErrorCode ?? OperatorConsoleOperatingContextFailureCodes.DeviceBindingRequired,
+            correlationId);
+        return Failure(
+            StatusCodes.Status403Forbidden,
+            result.ErrorCode ?? OperatorConsoleOperatingContextFailureCodes.DeviceBindingRequired,
+            correlationId,
+            "Operator Console trusted workstation context is not available.");
     }
 
     private static async Task<IResult> EstablishAsync(
@@ -64,6 +109,7 @@ public static class OperatorConsoleDeviceBindingEndpoints
         HttpResponse response,
         IOperatorConsoleOperatingContextService service,
         IAntiforgery antiforgery,
+        TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
         var correlationId = HumanSessionAuthenticationHandler.ResolveCorrelationId(request);
@@ -85,18 +131,23 @@ public static class OperatorConsoleDeviceBindingEndpoints
             return Failure(StatusCodes.Status403Forbidden, OperatorConsoleOperatingContextFailureCodes.SessionExpiredOrRevoked, correlationId);
         }
 
+        var proof = OperatorConsoleDeviceBindingCookie.Read(request);
         var result = await service.BindSessionAsync(
             humanSessionId,
             userId,
             GuidClaims(request.HttpContext.User, "site_id"),
             GuidClaims(request.HttpContext.User, "site_group_id"),
             string.Equals(request.HttpContext.User.FindFirstValue("has_global_scope"), "true", StringComparison.OrdinalIgnoreCase),
-            OperatorConsoleDeviceBindingCookie.Read(request),
+            proof,
             correlationId,
             cancellationToken);
-        return result.Succeeded
-            ? Results.NoContent()
-            : Failure(StatusCodes.Status403Forbidden, result.ErrorCode ?? OperatorConsoleOperatingContextFailureCodes.SessionExpiredOrRevoked, correlationId);
+        if (!result.Succeeded)
+        {
+            return Failure(StatusCodes.Status403Forbidden, result.ErrorCode ?? OperatorConsoleOperatingContextFailureCodes.SessionExpiredOrRevoked, correlationId);
+        }
+
+        OperatorConsoleDeviceBindingCookie.Issue(response, proof!, timeProvider.GetUtcNow());
+        return Results.NoContent();
     }
 
     private static Guid[] GuidClaims(ClaimsPrincipal principal, string claimType) =>
@@ -106,11 +157,15 @@ public static class OperatorConsoleDeviceBindingEndpoints
             .Distinct()
             .ToArray();
 
-    private static IResult Failure(int status, string code, Guid correlationId) =>
+    private static IResult Failure(
+        int status,
+        string code,
+        Guid correlationId,
+        string message = "Operator Console device binding could not be established.") =>
         Results.Json(new ErrorResponse
         {
             ErrorCode = code,
-            Message = "Operator Console device binding could not be established.",
+            Message = message,
             CorrelationId = correlationId,
             Retryable = false
         }, statusCode: status);

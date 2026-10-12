@@ -79,6 +79,8 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "management-platform.identity-rbac.inventory.read"
             ],
+            ["ManagementDeviceRead"] = ["device.view"],
+            ["ManagementDeviceManage"] = ["device.manage"],
             ["ManagementPlatformDashboardCatalogRead"] =
             [
                 "reports.view"

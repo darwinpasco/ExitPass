@@ -1031,6 +1031,40 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     });
   });
 
+  it("SessionLookup_ShowsTheAuthoritativeLiveVendorTariffForAResolvedProjection", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          ticketLookupResults: [{
+            sessionFound: true,
+            accessAllowed: true,
+            sessionEligible: false,
+            ticketNumber: "1474119573174",
+            cardNum: "1474119573174",
+            plateLicense: "ABC****",
+            siteName: "PITX Level 3",
+            parkingInTime: "2026-10-10T09:40:00+08:00",
+            parkingDurationSeconds: 433,
+            feeMinorUnits: 5000,
+            currencyCode: "PHP",
+            tariffSource: "LIVE_VENDOR",
+            sessionSource: "VENDOR_SESSION_PROJECTION",
+            correlationId: "b8913276-5cc6-4a81-af30-ac9aeac13ff2"
+          }]
+        })}
+        initialPath="/operator-console/ticket-lookup"
+      />
+    );
+
+    await userEvent.type(await selectTicketInput(), "1474119573174");
+    await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
+
+    expect(await screen.findByRole("heading", { name: "Session Summary" })).toBeInTheDocument();
+    expect(screen.getByText("LIVE_VENDOR")).toBeInTheDocument();
+    expect(screen.getByText("₱50.00")).toBeInTheDocument();
+    expect(screen.getByText("7 minutes")).toBeInTheDocument();
+  });
+
   it("SessionLookup_LooksUpByPlateThroughTheSameCanonicalClient", async () => {
     const onTicketLookup = vi.fn();
     render(

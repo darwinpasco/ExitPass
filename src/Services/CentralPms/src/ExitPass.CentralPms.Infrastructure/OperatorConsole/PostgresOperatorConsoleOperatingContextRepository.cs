@@ -40,27 +40,96 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
                 GROUP BY a.operator_device_binding_id
             )
             SELECT d.operator_device_binding_id,
-                   d.device_status::text,
+                   CASE
+                       WHEN device.device_id IS NULL THEN 'PENDING'
+                       WHEN device.lifecycle_status IN ('REVOKED', 'REPLACED') THEN 'REVOKED'
+                       WHEN device.lifecycle_status = 'SUSPENDED' THEN 'SUSPENDED'
+                       WHEN device.effective_from > @now
+                           OR (device.effective_to IS NOT NULL AND device.effective_to <= @now) THEN 'REVOKED'
+                       WHEN service.identity_status IS DISTINCT FROM 'ACTIVE' OR service.revoked_at IS NOT NULL
+                           OR service.effective_from > @now
+                           OR (service.effective_to IS NOT NULL AND service.effective_to <= @now)
+                           OR (service.credential_expires_at IS NOT NULL AND service.credential_expires_at <= @now) THEN 'REVOKED'
+                       WHEN credential.credential_status IS DISTINCT FROM 'ACTIVE' THEN 'REVOKED'
+                       WHEN credential.expires_at IS NOT NULL AND credential.expires_at <= @now THEN 'EXPIRED'
+                       WHEN device.lifecycle_status <> 'ACTIVE' THEN 'PENDING'
+                       ELSE d.device_status::text
+                   END,
                    d.trust_level::text,
                    d.site_id,
                    d.site_group_id,
-                   (site_scope.site_id IS NOT NULL),
+                   (site_scope.site_id IS NOT NULL
+                       AND site_group_scope.site_group_id IS NOT NULL
+                       AND canonical_assignment.active_assignment_count = 1),
                    CASE
-                       WHEN d.trust_level = 'BROWSER_KEY_ONLY' AND d.last_seen_at IS NOT NULL
-                           THEN d.last_seen_at + interval '12 hours'
+                       WHEN d.trust_level = 'BROWSER_KEY_ONLY' THEN credential.expires_at
                        WHEN d.trust_level = 'BROWSER_KEY_AND_MTLS'
-                           THEN LEAST(d.last_seen_at + interval '12 hours', d.mtls_certificate_expires_at)
+                           THEN LEAST(credential.expires_at, d.mtls_certificate_expires_at)
                        WHEN d.trust_level = 'MTLS_ONLY' THEN d.mtls_certificate_expires_at
                        ELSE NULL
                    END,
                    d.matching_proof_count,
                    COALESCE(a.active_assignment_count, 0),
                    a.site_id,
-                   a.site_group_id
+                   a.site_group_id,
+                   EXISTS (
+                       SELECT 1
+                       FROM identity.device_provisioning_credentials provisioning
+                       WHERE provisioning.device_id = device.device_id
+                         AND device.lifecycle_status = 'CREDENTIAL_ROTATION'
+                         AND provisioning.provisioning_purpose = 'ROTATION'
+                         AND provisioning.provisioning_status = 'ISSUED'
+                         AND provisioning.consumed_at IS NULL
+                         AND provisioning.cancelled_at IS NULL
+                         AND provisioning.expires_at > @now
+                         AND provisioning.intended_credential_version = device.credential_version + 1
+                   ) AS rotation_enrollment_available,
+                   EXISTS (
+                       SELECT 1
+                       FROM identity.devices successor
+                       JOIN identity.device_provisioning_credentials provisioning
+                         ON provisioning.device_id = successor.device_id
+                       WHERE device.lifecycle_status = 'REPLACED'
+                         AND successor.device_id = device.replacement_device_id
+                         AND successor.predecessor_device_id = device.device_id
+                         AND successor.device_type = 'OPERATOR_CONSOLE'
+                         AND successor.lifecycle_status = 'PROVISIONING_PENDING'
+                         AND provisioning.provisioning_purpose = 'REPLACEMENT'
+                         AND provisioning.provisioning_status = 'ISSUED'
+                         AND provisioning.consumed_at IS NULL
+                         AND provisioning.cancelled_at IS NULL
+                         AND provisioning.expires_at > @now
+                         AND provisioning.intended_credential_version = successor.credential_version + 1
+                   ) AS replacement_enrollment_available
             FROM matching_devices d
+            LEFT JOIN identity.devices device
+              ON device.device_id = d.operator_device_binding_id
+             AND device.service_identity_id = d.service_identity_id
+            LEFT JOIN identity.service_identities service
+              ON service.service_identity_id = device.service_identity_id
+            LEFT JOIN identity.device_credential_history credential
+              ON credential.device_id = device.device_id
+             AND credential.credential_version = device.credential_version
             LEFT JOIN sites.sites site_scope
               ON site_scope.site_id = d.site_id
              AND site_scope.site_group_id = d.site_group_id
+             AND site_scope.site_status = 'ACTIVE'
+             AND site_scope.effective_from <= @now
+             AND (site_scope.effective_to IS NULL OR site_scope.effective_to > @now)
+            LEFT JOIN sites.site_groups site_group_scope
+              ON site_group_scope.site_group_id = d.site_group_id
+             AND site_group_scope.site_group_status = 'ACTIVE'
+             AND site_group_scope.effective_from <= @now
+             AND (site_group_scope.effective_to IS NULL OR site_group_scope.effective_to > @now)
+            LEFT JOIN LATERAL (
+                SELECT count(*)::integer AS active_assignment_count
+                FROM sites.device_assignments canonical
+                WHERE canonical.service_identity_id = device.service_identity_id
+                  AND canonical.site_id = d.site_id
+                  AND canonical.assignment_type = 'SERVICE_PRINCIPAL'
+                  AND canonical.assignment_status = 'ACTIVE'
+                  AND canonical.unassigned_at IS NULL
+            ) canonical_assignment ON true
             LEFT JOIN assignments a ON a.operator_device_binding_id = d.operator_device_binding_id
             ORDER BY CASE WHEN d.device_status = 'ACTIVE' THEN 0 ELSE 1 END, d.updated_at DESC
             LIMIT 1;
@@ -87,7 +156,9 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
             reader.GetInt32(7),
             reader.GetInt32(8),
             GetNullableGuid(reader, 9),
-            GetNullableGuid(reader, 10));
+            GetNullableGuid(reader, 10),
+            reader.GetBoolean(11),
+            reader.GetBoolean(12));
     }
 
     public async Task<bool> RotateDeviceProofAsync(
@@ -214,12 +285,27 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
             SELECT c.operator_user_id, c.operator_device_binding_id, c.operator_shift_id,
                    c.site_id, c.site_group_id, c.authorization_epoch_snapshot,
                    c.credential_version_snapshot, c.bound_at, c.correlation_id, c.context_status,
-                   d.browser_key_thumbprint, d.device_status::text, d.trust_level::text,
+                   d.browser_key_thumbprint,
                    CASE
-                       WHEN d.trust_level = 'BROWSER_KEY_ONLY' AND d.last_seen_at IS NOT NULL
-                           THEN d.last_seen_at + interval '12 hours'
+                       WHEN device.device_id IS NULL THEN 'PENDING'
+                       WHEN device.lifecycle_status IN ('REVOKED', 'REPLACED') THEN 'REVOKED'
+                       WHEN device.lifecycle_status = 'SUSPENDED' THEN 'SUSPENDED'
+                       WHEN device.effective_from > now()
+                           OR (device.effective_to IS NOT NULL AND device.effective_to <= now()) THEN 'REVOKED'
+                       WHEN service.identity_status IS DISTINCT FROM 'ACTIVE' OR service.revoked_at IS NOT NULL
+                           OR service.effective_from > now()
+                           OR (service.effective_to IS NOT NULL AND service.effective_to <= now())
+                           OR (service.credential_expires_at IS NOT NULL AND service.credential_expires_at <= now()) THEN 'REVOKED'
+                       WHEN credential.credential_status IS DISTINCT FROM 'ACTIVE' THEN 'REVOKED'
+                       WHEN credential.expires_at IS NOT NULL AND credential.expires_at <= now() THEN 'EXPIRED'
+                       WHEN device.lifecycle_status <> 'ACTIVE' THEN 'PENDING'
+                       ELSE d.device_status::text
+                   END,
+                   d.trust_level::text,
+                   CASE
+                       WHEN d.trust_level = 'BROWSER_KEY_ONLY' THEN credential.expires_at
                        WHEN d.trust_level = 'BROWSER_KEY_AND_MTLS'
-                           THEN LEAST(d.last_seen_at + interval '12 hours', d.mtls_certificate_expires_at)
+                           THEN LEAST(credential.expires_at, d.mtls_certificate_expires_at)
                        WHEN d.trust_level = 'MTLS_ONLY' THEN d.mtls_certificate_expires_at
                        ELSE NULL
                    END,
@@ -242,15 +328,43 @@ public sealed class PostgresOperatorConsoleOperatingContextRepository : IOperato
                               OR (g.scope_type = 'SITE' AND g.site_id = c.site_id)
                               OR (g.scope_type = 'SITE_GROUP' AND g.site_group_id = c.site_group_id))
                    ) AS has_effective_site_scope,
-                   EXISTS (
-                       SELECT 1 FROM sites.sites site_scope
-                       WHERE site_scope.site_id = c.site_id
-                         AND site_scope.site_group_id = c.site_group_id
+                   (
+                       EXISTS (
+                           SELECT 1 FROM sites.sites site_scope
+                           WHERE site_scope.site_id = c.site_id
+                             AND site_scope.site_group_id = c.site_group_id
+                             AND site_scope.site_status = 'ACTIVE'
+                             AND site_scope.effective_from <= now()
+                             AND (site_scope.effective_to IS NULL OR site_scope.effective_to > now())
+                       )
+                       AND EXISTS (
+                           SELECT 1 FROM sites.site_groups site_group_scope
+                           WHERE site_group_scope.site_group_id = c.site_group_id
+                             AND site_group_scope.site_group_status = 'ACTIVE'
+                             AND site_group_scope.effective_from <= now()
+                             AND (site_group_scope.effective_to IS NULL OR site_group_scope.effective_to > now())
+                       )
+                       AND EXISTS (
+                           SELECT 1 FROM sites.device_assignments canonical
+                           WHERE canonical.service_identity_id = device.service_identity_id
+                             AND canonical.site_id = c.site_id
+                             AND canonical.assignment_type = 'SERVICE_PRINCIPAL'
+                             AND canonical.assignment_status = 'ACTIVE'
+                             AND canonical.unassigned_at IS NULL
+                       )
                    ) AS has_canonical_site_group_relationship
             FROM identity.human_sessions hs
             JOIN identity.users u ON u.user_id = hs.user_id
             LEFT JOIN operator_console.operator_session_contexts c ON c.human_session_id = hs.human_session_id
             LEFT JOIN operator_console.operator_device_bindings d ON d.operator_device_binding_id = c.operator_device_binding_id
+            LEFT JOIN identity.devices device
+              ON device.device_id = d.operator_device_binding_id
+             AND device.service_identity_id = d.service_identity_id
+            LEFT JOIN identity.service_identities service
+              ON service.service_identity_id = device.service_identity_id
+            LEFT JOIN identity.device_credential_history credential
+              ON credential.device_id = device.device_id
+             AND credential.credential_version = device.credential_version
             LEFT JOIN LATERAL (
                 SELECT count(*)::integer AS active_assignment_count,
                        (array_agg(da.site_id ORDER BY da.effective_from DESC))[1] AS site_id,

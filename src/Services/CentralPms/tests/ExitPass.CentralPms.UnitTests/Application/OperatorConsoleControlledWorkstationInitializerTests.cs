@@ -15,7 +15,7 @@ public sealed class OperatorConsoleControlledWorkstationInitializerTests
         sql.Should().Contain("identity.user_role_scope_grants");
         sql.Should().Contain("browser_key_thumbprint = v_proof_hash");
         sql.Should().Contain("last_seen_at = now()");
-        sql.Should().Contain("last_seen_at <= now() - interval '12 hours'");
+        sql.Should().NotContain("last_seen_at <= now() - interval");
         sql.Should().NotContain("operator_shifts");
         sql.Should().NotContain("hr_identity_mappings");
         sql.Should().NotContain("active_shift");

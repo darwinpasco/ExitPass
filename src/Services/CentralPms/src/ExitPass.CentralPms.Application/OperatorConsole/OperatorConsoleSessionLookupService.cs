@@ -1,3 +1,5 @@
+using ExitPass.CentralPms.Application.Operations;
+
 namespace ExitPass.CentralPms.Application.OperatorConsole;
 
 /// <summary>
@@ -21,6 +23,7 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
     private readonly IOperatorConsoleAccessEvaluationService _accessEvaluationService;
     private readonly IOperatorConsoleAccessEvaluationWriter _accessEvaluationWriter;
     private readonly IOperatorConsoleSessionLookupReadRepository _sessionRepository;
+    private readonly ITicketSessionSummaryService _ticketSessionSummaryService;
 
     /// <summary>
     /// Creates an Operator Console session lookup service.
@@ -28,11 +31,13 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
     public OperatorConsoleSessionLookupService(
         IOperatorConsoleAccessEvaluationService accessEvaluationService,
         IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
-        IOperatorConsoleSessionLookupReadRepository sessionRepository)
+        IOperatorConsoleSessionLookupReadRepository sessionRepository,
+        ITicketSessionSummaryService ticketSessionSummaryService)
     {
         _accessEvaluationService = accessEvaluationService ?? throw new ArgumentNullException(nameof(accessEvaluationService));
         _accessEvaluationWriter = accessEvaluationWriter ?? throw new ArgumentNullException(nameof(accessEvaluationWriter));
         _sessionRepository = sessionRepository ?? throw new ArgumentNullException(nameof(sessionRepository));
+        _ticketSessionSummaryService = ticketSessionSummaryService ?? throw new ArgumentNullException(nameof(ticketSessionSummaryService));
     }
 
     /// <inheritdoc />
@@ -98,6 +103,30 @@ public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessio
                 IneligibilityReason: "SESSION_NOT_FOUND",
                 Alerts: Array.Empty<string>(),
                 persistedEvaluation.CorrelationId);
+        }
+
+        if (string.Equals(session.SessionSource, VendorSessionProjectionSource, StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(session.TicketReference))
+        {
+            var authoritativeSummary = await _ticketSessionSummaryService.GetAsync(
+                new TicketSessionSummaryCommand(
+                    session.TicketReference,
+                    CardNum: null,
+                    session.SiteId,
+                    session.SiteGroupId,
+                    persistedEvaluation.CorrelationId),
+                cancellationToken);
+            if (authoritativeSummary.Outcome == TicketSessionSummaryOutcome.Resolved &&
+                authoritativeSummary.Summary is { FeeMinorUnits: not null, CurrencyCode: not null } summary)
+            {
+                session = session with
+                {
+                    ParkingDurationSeconds = summary.ParkingDurationSeconds,
+                    CurrentPayableAmountMinorUnits = summary.FeeMinorUnits,
+                    CurrencyCode = summary.CurrencyCode,
+                    TariffSource = "LIVE_VENDOR"
+                };
+            }
         }
 
         var isTransactionalSession = session.ParkingSessionId.HasValue &&

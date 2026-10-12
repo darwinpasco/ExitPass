@@ -6,6 +6,7 @@ export const humanAuthenticationRoutes = {
   logout: "/v1/human-authentication/logout",
   passwordChange: "/v1/human-authentication/password/change",
   enrollDevice: "/v1/devices/enrollment",
+  deviceBindingStatus: "/v1/operator-console/device-binding/status",
   establishDeviceBinding: "/v1/operator-console/device-binding/establish",
   bindDeviceSession: "/v1/operator-console/device-binding/bind-session"
 } as const;
@@ -76,6 +77,7 @@ export class HumanAuthenticationError extends Error {
 export interface HumanAuthenticationClient {
   login(username: string, password: string): Promise<OperatorConsoleHumanSession>;
   getCurrentSession(): Promise<OperatorConsoleHumanSession>;
+  validateDeviceTrust(): Promise<void>;
   changePassword(command: ChangePasswordCommand): Promise<void>;
   enrollDevice(enrollmentPackage: string): Promise<void>;
   bindDeviceSession(): Promise<OperatorConsoleHumanSession>;
@@ -160,6 +162,14 @@ export function createHumanAuthenticationClient(
     async getCurrentSession() {
       const dto = await request(humanAuthenticationRoutes.session, { method: "GET" });
       return requireAuthenticatedSession(dto);
+    },
+
+    async validateDeviceTrust() {
+      const response = await send(humanAuthenticationRoutes.deviceBindingStatus, { method: "GET" });
+      if (!response.ok) {
+        throw mapOperatingContextFailure(response.status, await parseAuthenticationResponse(response));
+      }
+      if (response.status !== 204) throw malformedSession();
     },
 
     async changePassword(command) {
@@ -347,10 +357,12 @@ async function parseAuthenticationResponse(response: Response): Promise<Authenti
     }
     return value;
   } catch {
+    const supportReference = response.headers.get("X-Correlation-Id")?.trim() || undefined;
     throw new HumanAuthenticationError(
       "malformed",
       "Operator Console authentication returned an unsupported response. Try again.",
-      true
+      true,
+      supportReference
     );
   }
 }
@@ -433,7 +445,11 @@ function mapOperatingContextFailure(status: number, dto: AuthenticationResponseD
   const supportReference = isString(dto.correlationId) ? dto.correlationId : undefined;
   const message = errorCode === "OPERATOR_DEVICE_BINDING_REQUIRED"
     ? "This workstation must be provisioned before governed Operator Console actions are available."
-    : "The trusted Operator Console operating context is not available.";
+    : errorCode === "OPERATOR_DEVICE_CREDENTIAL_ROTATION_REQUIRED"
+      ? "This workstation must complete credential rotation before governed Operator Console actions are available."
+      : errorCode === "OPERATOR_DEVICE_REPLACEMENT_ENROLLMENT_REQUIRED"
+        ? "Enroll the approved replacement device before governed Operator Console actions are available."
+      : "The trusted Operator Console operating context is not available.";
   return new HumanAuthenticationError(
     status >= 500 ? "unavailable" : "operating-context",
     message,
@@ -451,6 +467,10 @@ function mapAuthenticationFailure(
   const errorCode = isString(dto.errorCode) ? dto.errorCode.toUpperCase() : "";
   const retryable = dto.retryable === true;
   const supportReference = isString(dto.correlationId) ? dto.correlationId : undefined;
+
+  if (errorCode.startsWith("OPERATOR_DEVICE_") || errorCode === "OPERATOR_DEVICE_OUTSIDE_AUTHORIZED_SITE") {
+    return mapOperatingContextFailure(status, dto);
+  }
 
   if (errorCode === "AUTHENTICATION_THROTTLED") {
     return new HumanAuthenticationError(
