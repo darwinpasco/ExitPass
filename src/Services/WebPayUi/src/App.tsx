@@ -2035,12 +2035,6 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
   const isCancelled = mode === "cancelled";
   const paymentStatusKind = classifyPaymentStatus(summary?.paymentStatus, isCancelled);
   const isPaid = paymentStatusKind === "confirmed";
-  const retryQuery = summary?.ticketReference
-    ? `ticketReference=${encodeURIComponent(summary.ticketReference)}`
-    : summary?.plateNumber
-      ? `plateNumber=${encodeURIComponent(summary.plateNumber)}`
-      : "";
-
   async function refreshStatus() {
     if (!paymentAttemptId) {
       setStatus("error");
@@ -2204,11 +2198,6 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
             <button type="button" className="primary-button status-button" onClick={() => void refreshStatus()}>
               Check Status
             </button>
-            {(isCancelled || status === "loaded") && retryQuery && (
-              <a className="primary-link" href={`/?${retryQuery}`}>
-                Retry Payment
-              </a>
-            )}
           </div>
         )}
       </section>
@@ -3835,19 +3824,19 @@ function getPaymentStatusCopy(statusKind: PaymentStatusKind): { heading: string;
     case "failed":
       return {
         heading: "Payment failed",
-        body: "We could not confirm this payment. You can retry payment or check status again.",
+        body: "We could not confirm this payment. Check status again or return to WebPay session lookup.",
         image: "/assets/illustrations/payment-failed.svg"
       };
     case "expired":
       return {
         heading: "Payment expired",
-        body: "This checkout session expired before payment was confirmed. Please retry payment.",
+        body: "This checkout session expired before payment was confirmed. Return to WebPay session lookup.",
         image: "/assets/illustrations/payment-failed.svg"
       };
     case "cancelled":
       return {
         heading: "Payment was cancelled",
-        body: "You can retry payment or check status again.",
+        body: "Check status again or return to WebPay session lookup.",
         image: "/assets/illustrations/payment-failed.svg"
       };
     case "confirmed":

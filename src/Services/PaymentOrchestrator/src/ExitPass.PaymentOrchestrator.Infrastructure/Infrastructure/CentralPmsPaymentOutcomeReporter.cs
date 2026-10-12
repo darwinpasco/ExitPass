@@ -55,10 +55,19 @@ public sealed class CentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcome
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(logger);
 
-        var baseUrl = configuration["Integrations:CentralPms:BaseUrl"];
+        var useServicePrincipal = bool.TryParse(
+            configuration["Integrations:CentralPms:StatutoryDiscounts:UseServerDerivedServicePrincipal"],
+            out var configuredUseServicePrincipal) &&
+            configuredUseServicePrincipal;
+        var baseUrl = useServicePrincipal
+            ? configuration["Integrations:CentralPms:StatutoryDiscounts:BaseUrl"]
+            : configuration["Integrations:CentralPms:BaseUrl"];
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
-            throw new InvalidOperationException("Configuration value 'Integrations:CentralPms:BaseUrl' is required.");
+            var setting = useServicePrincipal
+                ? "Integrations:CentralPms:StatutoryDiscounts:BaseUrl"
+                : "Integrations:CentralPms:BaseUrl";
+            throw new InvalidOperationException($"Configuration value '{setting}' is required.");
         }
 
         _httpClient = httpClient;
