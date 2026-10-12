@@ -23,6 +23,7 @@ describe("Operator Console authentication shell", () => {
     expect(screen.getByText("1 Site, 1 Site Group")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Session Lookup" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Governed workstation enrollment package")).not.toBeInTheDocument();
+    expect(client.validateDeviceTrust).toHaveBeenCalledTimes(1);
     expect(client.getCurrentSession).toHaveBeenCalledTimes(1);
     expect(client.bindDeviceSession).not.toHaveBeenCalled();
     expect(window.localStorage).toHaveLength(0);
@@ -43,6 +44,7 @@ describe("Operator Console authentication shell", () => {
     );
 
     await screen.findByRole("heading", { name: "Staff sign in" });
+    expect(screen.queryByLabelText("Governed workstation enrollment package")).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/totp|one-time/i)).not.toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Username"), "ordinary.operator");
     await userEvent.type(screen.getByLabelText("Password"), "operator-password");
@@ -55,21 +57,92 @@ describe("Operator Console authentication shell", () => {
     expect(document.body).not.toHaveTextContent("operator-password");
   });
 
-  it("consumes the governed workstation enrollment package without browser persistence", async () => {
+  it("requires enrollment before staff sign-in and transitions directly to sign-in after trust is established", async () => {
     const client = authenticationClient({
-      currentError: new HumanAuthenticationError("unauthenticated", "Sign in to continue.")
+      deviceTrustError: deviceBindingRequired(),
+      trustAfterEnrollment: true
     });
     const storageSetItem = vi.spyOn(Storage.prototype, "setItem");
     render(<OperatorConsoleAuthenticationShell authenticationClient={client} />);
 
     const packageInput = await screen.findByLabelText("Governed workstation enrollment package");
+    expect(screen.getByRole("heading", { name: "Trusted workstation required" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Staff sign in" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Session Lookup" })).not.toBeInTheDocument();
+    expect(client.getCurrentSession).not.toHaveBeenCalled();
     const enrollmentPackage = JSON.stringify({ provisioningCredential: "one-time-token", deviceType: "OPERATOR_CONSOLE" });
     fireEvent.change(packageInput, { target: { value: enrollmentPackage } });
     await userEvent.click(screen.getByRole("button", { name: "Enroll workstation" }));
 
     await waitFor(() => expect(client.enrollDevice).toHaveBeenCalledWith(enrollmentPackage));
-    expect(packageInput).toHaveValue("");
+    expect(await screen.findByRole("heading", { name: "Staff sign in" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Governed workstation enrollment completed.");
+    expect(screen.queryByLabelText("Governed workstation enrollment package")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Session Lookup" })).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(enrollmentPackage);
+    expect(client.login).not.toHaveBeenCalled();
+    expect(client.validateDeviceTrust).toHaveBeenCalledTimes(2);
+    expect(storageSetItem).not.toHaveBeenCalled();
+    storageSetItem.mockRestore();
+  });
+
+  it("offers the existing enrollment flow after credential rotation and keeps staff sign-in blocked until rebinding", async () => {
+    const client = authenticationClient({
+      deviceTrustError: new HumanAuthenticationError(
+        "operating-context",
+        "The trusted Operator Console operating context is not available.",
+        false,
+        "19000000-0000-0000-0000-000000000002",
+        "OPERATOR_DEVICE_CREDENTIAL_ROTATION_REQUIRED"
+      ),
+      trustAfterEnrollment: true
+    });
+    const storageSetItem = vi.spyOn(Storage.prototype, "setItem");
+    render(<OperatorConsoleAuthenticationShell authenticationClient={client} />);
+
+    const packageInput = await screen.findByLabelText("Governed workstation enrollment package");
+    expect(screen.getByRole("button", { name: "Enroll workstation" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Staff sign in" })).not.toBeInTheDocument();
+    const rotationPackage = JSON.stringify({ provisioningCredential: "rotation-token", deviceType: "OPERATOR_CONSOLE" });
+    fireEvent.change(packageInput, { target: { value: rotationPackage } });
+    await userEvent.click(screen.getByRole("button", { name: "Enroll workstation" }));
+
+    await waitFor(() => expect(client.enrollDevice).toHaveBeenCalledWith(rotationPackage));
+    expect(await screen.findByRole("heading", { name: "Staff sign in" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Governed workstation enrollment package")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(rotationPackage);
+    expect(client.login).not.toHaveBeenCalled();
+    expect(storageSetItem).not.toHaveBeenCalled();
+    storageSetItem.mockRestore();
+  });
+
+  it("offers successor enrollment after replacement and keeps staff sign-in blocked until successor trust is established", async () => {
+    const client = authenticationClient({
+      deviceTrustError: new HumanAuthenticationError(
+        "operating-context",
+        "Enroll the approved replacement device before governed Operator Console actions are available.",
+        false,
+        "19000000-0000-0000-0000-000000000003",
+        "OPERATOR_DEVICE_REPLACEMENT_ENROLLMENT_REQUIRED"
+      ),
+      trustAfterEnrollment: true
+    });
+    const storageSetItem = vi.spyOn(Storage.prototype, "setItem");
+    render(<OperatorConsoleAuthenticationShell authenticationClient={client} />);
+
+    const packageInput = await screen.findByLabelText("Governed workstation enrollment package");
+    expect(screen.getByText("Enroll the approved replacement device before governed Operator Console actions are available.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Enroll workstation" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Staff sign in" })).not.toBeInTheDocument();
+    const replacementPackage = JSON.stringify({ provisioningCredential: "replacement-token", deviceType: "OPERATOR_CONSOLE" });
+    fireEvent.change(packageInput, { target: { value: replacementPackage } });
+    await userEvent.click(screen.getByRole("button", { name: "Enroll workstation" }));
+
+    await waitFor(() => expect(client.enrollDevice).toHaveBeenCalledWith(replacementPackage));
+    expect(await screen.findByRole("heading", { name: "Staff sign in" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Governed workstation enrollment package")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(replacementPackage);
+    expect(client.login).not.toHaveBeenCalled();
     expect(storageSetItem).not.toHaveBeenCalled();
     storageSetItem.mockRestore();
   });
@@ -89,7 +162,7 @@ describe("Operator Console authentication shell", () => {
     expect(screen.queryByText("Operator context required")).not.toBeInTheDocument();
   });
 
-  it("keeps read-only workspace available while an unbound browser remains denied", async () => {
+  it("fails closed without rendering the workspace when an authenticated session cannot bind its device context", async () => {
     const unbound = { ...session(), operatorDeviceBindingReference: undefined };
     const client = authenticationClient({
       currentSession: unbound,
@@ -108,9 +181,36 @@ describe("Operator Console authentication shell", () => {
       />
     );
 
-    expect(await screen.findByText("Operator context required")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Session Lookup" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Trusted workstation required" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Staff sign in" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Session Lookup" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Governed workstation enrollment package")).toHaveAttribute("type", "password");
+  });
+
+  it("fails closed before human-session discovery when the device is suspended or revoked", async () => {
+    const client = authenticationClient({
+      deviceTrustError: new HumanAuthenticationError(
+        "operating-context",
+        "The trusted Operator Console operating context is not available.",
+        false,
+        "19000000-0000-0000-0000-000000000001",
+        "OPERATOR_DEVICE_BINDING_REVOKED"
+      )
+    });
+
+    render(
+      <OperatorConsoleAuthenticationShell
+        authenticationClient={client}
+        createWorkspaceClient={() => createMockOperatorConsoleApiClient()}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Trusted workstation required" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Staff sign in" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Governed workstation enrollment package")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Session Lookup" })).not.toBeInTheDocument();
+    expect(client.getCurrentSession).not.toHaveBeenCalled();
+    expect(client.login).not.toHaveBeenCalled();
   });
 
   it("disables login credential autocomplete and presents no persistence option", async () => {
@@ -258,6 +358,29 @@ describe("Operator Console authentication shell", () => {
 
     expect(await screen.findByLabelText("Username")).toHaveValue("");
     expect(screen.getByLabelText("Password")).toHaveValue("");
+    expect(screen.getByRole("alert")).toHaveTextContent("Your session ended. Sign in again.");
+    expect(screen.queryByLabelText("Governed workstation enrollment package")).not.toBeInTheDocument();
+  });
+
+  it("keeps device trust after human-session expiry and returns to staff sign-in", async () => {
+    const client = authenticationClient({
+      currentSession: {
+        ...session(),
+        idleExpiresAt: new Date(Date.now() - 1).toISOString()
+      }
+    });
+
+    render(
+      <OperatorConsoleAuthenticationShell
+        authenticationClient={client}
+        createWorkspaceClient={() => createMockOperatorConsoleApiClient()}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Staff sign in" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Your session expired. Sign in again.");
+    expect(screen.queryByLabelText("Governed workstation enrollment package")).not.toBeInTheDocument();
+    expect(client.validateDeviceTrust).toHaveBeenCalledTimes(1);
   });
 
   it("clears both credentials after a successful login and explicit logout", async () => {
@@ -280,6 +403,7 @@ describe("Operator Console authentication shell", () => {
 
     expect(await screen.findByLabelText("Username")).toHaveValue("");
     expect(screen.getByLabelText("Password")).toHaveValue("");
+    expect(screen.queryByLabelText("Governed workstation enrollment package")).not.toBeInTheDocument();
   });
 
   it("does not write login credentials to browser-managed application storage", async () => {
@@ -394,6 +518,8 @@ describe("Operator Console authentication shell", () => {
 });
 
 function authenticationClient(options: {
+  deviceTrustError?: Error;
+  trustAfterEnrollment?: boolean;
   currentSession?: OperatorConsoleHumanSession;
   currentError?: Error;
   loginSession?: OperatorConsoleHumanSession;
@@ -404,7 +530,13 @@ function authenticationClient(options: {
   changePasswordError?: Error;
   logoutError?: Error;
 }): HumanAuthenticationClient {
+  let enrolled = false;
   return {
+    validateDeviceTrust: vi.fn(async () => {
+      if (options.deviceTrustError && !(options.trustAfterEnrollment && enrolled)) {
+        throw options.deviceTrustError;
+      }
+    }),
     getCurrentSession: vi.fn(async () => {
       if (options.currentError) throw options.currentError;
       return options.currentSession ?? session();
@@ -418,6 +550,7 @@ function authenticationClient(options: {
     }),
     enrollDevice: vi.fn(async () => {
       if (options.enrollError) throw options.enrollError;
+      enrolled = true;
     }),
     bindDeviceSession: vi.fn(async () => {
       if (options.bindError) throw options.bindError;
@@ -429,6 +562,16 @@ function authenticationClient(options: {
     clearRuntimeState: vi.fn(),
     getCsrfToken: vi.fn(() => "csrf-test-token")
   };
+}
+
+function deviceBindingRequired() {
+  return new HumanAuthenticationError(
+    "operating-context",
+    "This workstation must be provisioned before governed Operator Console actions are available.",
+    false,
+    undefined,
+    "OPERATOR_DEVICE_BINDING_REQUIRED"
+  );
 }
 
 function session(): OperatorConsoleHumanSession {

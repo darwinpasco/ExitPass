@@ -39,6 +39,22 @@ public interface ICentralPmsRbacRepository
         Task.FromResult<CentralPmsServicePrincipalAuthenticationRecord?>(null);
 
     /// <summary>
+    /// Resolves an enrolled ACTIVE APT certificate against canonical device identity,
+    /// credential-version, and PAYMENT_DEVICE Site assignment state.
+    /// </summary>
+    Task<CentralPmsGovernedDeviceAuthenticationRecord?> GetGovernedDeviceAuthenticationAsync(
+        string credentialReference,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<CentralPmsGovernedDeviceAuthenticationRecord?>(null);
+
+    /// <summary>
+    /// Returns true once an APT has moved from deployment-owned legacy certificate configuration
+    /// to a governed certificate binding, false for a registered legacy APT, and null when unknown.
+    /// </summary>
+    Task<bool?> RequiresGovernedDeviceCertificateAsync(Guid serviceIdentityId, CancellationToken cancellationToken) =>
+        Task.FromResult<bool?>(null);
+
+    /// <summary>
     /// Resolves the canonical lifecycle, application ownership, and Site assignment for a service identity.
     /// </summary>
     Task<CentralPmsServiceIdentityAuthorizationRecord?> GetServiceIdentityAuthorizationAsync(
@@ -98,7 +114,7 @@ public sealed record CentralPmsServiceIdentityAuthorizationRecord(
 /// </summary>
 public sealed record CentralPmsAptDeviceAuthorizationRecord(
     Guid ServiceIdentityId,
-    string ServiceIdentityCode,
+    string TerminalIdentifier,
     string IdentityType,
     string OwningServiceName,
     bool Active,
@@ -115,5 +131,15 @@ public sealed record CentralPmsServicePrincipalAuthenticationRecord(
     string CredentialType,
     bool Effective,
     bool CredentialCurrent,
+    IReadOnlyList<Guid> SiteIds,
+    IReadOnlyList<Guid> SiteGroupIds);
+
+/// <summary>Canonical facts for a governed mTLS device principal.</summary>
+public sealed record CentralPmsGovernedDeviceAuthenticationRecord(
+    Guid ServiceIdentityId,
+    Guid DeviceId,
+    string DeviceType,
+    long CredentialVersion,
+    string OwningServiceName,
     IReadOnlyList<Guid> SiteIds,
     IReadOnlyList<Guid> SiteGroupIds);

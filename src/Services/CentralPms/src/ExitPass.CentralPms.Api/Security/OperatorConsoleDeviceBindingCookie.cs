@@ -6,6 +6,9 @@ namespace ExitPass.CentralPms.Api.Security;
 public static class OperatorConsoleDeviceBindingCookie
 {
     public const string CookieName = "__Host-ExitPass-Operator-Device";
+    // This window controls browser retention only. Server-side trust has no age-based TTL
+    // and is re-evaluated against canonical device state whenever the proof is presented.
+    private static readonly TimeSpan BrowserProofRetentionWindow = TimeSpan.FromDays(400);
 
     public static string? Read(HttpRequest request) =>
         request.Cookies.TryGetValue(CookieName, out var value) && !string.IsNullOrWhiteSpace(value)
@@ -21,7 +24,8 @@ public static class OperatorConsoleDeviceBindingCookie
             SameSite = SameSiteMode.Strict,
             Path = "/",
             IsEssential = true,
-            Expires = now.AddHours(12)
+            MaxAge = BrowserProofRetentionWindow,
+            Expires = now.Add(BrowserProofRetentionWindow)
         });
     }
 

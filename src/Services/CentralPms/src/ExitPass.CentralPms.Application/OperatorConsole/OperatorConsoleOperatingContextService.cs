@@ -239,6 +239,14 @@ public sealed class OperatorConsoleOperatingContextService : IOperatorConsoleOpe
         {
             return OperatorConsoleOperatingContextFailureCodes.DeviceBindingInvalid;
         }
+        if (device.RotationEnrollmentAvailable)
+        {
+            return OperatorConsoleOperatingContextFailureCodes.DeviceCredentialRotationRequired;
+        }
+        if (device.ReplacementEnrollmentAvailable)
+        {
+            return OperatorConsoleOperatingContextFailureCodes.DeviceReplacementEnrollmentRequired;
+        }
         if (device.DeviceStatus == "EXPIRED" || (device.CredentialExpiresAt.HasValue && device.CredentialExpiresAt <= now))
         {
             return OperatorConsoleOperatingContextFailureCodes.DeviceBindingExpired;

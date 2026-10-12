@@ -11,9 +11,10 @@ import { createOperatorFiscalReportingClient } from "./fiscalReporting";
 
 type ShellState =
   | { status: "bootstrapping" }
+  | { status: "device-untrusted"; error: HumanAuthenticationError }
   | { status: "unauthenticated"; message?: string; supportReference?: string }
   | { status: "authenticating" }
-  | { status: "authenticated"; session: OperatorConsoleHumanSession; operatingContextError?: HumanAuthenticationError }
+  | { status: "authenticated"; session: OperatorConsoleHumanSession }
   | { status: "restricted"; session: OperatorConsoleHumanSession };
 
 interface OperatorConsoleAuthenticationShellProps {
@@ -44,7 +45,7 @@ export function OperatorConsoleAuthenticationShell({
   const [passwordChangeError, setPasswordChangeError] = useState<string | undefined>();
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutMessage, setLogoutMessage] = useState<string | undefined>();
-  const [deviceProof, setDeviceProof] = useState("");
+  const [deviceEnrollmentPackage, setDeviceEnrollmentPackage] = useState("");
   const [deviceProvisioningPending, setDeviceProvisioningPending] = useState(false);
   const [deviceProvisioningMessage, setDeviceProvisioningMessage] = useState<string | undefined>();
   const activeRef = useRef(true);
@@ -60,7 +61,7 @@ export function OperatorConsoleAuthenticationShell({
     setPasswordChangeError(undefined);
     setLogoutPending(false);
     setLogoutMessage(undefined);
-    setDeviceProof("");
+    setDeviceEnrollmentPackage("");
     setDeviceProvisioningPending(false);
     setDeviceProvisioningMessage(undefined);
     setState({ status: "unauthenticated", message });
@@ -79,20 +80,30 @@ export function OperatorConsoleAuthenticationShell({
       if (activeRef.current) setState({ status: "authenticated", session: rebound });
     } catch (error) {
       if (!activeRef.current) return;
-      const mapped = operatingContextMessage(error);
-      setState({ status: "authenticated", session, operatingContextError: mapped });
+      setState({ status: "device-untrusted", error: operatingContextMessage(error) });
     }
   }
 
   useEffect(() => {
     activeRef.current = true;
-    void authClient
-      .getCurrentSession()
-      .then((session) => {
+    void (async () => {
+      try {
+        await authClient.validateDeviceTrust();
         if (!activeRef.current) return;
-        void resolveOperatingContext(session);
-      })
-      .catch((error) => {
+      } catch (error) {
+        if (!activeRef.current) return;
+        authClient.clearRuntimeState();
+        setUsername("");
+        setPassword("");
+        setState({ status: "device-untrusted", error: operatingContextMessage(error) });
+        return;
+      }
+
+      try {
+        const session = await authClient.getCurrentSession();
+        if (!activeRef.current) return;
+        await resolveOperatingContext(session);
+      } catch (error) {
         if (!activeRef.current) return;
         const mapped = authenticationMessage(error);
         authClient.clearRuntimeState();
@@ -103,7 +114,8 @@ export function OperatorConsoleAuthenticationShell({
           message: mapped.silent ? undefined : mapped.message,
           supportReference: mapped.supportReference
         });
-      });
+      }
+    })();
 
     return () => {
       activeRef.current = false;
@@ -132,12 +144,25 @@ export function OperatorConsoleAuthenticationShell({
 
     setState({ status: "authenticating" });
     try {
+      await authClient.validateDeviceTrust();
+    } catch (error) {
+      authClient.clearRuntimeState();
+      setPassword("");
+      setState({ status: "device-untrusted", error: operatingContextMessage(error) });
+      return;
+    }
+
+    try {
       const session = await authClient.login(submittedUsername, password);
       setPassword("");
       await resolveOperatingContext(session);
     } catch (error) {
       authClient.clearRuntimeState();
       setPassword("");
+      if (error instanceof HumanAuthenticationError && error.kind === "operating-context") {
+        setState({ status: "device-untrusted", error });
+        return;
+      }
       const mapped = authenticationMessage(error);
       setState({
         status: "unauthenticated",
@@ -208,21 +233,24 @@ export function OperatorConsoleAuthenticationShell({
     }
   }
 
-  async function establishDeviceBinding(event: FormEvent<HTMLFormElement>) {
+  async function enrollDevice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (deviceProvisioningPending || deviceProof.length < 32) return;
+    if (deviceProvisioningPending || deviceEnrollmentPackage.length < 32) return;
     setDeviceProvisioningPending(true);
     setDeviceProvisioningMessage(undefined);
-    const proof = deviceProof;
-    setDeviceProof("");
+    const enrollmentPackage = deviceEnrollmentPackage;
+    setDeviceEnrollmentPackage("");
     try {
-      await authClient.establishDeviceBinding(proof);
-      setDeviceProvisioningMessage("Workstation trust established.");
-      if (state.status === "authenticated") await resolveOperatingContext(state.session);
+      await authClient.enrollDevice(enrollmentPackage);
+      await authClient.validateDeviceTrust();
+      setState({
+        status: "unauthenticated",
+        message: "Governed workstation enrollment completed. Staff sign in is now available."
+      });
     } catch (error) {
       setDeviceProvisioningMessage(operatingContextMessage(error).message);
     } finally {
-      setDeviceProof("");
+      setDeviceEnrollmentPackage("");
       setDeviceProvisioningPending(false);
     }
   }
@@ -241,21 +269,6 @@ export function OperatorConsoleAuthenticationShell({
   if (state.status === "authenticated" && workspaceClient) {
     return (
       <>
-        {state.operatingContextError && (
-          <section className="operatingContextNotice" role="status" aria-live="polite">
-            <strong>Operator context required</strong>
-            <span>{state.operatingContextError.message}</span>
-            {state.operatingContextError.errorCode === "OPERATOR_DEVICE_BINDING_REQUIRED" && (
-              <DeviceProvisioningForm
-                proof={deviceProof}
-                pending={deviceProvisioningPending}
-                message={deviceProvisioningMessage}
-                onProofChange={setDeviceProof}
-                onSubmit={establishDeviceBinding}
-              />
-            )}
-          </section>
-        )}
         <App
           apiClient={workspaceClient}
           fiscalReportingClient={import.meta.env.DEV && new URLSearchParams(window.location.search).get("operatorFiscalReportingScenario") === "ready"
@@ -348,6 +361,32 @@ export function OperatorConsoleAuthenticationShell({
     );
   }
 
+  if (state.status === "device-untrusted") {
+    return (
+      <main className="authenticationShell">
+        <section className="authenticationPanel" aria-labelledby="operator-console-device-trust-title">
+          <p className="eyebrow">Operator Console</p>
+          <h1 id="operator-console-device-trust-title">Trusted workstation required</h1>
+          <p className="authenticationError" role="alert">{state.error.message}</p>
+          {state.error.supportReference && (
+            <p className="supportReference">Support reference: {state.error.supportReference}</p>
+          )}
+          {(state.error.errorCode === "OPERATOR_DEVICE_BINDING_REQUIRED" ||
+            state.error.errorCode === "OPERATOR_DEVICE_CREDENTIAL_ROTATION_REQUIRED" ||
+            state.error.errorCode === "OPERATOR_DEVICE_REPLACEMENT_ENROLLMENT_REQUIRED") && (
+            <DeviceProvisioningForm
+              enrollmentPackage={deviceEnrollmentPackage}
+              pending={deviceProvisioningPending}
+              message={deviceProvisioningMessage}
+              onEnrollmentPackageChange={setDeviceEnrollmentPackage}
+              onSubmit={enrollDevice}
+            />
+          )}
+        </section>
+      </main>
+    );
+  }
+
   const busy = state.status === "authenticating";
   const message = state.status === "unauthenticated" ? state.message : undefined;
   const supportReference = state.status === "unauthenticated" ? state.supportReference : undefined;
@@ -385,45 +424,38 @@ export function OperatorConsoleAuthenticationShell({
             {busy ? "Signing in" : "Sign in"}
           </button>
         </form>
-        <DeviceProvisioningForm
-          proof={deviceProof}
-          pending={deviceProvisioningPending}
-          message={deviceProvisioningMessage}
-          onProofChange={setDeviceProof}
-          onSubmit={establishDeviceBinding}
-        />
       </section>
     </main>
   );
 }
 
 function DeviceProvisioningForm({
-  proof,
+  enrollmentPackage,
   pending,
   message,
-  onProofChange,
+  onEnrollmentPackageChange,
   onSubmit
 }: {
-  proof: string;
+  enrollmentPackage: string;
   pending: boolean;
   message?: string;
-  onProofChange: (value: string) => void;
+  onEnrollmentPackageChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
     <form className="deviceProvisioningForm" autoComplete="off" onSubmit={onSubmit} aria-busy={pending}>
       <label>
-        Workstation provisioning proof
+        Governed workstation enrollment package
         <input
           type="password"
           autoComplete="off"
-          value={proof}
-          onChange={(event) => onProofChange(event.target.value)}
+          value={enrollmentPackage}
+          onChange={(event) => onEnrollmentPackageChange(event.target.value)}
           disabled={pending}
         />
       </label>
-      <button type="submit" disabled={pending || proof.length < 32}>
-        {pending ? "Establishing trust" : "Trust workstation"}
+      <button type="submit" disabled={pending || enrollmentPackage.length < 32}>
+        {pending ? "Enrolling workstation" : "Enroll workstation"}
       </button>
       {message && <span role="status">{message}</span>}
     </form>

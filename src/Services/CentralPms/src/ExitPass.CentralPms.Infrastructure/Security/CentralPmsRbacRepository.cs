@@ -262,6 +262,70 @@ public sealed class CentralPmsRbacRepository : ICentralPmsRbacRepository
             reader.GetBoolean(4));
     }
 
+    public async Task<CentralPmsGovernedDeviceAuthenticationRecord?> GetGovernedDeviceAuthenticationAsync(
+        string credentialReference,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(credentialReference)) return null;
+        const string sql = """
+            SELECT service.service_identity_id,device.device_id,device.device_type::text,
+                   device.credential_version,COALESCE(service.owning_service_name,''),
+                   array_agg(DISTINCT assignment.site_id),
+                   array_agg(DISTINCT site.site_group_id)
+            FROM identity.devices device
+            JOIN identity.service_identities service
+              ON service.service_identity_id=device.service_identity_id
+            JOIN identity.device_credential_history credential
+              ON credential.device_id=device.device_id
+             AND credential.credential_version=device.credential_version
+             AND credential.credential_status='ACTIVE'
+            JOIN sites.device_assignments assignment
+              ON assignment.service_identity_id=service.service_identity_id
+             AND assignment.assignment_type='PAYMENT_DEVICE'
+             AND assignment.assignment_status='ACTIVE'
+             AND assignment.assigned_at<=now()
+             AND assignment.unassigned_at IS NULL
+            JOIN sites.sites site ON site.site_id=assignment.site_id
+            WHERE service.credential_reference=@credential_reference
+              AND service.credential_type='MTLS_CERTIFICATE_REFERENCE'
+              AND service.identity_type='DEVICE' AND service.identity_status='ACTIVE'
+              AND service.effective_from<=now()
+              AND (service.effective_to IS NULL OR service.effective_to>now())
+              AND service.revoked_at IS NULL
+              AND (service.credential_expires_at IS NULL OR service.credential_expires_at>now())
+              AND device.device_type='ASSISTED_PAYMENT_TERMINAL'
+              AND device.lifecycle_status='ACTIVE'
+              AND (credential.expires_at IS NULL OR credential.expires_at>now())
+              AND site.site_status='ACTIVE'
+            GROUP BY service.service_identity_id,device.device_id;
+            """;
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("credential_reference", credentialReference.Trim());
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        var result = new CentralPmsGovernedDeviceAuthenticationRecord(
+            reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetInt64(3),
+            reader.GetString(4), reader.GetFieldValue<Guid[]>(5), reader.GetFieldValue<Guid[]>(6));
+        return await reader.ReadAsync(cancellationToken) ? null : result;
+    }
+
+    public async Task<bool?> RequiresGovernedDeviceCertificateAsync(Guid serviceIdentityId, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT service.credential_reference LIKE 'device-mtls-sha256:%'
+            FROM identity.devices device
+            JOIN identity.service_identities service ON service.service_identity_id=device.service_identity_id
+            WHERE service.service_identity_id=@service_identity_id
+              AND device.device_type='ASSISTED_PAYMENT_TERMINAL';
+            """;
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("service_identity_id", serviceIdentityId);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is bool required ? required : null;
+    }
+
     public async Task<CentralPmsAptDeviceAuthorizationRecord?> GetAptDeviceAuthorizationAsync(
         Guid serviceIdentityId,
         Guid siteId,
@@ -270,7 +334,7 @@ public sealed class CentralPmsRbacRepository : ICentralPmsRbacRepository
         const string sql = """
             SELECT
                 si.service_identity_id,
-                si.service_identity_code,
+                device.terminal_identifier,
                 si.identity_type::text,
                 COALESCE(si.owning_service_name, ''),
                 (
@@ -291,6 +355,9 @@ public sealed class CentralPmsRbacRepository : ICentralPmsRbacRepository
                       AND da.unassigned_at IS NULL
                 ) AS site_assigned
             FROM identity.service_identities si
+            JOIN identity.devices device
+              ON device.service_identity_id=si.service_identity_id
+             AND device.device_type='ASSISTED_PAYMENT_TERMINAL'
             WHERE si.service_identity_id = @service_identity_id;
             """;
 

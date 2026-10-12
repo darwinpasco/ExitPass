@@ -5,7 +5,10 @@ namespace ExitPass.CentralPms.Api.Security;
 
 public sealed class OperatorConsoleOperatingContextMiddleware(RequestDelegate next, ILogger<OperatorConsoleOperatingContextMiddleware> logger)
 {
-    public async Task InvokeAsync(HttpContext context, IOperatorConsoleOperatingContextService service)
+    public async Task InvokeAsync(
+        HttpContext context,
+        IOperatorConsoleOperatingContextService service,
+        TimeProvider? timeProvider = null)
     {
         if (!IsOperatorConsoleRequest(context.Request) ||
             !string.Equals(context.User.Identity?.AuthenticationType, HumanSessionAuthenticationHandler.SchemeName, StringComparison.Ordinal))
@@ -30,9 +33,10 @@ public sealed class OperatorConsoleOperatingContextMiddleware(RequestDelegate ne
             return;
         }
 
+        var deviceProof = OperatorConsoleDeviceBindingCookie.Read(context.Request);
         var result = await service.ValidateSessionAsync(
             humanSessionId,
-            OperatorConsoleDeviceBindingCookie.Read(context.Request),
+            deviceProof,
             correlationId,
             context.RequestAborted);
         if (!result.Succeeded || result.Context is null)
@@ -46,6 +50,10 @@ public sealed class OperatorConsoleOperatingContextMiddleware(RequestDelegate ne
             return;
         }
 
+        OperatorConsoleDeviceBindingCookie.Issue(
+            context.Response,
+            deviceProof!,
+            (timeProvider ?? TimeProvider.System).GetUtcNow());
         OperatorConsoleDeviceBindingCookie.AddClaims(context.User, result.Context);
         await next(context);
     }

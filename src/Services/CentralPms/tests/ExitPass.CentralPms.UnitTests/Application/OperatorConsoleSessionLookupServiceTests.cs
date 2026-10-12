@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.Operations;
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.Sessions;
 using FluentAssertions;
@@ -76,13 +77,16 @@ public sealed class OperatorConsoleSessionLookupServiceTests
     }
 
     [Fact]
-    public async Task LookupAsync_WhenOnlyVendorProjectionExists_ReturnsVisibleNonTransactionalContext()
+    public async Task LookupAsync_WhenOnlyVendorProjectionExists_EnrichesItFromAuthoritativeTariffSummary()
     {
         var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
         repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
             .Returns(ProjectionSession());
+        var ticketSummary = Substitute.For<ITicketSessionSummaryService>();
+        ticketSummary.GetAsync(Arg.Any<TicketSessionSummaryCommand>(), Arg.Any<CancellationToken>())
+            .Returns(AuthoritativeSummary());
 
-        var sut = CreateSut(AccessResult(allowed: true, []), repository);
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, ticketSummary);
 
         var result = await sut.LookupAsync(
             Command(parkingSessionId: null, lookupMode: "TICKET_REFERENCE"),
@@ -91,21 +95,34 @@ public sealed class OperatorConsoleSessionLookupServiceTests
         result.Session.Should().NotBeNull();
         result.Session!.ParkingSessionId.Should().BeNull();
         result.Session.SessionSource.Should().Be("VENDOR_SESSION_PROJECTION");
-        result.Session.CurrentPayableAmountMinorUnits.Should().BeNull();
+        result.Session.CurrentPayableAmountMinorUnits.Should().Be(5000);
+        result.Session.CurrencyCode.Should().Be("PHP");
+        result.Session.ParkingDurationSeconds.Should().Be(433);
+        result.Session.TariffSource.Should().Be("LIVE_VENDOR");
         result.Session.PaymentStatus.Should().BeNull();
         result.Session.ExitAuthorizationStatus.Should().BeNull();
         result.SessionEligible.Should().BeFalse();
         result.IneligibilityReason.Should().Be("TRANSACTIONAL_SESSION_NOT_STARTED");
         result.Alerts.Should().ContainSingle().Which.Should().Be("VENDOR_PROJECTION_ONLY");
+        await ticketSummary.Received(1).GetAsync(
+            Arg.Is<TicketSessionSummaryCommand>(command =>
+                command.TicketNumber == "TICKET-001" &&
+                command.SiteId == SiteId &&
+                command.SiteGroupId == SiteGroupId &&
+                command.CorrelationId == CorrelationId),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task LookupAsync_WhenPlateModeSelected_UsesExactPlateWithoutFinancialResolution()
+    public async Task LookupAsync_WhenPlateModeSelected_UsesProjectionTicketForAuthoritativeTariffSummary()
     {
         var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
         repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
             .Returns(ProjectionSession(VendorSystemId));
-        var sut = CreateSut(AccessResult(allowed: true, []), repository);
+        var ticketSummary = Substitute.For<ITicketSessionSummaryService>();
+        ticketSummary.GetAsync(Arg.Any<TicketSessionSummaryCommand>(), Arg.Any<CancellationToken>())
+            .Returns(AuthoritativeSummary());
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, ticketSummary);
 
         var result = await sut.LookupAsync(
             Command(parkingSessionId: null, ticketReference: null, plateNumber: " abc1102 ", lookupMode: "PLATE_LICENSE"),
@@ -113,9 +130,14 @@ public sealed class OperatorConsoleSessionLookupServiceTests
 
         result.Session!.ParkingSessionId.Should().BeNull();
         result.Session.SessionSource.Should().Be("VENDOR_SESSION_PROJECTION");
+        result.Session.CurrentPayableAmountMinorUnits.Should().Be(5000);
+        result.Session.TariffSource.Should().Be("LIVE_VENDOR");
         await repository.Received().FindAsync(
             Arg.Is<OperatorConsoleSessionLookupReadRequest>(request =>
                 request.LookupMode == "PLATE_LICENSE" && request.PlateNumber == "ABC1102" && request.TicketReference == null),
+            Arg.Any<CancellationToken>());
+        await ticketSummary.Received(1).GetAsync(
+            Arg.Is<TicketSessionSummaryCommand>(command => command.TicketNumber == "TICKET-001"),
             Arg.Any<CancellationToken>());
     }
 
@@ -191,7 +213,8 @@ public sealed class OperatorConsoleSessionLookupServiceTests
 
     private static OperatorConsoleSessionLookupService CreateSut(
         OperatorConsoleAccessEvaluationResult accessResult,
-        IOperatorConsoleSessionLookupReadRepository sessionRepository)
+        IOperatorConsoleSessionLookupReadRepository sessionRepository,
+        ITicketSessionSummaryService? ticketSessionSummaryService = null)
     {
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
@@ -201,7 +224,8 @@ public sealed class OperatorConsoleSessionLookupServiceTests
         writer.PersistAsync(Arg.Any<OperatorConsoleAccessEvaluationResult>(), Arg.Any<CancellationToken>())
             .Returns(accessResult with { EvaluationId = EvaluationId, Persisted = true });
 
-        return new OperatorConsoleSessionLookupService(accessService, writer, sessionRepository);
+        ticketSessionSummaryService ??= Substitute.For<ITicketSessionSummaryService>();
+        return new OperatorConsoleSessionLookupService(accessService, writer, sessionRepository, ticketSessionSummaryService);
     }
 
     private static OperatorConsoleSessionLookupCommand Command(
@@ -300,4 +324,31 @@ public sealed class OperatorConsoleSessionLookupServiceTests
             ProjectionSourceEventAt: EntryTime,
             ProjectionLastRefreshedAt: EntryTime.AddMinutes(1),
             VendorSystemId: vendorSystemId);
+
+    private static TicketSessionSummaryResult AuthoritativeSummary() =>
+        TicketSessionSummaryResult.Resolved(
+            new TicketSessionSummaryReadModel(
+                TicketNumber: "TICKET-001",
+                CardNum: null,
+                PlateLicense: "ABC1102",
+                ParkingInTime: EntryTime,
+                ParkingDurationSeconds: 433,
+                FeeMinorUnits: 5000,
+                CurrencyCode: "PHP",
+                FeeRuleType: null,
+                FeeRuleIndexCode: "PITX-MOCK-RULE",
+                FeeRuleName: "PITX Mock Parking Rule",
+                VendorSessionStatus: "ACTIVE",
+                VendorSystemCode: "HIKCENTRAL",
+                VendorConfirmationCode: "VENDOR_CONFIRMATION_STATUS_UNAVAILABLE",
+                VendorMessage: "Vendor session and tariff summary resolved.",
+                ParkingSessionId: null,
+                PaymentAttemptId: null,
+                PaymentAttemptStatus: null,
+                PaymentStatus: null,
+                PaymentConfirmationStatus: null,
+                VendorConfirmationStatus: null,
+                VendorConfirmationTimestamp: null),
+            Array.Empty<TicketSessionSummaryDiagnostic>(),
+            CorrelationId);
 }

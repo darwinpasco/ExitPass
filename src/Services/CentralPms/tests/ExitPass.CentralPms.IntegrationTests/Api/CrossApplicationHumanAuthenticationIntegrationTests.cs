@@ -93,14 +93,12 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
 
         using (var unboundBrowser = WebClient(factory))
         {
-            var unboundLogin = await LoginWebWithCsrfAsync(unboundBrowser, seed, HumanSessionAudiences.OperatorConsole);
-            using var unboundRebind = new HttpRequestMessage(HttpMethod.Post, "/v1/operator-console/device-binding/bind-session")
+            using var unboundLogin = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
             {
-                Content = JsonContent.Create(new { })
+                Content = JsonContent.Create(new HumanLoginRequest(seed.Username, Password, HumanSessionAudiences.OperatorConsole))
             };
-            unboundRebind.Headers.Add("Origin", "https://localhost");
-            unboundRebind.Headers.Add("X-CSRF-Token", unboundLogin.Csrf);
-            var response = await unboundBrowser.SendAsync(unboundRebind);
+            unboundLogin.Headers.Add("Origin", "https://localhost");
+            var response = await unboundBrowser.SendAsync(unboundLogin);
             response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
             (await response.Content.ReadAsStringAsync()).Should().Contain(OperatorConsoleOperatingContextFailureCodes.DeviceBindingRequired);
         }
@@ -186,9 +184,70 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         var seed = await SeedScopedUserAsync([ApprovedIdentityRoleCatalog.OperationsSupervisor]);
         await using var factory = ProductionFactory();
         using var client = WebClient(factory);
-        await LoginWebAsync(client, seed, HumanSessionAudiences.ManagementPlatform);
+
+        var untrustedStatus = await client.GetAsync("/v1/operator-console/device-binding/status");
+        untrustedStatus.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await untrustedStatus.Content.ReadAsStringAsync()).Should()
+            .Contain(OperatorConsoleOperatingContextFailureCodes.DeviceBindingRequired);
+
+        using (var untrustedLogin = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
+        {
+            Content = JsonContent.Create(new HumanLoginRequest(seed.Username, Password, HumanSessionAudiences.OperatorConsole))
+        })
+        {
+            untrustedLogin.Headers.Add("Origin", "https://localhost");
+            var response = await client.SendAsync(untrustedLogin);
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            (await response.Content.ReadAsStringAsync()).Should()
+                .Contain(OperatorConsoleOperatingContextFailureCodes.DeviceBindingRequired);
+        }
 
         await EstablishOperatorDeviceAsync(client, seed);
+
+        (await client.GetAsync("/v1/operator-console/device-binding/status"))
+            .StatusCode.Should().Be(HttpStatusCode.NoContent);
+        var authenticated = await LoginWebWithCsrfAsync(client, seed, HumanSessionAudiences.OperatorConsole);
+        authenticated.Response.Authenticated.Should().BeTrue();
+
+        using var logout = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/logout")
+        {
+            Content = JsonContent.Create(new { })
+        };
+        logout.Headers.Add("Origin", "https://localhost");
+        logout.Headers.Add("X-CSRF-Token", authenticated.Csrf);
+        using var logoutResponse = await client.SendAsync(logout);
+        logoutResponse.StatusCode.Should().Be(HttpStatusCode.OK, await logoutResponse.Content.ReadAsStringAsync());
+        logoutResponse.Headers.TryGetValues("Set-Cookie", out var logoutCookies).Should().BeTrue();
+        logoutCookies!.Should().NotContain(value => value.StartsWith(
+            $"{OperatorConsoleDeviceBindingCookie.CookieName}=", StringComparison.Ordinal));
+        (await client.GetAsync("/v1/operator-console/device-binding/status"))
+            .StatusCode.Should().Be(HttpStatusCode.NoContent,
+                "human sign-out must not remove the independently governed workstation binding");
+
+        var expiringSession = await LoginWebWithCsrfAsync(
+            client, seed, HumanSessionAudiences.OperatorConsole);
+        await ExecuteAsync("""
+            UPDATE identity.human_sessions
+            SET authenticated_at=now()-interval '2 hours',
+                last_seen_at=now()-interval '61 minutes',
+                idle_expires_at=now()-interval '60 minutes',
+                absolute_expires_at=now()+interval '1 hour'
+            WHERE session_reference=@session_reference;
+            """, ("session_reference", expiringSession.Response.Session!.SessionReference));
+        (await client.GetAsync("/v1/operator-console/device-binding/status"))
+            .StatusCode.Should().Be(HttpStatusCode.NoContent,
+                "device-only bootstrap validation must not be blocked by an expired human session");
+        using var expiredResponse = await client.GetAsync("/v1/human-authentication/session");
+        expiredResponse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await expiredResponse.Content.ReadAsStringAsync()).Should().Contain("SESSION_EXPIRED");
+        if (expiredResponse.Headers.TryGetValues("Set-Cookie", out var expiryCookies))
+        {
+            expiryCookies.Should().NotContain(value => value.StartsWith(
+                $"{OperatorConsoleDeviceBindingCookie.CookieName}=", StringComparison.Ordinal));
+        }
+        (await client.GetAsync("/v1/operator-console/device-binding/status"))
+            .StatusCode.Should().Be(HttpStatusCode.NoContent,
+                "human-session expiry must not remove the independently governed workstation binding");
     }
 
     [Fact]
@@ -198,6 +257,8 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         await using var factory = ProductionFactory();
         using var operatorClient = WebClient(factory);
         using var managementClient = WebClient(factory);
+
+        await EstablishOperatorDeviceAsync(operatorClient, seed);
 
         using (var passwordOnlyLogin = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
         {
@@ -225,7 +286,6 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
                 .Should().Be("TOTP_REQUIRED");
         }
 
-        await EstablishOperatorDeviceAsync(operatorClient, seed);
         var operatorLogin = await LoginWebAsync(operatorClient, seed, HumanSessionAudiences.OperatorConsole);
         operatorLogin.Session!.SiteReferences.Should().ContainSingle().Which.Should().Be(seed.SiteId);
         operatorLogin.Session.HasGlobalScope.Should().BeFalse();
@@ -554,14 +614,38 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
     private async Task<OperatorDeviceSeed> EstablishOperatorDeviceAsync(HttpClient client, Seed seed)
     {
         var deviceId = Guid.NewGuid();
+        var deviceCode = $"I022_OC_{deviceId:N}"[..32];
         var proof = $"i022-provisioning-proof-{Guid.NewGuid():N}";
         var proofHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(proof))).ToLowerInvariant();
         await ExecuteAsync("""
+            INSERT INTO identity.service_identities (
+                service_identity_id,service_identity_code,service_identity_name,identity_type,
+                identity_status,credential_reference,credential_type,effective_from,last_rotated_at,
+                created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (@device_id,@device_code,'I-022 browser','DEVICE','ACTIVE',@proof_hash,
+                'API_KEY_REFERENCE',now()-interval '1 minute',now()-interval '1 minute',
+                @service_id,@service_id);
+            INSERT INTO identity.devices (
+                device_id,device_reference,service_identity_id,device_name,device_type,
+                lifecycle_status,credential_version,last_provisioning_status,enrolled_at,effective_from)
+            VALUES (@device_id,@device_code,@device_id,'I-022 browser','OPERATOR_CONSOLE',
+                'ACTIVE',1,'CONSUMED',now()-interval '1 minute',now()-interval '1 minute');
+            INSERT INTO identity.device_credential_history (
+                device_credential_history_id,device_id,credential_version,credential_type,
+                credential_status,credential_fingerprint,activated_at,correlation_id)
+            VALUES (gen_random_uuid(),@device_id,1,'API_KEY_REFERENCE','ACTIVE',@proof_hash,
+                now()-interval '1 minute',gen_random_uuid());
+            INSERT INTO sites.device_assignments (
+                device_assignment_id,site_id,service_identity_id,assignment_type,assignment_status,
+                assignment_reason_code,assigned_by_service_identity_id,
+                created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (gen_random_uuid(),@site_id,@device_id,'SERVICE_PRINCIPAL','ACTIVE',
+                'I022_PROOF',@service_id,@service_id,@service_id);
             INSERT INTO operator_console.operator_device_bindings (
                 operator_device_binding_id,device_binding_code,device_name,site_group_id,site_id,
-                browser_key_thumbprint,device_status,trust_level,binding_source,correlation_id,
+                service_identity_id,browser_key_thumbprint,device_status,trust_level,binding_source,correlation_id,
                 created_by_service_identity_id,updated_by_service_identity_id)
-            VALUES (@device_id,@device_code,'I-022 browser',@site_group_id,@site_id,@proof_hash,
+            VALUES (@device_id,@device_code,'I-022 browser',@site_group_id,@site_id,@device_id,@proof_hash,
                 'ACTIVE','BROWSER_KEY_ONLY','I022_PROOF',gen_random_uuid(),@service_id,@service_id);
             INSERT INTO operator_console.operator_device_assignment_history (
                 operator_device_assignment_history_id,operator_device_binding_id,site_group_id,site_id,
@@ -571,7 +655,7 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
                 now()-interval '1 minute',gen_random_uuid(),@service_id,@service_id);
             """,
             ("user_id", seed.UserId),
-            ("device_id", deviceId), ("device_code", $"I022_OC_{deviceId:N}"[..32]),
+            ("device_id", deviceId), ("device_code", deviceCode),
             ("site_group_id", seed.SiteGroupId), ("site_id", seed.SiteId), ("proof_hash", proofHash),
             ("service_id", CentralPmsServiceIdentityId));
 

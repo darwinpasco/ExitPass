@@ -64,6 +64,7 @@ describe("Operator Console I-020 authentication client", () => {
       .fn()
       .mockResolvedValueOnce(deviceEnrollmentResponse())
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(authenticationResponse(sessionDto(), { csrf: "csrf-bind" }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(authenticationResponse(boundSession));
@@ -71,6 +72,7 @@ describe("Operator Console I-020 authentication client", () => {
     const enrollmentPackage = operatorConsoleEnrollmentPackage();
 
     await client.enrollDevice(enrollmentPackage);
+    await client.validateDeviceTrust();
     await client.getCurrentSession();
     const result = await client.bindDeviceSession();
 
@@ -81,7 +83,10 @@ describe("Operator Console I-020 authentication client", () => {
     expect(establish[0]).toBe(humanAuthenticationRoutes.establishDeviceBinding);
     expect(establish[1].credentials).toBe("same-origin");
     expect(JSON.parse(establish[1].body as string)).toEqual({ proof: "server-issued-runtime-proof-12345678901234567890" });
-    const bind = fetchMock.mock.calls[3] as unknown as [string, RequestInit];
+    const status = fetchMock.mock.calls[2] as unknown as [string, RequestInit];
+    expect(status[0]).toBe(humanAuthenticationRoutes.deviceBindingStatus);
+    expect(status[1].method).toBe("GET");
+    const bind = fetchMock.mock.calls[4] as unknown as [string, RequestInit];
     expect(bind[0]).toBe(humanAuthenticationRoutes.bindDeviceSession);
     expect(bind[1].headers).toEqual(expect.objectContaining({ "X-CSRF-Token": "csrf-bind" }));
     expect(result).toEqual(expect.objectContaining({
@@ -92,6 +97,65 @@ describe("Operator Console I-020 authentication client", () => {
     }));
     expect(window.localStorage).toHaveLength(0);
     expect(window.sessionStorage).toHaveLength(0);
+    expect(fetchMock.mock.calls.map((call) => call[0])).not.toContain(humanAuthenticationRoutes.login);
+  });
+
+  it("validates device trust independently and maps a rejected binding before human login", async () => {
+    const fetchMock = vi.fn(async () => failureResponse(403, "OPERATOR_DEVICE_BINDING_REVOKED"));
+    const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
+
+    await expect(client.validateDeviceTrust()).rejects.toEqual(expect.objectContaining({
+      kind: "operating-context",
+      errorCode: "OPERATOR_DEVICE_BINDING_REVOKED"
+    }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const status = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(status[0]).toBe(humanAuthenticationRoutes.deviceBindingStatus);
+    expect(status[1]).toEqual(expect.objectContaining({
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store"
+    }));
+  });
+
+  it("maps the credential-rotation status to an actionable workstation enrollment state", async () => {
+    const fetchMock = vi.fn(async () =>
+      failureResponse(403, "OPERATOR_DEVICE_CREDENTIAL_ROTATION_REQUIRED"));
+    const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
+
+    await expect(client.validateDeviceTrust()).rejects.toEqual(expect.objectContaining({
+      kind: "operating-context",
+      errorCode: "OPERATOR_DEVICE_CREDENTIAL_ROTATION_REQUIRED",
+      message: "This workstation must complete credential rotation before governed Operator Console actions are available."
+    }));
+  });
+
+  it("maps replacement-pending status to actionable successor enrollment guidance", async () => {
+    const fetchMock = vi.fn(async () =>
+      failureResponse(403, "OPERATOR_DEVICE_REPLACEMENT_ENROLLMENT_REQUIRED"));
+    const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
+
+    await expect(client.validateDeviceTrust()).rejects.toEqual(expect.objectContaining({
+      kind: "operating-context",
+      errorCode: "OPERATOR_DEVICE_REPLACEMENT_ENROLLMENT_REQUIRED",
+      message: "Enroll the approved replacement device before governed Operator Console actions are available."
+    }));
+  });
+
+  it("fails closed on an undocumented empty status response and retains its safe correlation reference", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, {
+      status: 404,
+      headers: { "X-Correlation-Id": "19000000-0000-0000-0000-000000000404" }
+    }));
+    const client = createHumanAuthenticationClient({ fetchImpl: fetchMock as typeof fetch });
+
+    await expect(client.validateDeviceTrust()).rejects.toEqual(expect.objectContaining({
+      kind: "malformed",
+      retryable: true,
+      supportReference: "19000000-0000-0000-0000-000000000404",
+      message: "Operator Console authentication returned an unsupported response. Try again."
+    }));
   });
 
   it("treats an unprocessable successful enrollment as consumed and preserves its support reference", async () => {
