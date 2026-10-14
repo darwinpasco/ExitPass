@@ -22,6 +22,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
     private static readonly Guid ParkingSessionReference = Guid.Parse("72000000-0000-4000-8000-000000000203");
     private static readonly Guid CorrelationId = Guid.Parse("72000000-0000-4000-8000-000000000301");
     private static readonly DateTimeOffset SubmittedAt = DateTimeOffset.Parse("2026-08-24T01:00:00Z");
+    private static readonly DateTimeOffset CurrentTime = DateTimeOffset.Parse("2026-10-13T04:00:00Z");
 
     [Fact]
     public async Task List_UsesAssignedEnterpriseSiteSetAndNormalizesPendingFilter()
@@ -523,6 +524,124 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
     }
 
     [Theory]
+    [InlineData("WEBPAY")]
+    [InlineData("ASSISTED_PAYMENT_TERMINAL")]
+    public async Task Approve_ServiceChannelSeniorCitizen_UsesBirthDateWithoutRequiringExpiry(string sourceChannel)
+    {
+        var birthDate = new DateOnly(1966, 10, 13);
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                SourceChannel = sourceChannel,
+                EntitlementType = "SENIOR_CITIZEN",
+                IdDocumentType = "SENIOR_CITIZEN_ID",
+                IssuingAuthority = "OSCA",
+                ExpiryDate = null,
+                BirthDate = birthDate,
+                IdControlReference = "123467"
+            }
+        };
+        var decisions = new FakeDecisionService();
+        var command = Command("APPROVE") with
+        {
+            IdDocumentType = "SENIOR_CITIZEN_ID",
+            IssuingAuthority = "OSCA",
+            ExpiryDate = null,
+            BirthDate = birthDate,
+            IdControlReference = null
+        };
+
+        var result = await CreateService(AllowedRepository(), canonical, decisions)
+            .DecideAsync(Actor(), command, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        decisions.CapturedCommand!.ReviewedDocument.BirthDate.Should().Be(birthDate);
+        decisions.CapturedCommand.ReviewedDocument.ExpiryDate.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(1966, 10, 14)]
+    [InlineData(2027, 1, 1)]
+    public async Task Approve_SeniorCitizenYoungerThanSixtyOrFutureBirthDate_FailsBeforePersistence(
+        int year,
+        int month,
+        int day)
+    {
+        var birthDate = new DateOnly(year, month, day);
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                EntitlementType = "SENIOR_CITIZEN",
+                IdDocumentType = "SENIOR_CITIZEN_ID",
+                IssuingAuthority = "OSCA",
+                ExpiryDate = null,
+                BirthDate = birthDate,
+                IdControlReference = "123467"
+            }
+        };
+        var decisions = new FakeDecisionService();
+        var command = Command("APPROVE") with
+        {
+            IdDocumentType = "SENIOR_CITIZEN_ID",
+            IssuingAuthority = "OSCA",
+            ExpiryDate = null,
+            BirthDate = birthDate,
+            IdControlReference = null
+        };
+
+        var result = await CreateService(AllowedRepository(), canonical, decisions)
+            .DecideAsync(Actor(), command, CancellationToken.None);
+
+        result.Classification.Should().Be("STATUTORY_BENEFIT_SENIOR_CITIZEN_MINIMUM_AGE_REQUIRED");
+        decisions.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Approve_SeniorCitizenMissingBirthDate_DoesNotAcceptExpiryDateAsSubstitute()
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                EntitlementType = "SENIOR_CITIZEN",
+                IdDocumentType = "SENIOR_CITIZEN_ID",
+                IssuingAuthority = "OSCA",
+                BirthDate = null,
+                IdControlReference = "123467"
+            }
+        };
+        var decisions = new FakeDecisionService();
+        var command = Command("APPROVE") with
+        {
+            IdDocumentType = "SENIOR_CITIZEN_ID",
+            IssuingAuthority = "OSCA",
+            BirthDate = null,
+            IdControlReference = null
+        };
+
+        var result = await CreateService(AllowedRepository(), canonical, decisions)
+            .DecideAsync(Actor(), command, CancellationToken.None);
+
+        result.Classification.Should().Be("STATUTORY_BENEFIT_APPROVAL_METADATA_REQUIRED");
+        decisions.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Approve_PwdContinuesToRequireExpiryDateInsteadOfBirthDate()
+    {
+        var decisions = new FakeDecisionService();
+
+        var result = await CreateService(AllowedRepository(), decisions: decisions)
+            .DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        decisions.CapturedCommand!.ReviewedDocument.ExpiryDate.Should().Be(new DateOnly(2027, 8, 24));
+        decisions.CapturedCommand.ReviewedDocument.BirthDate.Should().BeNull();
+    }
+
+    [Theory]
     [InlineData("SENIOR CITIZEN", "SENIOR_CITIZEN_ID")]
     [InlineData("SENIOR_CITIZEN", "SENIOR_CITIZEN_ID")]
     [InlineData("SENIOR_CITIZEN_ID", "SENIOR_CITIZEN_ID")]
@@ -994,7 +1113,8 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         IOperatorConsoleStatutoryEvidenceReviewService? evidenceReview = null,
         IOperatorConsoleStatutoryDiscountEvidenceRepository? operatorConsoleEvidence = null,
         IStatutoryEvidenceProtectedObjectStorageAdapter? evidenceStorage = null,
-        FakeAuditRepository? audit = null)
+        FakeAuditRepository? audit = null,
+        TimeProvider? timeProvider = null)
     {
         var review = evidenceReview ?? Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>();
         if (evidenceReview is null)
@@ -1016,7 +1136,8 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
                 MaxContentLengthBytes = 5 * 1024 * 1024
             }),
             audit ?? new FakeAuditRepository(),
-            NullLogger<ManagementStatutoryBenefitReviewService>.Instance);
+            NullLogger<ManagementStatutoryBenefitReviewService>.Instance,
+            timeProvider ?? new FixedTimeProvider(CurrentTime));
     }
 
     private static OperatorConsoleStatutoryEvidenceReviewResult AuthoritativeEvidence()
@@ -1273,5 +1394,10 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             Summaries.Add(summary);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
     }
 }

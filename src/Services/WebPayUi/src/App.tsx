@@ -1609,7 +1609,7 @@ export function App() {
           </section>
         )}
 
-        {!isDegradedSession && !zeroPayableStatutoryCompletion && !result && !activePaymentAttempt && stage !== "REDIRECTING" && <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || statutoryDiscountPaymentBlocked || statutoryRecoveryPaymentBlocked}>
+        {!isDegradedSession && !showStatutoryDiscountForm && !isPayablePending && !(isActiveStatutoryWorkflow && !appliedStatutoryBasis) && !zeroPayableStatutoryCompletion && !result && !activePaymentAttempt && stage !== "REDIRECTING" && <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || statutoryDiscountPaymentBlocked || statutoryRecoveryPaymentBlocked}>
           <img src="/assets/icons/payment.svg" alt="" aria-hidden="true" />
           {isResolving
             ? "Resolving..."

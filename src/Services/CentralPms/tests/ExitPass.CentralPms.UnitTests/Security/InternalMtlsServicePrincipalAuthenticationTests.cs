@@ -142,6 +142,78 @@ public sealed class InternalMtlsServicePrincipalAuthenticationTests
             .GetServicePrincipalAuthenticationAsync(default!, default);
     }
 
+    [Fact]
+    public async Task Governed_apt_certificate_builds_device_principal_from_current_canonical_version_and_scope()
+    {
+        using var certificate = CreateCertificate();
+        var fingerprint = Convert.ToHexString(certificate.GetCertHash(HashAlgorithmName.SHA256)).ToLowerInvariant();
+        var serviceIdentityId = Guid.NewGuid();
+        var deviceId = Guid.NewGuid();
+        var siteId = Guid.NewGuid();
+        var siteGroupId = Guid.NewGuid();
+        var repository = Substitute.For<ICentralPmsRbacRepository>();
+        repository.GetGovernedDeviceAuthenticationAsync(
+                $"device-mtls-sha256:{fingerprint}", Arg.Any<CancellationToken>())
+            .Returns(new CentralPmsGovernedDeviceAuthenticationRecord(
+                serviceIdentityId, deviceId, "ASSISTED_PAYMENT_TERMINAL", 3,
+                "ASSISTED_PAYMENT_TERMINAL", [siteId], [siteGroupId]));
+        var nextCalled = false;
+        var middleware = new InternalMtlsMiddleware(_ => { nextCalled = true; return Task.CompletedTask; });
+        var context = ContextWithGovernedAptMetadata();
+
+        await middleware.InvokeAsync(context,
+            Options.Create(new InternalMtlsOptions { Enabled = true, RequireClientCertificate = true }),
+            new FixedCertificateAccessor(certificate), repository);
+
+        nextCalled.Should().BeTrue();
+        context.User.Identity!.AuthenticationType.Should().Be("GovernedDeviceMtls");
+        context.User.FindFirst("service_identity_id")!.Value.Should().Be(serviceIdentityId.ToString("D"));
+        context.User.FindFirst("device_id")!.Value.Should().Be(deviceId.ToString("D"));
+        context.User.FindFirst("device_type")!.Value.Should().Be("ASSISTED_PAYMENT_TERMINAL");
+        context.User.FindFirst("device_credential_version")!.Value.Should().Be("3");
+        context.User.FindFirst("site_id")!.Value.Should().Be(siteId.ToString("D"));
+        context.User.FindFirst("site_group_id")!.Value.Should().Be(siteGroupId.ToString("D"));
+    }
+
+    [Fact]
+    public async Task Rotated_governed_apt_cannot_fall_back_to_legacy_static_certificate_trust()
+    {
+        using var staleCertificate = CreateCertificate();
+        var serviceIdentityId = Guid.NewGuid();
+        var repository = Substitute.For<ICentralPmsRbacRepository>();
+        repository.GetGovernedDeviceAuthenticationAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns((CentralPmsGovernedDeviceAuthenticationRecord?)null);
+        repository.RequiresGovernedDeviceCertificateAsync(serviceIdentityId, Arg.Any<CancellationToken>())
+            .Returns(true);
+        var options = new InternalMtlsOptions { Enabled = true, RequireClientCertificate = true };
+        options.TrustedClientThumbprints.Add(staleCertificate.Thumbprint);
+        var middleware = new InternalMtlsMiddleware(_ => throw new InvalidOperationException("next must not run"));
+        var context = ContextWithGovernedAptMetadata();
+        context.Request.Headers[CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName] = serviceIdentityId.ToString("D");
+
+        await middleware.InvokeAsync(context, Options.Create(options),
+            new FixedCertificateAccessor(staleCertificate), repository);
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
+        (context.User.Identity?.IsAuthenticated ?? false).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Governed_apt_endpoint_preserves_existing_non_mtls_test_profile()
+    {
+        var repository = Substitute.For<ICentralPmsRbacRepository>();
+        var nextCalled = false;
+        var middleware = new InternalMtlsMiddleware(_ => { nextCalled = true; return Task.CompletedTask; });
+
+        await middleware.InvokeAsync(ContextWithGovernedAptMetadata(),
+            Options.Create(new InternalMtlsOptions { Enabled = false }),
+            new FixedCertificateAccessor(null), repository);
+
+        nextCalled.Should().BeTrue();
+        await repository.DidNotReceiveWithAnyArgs()
+            .GetGovernedDeviceAuthenticationAsync(default!, default);
+    }
+
     private static DefaultHttpContext ContextWithServiceMetadata()
     {
         var context = new DefaultHttpContext();
@@ -150,6 +222,17 @@ public sealed class InternalMtlsServicePrincipalAuthenticationTests
             _ => Task.CompletedTask,
             new EndpointMetadataCollection(new ServicePrincipalEndpointMetadata()),
             "shared statutory endpoint"));
+        return context;
+    }
+
+    private static DefaultHttpContext ContextWithGovernedAptMetadata()
+    {
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+        context.SetEndpoint(new Endpoint(
+            _ => Task.CompletedTask,
+            new EndpointMetadataCollection(new InternalServiceEndpointMetadata(), new GovernedAptDeviceEndpointMetadata()),
+            "governed apt endpoint"));
         return context;
     }
 

@@ -480,6 +480,10 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal("WEBPAY-REQ-001", root.GetProperty("ticketReference").GetString());
         Assert.Equal("12345678", root.GetProperty("idControlReference").GetString());
         Assert.Equal("SC-****-0001", root.GetProperty("maskedIdReference").GetString());
+        Assert.False(root.TryGetProperty("birthDate", out _));
+        Assert.False(root.TryGetProperty("expiryDate", out _));
+        Assert.False(root.TryGetProperty("idDocumentType", out _));
+        Assert.False(root.TryGetProperty("issuingAuthority", out _));
         Assert.Equal(TariffSnapshotId, root.GetProperty("originalTariffSnapshotId").GetGuid());
         Assert.True(root.GetProperty("beneficiaryResidencySatisfied").GetBoolean());
         Assert.False(root.TryGetProperty("reviewerUserId", out _));
@@ -1177,9 +1181,6 @@ public sealed class CentralPmsWebPayClientTests
             "WEBPAY-REQ-001",
             "ABC1234",
             "SENIOR_CITIZEN",
-            "OSCA",
-            "QUEZON_CITY",
-            DateOnly.Parse("2030-12-31"),
             "SC-****-0001",
             true,
             new[]

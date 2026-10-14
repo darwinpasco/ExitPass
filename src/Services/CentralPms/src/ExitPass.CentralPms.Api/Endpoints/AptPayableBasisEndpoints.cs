@@ -227,7 +227,7 @@ public static class AptPayableBasisEndpoints
             !device.SiteAssigned ||
             !string.Equals(device.IdentityType, "DEVICE", StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(device.OwningServiceName, "ExitPass.AssistedPaymentTerminal", StringComparison.Ordinal) ||
-            !string.Equals(device.ServiceIdentityCode, terminalId?.Trim(), StringComparison.OrdinalIgnoreCase))
+            !string.Equals(device.TerminalIdentifier, terminalId?.Trim(), StringComparison.OrdinalIgnoreCase))
         {
             return BuildError(
                 "FORBIDDEN_TERMINAL",

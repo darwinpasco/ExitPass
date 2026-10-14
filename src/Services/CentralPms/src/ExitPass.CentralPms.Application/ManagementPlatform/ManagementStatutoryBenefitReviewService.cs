@@ -27,6 +27,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
     private readonly StatutoryEvidenceUploadOptions _evidenceOptions;
     private readonly ICentralPmsRbacRepository _audit;
     private readonly ILogger<ManagementStatutoryBenefitReviewService> _logger;
+    private readonly TimeProvider _timeProvider;
 
     public ManagementStatutoryBenefitReviewService(
         IManagementStatutoryBenefitReviewRepository repository,
@@ -38,7 +39,8 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         IStatutoryEvidenceProtectedObjectStorageAdapter evidenceStorage,
         IOptions<StatutoryEvidenceUploadOptions> evidenceOptions,
         ICentralPmsRbacRepository audit,
-        ILogger<ManagementStatutoryBenefitReviewService> logger)
+        ILogger<ManagementStatutoryBenefitReviewService> logger,
+        TimeProvider timeProvider)
     {
         _repository = repository;
         _canonicalReviews = canonicalReviews;
@@ -50,6 +52,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         _evidenceOptions = evidenceOptions.Value;
         _audit = audit;
         _logger = logger;
+        _timeProvider = timeProvider;
     }
 
     public async Task<ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitReviewQueue>> ListAsync(
@@ -804,7 +807,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         _audit.RecordAuditEventAsync(type, result, reason, "STATUTORY_BENEFIT_REVIEW", site, actor.UserId, null, correlationId,
             $"Management Platform statutory-benefit review event {reason}.{(safeDetails is null ? string.Empty : $" {safeDetails}")}", cancellationToken);
 
-    private static bool TryResolveReviewedDocument(
+    private bool TryResolveReviewedDocument(
         ManagementStatutoryBenefitDecisionCommand command,
         StatutoryDiscountServiceChannelReviewDetail review,
         string decision,
@@ -844,9 +847,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             return false;
         }
 
-        var requiresBirthDate =
-            string.Equals(review.SourceChannel, StatutoryDiscountSourceChannels.OperatorConsole, StringComparison.Ordinal) &&
-            string.Equals(review.EntitlementType, "SENIOR_CITIZEN", StringComparison.Ordinal);
+        var requiresBirthDate = string.Equals(review.EntitlementType, "SENIOR_CITIZEN", StringComparison.Ordinal);
         if (decision == "APPROVE" &&
             (string.IsNullOrWhiteSpace(idDocumentType) ||
              string.IsNullOrWhiteSpace(issuingAuthority) ||
@@ -855,6 +856,16 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         {
             reviewedDocument = null;
             errorCode = "STATUTORY_BENEFIT_APPROVAL_METADATA_REQUIRED";
+            return false;
+        }
+
+        if (decision == "APPROVE" &&
+            requiresBirthDate &&
+            birthDate.HasValue &&
+            birthDate.Value > DateOnly.FromDateTime(_timeProvider.GetLocalNow().DateTime).AddYears(-60))
+        {
+            reviewedDocument = null;
+            errorCode = "STATUTORY_BENEFIT_SENIOR_CITIZEN_MINIMUM_AGE_REQUIRED";
             return false;
         }
 
@@ -1035,7 +1046,13 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             StringComparison.Ordinal);
 
     private static ManagementStatutoryBenefitReviewResult<T> Invalid<T>(string code, Guid correlationId) =>
-        ManagementStatutoryBenefitReviewResult<T>.Failed(ManagementStatutoryBenefitReviewOutcome.Invalid, code, "The statutory-benefit review request is invalid.", correlationId);
+        ManagementStatutoryBenefitReviewResult<T>.Failed(
+            ManagementStatutoryBenefitReviewOutcome.Invalid,
+            code,
+            code == "STATUTORY_BENEFIT_SENIOR_CITIZEN_MINIMUM_AGE_REQUIRED"
+                ? "The beneficiary must be at least 60 years old."
+                : "The statutory-benefit review request is invalid.",
+            correlationId);
 
     private static ManagementStatutoryBenefitReviewResult<T> Forbidden<T>(Guid correlationId) =>
         ManagementStatutoryBenefitReviewResult<T>.Failed(ManagementStatutoryBenefitReviewOutcome.Forbidden, "CENTRAL_PMS_RBAC_FORBIDDEN", "The authenticated principal does not have the required statutory-benefit review authority.", correlationId);

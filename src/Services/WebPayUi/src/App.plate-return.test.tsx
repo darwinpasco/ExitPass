@@ -26,7 +26,7 @@ beforeEach(() => {
   );
 });
 
-it("WebPayReturnPage_LoadsPlateOriginatedStatusByPaymentAttemptOnly", async () => {
+it("WebPayReturnPage_LoadsPlateOriginatedStatusWithoutOfferingAnotherPayment", async () => {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     expect(String(url)).toContain(`/v1/webpay/payment-attempts/${paymentAttemptId}/status`);
     expect(String(url)).not.toContain("plateNumber");
@@ -59,14 +59,16 @@ it("WebPayReturnPage_LoadsPlateOriginatedStatusByPaymentAttemptOnly", async () =
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: /payment is still being verified/i })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /retry payment/i })).toHaveAttribute("href", "/?plateNumber=R35-PLATE-C");
+  expect(screen.queryByRole("link", { name: /retry payment/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /pay again/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /start new payment/i })).not.toBeInTheDocument();
   expect(screen.queryByText("Parking Session Summary")).not.toBeInTheDocument();
   expect(screen.queryByText(/Payment reference is missing/i)).not.toBeInTheDocument();
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 });
 
-it("WebPayReturnPage_UsesServerReturnedTicketForRetryWithoutProviderTicketQuery", async () => {
+it("WebPayReturnPage_UsesServerReturnedTicketForStatusWithoutOfferingAnotherPayment", async () => {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     expect(String(url)).toContain(`/v1/webpay/payment-attempts/${paymentAttemptId}/status`);
     expect(String(url)).not.toContain("ticketReference");
@@ -95,10 +97,10 @@ it("WebPayReturnPage_UsesServerReturnedTicketForRetryWithoutProviderTicketQuery"
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   render(<App />);
 
-  expect(await screen.findByRole("link", { name: /retry payment/i })).toHaveAttribute(
-    "href",
-    "/?ticketReference=R35-TICKET-RETURN"
-  );
+  expect(await screen.findByRole("heading", { name: /payment is still being verified/i })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /retry payment/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /pay again/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /start new payment/i })).not.toBeInTheDocument();
   expect(screen.queryByText("Parking Session Summary")).not.toBeInTheDocument();
   expect(window.location.search).not.toContain("ticketReference");
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));

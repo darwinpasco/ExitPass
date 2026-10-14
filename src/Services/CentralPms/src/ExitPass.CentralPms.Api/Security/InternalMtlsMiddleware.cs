@@ -1,5 +1,6 @@
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.Common;
@@ -45,9 +46,10 @@ public sealed class InternalMtlsMiddleware
         var endpoint = context.GetEndpoint();
         var isInternalEndpoint = endpoint?.Metadata.GetMetadata<InternalServiceEndpointMetadata>() is not null;
         var acceptsServicePrincipal = endpoint?.Metadata.GetMetadata<ServicePrincipalEndpointMetadata>() is not null;
+        var acceptsGovernedAptDevice = endpoint?.Metadata.GetMetadata<GovernedAptDeviceEndpointMetadata>() is not null;
         var mtlsOptions = options.Value;
 
-        if (!isInternalEndpoint && !acceptsServicePrincipal)
+        if (!isInternalEndpoint && !acceptsServicePrincipal && !acceptsGovernedAptDevice)
         {
             await _next(context);
             return;
@@ -95,7 +97,38 @@ public sealed class InternalMtlsMiddleware
             return;
         }
 
-        if (!IsTrusted(certificate, mtlsOptions.TrustedClientThumbprints))
+        var staticallyTrusted = IsTrusted(certificate, mtlsOptions.TrustedClientThumbprints);
+        if (acceptsGovernedAptDevice)
+        {
+            if (await TryAuthenticateGovernedAptDeviceAsync(context, certificate, repository))
+            {
+                await _next(context);
+                return;
+            }
+
+            if (staticallyTrusted)
+            {
+                var suppliedIdentity = HumanSessionAuthenticationHandler.ResolveGuid(
+                    context.Request.Headers[CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName]);
+                var governedRequired = suppliedIdentity.HasValue
+                    ? await repository.RequiresGovernedDeviceCertificateAsync(suppliedIdentity.Value, context.RequestAborted)
+                    : null;
+                if (governedRequired is not true)
+                {
+                    await _next(context);
+                    return;
+                }
+            }
+
+            await WriteErrorAsync(
+                context,
+                StatusCodes.Status401Unauthorized,
+                "INTERNAL_CLIENT_CERTIFICATE_UNTRUSTED",
+                "The internal client certificate is not trusted.");
+            return;
+        }
+
+        if (!staticallyTrusted)
         {
             await WriteErrorAsync(
                 context,
@@ -112,6 +145,42 @@ public sealed class InternalMtlsMiddleware
         }
 
         await _next(context);
+    }
+
+    private static async Task<bool> TryAuthenticateGovernedAptDeviceAsync(
+        HttpContext context,
+        X509Certificate2 certificate,
+        ICentralPmsRbacRepository repository)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (certificate.NotBefore.ToUniversalTime() > now || certificate.NotAfter.ToUniversalTime() <= now)
+            return false;
+
+        var fingerprint = Convert.ToHexString(certificate.GetCertHash(HashAlgorithmName.SHA256)).ToLowerInvariant();
+        var device = await repository.GetGovernedDeviceAuthenticationAsync(
+            $"device-mtls-sha256:{fingerprint}", context.RequestAborted);
+        if (device is null || device.DeviceType != "ASSISTED_PAYMENT_TERMINAL") return false;
+
+        var claims = new List<Claim>
+        {
+            new("service_identity_id", device.ServiceIdentityId.ToString("D")),
+            new("client_id", device.ServiceIdentityId.ToString("D")),
+            new("device_id", device.DeviceId.ToString("D")),
+            new("device_type", device.DeviceType),
+            new("device_credential_version", device.CredentialVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            new("exitpass_audience", "APT"),
+            new("source_channel", StatutoryDiscountSourceChannels.AssistedPaymentTerminal),
+            new("source_application", device.OwningServiceName),
+            new("credential_type", "MTLS")
+        };
+        claims.AddRange(device.SiteIds.Select(siteId => new Claim("site_id", siteId.ToString("D"))));
+        claims.AddRange(device.SiteGroupIds.Select(siteGroupId => new Claim("site_group_id", siteGroupId.ToString("D"))));
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(
+            claims,
+            authenticationType: "GovernedDeviceMtls",
+            nameType: "service_identity_id",
+            roleType: ClaimTypes.Role));
+        return true;
     }
 
     private static async Task<bool> TryAuthenticateServicePrincipalAsync(

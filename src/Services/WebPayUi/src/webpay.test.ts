@@ -666,6 +666,10 @@ describe("WebPay QR and payment intent helpers", () => {
 
     expect(body.entitlementType).toBe("PWD");
     expect(body.attestationNotes).toBe("Needs review");
+    expect(body).not.toHaveProperty("birthDate");
+    expect(body).not.toHaveProperty("expiryDate");
+    expect(body).not.toHaveProperty("idDocumentType");
+    expect(body).not.toHaveProperty("issuingAuthority");
     expect(JSON.stringify(body)).not.toContain("sourceChannel");
     expect(JSON.stringify(body)).not.toContain("reviewer");
   });
@@ -1136,9 +1140,6 @@ function statutoryDecisionRequest() {
     ticketReference: "TICKET-STAT-001",
     plateNumber: "ABC1234",
     entitlementType: "SENIOR_CITIZEN" as const,
-    idDocumentType: "OSCA",
-    issuingAuthority: "QUEZON_CITY",
-    expiryDate: "2030-12-31",
     idControlReference: "12345678",
     maskedIdReference: "****5678",
     evidenceCaptureRequested: false,

@@ -519,7 +519,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
-    public async Task SubmitAsync_WhenWebPayLeavesReviewerFactsAndOptionalIdEmpty_CreatesAwaitingReviewDecision()
+    public async Task SubmitAsync_WhenWebPayLeavesProcessorMetadataBirthDateAndOptionalIdEmpty_CreatesAwaitingReviewDecision()
     {
         var fixture = CreateFixture();
         var command = Command(sourceChannel: "WEBPAY", applyPayableBasis: false, maskedIdReference: "") with
@@ -527,6 +527,8 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             IdDocumentType = "",
             IssuingAuthority = "",
             ExpiryDate = null,
+            BirthDate = null,
+            IdControlReference = null,
             EvidenceReferences = []
         };
 
@@ -534,6 +536,8 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
 
         result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
         fixture.Repository.LastDecisionCommand.Should().NotBeNull();
+        fixture.Repository.LastDecisionCommand!.BirthDate.Should().BeNull();
+        fixture.Repository.LastDecisionCommand.IdControlReference.Should().BeNull();
         fixture.Repository.ApplicationCount.Should().Be(0);
     }
 
