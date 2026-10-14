@@ -1,5 +1,4 @@
 import { FormEvent, KeyboardEvent, RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
 import QRCode from "qrcode";
 import { QrScanner } from "./QrScanner";
 import { PhoneCameraCapture } from "./PhoneCameraCapture";
@@ -57,7 +56,6 @@ import type {
   PaymentIntentResponse,
   PaymentMethod,
   InvoiceCustomerInformation,
-  SalesInvoicePresentationRow,
   StatutoryDiscountEntitlementType,
   WebPayStatutoryDiscountAvailabilityResponse,
   WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse,
@@ -2157,7 +2155,6 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
               <>
                 <SalesInvoicePresentationPanel
                   receipt={receipt}
-                  parkingSummary={summary}
                   status={receiptStatus}
                   message={receiptMessage}
                   correlationId={receiptCorrelationId}
@@ -2560,7 +2557,6 @@ function ZeroPayableReceiptAndExit({
     <>
       {ready && <SalesInvoicePresentationPanel
         receipt={receipt}
-        parkingSummary={parkingSummary}
         status={status}
         message={message}
         correlationId={decision.correlationId}
@@ -2576,7 +2572,6 @@ function ZeroPayableReceiptAndExit({
 
 function SalesInvoicePresentationPanel({
   receipt,
-  parkingSummary,
   status,
   message,
   correlationId,
@@ -2584,7 +2579,6 @@ function SalesInvoicePresentationPanel({
   canRefresh
 }: {
   receipt: WebPayReceiptPresentationResponse | null;
-  parkingSummary: ParkingSessionResolveResponse;
   status: "idle" | "checking" | "available" | "pending" | "error";
   message: string;
   correlationId: string;
@@ -2592,7 +2586,7 @@ function SalesInvoicePresentationPanel({
   canRefresh: boolean;
 }) {
   const presentation = receipt?.authoritativePresentation?.presentation ?? null;
-  const invoice = receipt ? buildThermalSalesInvoice(receipt, parkingSummary) : null;
+  const canonicalText = receipt?.authoritativePresentation?.canonicalText?.trimEnd() ?? "";
   const receiptElementRef = useRef<HTMLElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
@@ -2619,14 +2613,14 @@ function SalesInvoicePresentationPanel({
         </div>
       )}
 
-      {status === "available" && receipt && !invoice && (
+      {status === "available" && receipt && !canonicalText && (
         <div className="invoice-status is-error" role="alert">
-          <strong>Sales Invoice fiscal identity is unavailable</strong>
-          <span>The configured merchant and POS software supplier details could not be verified.</span>
+          <strong>Sales Invoice presentation is unavailable</strong>
+          <span>The POS-authoritative Sales Invoice text could not be verified.</span>
         </div>
       )}
 
-      {status === "available" && receipt && invoice && (
+      {status === "available" && receipt && canonicalText && (
         <>
           <article
             ref={receiptElementRef}
@@ -2634,149 +2628,14 @@ function SalesInvoicePresentationPanel({
             data-paper-width="80mm"
             aria-label="Printable Sales Invoice"
           >
-            <header className="thermal-receipt-header">
-              <strong className="receipt-merchant-name">{invoice.registeredBusinessName}</strong>
-              <span>{invoice.registeredBusinessAddress}</span>
-              <ReceiptDefinitionList
-                className="thermal-receipt-merchant-identity"
-                rows={[
-                  ["VAT REG TIN", invoice.tin],
-                  ["MIN", invoice.min],
-                  ["S/N", invoice.posSerialNumber],
-                  ["Branch / Site", invoice.siteName],
-                  ["Parking Location", invoice.parkingLocation],
-                  ["Terminal ID", invoice.terminalId]
-                ]}
-              />
-              <span className="thermal-rule">================================</span>
-              <strong>SALES INVOICE</strong>
-              <span className="thermal-rule">================================</span>
-              <span>ORIGINAL</span>
-            </header>
-
-            <>
-                <ReceiptDefinitionList
-                  className="thermal-receipt-summary"
-                  rows={[
-                    ["SI No", receipt.fiscalDocumentNumber ?? undefined],
-                    ["Issued Date", invoice.issuedDate]
-                  ]}
-                />
-
-                <ReceiptSection title="PARKING DETAILS">
-                  <ReceiptDefinitionList
-                    rows={[
-                      ["Ticket Number", invoice.ticketNumber],
-                      ["Plate Number", invoice.plateNumber],
-                      ["Entry Time", invoice.entryTime],
-                      [invoice.noPaymentRequired ? "Fiscal record" : "Payment", invoice.paymentTime],
-                      ["Duration", invoice.duration]
-                    ]}
-                  />
-                </ReceiptSection>
-
-                <ReceiptSection title="ITEMS">
-                  <div className="receipt-item-table" role="table" aria-label="Sales Invoice items">
-                    <div className="receipt-item-row receipt-item-heading" role="row">
-                      <span>#</span><span>Description</span><span>Qty</span><span>Unit</span><span>Amount</span>
-                    </div>
-                    {invoice.items.map((item, index) => (
-                      <div className="receipt-item-row" role="row" key={`${item.description}-${index}`}>
-                        <span>{index + 1}</span>
-                        <span>{item.description}</span>
-                        <span>{item.quantity}</span>
-                        <span>{item.unitAmount ?? "-"}</span>
-                        <span>{item.amount}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <ReceiptDefinitionList rows={[["Subtotal", invoice.subtotal]]} emphasize />
-                </ReceiptSection>
-
-                <ReceiptSection title="DISCOUNTS">
-                  <ReceiptDefinitionList
-                    rows={[
-                      ["Discount Reason", invoice.discountReason ?? "None"],
-                      ["Discount Amount", invoice.discountAmount ?? invoice.zeroAmount]
-                    ]}
-                  />
-                </ReceiptSection>
-
-                <ReceiptSection title="VAT BREAKDOWN">
-                  <ReceiptDefinitionList
-                    rows={[
-                      ["VATable Sales", invoice.vatableSales],
-                      ["VAT Amount", invoice.vatAmount],
-                      ["VAT Exempt Sales", invoice.vatExempt],
-                      ["Zero Rated Sales", invoice.zeroRated]
-                    ]}
-                  />
-                </ReceiptSection>
-
-                <ReceiptSection title={invoice.noPaymentRequired ? "COMPLETION DETAILS" : "PAYMENT DETAILS"}>
-                  <div className="receipt-payment-table" role="table" aria-label="Payment details">
-                    <div className="receipt-payment-row receipt-payment-heading" role="row">
-                      <span>Type</span><span>Provider</span><span>Amount</span>
-                    </div>
-                    <div className="receipt-payment-row" role="row">
-                      <span>{invoice.paymentMethod}</span>
-                      <span>{invoice.paymentProvider}</span>
-                      <span>{invoice.paymentAmount}</span>
-                    </div>
-                  </div>
-                  {invoice.isCashChannel && (
-                    <ReceiptDefinitionList
-                      rows={[
-                        ["Tendered Amount", invoice.tenderedAmount],
-                        ["Change", invoice.changeAmount]
-                      ]}
-                      emphasize
-                    />
-                  )}
-                </ReceiptSection>
-
-                <section className="thermal-receipt-declaration">
-                  <strong>{invoice.legalStatement}</strong>
-                  <span>Print Date</span>
-                  <b>{invoice.printDate}</b>
-                </section>
-
-                <ReceiptSection title="Customer Information" titleCase>
-                  <div className="receipt-customer-fields">
-                    <span>NAME: {invoice.customerName || "—"}</span>
-                    <span>ADDRESS: {invoice.customerAddress || "—"}</span>
-                    <span>TIN: {invoice.customerTin || "—"}</span>
-                    <span>BUS. STYLE: {invoice.businessStyle || "—"}</span>
-                    {invoice.statutoryIdNumber && <span>OSCA ID No./PWD ID No.: {invoice.statutoryIdNumber}</span>}
-                    <span className="customer-signature">Customer Sign : ____________________</span>
-                  </div>
-                </ReceiptSection>
-
-                <footer className="thermal-receipt-footer">
-                  <strong>POS SOFTWARE SUPPLIER / DEVELOPER</strong>
-                  <b>{invoice.supplierDeveloperRegisteredName}</b>
-                  <span>{invoice.supplierDeveloperAddress}</span>
-                  <ReceiptDefinitionList
-                    rows={[
-                      ["TIN", invoice.supplierDeveloperTin],
-                      ["ACCR. NO.", invoice.accreditationNumber],
-                      ["DATE ISSUED", invoice.accreditationIssuedDate],
-                      ["PTU", invoice.ptuNumber],
-                      ["PTU Date", invoice.ptuIssuedDate]
-                    ]}
-                  />
-                  <strong>THANK YOU FOR CHOOSING OUR SERVICE</strong>
-                  {invoice.qrCodeUrl && <img className="receipt-qr" src={invoice.qrCodeUrl} alt="Sales Invoice QR code" />}
-                  <strong className="nothing-follows">===== NOTHING FOLLOWS =====</strong>
-                </footer>
-            </>
+            <pre className="canonical-sales-invoice-text">{canonicalText}</pre>
           </article>
         </>
       )}
 
       {status !== "checking" && (
         <div className="invoice-actions">
-          {status === "available" && receipt && invoice && (
+          {status === "available" && receipt && canonicalText && (
             <button
               type="button"
               className="primary-button"
@@ -2843,246 +2702,6 @@ function ExitQrCodePanel({ ticketReference }: { ticketReference?: string }) {
   );
 }
 
-type ReceiptLineItem = {
-  description: string;
-  quantity: string;
-  unitAmount?: string;
-  amount: string;
-};
-
-type ThermalSalesInvoice = {
-  registeredBusinessName: string;
-  registeredBusinessAddress: string;
-  siteName?: string;
-  tin: string;
-  posSerialNumber: string;
-  min: string;
-  parkingLocation: string;
-  terminalId?: string;
-  issuedDate: string;
-  ticketNumber?: string;
-  plateNumber?: string;
-  entryTime?: string;
-  paymentTime?: string;
-  duration?: string;
-  items: ReceiptLineItem[];
-  subtotal: string;
-  discountReason?: string;
-  discountAmount?: string;
-  vatableSales: string;
-  vatAmount: string;
-  vatExempt: string;
-  zeroRated: string;
-  customerName?: string;
-  customerAddress?: string;
-  customerTin?: string;
-  businessStyle?: string;
-  statutoryIdNumber?: string;
-  zeroAmount: string;
-  paymentMethod: string;
-  paymentProvider: string;
-  paymentAmount: string;
-  noPaymentRequired: boolean;
-  isCashChannel: boolean;
-  tenderedAmount?: string;
-  changeAmount?: string;
-  legalStatement: string;
-  printDate: string;
-  accreditationNumber?: string;
-  accreditationIssuedDate?: string;
-  ptuNumber?: string;
-  ptuIssuedDate?: string;
-  supplierDeveloperRegisteredName: string;
-  supplierDeveloperAddress: string;
-  supplierDeveloperTin: string;
-  qrCodeUrl?: string;
-};
-
-function buildThermalSalesInvoice(
-  receipt: WebPayReceiptPresentationResponse,
-  parkingSummary: ParkingSessionResolveResponse
-): ThermalSalesInvoice | null {
-  const sections = receipt.authoritativePresentation.presentation?.sections ?? [];
-  const rows = sections.flatMap((section) => section.rows ?? []);
-  const value = (...keysOrLabels: string[]) => findPresentationValue(rows, keysOrLabels);
-  const paymentMethod = customerPaymentMethod(
-    parkingSummary.paymentMethod ?? value("appliedStatutoryFiscalFacts.sourcePaymentChannel", "Source Payment Channel", "tenders[0000].tenderTypeCodeKey", "Tender Type")
-  );
-  const noPaymentRequired = receipt.paymentAttemptId == null && receipt.paymentConfirmationId == null;
-  const paymentProvider = customerPaymentProvider(parkingSummary.paymentProvider);
-  const isCashChannel = paymentMethod === "CASH" || /^(APT|APM|TERMINAL_CASH|CASHIER)/.test(paymentMethod);
-  const paymentAmount = formatOptionalReceiptAmount(value("tenders[0000].amount", "Tender Amount"))
-    ?? formatReceiptAmount(formatCurrencyAmount(parkingSummary.amountMinorUnits, parkingSummary.currency) ?? "PHP 0.00");
-  const subtotal = formatReceiptAmount(value("totals.subtotal", "Subtotal", "totals[0000].amount", "Total Amount") ?? paymentAmount);
-  const zeroAmount = formatReceiptAmount(`PHP 0.00`);
-  const qrCodeUrl = authoritativeQrCodeUrl(receipt);
-  const registeredBusinessName = value("salesInvoiceHeaderSnapshot.registeredBusinessName", "Registered Business Name", "Business Name");
-  const registeredBusinessAddress = value("salesInvoiceHeaderSnapshot.registeredBusinessAddress", "Registered Business Address");
-  const tin = value("salesInvoiceHeaderSnapshot.tin", "TIN", "VAT REG TIN");
-  const posSerialNumber = value("salesInvoiceHeaderSnapshot.posSerialNumber", "POS Serial Number", "S/N");
-  const min = value("salesInvoiceHeaderSnapshot.machineIdentificationNumber", "MIN");
-  const parkingLocation = value("salesInvoiceHeaderSnapshot.parkingLocationDisplay", "Parking Location");
-  const supplierDeveloperRegisteredName = value("salesInvoiceHeaderSnapshot.supplierDeveloperRegisteredName", "Supplier / Developer Registered Name");
-  const supplierDeveloperAddress = value("salesInvoiceHeaderSnapshot.supplierDeveloperAddress", "Supplier / Developer Address");
-  const supplierDeveloperTin = value("salesInvoiceHeaderSnapshot.supplierDeveloperTin", "Supplier / Developer TIN");
-  const accreditationNumber = value("salesInvoiceHeaderSnapshot.birAccreditationNumber", "BIR Accreditation Number", "ACCR. NO.");
-  const accreditationIssuedDate = value("salesInvoiceHeaderSnapshot.birAccreditationIssuedDate", "BIR Accreditation Issued Date", "DATE ISSUED");
-  const ptuNumber = value("salesInvoiceHeaderSnapshot.ptuNumber", "PTU Number", "PTU");
-  const ptuIssuedDate = value("salesInvoiceHeaderSnapshot.ptuIssuedDate", "PTU Issued Date", "PTU Date");
-  const vatableSales = formatOptionalReceiptAmount(value("totals.vatableSales", "VATable Sales", "taxes[0000].taxableAmount", "Taxable Amount"));
-  const vatAmount = formatOptionalReceiptAmount(value("totals.vatAmount", "VAT Amount", "appliedStatutoryFiscalFacts.vatAmount", "taxes[0000].taxAmount", "Tax Amount"));
-  const vatExempt = formatOptionalReceiptAmount(value("totals.vatExempt", "VAT Exempt", "VAT-Exempt Sales", "VAT Exempt Sales"));
-  const zeroRated = formatOptionalReceiptAmount(value("totals.zeroRated", "Zero Rated", "Zero-Rated Sales", "Zero Rated Sales"));
-
-  if (!registeredBusinessName || !registeredBusinessAddress || !tin || !posSerialNumber || !min ||
-      !parkingLocation || !supplierDeveloperRegisteredName || !supplierDeveloperAddress ||
-      !supplierDeveloperTin || !accreditationNumber || !accreditationIssuedDate ||
-      !ptuNumber || !ptuIssuedDate || !vatableSales || !vatAmount || !vatExempt || !zeroRated) {
-    return null;
-  }
-
-  return {
-    registeredBusinessName,
-    registeredBusinessAddress,
-    siteName: value("salesInvoiceHeaderSnapshot.branchName", "Site / Branch", "Branch Name") ?? parkingSummary.siteName ?? undefined,
-    tin,
-    posSerialNumber,
-    min,
-    parkingLocation,
-    terminalId: value("salesInvoiceHeaderSnapshot.terminalId", "Terminal ID"),
-    issuedDate: formatDateTime(value("fiscalNumbering.fiscalNumberAssignedAt", "Fiscal Number Assigned At", "Issued Date", "Transaction Date") ?? receipt.updatedAt) ?? "",
-    ticketNumber: parkingSummary.ticketReference ?? undefined,
-    plateNumber: parkingSummary.plateNumber ?? undefined,
-    entryTime: parkingSummary.entryTime ? formatDateTime(parkingSummary.entryTime) : undefined,
-    paymentTime: parkingSummary.paymentTime ? formatDateTime(parkingSummary.paymentTime) : formatDateTime(receipt.updatedAt),
-    duration: parkingSummary.durationParked ?? formatDuration(parkingSummary.entryTime, parkingSummary.paymentTime ?? receipt.updatedAt),
-    items: buildReceiptLineItems(sections, subtotal),
-    subtotal,
-    discountReason: value("appliedStatutoryFiscalFacts.entitlementType", "Discount Reason", "Entitlement Type", "Benefit Classification"),
-    discountAmount: formatOptionalReceiptAmount(value("appliedStatutoryFiscalFacts.statutoryDiscountAmount", "Statutory Discount Amount", "Discount Amount")),
-    vatableSales,
-    vatAmount,
-    vatExempt,
-    zeroRated,
-    customerName: value("customerInformation.customerName", "Customer Name", "NAME"),
-    customerAddress: value("customerInformation.address", "Customer Address", "ADDRESS"),
-    customerTin: value("customerInformation.tin", "Customer TIN"),
-    businessStyle: value("customerInformation.businessStyle", "Business Style", "BUS. STYLE"),
-    statutoryIdNumber: value("customerInformation.statutoryIdNumber", "OSCA ID No. / PWD ID No.", "OSCA ID No./PWD ID No."),
-    zeroAmount,
-    paymentMethod: noPaymentRequired ? "No payment required" : paymentMethod,
-    paymentProvider: noPaymentRequired ? "-" : paymentProvider,
-    paymentAmount: noPaymentRequired ? zeroAmount : paymentAmount,
-    noPaymentRequired,
-    isCashChannel,
-    tenderedAmount: isCashChannel
-      ? formatOptionalReceiptAmount(value("tenders[0000].cashReceived", "Tendered Amount", "Cash Received"))
-      : undefined,
-    changeAmount: isCashChannel
-      ? formatOptionalReceiptAmount(value("tenders[0000].change", "Change", "Change Due"))
-      : undefined,
-    legalStatement: value("salesInvoiceHeaderSnapshot.salesInvoiceLegalStatement", "Sales Invoice Legal Statement") ?? "THIS SERVES AS YOUR SALES INVOICE",
-    printDate: formatDateTime(new Date().toISOString()) ?? new Date().toISOString(),
-    accreditationNumber,
-    accreditationIssuedDate,
-    ptuNumber,
-    ptuIssuedDate,
-    supplierDeveloperRegisteredName,
-    supplierDeveloperAddress,
-    supplierDeveloperTin,
-    qrCodeUrl
-  };
-}
-
-function buildReceiptLineItems(
-  sections: NonNullable<NonNullable<WebPayReceiptPresentationResponse["authoritativePresentation"]["presentation"]>["sections"]>
-  , fallbackAmount: string
-): ReceiptLineItem[] {
-  const rows = sections.flatMap((section) => section.rows ?? []);
-  const indexes = Array.from(new Set(rows.flatMap((row) => {
-    const match = row.key?.match(/^lineItems\[(\d+)]\./i);
-    return match ? [match[1]] : [];
-  })));
-
-  const items = indexes.flatMap((index) => {
-    const value = (...suffixes: string[]) => findPresentationValue(rows, suffixes.map((suffix) => `lineItems[${index}].${suffix}`));
-    const description = value("description");
-    const amount = formatOptionalReceiptAmount(value("netAmount", "grossAmount"));
-    if (!description || !amount) {
-      return [];
-    }
-
-    return [{
-      description,
-      quantity: value("quantity") ?? "1",
-      unitAmount: formatOptionalReceiptAmount(value("unitAmount")),
-      amount
-    }];
-  });
-
-  return items.length > 0 ? items : [{ description: "Parking Fee", quantity: "1", amount: fallbackAmount }];
-}
-
-function findPresentationValue(
-  rows: SalesInvoicePresentationRow[],
-  keysOrLabels: string[]
-): string | undefined {
-  for (const target of keysOrLabels) {
-    const normalizedTarget = target.trim().toLowerCase();
-    const row = rows.find((candidate) =>
-      candidate.key?.trim().toLowerCase() === normalizedTarget ||
-      candidate.label?.trim().toLowerCase() === normalizedTarget
-    );
-    const rawValue = row?.displayValue ?? row?.value ?? row?.rawValue;
-    const resolved = rawValue === null || rawValue === undefined ? "" : String(rawValue).trim();
-    if (resolved && !/^not available$/i.test(resolved) && !/^(placeholder|deferred)$/i.test(row?.posture ?? "")) {
-      return resolved;
-    }
-  }
-
-  return undefined;
-}
-
-function customerPaymentMethod(value?: string | null): string {
-  const normalized = value?.trim().toUpperCase().replace(/[- ]/g, "_") ?? "";
-  for (const method of ["QRPH", "GCASH", "MAYA", "CARD", "CASH"]) {
-    if (normalized === method || normalized.endsWith(`_${method}`)) {
-      return method;
-    }
-  }
-
-  return normalized && normalized !== "DIGITAL_OR_CASH_TENDER" && normalized !== "CASHLESS" ? normalized : "DIGITAL";
-}
-
-function customerPaymentProvider(value?: string | null): string {
-  const normalized = value?.trim();
-  if (!normalized) {
-    return "-";
-  }
-
-  return normalized.toUpperCase() === "PAYMONGO" ? "PayMongo" : normalized;
-}
-
-function formatOptionalReceiptAmount(value?: string): string | undefined {
-  return value ? formatReceiptAmount(value) : undefined;
-}
-
-function formatReceiptAmount(value: string): string {
-  return value.replace(/^PHP\s+/i, "P ");
-}
-
-function authoritativeQrCodeUrl(receipt: WebPayReceiptPresentationResponse): string | undefined {
-  const source = receipt.authoritativePresentation as Record<string, unknown>;
-  for (const key of ["qrCodeUrl", "digitalSalesInvoiceQrCodeUrl"]) {
-    const value = source[key];
-    if (typeof value === "string" && /^https:\/\//i.test(value.trim())) {
-      return value.trim();
-    }
-  }
-
-  return undefined;
-}
-
 async function downloadSalesInvoicePdf(receiptElement: HTMLElement, fiscalDocumentNumber?: string | null): Promise<void> {
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
     import("html2canvas"),
@@ -3117,46 +2736,6 @@ function downloadDataUrl(dataUrl: string, filename: string): void {
 
 function safeFileName(value: string): string {
   return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").replace(/\s+/g, "-");
-}
-
-function ReceiptSection({
-  title,
-  titleCase = false,
-  children
-}: {
-  title: string;
-  titleCase?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <section className="thermal-receipt-section">
-      <h3 className={titleCase ? "receipt-title-case" : undefined}>{title}</h3>
-      {children}
-    </section>
-  );
-}
-
-function ReceiptDefinitionList({
-  rows,
-  className = "",
-  emphasize = false
-}: {
-  rows: Array<[string, string | undefined]>;
-  className?: string;
-  emphasize?: boolean;
-}) {
-  const availableRows = rows.filter((row): row is [string, string] => Boolean(row[1]?.trim()));
-  if (availableRows.length === 0) {
-    return null;
-  }
-
-  return (
-    <dl className={`${className} ${emphasize ? "receipt-emphasis" : ""}`.trim()}>
-      {availableRows.map(([label, value]) => (
-        <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
-      ))}
-    </dl>
-  );
 }
 
 function ExitInstructionPanel({ summary }: { summary: ParkingSessionResolveResponse }) {

@@ -409,6 +409,14 @@ export async function retrieveReceiptPresentation(
     );
   }
 
+  if (!hasCanonicalSalesInvoiceText(payload)) {
+    throw new ReceiptPresentationError(
+      "MALFORMED_WEBPAY_RECEIPT_PRESENTATION_RESPONSE",
+      "Sales Invoice presentation is temporarily unavailable.",
+      true
+    );
+  }
+
   return payload as WebPayReceiptPresentationResponse;
 }
 
@@ -434,7 +442,7 @@ export async function retrieveStatutoryReceiptPresentation(
       error.correlationId
     );
   }
-  if (!(payload as WebPayReceiptPresentationResponse).authoritativePresentation?.presentation) {
+  if (!hasCanonicalSalesInvoiceText(payload)) {
     throw new ReceiptPresentationError(
       "MALFORMED_WEBPAY_RECEIPT_PRESENTATION_RESPONSE",
       "Sales Invoice presentation is temporarily unavailable.",
@@ -442,6 +450,14 @@ export async function retrieveStatutoryReceiptPresentation(
     );
   }
   return payload as WebPayReceiptPresentationResponse;
+}
+
+function hasCanonicalSalesInvoiceText(
+  payload: WebPayReceiptPresentationResponse | ApiError
+): payload is WebPayReceiptPresentationResponse {
+  const canonicalText = (payload as WebPayReceiptPresentationResponse)
+    .authoritativePresentation?.canonicalText;
+  return typeof canonicalText === "string" && canonicalText.trim().length > 0;
 }
 
 export async function createPaymentIntent(

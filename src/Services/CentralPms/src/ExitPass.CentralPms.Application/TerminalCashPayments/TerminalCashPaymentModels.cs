@@ -139,6 +139,8 @@ public sealed record TerminalCashPaymentReadback(
     public DateTimeOffset? CashReceivedAt { get; init; }
 
     public bool ExitAuthorizationIssued { get; init; }
+
+    public string? CashierDisplayName { get; init; }
 }
 
 /// <summary>

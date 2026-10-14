@@ -119,8 +119,29 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             Arg.Is<StatutoryDiscountServiceChannelReviewIntakeCommand>(record =>
                 record.StatutoryDiscountDecisionCommandId == result.StatutoryDiscountDecisionCommandId &&
                 record.SourceChannel == "WEBPAY" &&
+                record.SubmittedByUserId == null &&
                 record.MaskedIdReference == "SC-****-1234" &&
                 record.EvidenceReferences.Count == 1),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenAptPendingReviewCreated_PersistsAuthenticatedCashierAcrossReplay()
+    {
+        var fixture = CreateFixture();
+        var command = Command(
+            sourceChannel: StatutoryDiscountSourceChannels.AssistedPaymentTerminal,
+            applyPayableBasis: false);
+
+        var first = await fixture.Sut.SubmitAsync(command, CancellationToken.None);
+        var replay = await fixture.Sut.SubmitAsync(command, CancellationToken.None);
+
+        replay.StatutoryDiscountDecisionCommandId.Should().Be(first.StatutoryDiscountDecisionCommandId);
+        await fixture.ServiceChannelReviewRepository.Received(2).UpsertIntakeAsync(
+            Arg.Is<StatutoryDiscountServiceChannelReviewIntakeCommand>(record =>
+                record.StatutoryDiscountDecisionCommandId == first.StatutoryDiscountDecisionCommandId &&
+                record.SourceChannel == StatutoryDiscountSourceChannels.AssistedPaymentTerminal &&
+                record.SubmittedByUserId == ActorUserId),
             Arg.Any<CancellationToken>());
     }
 

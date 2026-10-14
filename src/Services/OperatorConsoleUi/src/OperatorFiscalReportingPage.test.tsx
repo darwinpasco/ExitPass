@@ -105,16 +105,19 @@ describe("Operator Console fiscal reporting", () => {
     const pre = invoice.closest("article")?.querySelector("pre");
     expect(pre?.textContent).toContain("SALES INVOICE");
     expect(pre?.textContent).toContain("ORIGINAL");
-    expect(pre?.textContent).toContain("PARKING DETAILS");
-    expect(pre?.textContent).toContain("ITEMS");
-    expect(pre?.textContent).toContain("DISCOUNTS");
-    expect(pre?.textContent).toContain("PAYMENT DETAILS");
+    expect(pre?.textContent).toContain("BUSINESS DATE");
+    expect(pre?.textContent).toContain("CASHIER");
+    expect(pre?.textContent).toContain("DURATION");
+    expect(pre?.textContent).toContain("PARKING FEE");
+    expect(pre?.textContent).toContain("AMOUNT DUE");
+    expect(pre?.textContent).toContain("TOTAL PAID");
     expect(pre?.textContent).toContain("THIS SERVES AS YOUR SALES INVOICE");
-    expect(pre?.textContent).toContain("Customer Information");
+    expect(pre?.textContent).toContain("CUSTOMER INFORMATION");
     expect(pre?.textContent).toContain("POS SOFTWARE SUPPLIER / DEVELOPER");
     expect(pre?.textContent).toContain("THANK YOU FOR CHOOSING OUR SERVICE");
     expect(pre?.textContent).toContain("NOTHING FOLLOWS");
-    expect(pre?.textContent).toContain("VAT Exempt Sales                        PHP 0.00");
+    expect(pre?.textContent).toContain("VAT EXEMPT SALES              0.00");
+    expect(pre?.textContent).not.toContain("PROVIDER");
     expect(screen.getByRole("link", { name: "Download authoritative .txt" })).toHaveAttribute("href", expect.stringContaining("/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/electronic-journal/download"));
   });
 

@@ -80,8 +80,29 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal(EntryTime.ToString("O", CultureInfo.InvariantCulture), posIntegration.LastFiscalContext.ReferenceContext["entry_time"]);
         Assert.Equal(CashReceivedAt.ToString("O", CultureInfo.InvariantCulture), posIntegration.LastFiscalContext.ReferenceContext["payment_time"]);
         Assert.Equal("02:15:30", posIntegration.LastFiscalContext.ReferenceContext["parking_duration"]);
+        Assert.Equal("10000", posIntegration.LastFiscalContext.ReferenceContext["tendered_amount_minor_units"]);
+        Assert.Equal("0", posIntegration.LastFiscalContext.ReferenceContext["change_amount_minor_units"]);
         Assert.Equal(1, exitAuthorization.CallCount);
         Assert.Equal(1, acknowledgment.CallCount);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_CashWithChange_MapsDurableTenderFacts()
+    {
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var service = CreateService(
+            CashPayment(
+                amountDueMinorUnits: 5_000,
+                amountTenderedMinorUnits: 10_000,
+                changeDueMinorUnits: 5_000),
+            repo,
+            posIntegration);
+
+        await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.Equal("10000", posIntegration.LastFiscalContext!.ReferenceContext["tendered_amount_minor_units"]);
+        Assert.Equal("5000", posIntegration.LastFiscalContext.ReferenceContext["change_amount_minor_units"]);
     }
 
     [Theory]
@@ -789,6 +810,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     private static TerminalCashPaymentReadback CashPayment(
         string canonicalPaymentStatus = "CONFIRMED",
         long amountDueMinorUnits = 10_000,
+        long? amountTenderedMinorUnits = null,
+        long? changeDueMinorUnits = null,
         string? posServerId = null) =>
         new(
             TerminalCashPaymentCommandId: Guid.Parse("21000000-0000-4000-8000-000000000010"),
@@ -805,8 +828,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             CashierShiftId: "shift-001",
             Currency: "PHP",
             AmountDueMinorUnits: amountDueMinorUnits,
-            AmountTenderedMinorUnits: amountDueMinorUnits,
-            ChangeDueMinorUnits: 0,
+            AmountTenderedMinorUnits: amountTenderedMinorUnits ?? amountDueMinorUnits,
+            ChangeDueMinorUnits: changeDueMinorUnits ?? 0,
             CanonicalPaymentStatus: canonicalPaymentStatus,
             PaymentConfirmationId: PaymentConfirmationId,
             ResultClassification: "CREATED",
@@ -822,7 +845,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             SiteName = "PITX Level 3",
             TicketNumber = "1474119573105",
             PlateNumber = "ABC1105",
-            EntryTime = EntryTime
+            EntryTime = EntryTime,
+            CashierDisplayName = "Juan Dela Cruz"
         };
 
     private static TerminalCashStatutoryFiscalLinkageContext StatutoryContext() =>

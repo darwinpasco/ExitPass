@@ -17,7 +17,18 @@ public interface IStatutoryDiscountDecisionFacadeService
         Guid statutoryDiscountDecisionCommandId,
         Guid correlationId,
         CancellationToken cancellationToken);
+
+    Task<StatutoryDiscountDecisionResult?> CompleteZeroPayableForAptAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        AptZeroPayableCompletionActor actor,
+        Guid correlationId,
+        CancellationToken cancellationToken) =>
+        GetAsync(statutoryDiscountDecisionCommandId, correlationId, cancellationToken);
 }
+
+public sealed record AptZeroPayableCompletionActor(
+    Guid UserId,
+    string DisplayName);
 
 /// <summary>
 /// Durable repository boundary for shared statutory-discount command idempotency and readback.

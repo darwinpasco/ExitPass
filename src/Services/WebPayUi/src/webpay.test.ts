@@ -886,6 +886,7 @@ describe("WebPay QR and payment intent helpers", () => {
         fiscalDocumentNumber: "SI-20260523-000001",
         receiptAvailabilityState: "AVAILABLE",
         authoritativePresentation: {
+          canonicalText: "SALES INVOICE\r\nORIGINAL\r\n===== NOTHING FOLLOWS =====\r\n",
           presentation: {
             documentTitle: "Sales Invoice",
             sections: []

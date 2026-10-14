@@ -1,5 +1,59 @@
 export const operatorFiscalReportingRoute =
     "/operator-console/fiscal-reporting";
+export const compactCanonicalSalesInvoiceFixture =
+    "PROFESSIONAL PARKING MANAGEMENT\r\n" +
+    "PITX, Paranaque City\r\n" +
+    "VAT REG TIN          123-456-789-000\r\n" +
+    "MIN                          MIN-001\r\n" +
+    "S/N                       POS-SN-001\r\n" +
+    "BRANCH / SITE                   PITX\r\n" +
+    "PARKING LOCATION       PITX Parking\r\n" +
+    "\r\n" +
+    "           SALES INVOICE\r\n" +
+    "              ORIGINAL\r\n" +
+    "SI NO                  SI-00000001\r\n" +
+    "ISSUED            2026-09-10 09:00\r\n" +
+    "BUSINESS DATE           2026-09-10\r\n" +
+    "CASHIER             Juan Dela Cruz\r\n" +
+    "\r\n" +
+    "TICKET                  TICKET-0001\r\n" +
+    "PLATE                      ABC-1234\r\n" +
+    "ENTRY             2026-09-10 08:00\r\n" +
+    "PAYMENT           2026-09-10 09:00\r\n" +
+    "DURATION                    01:00:00\r\n" +
+    "-----------------------------------\r\n" +
+    "PARKING FEE\r\n" +
+    "1 x PHP 100.00              100.00\r\n" +
+    "-----------------------------------\r\n" +
+    "SUBTOTAL                    112.00\r\n" +
+    "DISCOUNT                      0.00\r\n" +
+    "VATABLE SALES               100.00\r\n" +
+    "VAT AMOUNT                   12.00\r\n" +
+    "VAT EXEMPT SALES              0.00\r\n" +
+    "ZERO RATED SALES              0.00\r\n" +
+    "TOTAL                       112.00\r\n" +
+    "\r\n" +
+    "PAYMENT\r\n" +
+    "TYPE                           CASH\r\n" +
+    "AMOUNT DUE                  112.00\r\n" +
+    "TOTAL PAID                  112.00\r\n" +
+    "TENDERED                    112.00\r\n" +
+    "CHANGE                        0.00\r\n" +
+    "\r\n" +
+    "-----------------------------------\r\n" +
+    "THIS SERVES AS YOUR SALES INVOICE\r\n" +
+    "PRINT DATE        2026-09-10 09:00\r\n" +
+    "\r\n" +
+    "CUSTOMER INFORMATION\r\n" +
+    "NAME                 Juan Dela Cruz\r\n" +
+    "ADDRESS           123 Sample Street\r\n" +
+    "TIN              123-456-789-000\r\n" +
+    "BUS. STYLE                  Retail\r\n" +
+    "\r\n" +
+    "POS SOFTWARE SUPPLIER / DEVELOPER\r\n" +
+    "PROFESSIONAL PARKING MANAGEMENT\r\n" +
+    "THANK YOU FOR CHOOSING OUR SERVICE\r\n" +
+    "===== NOTHING FOLLOWS =====\r\n";
 export const fiscalReportingPermissions = {
     ejRead: "fiscal-reporting.ej.read",
     ejExport: "fiscal-reporting.ej.export",
@@ -326,8 +380,7 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
         fiscalDocumentNumber: "SI-00000001",
         businessDayDate: "2026-09-10",
         issuedAt: "2026-09-10T01:00:00Z",
-        printableText:
-            "PROFESSIONAL PARKING MANAGEMENT CORPORATION\r\nPITX, Paranaque City\r\nVAT REG TIN                         123-456-789-000\r\nMIN                                         MIN-001\r\nS/N                                      POS-SN-001\r\nBranch / Site                                  PITX\r\nParking Location              PITX Parking Facility\r\n------------------------------------------------\r\n                 SALES INVOICE\r\n------------------------------------------------\r\n                    ORIGINAL\r\nSI No                                  SI-00000001\r\nIssued Date                 2026-09-10 09:00:00 PHT\r\n------------------------------------------------\r\n                PARKING DETAILS\r\n------------------------------------------------\r\nTicket Number                        TICKET-0001\r\nPlate Number                            ABC-1234\r\n------------------------------------------------\r\n                     ITEMS\r\n------------------------------------------------\r\nSubtotal                              PHP 112.00\r\n------------------------------------------------\r\n                   DISCOUNTS\r\n------------------------------------------------\r\nDiscount Reason                             NONE\r\nDiscount Amount                         PHP 0.00\r\n------------------------------------------------\r\n                 VAT BREAKDOWN\r\n------------------------------------------------\r\nVATable Sales                         PHP 100.00\r\nVAT Amount                             PHP 12.00\r\nVAT Exempt Sales                        PHP 0.00\r\nZero Rated Sales                        PHP 0.00\r\n------------------------------------------------\r\n                PAYMENT DETAILS\r\n------------------------------------------------\r\nCASH                                   PHP 112.00\r\n------------------------------------------------\r\n         THIS SERVES AS YOUR SALES INVOICE\r\n------------------------------------------------\r\n             Customer Information\r\n------------------------------------------------\r\nNAME                              Juan Dela Cruz\r\nADDRESS                         123 Sample Street\r\nTIN                               123-456-789-000\r\nBUS. STYLE                                  Retail\r\n------------------------------------------------\r\n        POS SOFTWARE SUPPLIER / DEVELOPER\r\n------------------------------------------------\r\n       PROFESSIONAL PARKING MANAGEMENT\r\n                  CORPORATION\r\n\r\n      THANK YOU FOR CHOOSING OUR SERVICE\r\n\r\n          ===== NOTHING FOLLOWS =====\r\n",
+        printableText: compactCanonicalSalesInvoiceFixture,
     };
     return {
         listAuthorizedSites: async () => [

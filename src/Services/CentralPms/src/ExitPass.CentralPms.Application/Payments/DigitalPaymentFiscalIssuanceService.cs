@@ -150,6 +150,7 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             ["site_id"] = context.SiteId.ToString("D"),
             ["site_group_id"] = context.SiteGroupId.ToString("D"),
             ["payment_channel"] = "DIGITAL",
+            ["cashier_display_name"] = "System",
             ["fiscal_issuance_reference_id"] = reference.FiscalIssuanceReferenceId.ToString("D")
         };
         AddDisplayFact(referenceContext, "ticket_number", context.TicketNumber);
@@ -242,13 +243,9 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
     private static string? FormatDuration(DateTimeOffset? entryTime, DateTimeOffset completedAt)
     {
         if (!entryTime.HasValue || completedAt < entryTime.Value) return null;
-        var totalMinutes = (long)Math.Floor((completedAt - entryTime.Value).TotalMinutes);
-        var hours = totalMinutes / 60;
-        var minutes = totalMinutes % 60;
-        if (hours == 0) return $"{minutes} minute{(minutes == 1 ? string.Empty : "s")}";
-        return minutes == 0
-            ? $"{hours} hour{(hours == 1 ? string.Empty : "s")}"
-            : $"{hours} hour{(hours == 1 ? string.Empty : "s")} {minutes:00} minutes";
+        var duration = completedAt - entryTime.Value;
+        var totalHours = checked((long)Math.Floor(duration.TotalHours));
+        return $"{totalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}";
     }
 
     private static bool HasNoInvoiceCustomerInformation(

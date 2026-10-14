@@ -1,3 +1,4 @@
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.TerminalCashPayments;
 
 namespace ExitPass.CentralPms.Application.TerminalCashPayments;
@@ -11,6 +12,18 @@ public interface IAptPayableBasisReadinessService
     Task<AptPayableBasisReadinessResult> RevalidateAsync(
         AptPayableBasisRevalidateRequest request,
         CancellationToken cancellationToken);
+
+    Task<AptPayableBasisReadinessResult> ResolveAsync(
+        AptPayableBasisResolveRequest request,
+        AptZeroPayableCompletionActor? completionActor,
+        CancellationToken cancellationToken) =>
+        ResolveAsync(request, cancellationToken);
+
+    Task<AptPayableBasisReadinessResult> RevalidateAsync(
+        AptPayableBasisRevalidateRequest request,
+        AptZeroPayableCompletionActor? completionActor,
+        CancellationToken cancellationToken) =>
+        RevalidateAsync(request, cancellationToken);
 }
 
 public sealed record AptPayableBasisReadinessResult(

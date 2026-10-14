@@ -181,6 +181,7 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
                 tcp.site_group_id,
                 tcp.pos_server_id,
                 tcp.cashier_id,
+                cashier.display_name AS cashier_display_name,
                 tcp.cashier_shift_id,
                 tcp.currency_code,
                 tcp.amount_due_minor_units,
@@ -217,6 +218,8 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
             INNER JOIN sites.sites site
                 ON site.site_id = tcp.site_id
                AND site.site_group_id = tcp.site_group_id
+            LEFT JOIN identity.users cashier
+                ON cashier.user_id::text = tcp.cashier_id
             WHERE tcp.terminal_cash_tender_id = @terminal_cash_tender_id
             ORDER BY tcp.created_at DESC
             LIMIT 1;
@@ -847,7 +850,8 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
                 : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("entry_time")))
         {
             CashReceivedAt = reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("cash_received_at")),
-            ExitAuthorizationIssued = reader.GetBoolean(reader.GetOrdinal("exit_authorization_issued"))
+            ExitAuthorizationIssued = reader.GetBoolean(reader.GetOrdinal("exit_authorization_issued")),
+            CashierDisplayName = OptionalString(reader, "cashier_display_name")
         };
     }
 

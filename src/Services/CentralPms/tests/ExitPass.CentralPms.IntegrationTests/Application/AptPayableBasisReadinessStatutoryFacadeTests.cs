@@ -216,7 +216,11 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         };
         var context = CreateContext(readback, zeroPayableAppliedTariff: true);
 
-        var result = await context.Sut.ResolveAsync(ResolveRequest(DecisionCommandId), CancellationToken.None);
+        var cashierId = Guid.NewGuid();
+        var result = await context.Sut.ResolveAsync(
+            ResolveRequest(DecisionCommandId),
+            new AptZeroPayableCompletionActor(cashierId, "Mara Del Carmen"),
+            CancellationToken.None);
 
         result.Succeeded.Should().BeTrue();
         result.Response.Should().NotBeNull();
@@ -229,6 +233,26 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         result.Response.ZeroPayableStatutoryCompletion.FiscalDocumentNumber.Should().Be("SI-00000073");
         result.Response.ZeroPayableStatutoryCompletion.ExitAuthorizationId.Should().Be(ExitAuthorizationId);
         result.Response.ZeroPayableStatutoryCompletion.ExitAuthorizationStatus.Should().Be("ISSUED");
+        context.StatutoryDiscounts.CompletionActor.Should().Be(new AptZeroPayableCompletionActor(cashierId, "Mara Del Carmen"));
+    }
+
+    [Fact]
+    public async Task Resolve_WhenZeroPayableAndAptHumanSessionIsUnavailable_BlocksCompletion()
+    {
+        var readback = Applied(
+            netPayableAmountMinorUnits: 0,
+            statutoryDiscountAmountMinorUnits: 10000);
+        var context = CreateContext(readback, zeroPayableAppliedTariff: true);
+
+        var result = await context.Sut.ResolveAsync(ResolveRequest(DecisionCommandId), CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.Response.Should().NotBeNull();
+        result.Response!.ReadyForCashAcceptance.Should().BeFalse();
+        result.Response.StatutoryDiscountReadiness.Should().NotBeNull();
+        result.Response.StatutoryDiscountReadiness!.BlockingReasonCode.Should().Be("APT_HUMAN_SESSION_REQUIRED");
+        result.Response.StatutoryDiscountReadiness.SafeErrorCode.Should().Be("APT_ZERO_PAYABLE_CASHIER_REQUIRED");
+        context.StatutoryDiscounts.CompletionActor.Should().BeNull();
     }
 
     [Theory]
@@ -735,7 +759,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             RequestReference: Guid.Parse("41000000-0000-0000-0000-000000000013"),
             ValidationId,
             ParkingSessionId,
-            StatutoryDiscountSourceChannels.AssistedPaymentTerminal,
+            StatutoryDiscountSourceChannels.WebPay,
             "SENIOR_CITIZEN",
             decisionStatus,
             PolicyResolutionBasis: "NATIONAL_RA9994",
@@ -908,6 +932,8 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
 
         public int SubmitCallCount { get; private set; }
 
+        public AptZeroPayableCompletionActor? CompletionActor { get; private set; }
+
         public Task<StatutoryDiscountDecisionResult> SubmitAsync(
             StatutoryDiscountDecisionCommand command,
             CancellationToken cancellationToken)
@@ -927,6 +953,16 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             CancellationToken cancellationToken)
         {
             GetCallCount++;
+            return Task.FromResult(_readback);
+        }
+
+        public Task<StatutoryDiscountDecisionResult?> CompleteZeroPayableForAptAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            AptZeroPayableCompletionActor actor,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            CompletionActor = actor;
             return Task.FromResult(_readback);
         }
     }

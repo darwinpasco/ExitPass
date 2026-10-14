@@ -199,6 +199,9 @@ export type SalesInvoicePresentationDocument = {
 
 export type SalesInvoiceAuthoritativePresentation = {
   presentation?: SalesInvoicePresentationDocument | null;
+  canonicalText?: string | null;
+  canonicalTextAuthority?: string | null;
+  canonicalTextHash?: string | null;
   presentationVersion?: string | null;
   templateVersion?: string | null;
   contentType?: string | null;
