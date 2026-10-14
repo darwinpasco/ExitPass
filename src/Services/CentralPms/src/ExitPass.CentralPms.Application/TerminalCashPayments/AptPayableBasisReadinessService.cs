@@ -54,6 +54,12 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
 
     public async Task<AptPayableBasisReadinessResult> ResolveAsync(
         AptPayableBasisResolveRequest request,
+        CancellationToken cancellationToken) =>
+        await ResolveAsync(request, completionActor: null, cancellationToken).ConfigureAwait(false);
+
+    public async Task<AptPayableBasisReadinessResult> ResolveAsync(
+        AptPayableBasisResolveRequest request,
+        AptZeroPayableCompletionActor? completionActor,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -92,6 +98,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
                 expectedCurrency: null,
                 requestedStatutoryDecisionCommandId: request.StatutoryDiscountDecisionCommandId,
                 forceNotReadyCode: null,
+                completionActor,
                 cancellationToken)
             : MapResolutionFailure(resolved, correlationId);
     }
@@ -195,6 +202,12 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
 
     public async Task<AptPayableBasisReadinessResult> RevalidateAsync(
         AptPayableBasisRevalidateRequest request,
+        CancellationToken cancellationToken) =>
+        await RevalidateAsync(request, completionActor: null, cancellationToken).ConfigureAwait(false);
+
+    public async Task<AptPayableBasisReadinessResult> RevalidateAsync(
+        AptPayableBasisRevalidateRequest request,
+        AptZeroPayableCompletionActor? completionActor,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -267,6 +280,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             request.ExpectedCurrency,
             request.StatutoryDiscountDecisionCommandId,
             forceNotReadyCode: null,
+            completionActor,
             cancellationToken);
 
         if (!responseResult.Succeeded || responseResult.Response is null)
@@ -296,6 +310,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             request.ExpectedCurrency,
             request.StatutoryDiscountDecisionCommandId,
             forceNotReadyCode,
+            completionActor,
             cancellationToken);
     }
 
@@ -309,6 +324,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         string? expectedCurrency,
         Guid? requestedStatutoryDecisionCommandId,
         string? forceNotReadyCode,
+        AptZeroPayableCompletionActor? completionActor,
         CancellationToken cancellationToken)
     {
         var session = resolved.ParkingSession!;
@@ -330,6 +346,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             siteGroupId,
             siteId,
             correlationId,
+            completionActor,
             cancellationToken);
         var effectiveTariff = statutory.EffectiveTariff ?? tariff;
         var amountMinorUnits = statutory.FinalPayableAmountMinorUnits ?? ToMinorUnits(effectiveTariff.NetPayable);
@@ -604,6 +621,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         Guid siteGroupId,
         Guid siteId,
         Guid correlationId,
+        AptZeroPayableCompletionActor? completionActor,
         CancellationToken cancellationToken)
     {
         if (statutoryDiscountDecisionCommandId is null || statutoryDiscountDecisionCommandId == Guid.Empty)
@@ -658,6 +676,39 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
                 effectiveTariff: null,
                 finalPayableAmountMinorUnits: null,
                 currency: null);
+        }
+
+        if ((string.Equals(
+                    readback.PayableBasisReadinessStatus,
+                    StatutoryDiscountPayableBasisReadinessStatuses.PayableBasisReady,
+                    StringComparison.Ordinal) || readback.PayableBasisReady) &&
+            readback.NetPayableAmountMinorUnits == 0)
+        {
+            if (completionActor is null)
+            {
+                return BlockedStatutory(
+                    statutoryDiscountDecisionCommandId,
+                    "APT_HUMAN_SESSION_REQUIRED",
+                    "APT_ZERO_PAYABLE_CASHIER_REQUIRED",
+                    "Sign in to the APT before completing this zero-payable transaction.",
+                    retryable: false);
+            }
+
+            readback = await _statutoryDiscounts.CompleteZeroPayableForAptAsync(
+                    statutoryDiscountDecisionCommandId.Value,
+                    completionActor,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (readback is null)
+            {
+                return BlockedStatutory(
+                    statutoryDiscountDecisionCommandId,
+                    "STATUTORY_DISCOUNT_REQUIRED_FACTS_UNAVAILABLE",
+                    "STATUTORY_DISCOUNT_DECISION_NOT_FOUND",
+                    "Canonical statutory-discount readback is unavailable.",
+                    retryable: false);
+            }
         }
 
         if (string.Equals(

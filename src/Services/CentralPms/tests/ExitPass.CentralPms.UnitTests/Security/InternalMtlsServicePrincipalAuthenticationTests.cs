@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Security.Claims;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Security;
 using FluentAssertions;
@@ -143,6 +144,123 @@ public sealed class InternalMtlsServicePrincipalAuthenticationTests
     }
 
     [Fact]
+    public async Task Matching_apt_service_and_human_identities_are_preserved_as_independent_principals()
+    {
+        using var certificate = CreateCertificate();
+        var serviceIdentityId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var siteId = Guid.NewGuid();
+        var siteGroupId = Guid.NewGuid();
+        var repository = Substitute.For<ICentralPmsRbacRepository>();
+        repository.GetServicePrincipalAuthenticationAsync("secret://webpay", Arg.Any<CancellationToken>())
+            .Returns(new CentralPmsServicePrincipalAuthenticationRecord(
+                serviceIdentityId, "INTERNAL_SERVICE", "ACTIVE", "ASSISTED_PAYMENT_TERMINAL",
+                "MTLS_CERTIFICATE_REFERENCE", true, true, [siteId], [siteGroupId]));
+        var nextCalled = false;
+        var middleware = new InternalMtlsMiddleware(_ => { nextCalled = true; return Task.CompletedTask; });
+        var context = ContextWithServiceMetadata();
+        context.User = AptHumanPrincipal(userId, serviceIdentityId, siteId, siteGroupId);
+
+        await middleware.InvokeAsync(
+            context,
+            Options.Create(OptionsFor(certificate, "apt", "ASSISTED_PAYMENT_TERMINAL",
+                ["statutory-discounts.decision.submit.assisted-payment-terminal"])),
+            new FixedCertificateAccessor(certificate),
+            repository);
+
+        nextCalled.Should().BeTrue();
+        context.User.Identities.Select(identity => identity.AuthenticationType).Should().Equal(
+            "InternalMtlsServicePrincipal",
+            HumanSessionAuthenticationHandler.SchemeName);
+        context.User.Identities.Single(identity => identity.AuthenticationType == "InternalMtlsServicePrincipal")
+            .FindFirst("service_identity_id")!.Value.Should().Be(serviceIdentityId.ToString("D"));
+        context.User.Identities.Single(identity => identity.AuthenticationType == HumanSessionAuthenticationHandler.SchemeName)
+            .FindFirst("user_id")!.Value.Should().Be(userId.ToString("D"));
+    }
+
+    [Fact]
+    public async Task Apt_human_bound_to_another_device_is_denied_before_endpoint_execution()
+    {
+        using var certificate = CreateCertificate();
+        var serviceIdentityId = Guid.NewGuid();
+        var repository = Substitute.For<ICentralPmsRbacRepository>();
+        repository.GetServicePrincipalAuthenticationAsync("secret://webpay", Arg.Any<CancellationToken>())
+            .Returns(new CentralPmsServicePrincipalAuthenticationRecord(
+                serviceIdentityId, "INTERNAL_SERVICE", "ACTIVE", "ASSISTED_PAYMENT_TERMINAL",
+                "MTLS_CERTIFICATE_REFERENCE", true, true, [], []));
+        var middleware = new InternalMtlsMiddleware(_ => throw new InvalidOperationException("next must not run"));
+        var context = ContextWithServiceMetadata();
+        context.User = AptHumanPrincipal(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+
+        await middleware.InvokeAsync(
+            context,
+            Options.Create(OptionsFor(certificate, "apt", "ASSISTED_PAYMENT_TERMINAL",
+                ["statutory-discounts.decision.submit.assisted-payment-terminal"])),
+            new FixedCertificateAccessor(certificate),
+            repository);
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        context.Response.Body.Position = 0;
+        (await new StreamReader(context.Response.Body).ReadToEndAsync())
+            .Should().Contain("APT_HUMAN_DEVICE_BINDING_MISMATCH");
+    }
+
+    [Fact]
+    public async Task Apt_service_rejects_human_session_for_another_audience()
+    {
+        using var certificate = CreateCertificate();
+        var serviceIdentityId = Guid.NewGuid();
+        var repository = Substitute.For<ICentralPmsRbacRepository>();
+        repository.GetServicePrincipalAuthenticationAsync("secret://webpay", Arg.Any<CancellationToken>())
+            .Returns(new CentralPmsServicePrincipalAuthenticationRecord(
+                serviceIdentityId, "INTERNAL_SERVICE", "ACTIVE", "ASSISTED_PAYMENT_TERMINAL",
+                "MTLS_CERTIFICATE_REFERENCE", true, true, [], []));
+        var middleware = new InternalMtlsMiddleware(_ => throw new InvalidOperationException("next must not run"));
+        var context = ContextWithServiceMetadata();
+        context.User = AptHumanPrincipal(
+            Guid.NewGuid(), serviceIdentityId, Guid.NewGuid(), Guid.NewGuid(), audience: "OPERATOR_CONSOLE");
+
+        await middleware.InvokeAsync(
+            context,
+            Options.Create(OptionsFor(certificate, "apt", "ASSISTED_PAYMENT_TERMINAL",
+                ["statutory-discounts.decision.submit.assisted-payment-terminal"])),
+            new FixedCertificateAccessor(certificate),
+            repository);
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        context.Response.Body.Position = 0;
+        (await new StreamReader(context.Response.Body).ReadToEndAsync())
+            .Should().Contain("APT_HUMAN_DEVICE_BINDING_MISMATCH");
+    }
+
+    [Fact]
+    public async Task Webpay_service_principal_rejects_human_cashier_identity()
+    {
+        using var certificate = CreateCertificate();
+        var serviceIdentityId = Guid.NewGuid();
+        var repository = Substitute.For<ICentralPmsRbacRepository>();
+        repository.GetServicePrincipalAuthenticationAsync("secret://webpay", Arg.Any<CancellationToken>())
+            .Returns(new CentralPmsServicePrincipalAuthenticationRecord(
+                serviceIdentityId, "INTERNAL_SERVICE", "ACTIVE", "PaymentOrchestrator",
+                "MTLS_CERTIFICATE_REFERENCE", true, true, [], []));
+        var middleware = new InternalMtlsMiddleware(_ => throw new InvalidOperationException("next must not run"));
+        var context = ContextWithServiceMetadata();
+        context.User = AptHumanPrincipal(Guid.NewGuid(), serviceIdentityId, Guid.NewGuid(), Guid.NewGuid());
+
+        await middleware.InvokeAsync(
+            context,
+            Options.Create(OptionsFor(certificate, "webpay", "WEBPAY",
+                ["statutory-discounts.decision.submit.webpay"])),
+            new FixedCertificateAccessor(certificate),
+            repository);
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        context.Response.Body.Position = 0;
+        (await new StreamReader(context.Response.Body).ReadToEndAsync())
+            .Should().Contain("WEBPAY_HUMAN_SESSION_PROHIBITED");
+    }
+
+    [Fact]
     public async Task Governed_apt_certificate_builds_device_principal_from_current_canonical_version_and_scope()
     {
         using var certificate = CreateCertificate();
@@ -235,6 +353,23 @@ public sealed class InternalMtlsServicePrincipalAuthenticationTests
             "governed apt endpoint"));
         return context;
     }
+
+    private static ClaimsPrincipal AptHumanPrincipal(
+        Guid userId,
+        Guid deviceServiceIdentityId,
+        Guid siteId,
+        Guid siteGroupId,
+        string audience = "APT") =>
+        new(new ClaimsIdentity(
+        [
+            new Claim(ClaimTypes.NameIdentifier, userId.ToString("D")),
+            new Claim("user_id", userId.ToString("D")),
+            new Claim("exitpass_audience", audience),
+            new Claim("device_service_identity_id", deviceServiceIdentityId.ToString("D")),
+            new Claim("site_id", siteId.ToString("D")),
+            new Claim("site_group_id", siteGroupId.ToString("D")),
+            new Claim(CentralPmsRbacPolicyCatalog.PermissionClaimType, "apt.cashier.operate")
+        ], HumanSessionAuthenticationHandler.SchemeName));
 
     private static InternalMtlsOptions OptionsFor(
         X509Certificate2 certificate,

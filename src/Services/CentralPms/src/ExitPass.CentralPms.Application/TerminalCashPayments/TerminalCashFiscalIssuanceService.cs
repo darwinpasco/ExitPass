@@ -949,7 +949,10 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             ["plate_number"] = cashPayment.PlateNumber!.Trim(),
             ["entry_time"] = entryTime.ToString("O", CultureInfo.InvariantCulture),
             ["payment_time"] = paymentTime.ToString("O", CultureInfo.InvariantCulture),
-            ["parking_duration"] = FormatParkingDuration(duration)
+            ["parking_duration"] = FormatParkingDuration(duration),
+            ["cashier_display_name"] = RequireCashierDisplayName(cashPayment),
+            ["tendered_amount_minor_units"] = cashPayment.AmountTenderedMinorUnits.ToString(CultureInfo.InvariantCulture),
+            ["change_amount_minor_units"] = cashPayment.ChangeDueMinorUnits.ToString(CultureInfo.InvariantCulture)
         };
         context["payment_method"] = "CASH";
 
@@ -991,6 +994,13 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             CultureInfo.InvariantCulture,
             $"{totalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}");
     }
+
+    private static string RequireCashierDisplayName(TerminalCashPaymentReadback cashPayment) =>
+        !string.IsNullOrWhiteSpace(cashPayment.CashierDisplayName)
+            ? cashPayment.CashierDisplayName.Trim()
+            : throw Rejected(
+                "TERMINAL_CASH_CASHIER_DISPLAY_NAME_REQUIRED",
+                "The authenticated cashier display name is unavailable for Sales Invoice issuance.");
 
     private static void AddIfPresent(Dictionary<string, string> context, string key, string? value)
     {

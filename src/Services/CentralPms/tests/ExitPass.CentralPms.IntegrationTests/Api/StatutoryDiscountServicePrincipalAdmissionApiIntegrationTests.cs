@@ -34,7 +34,6 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
     [Theory]
     [InlineData(StatutoryDiscountSourceChannels.WebPay, "PaymentOrchestrator", "statutory-discounts.decision.submit.webpay")]
     [InlineData(StatutoryDiscountSourceChannels.WebPay, "PAYMENT_ORCHESTRATOR", "statutory-discounts.decision.submit.webpay")]
-    [InlineData(StatutoryDiscountSourceChannels.AssistedPaymentTerminal, "ASSISTED_PAYMENT_TERMINAL", "statutory-discounts.decision.submit.assisted-payment-terminal")]
     public async Task Valid_mtls_service_principal_is_admitted_and_server_creates_canonical_intake(
         string sourceChannel,
         string owningService,
@@ -55,6 +54,38 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
             body.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.NotDecided);
             (await ReadIntakeSourceChannelAsync(body.StatutoryDiscountDecisionCommandId))
                 .Should().Be(sourceChannel);
+        }
+        finally
+        {
+            await CleanupAsync(scenario);
+        }
+    }
+
+    [Fact]
+    public async Task Apt_cannot_originate_statutory_request()
+    {
+        var scenario = await CreateScenarioAsync(
+            StatutoryDiscountSourceChannels.AssistedPaymentTerminal,
+            "ASSISTED_PAYMENT_TERMINAL");
+        try
+        {
+            using var factory = CreateFactory(
+                scenario,
+                "CENTRAL_PMS",
+                StatutoryDiscountSourceChannels.AssistedPaymentTerminal,
+                ["statutory-discounts.decision.submit.assisted-payment-terminal"]);
+            using var client = factory.CreateClient();
+
+            using var response = await SendAsync(
+                client,
+                scenario,
+                StatutoryDiscountSourceChannels.AssistedPaymentTerminal,
+                includeCertificate: true);
+
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            (await response.Content.ReadFromJsonAsync<ErrorResponse>())!.ErrorCode
+                .Should().Be("STATUTORY_DISCOUNT_APT_REQUEST_ORIGIN_PROHIBITED");
+            (await ReadIntakeCountAsync(scenario.Context.ParkingSessionId)).Should().Be(0);
         }
         finally
         {
@@ -129,7 +160,6 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
 
     [Theory]
     [InlineData(StatutoryDiscountSourceChannels.WebPay, "PAYMENT_ORCHESTRATOR", "statutory-discounts.decision.submit.webpay", "statutory-discounts.evidence.capture.webpay", "/v1/webpay/statutory-discounts/evidence")]
-    [InlineData(StatutoryDiscountSourceChannels.AssistedPaymentTerminal, "ASSISTED_PAYMENT_TERMINAL", "statutory-discounts.decision.submit.assisted-payment-terminal", "statutory-discounts.evidence.capture.assisted-payment-terminal", "/v1/apt/statutory-discounts/evidence")]
     public async Task Valid_mtls_service_principal_can_bootstrap_evidence_and_replay_without_duplicate_persistence(
         string sourceChannel,
         string owningService,
@@ -345,7 +375,6 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
 
     [Theory]
     [InlineData(StatutoryDiscountSourceChannels.WebPay, "PAYMENT_ORCHESTRATOR", "statutory-discounts.decision.submit.webpay", StatutoryDiscountSourceChannels.AssistedPaymentTerminal)]
-    [InlineData(StatutoryDiscountSourceChannels.AssistedPaymentTerminal, "ASSISTED_PAYMENT_TERMINAL", "statutory-discounts.decision.submit.assisted-payment-terminal", StatutoryDiscountSourceChannels.WebPay)]
     public async Task Source_channel_mismatch_is_denied(
         string authenticatedSourceChannel,
         string owningService,
@@ -717,6 +746,17 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
             connection);
         command.Parameters.AddWithValue("command_id", commandId);
         return (string)(await command.ExecuteScalarAsync() ?? string.Empty);
+    }
+
+    private static async Task<long> ReadIntakeCountAsync(Guid parkingSessionId)
+    {
+        await using var connection = new NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM operator_console.statutory_discount_service_channel_reviews WHERE parking_session_id=@parking_session_id;",
+            connection);
+        command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+        return (long)(await command.ExecuteScalarAsync() ?? 0L);
     }
 
     private static async Task<(long Sets, long Items)> ReadEvidencePersistenceAsync(Guid commandId)

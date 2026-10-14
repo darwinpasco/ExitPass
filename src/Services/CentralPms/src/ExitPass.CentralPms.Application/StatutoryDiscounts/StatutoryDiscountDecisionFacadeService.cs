@@ -214,10 +214,13 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
         var overall = ResolveOverallClassification(decisionStart, decision, application, applicationResultClassification, applicationRequested);
         var result = decision.ToFacadeResult(application, applicationRequested, overall, normalized.CorrelationId);
+        var fiscalCashier = normalized.ApplyPayableBasis &&
+            string.Equals(normalized.SourceChannel, StatutoryDiscountSourceChannels.WebPay, StringComparison.Ordinal)
+                ? ZeroPayableFiscalCashierAttribution.WebPay()
+                : null;
         return await EnrichChannelSafeReadbackAsync(
                 result,
-                requestFiscalIssuance: true,
-                normalized.ReviewerUserId ?? normalized.ActorUserId,
+                fiscalCashier,
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -225,6 +228,40 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
     public async Task<StatutoryDiscountDecisionResult?> GetAsync(
         Guid statutoryDiscountDecisionCommandId,
         Guid correlationId,
+        CancellationToken cancellationToken) =>
+        await GetAndEnrichAsync(
+                statutoryDiscountDecisionCommandId,
+                correlationId,
+                fiscalCashier: null,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<StatutoryDiscountDecisionResult?> CompleteZeroPayableForAptAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        AptZeroPayableCompletionActor actor,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(actor);
+        if (actor.UserId == Guid.Empty || string.IsNullOrWhiteSpace(actor.DisplayName))
+        {
+            throw new StatutoryDiscountDecisionRejectedException(
+                "APT_ZERO_PAYABLE_CASHIER_REQUIRED",
+                "APT zero-payable completion requires an authenticated cashier.");
+        }
+
+        return await GetAndEnrichAsync(
+                statutoryDiscountDecisionCommandId,
+                correlationId,
+                ZeroPayableFiscalCashierAttribution.Apt(actor.UserId, actor.DisplayName),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<StatutoryDiscountDecisionResult?> GetAndEnrichAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid correlationId,
+        ZeroPayableFiscalCashierAttribution? fiscalCashier,
         CancellationToken cancellationToken)
     {
         if (statutoryDiscountDecisionCommandId == Guid.Empty)
@@ -257,8 +294,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             var result = decision.ToFacadeResult(application, applicationRequested, overall, correlationId);
             return await EnrichChannelSafeReadbackAsync(
                     result,
-                    requestFiscalIssuance: false,
-                    issuingUserId: null,
+                    fiscalCashier,
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -270,8 +306,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
     private async Task<StatutoryDiscountDecisionResult> EnrichChannelSafeReadbackAsync(
         StatutoryDiscountDecisionResult result,
-        bool requestFiscalIssuance,
-        Guid? issuingUserId,
+        ZeroPayableFiscalCashierAttribution? fiscalCashier,
         CancellationToken cancellationToken)
     {
         var review = await _serviceChannelReviewRepository.GetAsync(
@@ -286,13 +321,11 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             return enriched;
         }
 
-        // An approved service-channel review supplies the durable human actor for
-        // idempotent fiscal/exit recovery after the original application response.
         var reviewerUserId = review?.ReviewerUserId is Guid reviewer && reviewer != Guid.Empty
             ? reviewer
             : (Guid?)null;
-        var progressCompletion = requestFiscalIssuance || reviewerUserId.HasValue;
-        var completionActorId = reviewerUserId ?? issuingUserId;
+        var progressCompletion = fiscalCashier is not null;
+        var completionActorId = fiscalCashier?.CashierUserId ?? reviewerUserId;
 
         var candidate = await _zeroPayableFinalityReader.ReadAsync(
                 enriched.StatutoryDiscountDecisionCommandId,
@@ -349,7 +382,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                         enriched.VatExclusiveBasisAmountMinorUnits.Value,
                         enriched.VatTreatment,
                         enriched.PolicyResolutionBasis,
-                        resolution.Finality!.IdControlReference),
+                        resolution.Finality!.IdControlReference,
+                        fiscalCashier),
                     cancellationToken).ConfigureAwait(false)
                 : await _zeroPayableFiscalIssuanceService.ReadAsync(
                     resolution.Finality!.StatutoryDiscountPayableBasisApplicationCommandId,

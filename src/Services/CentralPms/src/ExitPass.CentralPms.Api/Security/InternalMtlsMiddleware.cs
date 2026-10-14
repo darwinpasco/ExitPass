@@ -264,11 +264,55 @@ public sealed class InternalMtlsMiddleware
         claims.AddRange(principalRecord.SiteIds.Select(siteId => new Claim("site_id", siteId.ToString("D"))));
         claims.AddRange(principalRecord.SiteGroupIds.Select(siteGroupId => new Claim("site_group_id", siteGroupId.ToString("D"))));
 
-        context.User = new ClaimsPrincipal(new ClaimsIdentity(
+        var serviceIdentity = new ClaimsIdentity(
             claims,
             authenticationType: "InternalMtlsServicePrincipal",
             nameType: "service_identity_id",
-            roleType: ClaimTypes.Role));
+            roleType: ClaimTypes.Role);
+
+        var sourceChannel = StatutoryDiscountSourceChannels.Normalize(binding.SourceChannel);
+        var humanIdentities = context.User.Identities.Where(identity =>
+            identity.IsAuthenticated &&
+            string.Equals(identity.AuthenticationType, HumanSessionAuthenticationHandler.SchemeName, StringComparison.Ordinal)).ToArray();
+        if (humanIdentities.Length > 1)
+        {
+            await WriteErrorAsync(context, StatusCodes.Status403Forbidden,
+                "HUMAN_SESSION_IDENTITY_AMBIGUOUS",
+                "The authenticated human-session identity is ambiguous.");
+            return false;
+        }
+
+        var humanIdentity = humanIdentities.SingleOrDefault();
+
+        if (string.Equals(sourceChannel, StatutoryDiscountSourceChannels.WebPay, StringComparison.Ordinal) &&
+            humanIdentity is not null)
+        {
+            await WriteErrorAsync(context, StatusCodes.Status403Forbidden,
+                "WEBPAY_HUMAN_SESSION_PROHIBITED",
+                "WebPay service calls cannot carry human-session cashier attribution.");
+            return false;
+        }
+
+        if (string.Equals(sourceChannel, StatutoryDiscountSourceChannels.AssistedPaymentTerminal, StringComparison.Ordinal) &&
+            humanIdentity is not null)
+        {
+            var humanAudience = humanIdentity.FindFirst("exitpass_audience")?.Value;
+            var humanDeviceServiceIdentityId = HumanSessionAuthenticationHandler.ResolveGuid(
+                humanIdentity.FindFirst("device_service_identity_id")?.Value);
+            if (!string.Equals(humanAudience, "APT", StringComparison.Ordinal) ||
+                humanDeviceServiceIdentityId != principalRecord.ServiceIdentityId)
+            {
+                await WriteErrorAsync(context, StatusCodes.Status403Forbidden,
+                    "APT_HUMAN_DEVICE_BINDING_MISMATCH",
+                    "The authenticated APT human session is not bound to the authenticated terminal identity.");
+                return false;
+            }
+
+            context.User = new ClaimsPrincipal([serviceIdentity, humanIdentity]);
+            return true;
+        }
+
+        context.User = new ClaimsPrincipal(serviceIdentity);
         return true;
     }
 

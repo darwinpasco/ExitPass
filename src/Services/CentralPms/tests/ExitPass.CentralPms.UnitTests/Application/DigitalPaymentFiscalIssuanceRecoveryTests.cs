@@ -45,7 +45,9 @@ public sealed class DigitalPaymentFiscalIssuanceRecoveryTests
         await posServer.Received(1).TryIssueFiscalDocumentViaPosServerAsync(
             FiscalReferenceId,
             Arg.Is<CentralPmsFiscalDocumentMappingContext>(value =>
-                value.SitePosServerId == PosId && value.SitePosServerRef == "IST-POS-A"),
+                value.SitePosServerId == PosId &&
+                value.SitePosServerRef == "IST-POS-A" &&
+                value.ReferenceContext["cashier_display_name"] == "System"),
             Arg.Any<PosServerCreateResultRecordingContext>(),
             Arg.Any<CancellationToken>());
         await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);

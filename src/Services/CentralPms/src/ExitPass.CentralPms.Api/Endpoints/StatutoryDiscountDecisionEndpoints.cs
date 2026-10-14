@@ -131,6 +131,18 @@ public static class StatutoryDiscountDecisionEndpoints
                 correlationId));
         }
 
+        if (string.Equals(
+                requestedSourceChannel,
+                StatutoryDiscountSourceChannels.AssistedPaymentTerminal,
+                StringComparison.Ordinal))
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "APT cannot originate statutory-discount requests.");
+            return Results.BadRequest(BuildError(
+                "STATUTORY_DISCOUNT_APT_REQUEST_ORIGIN_PROHIBITED",
+                "Statutory-discount requests may originate only from WebPay or Operator Console.",
+                correlationId));
+        }
+
         if (!TryResolveAuthenticatedSourceChannel(
                 request.HttpContext,
                 rbacOptions.Value,
@@ -157,15 +169,34 @@ public static class StatutoryDiscountDecisionEndpoints
                 statusCode: StatusCodes.Status403Forbidden);
         }
 
-        if (string.Equals(request.HttpContext.User.Identity?.AuthenticationType, "InternalMtlsServicePrincipal", StringComparison.Ordinal) &&
-            (effectiveSourceChannel is StatutoryDiscountSourceChannels.WebPay or StatutoryDiscountSourceChannels.AssistedPaymentTerminal) &&
-            !ServicePrincipalHasRequestedScope(request.HttpContext.User, body.SiteId, body.SiteGroupId))
+        var serviceIdentity = FindAuthenticatedIdentity(
+            request.HttpContext.User,
+            "InternalMtlsServicePrincipal");
+        if ((effectiveSourceChannel is StatutoryDiscountSourceChannels.WebPay or StatutoryDiscountSourceChannels.AssistedPaymentTerminal) &&
+            serviceIdentity is not null &&
+            !IdentityHasRequestedScope(serviceIdentity, body.SiteId, body.SiteGroupId))
         {
             activity?.SetStatus(ActivityStatusCode.Error, "Authenticated service principal is outside the requested Site scope.");
             return Results.Json(
                 BuildError(
                     "CENTRAL_PMS_SERVICE_PRINCIPAL_SCOPE_DENIED",
                     "The authenticated service principal is not authorized for the requested scope.",
+                    correlationId),
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        var humanIdentity = FindAuthenticatedIdentity(
+            request.HttpContext.User,
+            HumanSessionAuthenticationHandler.SchemeName);
+        if (effectiveSourceChannel is StatutoryDiscountSourceChannels.AssistedPaymentTerminal &&
+            humanIdentity is not null &&
+            !IdentityHasRequestedScope(humanIdentity, body.SiteId, body.SiteGroupId))
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "Authenticated APT cashier is outside the requested Site scope.");
+            return Results.Json(
+                BuildError(
+                    "CENTRAL_PMS_APT_HUMAN_SCOPE_DENIED",
+                    "The authenticated APT cashier is not authorized for the requested scope.",
                     correlationId),
                 statusCode: StatusCodes.Status403Forbidden);
         }
@@ -550,25 +581,19 @@ public static class StatutoryDiscountDecisionEndpoints
         var fixtureAuthorityAllowed =
             (environment.IsDevelopment() || environment.IsEnvironment("SecureDevelopment") || environment.IsEnvironment("Test")) &&
             options.AllowFixtureIdentityHeaders;
-        var permissions = ReadPermissions(context, options, fixtureAuthorityAllowed);
+        var servicePrincipal = FindAuthenticatedIdentity(context.User, "InternalMtlsServicePrincipal");
+        var humanPrincipal = FindAuthenticatedIdentity(context.User, HumanSessionAuthenticationHandler.SchemeName);
+        var permissions = fixtureAuthorityAllowed
+            ? ReadPermissions(context, options, fixtureAuthorityAllowed)
+            : ReadPermissions(servicePrincipal ?? humanPrincipal);
         var channels = ChannelPermissions
             .Where(pair => permissions.Contains(pair.Value))
             .Select(pair => pair.Key)
             .ToArray();
 
-        var userId = ResolveUserId(context, fixtureAuthorityAllowed);
-        serviceIdentityId = ResolveServiceIdentityId(context, fixtureAuthorityAllowed);
-        actorId = userId ?? serviceIdentityId ?? Guid.Empty;
-        if (actorId == Guid.Empty)
-        {
-            sourceChannel = string.Empty;
-            error = new ErrorResponse
-            {
-                ErrorCode = "CENTRAL_PMS_AUTHENTICATED_ACTOR_REQUIRED",
-                Message = "Authenticated user or service identity is required for statutory-discount decision submission."
-            };
-            return false;
-        }
+        var userId = ResolveUserId(context, humanPrincipal, fixtureAuthorityAllowed);
+        serviceIdentityId = ResolveServiceIdentityId(context, servicePrincipal, fixtureAuthorityAllowed);
+        actorId = Guid.Empty;
 
         if (channels.Length == 0)
         {
@@ -597,26 +622,80 @@ public static class StatutoryDiscountDecisionEndpoints
         }
 
         var resolvedChannel = channels[0];
-        var serviceChannel = resolvedChannel is StatutoryDiscountSourceChannels.WebPay
-            or StatutoryDiscountSourceChannels.AssistedPaymentTerminal;
-        if ((serviceChannel && (!serviceIdentityId.HasValue || userId.HasValue)) ||
-            (!serviceChannel && !userId.HasValue))
+        var serviceChannel = resolvedChannel is StatutoryDiscountSourceChannels.WebPay or
+            StatutoryDiscountSourceChannels.AssistedPaymentTerminal;
+        if (resolvedChannel == StatutoryDiscountSourceChannels.WebPay)
         {
-            sourceChannel = string.Empty;
-            error = new ErrorResponse
+            if (!serviceIdentityId.HasValue || userId.HasValue)
             {
-                ErrorCode = "CENTRAL_PMS_AUTHENTICATED_ACTOR_TYPE_MISMATCH",
-                Message = "The authenticated actor type is not valid for the requested statutory-discount channel."
-            };
-            return false;
+                return ActorTypeMismatch(out sourceChannel, out error);
+            }
+
+            actorId = serviceIdentityId.Value;
+        }
+        else if (resolvedChannel == StatutoryDiscountSourceChannels.AssistedPaymentTerminal)
+        {
+            if (!serviceIdentityId.HasValue || !userId.HasValue)
+            {
+                sourceChannel = string.Empty;
+                error = new ErrorResponse
+                {
+                    ErrorCode = !userId.HasValue
+                        ? "CENTRAL_PMS_APT_HUMAN_SESSION_REQUIRED"
+                        : "CENTRAL_PMS_AUTHENTICATED_ACTOR_TYPE_MISMATCH",
+                    Message = !userId.HasValue
+                        ? "An authenticated APT cashier session is required for statutory-discount submission."
+                        : "The authenticated actor type is not valid for the requested statutory-discount channel."
+                };
+                return false;
+            }
+
+            if (!fixtureAuthorityAllowed)
+            {
+                var humanAudience = humanPrincipal?.FindFirst("exitpass_audience")?.Value;
+                var boundDeviceServiceIdentityId = ResolveGuid(
+                    humanPrincipal?.FindFirst("device_service_identity_id")?.Value);
+                if (!string.Equals(humanAudience, "APT", StringComparison.Ordinal))
+                {
+                    sourceChannel = string.Empty;
+                    error = new ErrorResponse
+                    {
+                        ErrorCode = "CENTRAL_PMS_APT_HUMAN_AUDIENCE_DENIED",
+                        Message = "The authenticated human session is not valid for the APT audience."
+                    };
+                    return false;
+                }
+
+                if (!boundDeviceServiceIdentityId.HasValue ||
+                    boundDeviceServiceIdentityId != serviceIdentityId)
+                {
+                    sourceChannel = string.Empty;
+                    error = new ErrorResponse
+                    {
+                        ErrorCode = "CENTRAL_PMS_APT_HUMAN_DEVICE_BINDING_MISMATCH",
+                        Message = "The authenticated APT cashier session is not bound to the authenticated terminal identity."
+                    };
+                    return false;
+                }
+            }
+
+            actorId = userId.Value;
+        }
+        else if (!userId.HasValue || serviceIdentityId.HasValue)
+        {
+            return ActorTypeMismatch(out sourceChannel, out error);
+        }
+        else
+        {
+            actorId = userId.Value;
         }
 
         if (serviceChannel && !fixtureAuthorityAllowed)
         {
-            var authenticatedAudience = context.User.FindFirstValue("exitpass_audience");
+            var authenticatedAudience = servicePrincipal?.FindFirst("exitpass_audience")?.Value;
             var authenticatedSourceChannel = StatutoryDiscountSourceChannels.Normalize(
-                context.User.FindFirstValue("source_channel") ?? string.Empty);
-            if (context.User.Identity?.IsAuthenticated != true ||
+                servicePrincipal?.FindFirst("source_channel")?.Value ?? string.Empty);
+            if (servicePrincipal?.IsAuthenticated != true ||
                 !string.Equals(authenticatedAudience, "CENTRAL_PMS", StringComparison.Ordinal) ||
                 !string.Equals(authenticatedSourceChannel, resolvedChannel, StringComparison.Ordinal))
             {
@@ -633,6 +712,17 @@ public static class StatutoryDiscountDecisionEndpoints
         sourceChannel = resolvedChannel;
         error = null;
         return true;
+    }
+
+    private static bool ActorTypeMismatch(out string sourceChannel, out ErrorResponse? error)
+    {
+        sourceChannel = string.Empty;
+        error = new ErrorResponse
+        {
+            ErrorCode = "CENTRAL_PMS_AUTHENTICATED_ACTOR_TYPE_MISMATCH",
+            Message = "The authenticated actor type is not valid for the requested statutory-discount channel."
+        };
+        return false;
     }
 
     private static IReadOnlySet<string> ReadPermissions(
@@ -660,6 +750,14 @@ public static class StatutoryDiscountDecisionEndpoints
         return permissions;
     }
 
+    private static IReadOnlySet<string> ReadPermissions(ClaimsIdentity? identity) =>
+        identity?.Claims
+            .Where(claim => string.Equals(claim.Type, CentralPmsRbacPolicyCatalog.PermissionClaimType, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(claim.Type, "permission", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(claim.Type, "scope", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(claim => claim.Value.Split([' ', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     private static bool ValidateChannelFieldMatrix(
         StatutoryDiscountDecisionRequest body,
         string effectiveSourceChannel,
@@ -673,6 +771,17 @@ public static class StatutoryDiscountDecisionEndpoints
             body.ReviewerAttestation ||
             !string.IsNullOrWhiteSpace(body.Decision) ||
             !string.IsNullOrWhiteSpace(body.DecisionReasonCode);
+
+        if (effectiveSourceChannel is StatutoryDiscountSourceChannels.WebPay or StatutoryDiscountSourceChannels.AssistedPaymentTerminal &&
+            body.ActorUserId != Guid.Empty)
+        {
+            error = new ErrorResponse
+            {
+                ErrorCode = "STATUTORY_DISCOUNT_ACTOR_FIELD_PROHIBITED",
+                Message = "Service-channel actor identity is derived from authenticated server context and cannot be supplied in the request body."
+            };
+            return false;
+        }
 
         if (body.ActorUserId != Guid.Empty && body.ActorUserId != actorId)
         {
@@ -703,24 +812,35 @@ public static class StatutoryDiscountDecisionEndpoints
         return true;
     }
 
-    private static Guid? ResolveUserId(HttpContext context, bool fixtureAuthorityAllowed) =>
+    private static Guid? ResolveUserId(
+        HttpContext context,
+        ClaimsIdentity? humanIdentity,
+        bool fixtureAuthorityAllowed) =>
         (fixtureAuthorityAllowed
             ? ResolveGuid(context.Request.Headers[CentralPmsRbacPolicyCatalog.UserIdHeaderName].FirstOrDefault())
-            : null) ?? ResolveGuid(context.User.FindFirstValue(ClaimTypes.NameIdentifier)) ??
-        ResolveGuid(context.User.FindFirstValue("sub")) ??
-        ResolveGuid(context.User.FindFirstValue("user_id"));
+            : null) ?? ResolveGuid(humanIdentity?.FindFirst(ClaimTypes.NameIdentifier)?.Value) ??
+        ResolveGuid(humanIdentity?.FindFirst("sub")?.Value) ??
+        ResolveGuid(humanIdentity?.FindFirst("user_id")?.Value);
 
-    private static Guid? ResolveServiceIdentityId(HttpContext context, bool fixtureAuthorityAllowed) =>
+    private static Guid? ResolveServiceIdentityId(
+        HttpContext context,
+        ClaimsIdentity? serviceIdentity,
+        bool fixtureAuthorityAllowed) =>
         (fixtureAuthorityAllowed
             ? ResolveGuid(context.Request.Headers[CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName].FirstOrDefault())
-            : null) ?? ResolveGuid(context.User.FindFirstValue("service_identity_id")) ??
-        ResolveGuid(context.User.FindFirstValue("client_id"));
+            : null) ?? ResolveGuid(serviceIdentity?.FindFirst("service_identity_id")?.Value) ??
+        ResolveGuid(serviceIdentity?.FindFirst("client_id")?.Value);
 
     private static Guid? ResolveGuid(string? value) =>
         Guid.TryParse(value, out var guid) ? guid : null;
 
-    private static bool ServicePrincipalHasRequestedScope(
-        ClaimsPrincipal principal,
+    private static ClaimsIdentity? FindAuthenticatedIdentity(ClaimsPrincipal principal, string authenticationType) =>
+        principal.Identities.SingleOrDefault(identity =>
+            identity.IsAuthenticated &&
+            string.Equals(identity.AuthenticationType, authenticationType, StringComparison.Ordinal));
+
+    private static bool IdentityHasRequestedScope(
+        ClaimsIdentity identity,
         Guid? siteId,
         Guid? siteGroupId)
     {
@@ -729,7 +849,7 @@ public static class StatutoryDiscountDecisionEndpoints
             return false;
         }
 
-        var siteAllowed = principal.FindAll("site_id")
+        var siteAllowed = identity.FindAll("site_id")
             .Select(claim => ResolveGuid(claim.Value))
             .Any(candidate => candidate == siteId);
         if (!siteAllowed)
@@ -737,7 +857,7 @@ public static class StatutoryDiscountDecisionEndpoints
             return false;
         }
 
-        return !siteGroupId.HasValue || siteGroupId == Guid.Empty || principal.FindAll("site_group_id")
+        return !siteGroupId.HasValue || siteGroupId == Guid.Empty || identity.FindAll("site_group_id")
             .Select(claim => ResolveGuid(claim.Value))
             .Any(candidate => candidate == siteGroupId);
     }

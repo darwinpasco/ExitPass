@@ -34,6 +34,7 @@ public sealed class HumanAuthenticationServiceTests
 
         var principal = HumanSessionAuthenticationHandler.CreatePrincipal(session, Guid.NewGuid());
 
+        principal.FindFirst("display_name")!.Value.Should().Be("Operator");
         principal.FindFirst("operator_device_binding_id")!.Value.Should().Be(deviceId.ToString("D"));
         principal.FindFirst("operator_shift_id")!.Value.Should().Be(shiftId.ToString("D"));
         principal.FindFirst("operator_effective_site_id")!.Value.Should().Be(siteId.ToString("D"));

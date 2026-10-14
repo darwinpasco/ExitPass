@@ -229,6 +229,61 @@ function stubWebPayFetch(options?: {
   return fetchMock;
 }
 
+const canonicalSalesInvoiceText = [
+  " Pro Parking Management Corp.",
+  "123 Merchant Avenue, Cebu City",
+  "VAT REG TIN     123-456-789-000",
+  "MIN             MIN-SITE-A-0001",
+  "S/N              SN-SITE-A-0001",
+  "BRANCH / SITE                 PITX",
+  "PARKING LOCATION Mactan Newtown",
+  "             SALES INVOICE",
+  "                ORIGINAL",
+  "SI NO          SI-20260523-000001",
+  "ISSUED            2026-05-23 13:00",
+  "BUSINESS DATE            2026-05-23",
+  "CASHIER                       System",
+  "TICKET               TICKET-TEST-023",
+  "PLATE                       ABC-0023",
+  "ENTRY             2026-05-23 11:30",
+  "PAYMENT           2026-05-23 13:00",
+  "DURATION                    01:30:00",
+  "-----------------------------------",
+  "PARKING FEE",
+  "1 x PHP 125.00              125.00",
+  "-----------------------------------",
+  "SUBTOTAL                    125.00",
+  "DISCOUNT                      0.00",
+  "VATABLE SALES               111.61",
+  "VAT AMOUNT                   13.39",
+  "VAT EXEMPT SALES              0.00",
+  "ZERO RATED SALES              0.00",
+  "TOTAL                       125.00",
+  "PAYMENT",
+  "TYPE                          CARD",
+  "AMOUNT DUE                  125.00",
+  "TOTAL PAID                  125.00",
+  "-----------------------------------",
+  "THIS SERVES AS YOUR SALES INVOICE",
+  "PRINT DATE        2026-05-23 13:00",
+  "CUSTOMER INFORMATION",
+  "NAME               Juan Dela Cruz",
+  "ADDRESS                 Cebu City",
+  "TIN             123-456-789-000",
+  "BUS. STYLE Juan Parking Services",
+  "OSCA ID No.             OSCA-12345",
+  "POS SOFTWARE SUPPLIER / DEVELOPER",
+  "ExitPass Test Software Solutions",
+  "456 Software Park, Cebu City",
+  "TIN             987-654-321-000",
+  "ACCR NO        ACCR-SITE-A-0001",
+  "DATE ISSUED              2026-01-02",
+  "PTU              PTU-SITE-A-0001",
+  "PTU DATE                 2026-01-03",
+  "THANK YOU FOR CHOOSING OUR SERVICE",
+  "===== NOTHING FOLLOWS ====="
+].join("\r\n") + "\r\n";
+
 const salesInvoicePresentationResponse = {
   paymentAttemptId: "44444444-4444-4444-4444-444444444444",
   paymentConfirmationId: "11111111-1111-1111-1111-111111111111",
@@ -242,6 +297,9 @@ const salesInvoicePresentationResponse = {
   templateVersion: "digital-sales-invoice-json-v1",
   contentType: "application/json",
   authoritativePresentation: {
+    canonicalText: canonicalSalesInvoiceText,
+    canonicalTextAuthority: "POS_SERVER_ISSUANCE_TIME_ORIGINAL",
+    canonicalTextHash: "sha256:canonical-test",
     presentation: {
       documentTitle: "Sales Invoice",
       sections: [
@@ -1465,7 +1523,17 @@ describe("ExitPass WebPay UI", () => {
       statutoryRediscoveryPayload: statutoryPendingLifecycleRediscoveryResponse({
         decisionStatus: "APPROVED", payableBasisStatus: "READY", lifecycleState: "APPLIED", retryable: false
       }),
-      statutoryReadPayload: applied
+      statutoryReadPayload: applied,
+      statutoryReceiptPayload: {
+        ...salesInvoicePresentationResponse,
+        authoritativePresentation: {
+          ...salesInvoicePresentationResponse.authoritativePresentation,
+          canonicalText: canonicalSalesInvoiceText
+            .replace("TYPE                          CARD", "TYPE           NO PAYMENT REQUIRED")
+            .replace("AMOUNT DUE                  125.00", "AMOUNT DUE                    0.00")
+            .replace("TOTAL PAID                  125.00", "TOTAL PAID                    0.00")
+        }
+      }
     });
     render(<App />);
 
@@ -1476,7 +1544,7 @@ describe("ExitPass WebPay UI", () => {
     expect(await screen.findByText("Transaction complete")).toBeInTheDocument();
     expect(screen.getByText("Proceed to exit")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Sales Invoice" })).toBeInTheDocument();
-    expect(screen.getByText("No payment required")).toBeInTheDocument();
+    expect(screen.getByLabelText("Printable Sales Invoice")).toHaveTextContent("NO PAYMENT REQUIRED");
     expect(routeCalls(fetchMock, "/v1/webpay/statutory-applications/")).toHaveLength(1);
     expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
     expect(screen.queryByRole("button", { name: /continue to payment/i })).not.toBeInTheDocument();
@@ -3344,43 +3412,23 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.queryByText("Parking Session Summary")).not.toBeInTheDocument();
     expect(screen.queryByText(/This presentation is retrieved from/i)).not.toBeInTheDocument();
     expect(document.querySelectorAll(".return-panel > section")).toHaveLength(4);
-    expect(screen.getByText("SI No")).toBeInTheDocument();
-    expect(screen.getAllByText("SI-20260523-000001").length).toBeGreaterThan(0);
     expect(screen.queryByText("Fiscal Document Type")).not.toBeInTheDocument();
     expect(screen.queryByText("Fiscal Document Status")).not.toBeInTheDocument();
     expect(screen.queryByText("Recorded At")).not.toBeInTheDocument();
     expect(screen.queryByText("Tender Type")).not.toBeInTheDocument();
     expect(screen.queryByText("Not available")).not.toBeInTheDocument();
     const printableInvoice = screen.getByLabelText("Printable Sales Invoice");
-    expect(printableInvoice).toHaveTextContent("Ticket Number");
-    expect(printableInvoice).toHaveTextContent("TICKET-TEST-023");
-    expect(printableInvoice).toHaveTextContent("Pro Parking Management Corp.");
-    expect(printableInvoice).toHaveTextContent("123 Merchant Avenue, Cebu City");
-    expect(printableInvoice).toHaveTextContent("VAT REG TIN");
-    expect(printableInvoice).toHaveTextContent("123-456-789-000");
-    expect(printableInvoice).toHaveTextContent("POS SOFTWARE SUPPLIER / DEVELOPER");
-    expect(printableInvoice).toHaveTextContent("ExitPass Test Software Solutions Corp.");
-    expect(printableInvoice).toHaveTextContent("456 Software Park, Cebu City");
-    expect(printableInvoice).toHaveTextContent("987-654-321-000");
-    expect(printableInvoice).toHaveTextContent("CARD");
-    expect(printableInvoice).toHaveTextContent("PayMongo");
-    expect(printableInvoice).toHaveTextContent("VAT BREAKDOWN");
-    expect(printableInvoice).toHaveTextContent("VATable Sales");
-    expect(printableInvoice).toHaveTextContent("VAT Exempt Sales");
-    expect(printableInvoice).toHaveTextContent("Zero Rated Sales");
-    expect(printableInvoice).toHaveTextContent("Customer Information");
-    expect(printableInvoice).toHaveTextContent("NAME: Juan Dela Cruz");
-    expect(printableInvoice).toHaveTextContent("ADDRESS: Cebu City");
-    expect(printableInvoice).toHaveTextContent("TIN: 123-456-789-000");
-    expect(printableInvoice).toHaveTextContent("BUS. STYLE: Juan Parking Services");
-    expect(printableInvoice).toHaveTextContent("OSCA ID No./PWD ID No.: OSCA-12345");
-    expect(printableInvoice).toHaveTextContent("ACCR. NO.");
-    expect(printableInvoice).toHaveTextContent("PTU Date");
-    expect(printableInvoice).toHaveTextContent("===== NOTHING FOLLOWS =====");
-    expect(printableInvoice).not.toHaveTextContent("Total Paid");
-    expect(printableInvoice).not.toHaveTextContent("Tendered Amount");
-    expect(printableInvoice).not.toHaveTextContent("Change");
-    expect(printableInvoice).not.toHaveTextContent("digital_or_cash_tender");
+    expect(printableInvoice).toHaveTextContent("SI-20260523-000001");
+    expect(printableInvoice.querySelector("pre")?.textContent).toBe(canonicalSalesInvoiceText.trimEnd());
+    expect(printableInvoice).toHaveTextContent("BUSINESS DATE");
+    expect(printableInvoice).toHaveTextContent("CASHIER");
+    expect(printableInvoice).toHaveTextContent("System");
+    expect(printableInvoice).toHaveTextContent("DURATION");
+    expect(printableInvoice).toHaveTextContent("01:30:00");
+    expect(printableInvoice).toHaveTextContent("AMOUNT DUE");
+    expect(printableInvoice).toHaveTextContent("TOTAL PAID");
+    expect(printableInvoice).not.toHaveTextContent("PROVIDER");
+    expect(printableInvoice).not.toHaveTextContent("PayMongo");
     expect(printableInvoice).toHaveAttribute("data-paper-width", "80mm");
     expect(screen.queryByRole("group", { name: /receipt paper width/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "57 mm" })).not.toBeInTheDocument();
@@ -3408,10 +3456,11 @@ describe("ExitPass WebPay UI", () => {
     );
   });
 
-  it("WebPayReturnPage_WhenMandatoryFiscalIdentityIsMissing_FailsClosedWithoutInvoiceOrDownload", async () => {
+  it("WebPayReturnPage_WhenStructuredSupplierRowsDrift_StillUsesCanonicalPosText", async () => {
     const receiptWithoutSupplierIdentity = {
       ...salesInvoicePresentationResponse,
       authoritativePresentation: {
+        ...salesInvoicePresentationResponse.authoritativePresentation,
         presentation: {
           ...salesInvoicePresentationResponse.authoritativePresentation.presentation,
           sections: salesInvoicePresentationResponse.authoritativePresentation.presentation.sections.map((section) =>
@@ -3441,16 +3490,16 @@ describe("ExitPass WebPay UI", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Sales Invoice fiscal identity is unavailable");
-    expect(screen.queryByLabelText("Printable Sales Invoice")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /download sales invoice/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /retrieve sales invoice/i })).toBeInTheDocument();
+    const invoice = await screen.findByLabelText("Printable Sales Invoice");
+    expect(invoice.querySelector("pre")?.textContent).toBe(canonicalSalesInvoiceText.trimEnd());
+    expect(screen.getByRole("button", { name: /download sales invoice/i })).toBeInTheDocument();
   });
 
-  it("WebPayReturnPage_WhenMerchantIdentityIsMissing_DoesNotSubstituteSiteName", async () => {
+  it("WebPayReturnPage_WhenStructuredMerchantRowsDrift_DoesNotSubstituteSiteName", async () => {
     const receiptWithoutMerchantIdentity = {
       ...salesInvoicePresentationResponse,
       authoritativePresentation: {
+        ...salesInvoicePresentationResponse.authoritativePresentation,
         presentation: {
           ...salesInvoicePresentationResponse.authoritativePresentation.presentation,
           sections: salesInvoicePresentationResponse.authoritativePresentation.presentation.sections.map((section) =>
@@ -3483,9 +3532,9 @@ describe("ExitPass WebPay UI", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Sales Invoice fiscal identity is unavailable");
-    expect(screen.queryByLabelText("Printable Sales Invoice")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /download sales invoice/i })).not.toBeInTheDocument();
+    const invoice = await screen.findByLabelText("Printable Sales Invoice");
+    expect(invoice.querySelector("pre")?.textContent).toBe(canonicalSalesInvoiceText.trimEnd());
+    expect(invoice).not.toHaveTextContent("Restart 38 Site A");
   });
 
   it("WebPayReturnPage_WhenPaid_RendersDownloadableTicketExitQrWithoutMutation", async () => {
@@ -3530,6 +3579,9 @@ describe("ExitPass WebPay UI", () => {
       receiptPayload: {
         ...salesInvoicePresentationResponse,
         authoritativePresentation: {
+          canonicalText: canonicalSalesInvoiceText
+            .replace("TYPE                          CARD", "TYPE                          CASH")
+            .replace("TOTAL PAID                  125.00", "TOTAL PAID                   60.00\r\nTENDERED                     80.00\r\nCHANGE                       20.00"),
           presentation: {
             ...salesInvoicePresentationResponse.authoritativePresentation.presentation,
             sections: [
@@ -3554,11 +3606,11 @@ describe("ExitPass WebPay UI", () => {
 
     const printableInvoice = await screen.findByLabelText("Printable Sales Invoice");
     expect(printableInvoice).toHaveTextContent("CASH");
-    expect(printableInvoice).toHaveTextContent("Tendered Amount");
-    expect(printableInvoice).toHaveTextContent("P 80.00");
-    expect(printableInvoice).toHaveTextContent("Change");
-    expect(printableInvoice).toHaveTextContent("P 20.00");
-    expect(printableInvoice).not.toHaveTextContent("Total Paid");
+    expect(printableInvoice).toHaveTextContent("TENDERED");
+    expect(printableInvoice).toHaveTextContent("80.00");
+    expect(printableInvoice).toHaveTextContent("CHANGE");
+    expect(printableInvoice).toHaveTextContent("20.00");
+    expect(printableInvoice).toHaveTextContent("TOTAL PAID");
   });
 
   it("WebPayReturnPage_WhenReceiptIsPending_DoesNotFabricateFallbackReceipt", async () => {

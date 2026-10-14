@@ -55,6 +55,7 @@ public sealed class HumanSessionAuthenticationHandler : AuthenticationHandler<Au
         {
             new(ClaimTypes.NameIdentifier, session.UserReference.ToString("D")),
             new(ClaimTypes.Name, session.Username),
+            new("display_name", session.DisplayName),
             new("user_id", session.UserReference.ToString("D")),
             new("human_session_id", session.SessionReference.ToString("D")),
             new("exitpass_audience", session.Audience),

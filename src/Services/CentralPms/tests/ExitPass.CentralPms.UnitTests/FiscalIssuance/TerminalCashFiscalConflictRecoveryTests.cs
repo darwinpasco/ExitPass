@@ -51,7 +51,10 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
                 value.ReferenceContext["entry_time"] == "2026-09-28T04:15:59.0000000+00:00" &&
                 value.ReferenceContext["payment_time"] == "2026-09-28T06:31:29.0000000+00:00" &&
                 value.ReferenceContext["parking_duration"] == "02:15:30" &&
-                value.ReferenceContext["payment_method"] == "CASH"),
+                value.ReferenceContext["payment_method"] == "CASH" &&
+                value.ReferenceContext["cashier_display_name"] == "Juan Dela Cruz" &&
+                value.ReferenceContext["tendered_amount_minor_units"] == "4500" &&
+                value.ReferenceContext["change_amount_minor_units"] == "0"),
             Arg.Is<PosServerCreateResultRecordingContext>(value =>
                 value.CorrelationId == FiscalCorrelation && value.ServiceIdentityId == ActorId),
             Arg.Any<CancellationToken>());
@@ -740,7 +743,8 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             "PITX Level 3",
             DateTimeOffset.Parse("2026-09-28T04:15:59Z"))
         {
-            CashReceivedAt = DateTimeOffset.Parse("2026-09-28T06:31:29Z")
+            CashReceivedAt = DateTimeOffset.Parse("2026-09-28T06:31:29Z"),
+            CashierDisplayName = "Juan Dela Cruz"
         };
 
     private static FiscalIssuanceReferenceRecord Reference() =>

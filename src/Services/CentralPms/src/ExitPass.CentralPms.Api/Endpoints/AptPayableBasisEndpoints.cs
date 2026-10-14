@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Security.Claims;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Security;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.TerminalCashPayments;
@@ -82,7 +84,7 @@ public static class AptPayableBasisEndpoints
             return Results.Json(authorityFailure, statusCode: StatusCodes.Status403Forbidden);
         }
 
-        var result = await service.ResolveAsync(body, cancellationToken);
+        var result = await service.ResolveAsync(body, ResolveCompletionActor(request), cancellationToken);
         return ToHttpResult(result, request.HttpContext.Response);
     }
 
@@ -120,7 +122,7 @@ public static class AptPayableBasisEndpoints
             return Results.Json(authorityFailure, statusCode: StatusCodes.Status403Forbidden);
         }
 
-        var result = await service.RevalidateAsync(body, cancellationToken);
+        var result = await service.RevalidateAsync(body, ResolveCompletionActor(request), cancellationToken);
         return ToHttpResult(result, request.HttpContext.Response);
     }
 
@@ -187,17 +189,29 @@ public static class AptPayableBasisEndpoints
         Guid correlationId,
         CancellationToken cancellationToken)
     {
-        if (!string.Equals(
-                request.HttpContext.User.Identity?.AuthenticationType,
-                HumanSessionAuthenticationHandler.SchemeName,
-                StringComparison.Ordinal))
+        var humanIdentities = request.HttpContext.User.Identities
+            .Where(identity => identity.IsAuthenticated &&
+                string.Equals(identity.AuthenticationType, HumanSessionAuthenticationHandler.SchemeName, StringComparison.Ordinal))
+            .ToArray();
+        if (humanIdentities.Length == 0)
         {
             return null;
         }
 
+        if (humanIdentities.Length != 1)
+        {
+            return BuildError(
+                "APT_HUMAN_SESSION_AMBIGUOUS",
+                "The authenticated APT human session is ambiguous.",
+                correlationId,
+                false);
+        }
+
+        var humanPrincipal = new ClaimsPrincipal(humanIdentities[0]);
+
         if (!Guid.TryParse(siteId, out var requestedSiteId) ||
             requestedSiteId == Guid.Empty ||
-            !HasExactSiteScope(request.HttpContext.User, requestedSiteId))
+            !HasExactSiteScope(humanPrincipal, requestedSiteId))
         {
             return BuildError(
                 "FORBIDDEN_SITE",
@@ -207,7 +221,7 @@ public static class AptPayableBasisEndpoints
         }
 
         if (!Guid.TryParse(
-                request.HttpContext.User.FindFirst("device_service_identity_id")?.Value,
+                humanPrincipal.FindFirst("device_service_identity_id")?.Value,
                 out var deviceServiceIdentityId) ||
             deviceServiceIdentityId == Guid.Empty)
         {
@@ -237,6 +251,29 @@ public static class AptPayableBasisEndpoints
         }
 
         return null;
+    }
+
+    private static AptZeroPayableCompletionActor? ResolveCompletionActor(HttpRequest request)
+    {
+        var humanIdentities = request.HttpContext.User.Identities
+            .Where(identity => identity.IsAuthenticated &&
+                string.Equals(identity.AuthenticationType, HumanSessionAuthenticationHandler.SchemeName, StringComparison.Ordinal))
+            .ToArray();
+        if (humanIdentities.Length != 1)
+            return null;
+
+        var identity = humanIdentities[0];
+        if (!string.Equals(identity.FindFirst("exitpass_audience")?.Value, "APT", StringComparison.Ordinal) ||
+            !Guid.TryParse(identity.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId) ||
+            userId == Guid.Empty)
+        {
+            return null;
+        }
+
+        var displayName = identity.FindFirst("display_name")?.Value;
+        return string.IsNullOrWhiteSpace(displayName)
+            ? null
+            : new AptZeroPayableCompletionActor(userId, displayName.Trim());
     }
 
     private static bool HasExactSiteScope(System.Security.Claims.ClaimsPrincipal principal, Guid siteId)

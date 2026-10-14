@@ -179,6 +179,10 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
             ["fiscal_issuance_reference_id"] = reference.FiscalIssuanceReferenceId.ToString("D"),
             ["monetaryPaymentReceived"] = "false"
         };
+        referenceContext["completion_channel"] = command.CashierAttribution.CompletionChannel;
+        referenceContext["cashier_display_name"] = command.CashierAttribution.CashierDisplayName.Trim();
+        if (command.CashierAttribution.CashierUserId is { } cashierUserId)
+            referenceContext["cashier_user_id"] = cashierUserId.ToString("D");
         AddDisplayFact(referenceContext, "ticket_number", finality.TicketNumber);
         AddDisplayFact(referenceContext, "plate_number", finality.PlateNumber);
         AddDisplayFact(referenceContext, "branch_site", finality.SiteName);
@@ -313,13 +317,9 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
     private static string? FormatDuration(DateTimeOffset? entryTime, DateTimeOffset completedAt)
     {
         if (!entryTime.HasValue || completedAt < entryTime.Value) return null;
-        var totalMinutes = (long)Math.Floor((completedAt - entryTime.Value).TotalMinutes);
-        var hours = totalMinutes / 60;
-        var minutes = totalMinutes % 60;
-        if (hours == 0) return $"{minutes} minute{(minutes == 1 ? string.Empty : "s")}";
-        return minutes == 0
-            ? $"{hours} hour{(hours == 1 ? string.Empty : "s")}"
-            : $"{hours} hour{(hours == 1 ? string.Empty : "s")} {minutes:00} minutes";
+        var duration = completedAt - entryTime.Value;
+        var totalHours = (long)Math.Floor(duration.TotalHours);
+        return $"{totalHours:00}:{duration.Minutes:00}:{duration.Seconds:00}";
     }
 
     private static bool HasNoInvoiceCustomerInformation(
@@ -350,6 +350,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
             finality.StatutoryWaiverAmountMinorUnits != finality.OriginalAmountMinorUnits ||
             command.VatExclusiveBasisAmountMinorUnits < 0 || finality.VatAmountMinorUnits < 0 ||
             command.VatExclusiveBasisAmountMinorUnits + finality.VatAmountMinorUnits != finality.OriginalAmountMinorUnits ||
+            command.Cashier is null ||
+            !command.Cashier.IsValid() ||
             string.IsNullOrWhiteSpace(command.VatTreatment) ||
             string.IsNullOrWhiteSpace(command.PolicyResolutionBasis) ||
             command.StatutoryRequestReference == Guid.Empty ||
@@ -429,7 +431,34 @@ public sealed record ZeroPayableStatutoryFiscalIssuanceCommand(
     long VatExclusiveBasisAmountMinorUnits,
     string VatTreatment,
     string PolicyResolutionBasis,
-    string? StatutoryIdNumber = null);
+    string? StatutoryIdNumber = null,
+    ZeroPayableFiscalCashierAttribution? Cashier = null)
+{
+    public ZeroPayableFiscalCashierAttribution CashierAttribution =>
+        Cashier ?? throw new InvalidOperationException("ZERO_PAYABLE_FISCAL_CASHIER_ATTRIBUTION_REQUIRED");
+}
+
+public sealed record ZeroPayableFiscalCashierAttribution(
+    string CompletionChannel,
+    Guid? CashierUserId,
+    string CashierDisplayName)
+{
+    public static ZeroPayableFiscalCashierAttribution WebPay() =>
+        new(StatutoryDiscountSourceChannels.WebPay, null, "System");
+
+    public static ZeroPayableFiscalCashierAttribution Apt(Guid userId, string displayName) =>
+        new(StatutoryDiscountSourceChannels.AssistedPaymentTerminal, userId, displayName);
+
+    public bool IsValid()
+    {
+        if (string.Equals(CompletionChannel, StatutoryDiscountSourceChannels.WebPay, StringComparison.Ordinal))
+            return CashierUserId is null && string.Equals(CashierDisplayName, "System", StringComparison.Ordinal);
+
+        return string.Equals(CompletionChannel, StatutoryDiscountSourceChannels.AssistedPaymentTerminal, StringComparison.Ordinal) &&
+               CashierUserId is { } userId && userId != Guid.Empty &&
+               !string.IsNullOrWhiteSpace(CashierDisplayName);
+    }
+}
 
 public sealed record ZeroPayableStatutoryFiscalIssuanceResult(
     Guid FiscalIssuanceReferenceId,

@@ -84,7 +84,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal("ZERO-TICKET-001", mapped.ReferenceContext["ticket_number"]);
         Assert.Equal("ZERO 1001", mapped.ReferenceContext["plate_number"]);
         Assert.Equal("PITX Level 3", mapped.ReferenceContext["branch_site"]);
-        Assert.Equal("37 minutes", mapped.ReferenceContext["parking_duration"]);
+        Assert.Equal("00:37:00", mapped.ReferenceContext["parking_duration"]);
+        Assert.Equal("System", mapped.ReferenceContext["cashier_display_name"]);
         Assert.False(result.FiscalPrerequisiteSatisfied);
     }
 
@@ -125,6 +126,91 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Null(mapped.InvoiceCustomerInformation.Tin);
         Assert.Null(mapped.InvoiceCustomerInformation.BusinessStyle);
         Assert.Equal("12345678", mapped.InvoiceCustomerInformation.StatutoryIdNumber);
+    }
+
+    [Theory]
+    [InlineData(StatutoryDiscountSourceChannels.OperatorConsole)]
+    [InlineData(StatutoryDiscountSourceChannels.WebPay)]
+    public async Task IssueOrReadAsync_AptZeroPayableUsesCompletionCashierRegardlessOfRequestOrigin(
+        string requestSourceChannel)
+    {
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        CentralPmsFiscalDocumentMappingContext? mapped = null;
+        references.FindByStatutoryApplicationCommandIdAsync(ApplicationId, Arg.Any<CancellationToken>())
+            .Returns((FiscalIssuanceReferenceRecord?)null);
+        orchestration.PreparePendingAsync(
+                Arg.Any<PrepareFiscalIssuanceCommand>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.PendingFiscalIssuance));
+        posServer.TryIssueFiscalDocumentViaPosServerAsync(
+                FiscalReferenceId,
+                Arg.Do<CentralPmsFiscalDocumentMappingContext>(value => mapped = value),
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(["test_stop_after_mapping"]));
+        var cashierId = Guid.NewGuid();
+        var aptFinality = Finality() with
+        {
+            SourceChannel = requestSourceChannel
+        };
+
+        await CreateService(references, orchestration, posServer)
+            .IssueOrReadAsync(Command() with
+            {
+                Finality = aptFinality,
+                Cashier = ZeroPayableFiscalCashierAttribution.Apt(cashierId, "Mara Del Carmen")
+            }, CancellationToken.None);
+
+        Assert.NotNull(mapped);
+        Assert.Equal("ASSISTED_PAYMENT_TERMINAL", mapped.ReferenceContext["completion_channel"]);
+        Assert.Equal(cashierId.ToString("D"), mapped.ReferenceContext["cashier_user_id"]);
+        Assert.Equal("Mara Del Carmen", mapped.ReferenceContext["cashier_display_name"]);
+        Assert.DoesNotContain(mapped.ReferenceContext.Keys, key => key.Contains("reviewer", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task IssueOrReadAsync_WebPayZeroPayableUsesSystem()
+    {
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        CentralPmsFiscalDocumentMappingContext? mapped = null;
+        references.FindByStatutoryApplicationCommandIdAsync(ApplicationId, Arg.Any<CancellationToken>())
+            .Returns((FiscalIssuanceReferenceRecord?)null);
+        orchestration.PreparePendingAsync(
+                Arg.Any<PrepareFiscalIssuanceCommand>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.PendingFiscalIssuance));
+        posServer.TryIssueFiscalDocumentViaPosServerAsync(
+                FiscalReferenceId,
+                Arg.Do<CentralPmsFiscalDocumentMappingContext>(value => mapped = value),
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(["test_stop_after_mapping"]));
+        await CreateService(references, orchestration, posServer)
+            .IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.NotNull(mapped);
+        Assert.Equal("WEBPAY", mapped.ReferenceContext["completion_channel"]);
+        Assert.False(mapped.ReferenceContext.ContainsKey("cashier_user_id"));
+        Assert.Equal("System", mapped.ReferenceContext["cashier_display_name"]);
+        Assert.DoesNotContain(mapped.ReferenceContext.Keys, key => key.Contains("reviewer", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task IssueOrReadAsync_AptZeroPayableWithoutCompletionCashierFailsBeforePersistence()
+    {
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            CreateService(references, orchestration, posServer)
+                .IssueOrReadAsync(Command() with { Cashier = null }, CancellationToken.None));
+
+        Assert.Equal("ZERO_PAYABLE_STATUTORY_FISCAL_CONTEXT_INVALID", error.Message);
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
     }
 
     [Fact]
@@ -213,7 +299,15 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         new(references, orchestration, posServer, Options(), CentralPmsServiceIdentityId);
 
     private static ZeroPayableStatutoryFiscalIssuanceCommand Command() =>
-        new(Finality(), Authority(), Guid.Parse("a1000000-0000-4000-8000-00000000000d"), 2679, "VAT_EXCLUSIVE", "LOCAL_ORDINANCE_APPLIED", "12345678");
+        new(
+            Finality(),
+            Authority(),
+            Guid.Parse("a1000000-0000-4000-8000-00000000000d"),
+            2679,
+            "VAT_EXCLUSIVE",
+            "LOCAL_ORDINANCE_APPLIED",
+            "12345678",
+            ZeroPayableFiscalCashierAttribution.WebPay());
 
     private static StatutoryDiscountZeroPayableFinality Finality() =>
         new(

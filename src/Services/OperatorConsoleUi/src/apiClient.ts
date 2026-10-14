@@ -1681,7 +1681,8 @@ export function createMockOperatorConsoleApiClient(
           ],
           notices: []
         },
-        canonicalText: "SALES INVOICE\nSI No: SI-00000049\nTicket Number: MOCK-USABILITY-20260924-01\nPlate Number: USR2401",
+        canonicalText:
+          "SALES INVOICE\r\nORIGINAL\r\nSI NO SI-00000049\r\nBUSINESS DATE 2026-09-24\r\nCASHIER System\r\nTICKET MOCK-USABILITY-20260924-01\r\nPLATE USR2401\r\nPARKING FEE\r\nPAYMENT\r\nAMOUNT DUE 100.00\r\nTOTAL PAID 100.00\r\nTHIS SERVES AS YOUR SALES INVOICE\r\n===== NOTHING FOLLOWS =====\r\n",
         customerDigitalSalesInvoicePath: "/webpay/sales-invoice#access=fixture-opaque-capability",
         capabilityExpiresAt: "2026-09-27T00:00:00Z"
       };
