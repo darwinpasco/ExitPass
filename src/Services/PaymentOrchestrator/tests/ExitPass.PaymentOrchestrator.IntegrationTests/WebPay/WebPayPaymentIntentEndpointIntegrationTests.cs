@@ -449,14 +449,11 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     }
 
     [Fact]
-    public async Task WebPayStatutoryDiscountSubmit_WhenReviewerFactsAreOmitted_AcceptsOptionalId()
+    public async Task WebPayStatutoryDiscountSubmit_WithoutProcessorReviewMetadata_AcceptsOptionalId()
     {
         var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
         using var client = CreateClient(state);
         var body = StatutoryDecisionRequest();
-        body.IdDocumentType = null;
-        body.IssuingAuthority = null;
-        body.ExpiryDate = null;
         body.MaskedIdReference = null;
         body.IdControlReference = null;
         body.EvidenceReferences = [];
@@ -469,9 +466,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         using var response = await client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(string.Empty, state.CapturedStatutorySubmitRequest!.IdDocumentType);
-        Assert.Equal(string.Empty, state.CapturedStatutorySubmitRequest.IssuingAuthority);
-        Assert.Equal(string.Empty, state.CapturedStatutorySubmitRequest.MaskedIdReference);
+        Assert.Equal(string.Empty, state.CapturedStatutorySubmitRequest!.MaskedIdReference);
         Assert.True(state.CapturedStatutorySubmitRequest.EvidenceCaptureRequested);
     }
 
@@ -997,9 +992,6 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             TicketReference = "WEBPAY-REQ-001",
             PlateNumber = "ABC1234",
             EntitlementType = "SENIOR_CITIZEN",
-            IdDocumentType = "OSCA",
-            IssuingAuthority = "QUEZON_CITY",
-            ExpiryDate = DateOnly.Parse("2030-12-31"),
             IdControlReference = "12345678",
             MaskedIdReference = "****5678",
             EvidenceCaptureRequested = true,

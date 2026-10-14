@@ -41,21 +41,6 @@ public sealed class WebPayStatutoryDiscountDecisionRequest
     public string? EntitlementType { get; set; }
 
     /// <summary>
-    /// Safe document type label supplied for Operator Console review.
-    /// </summary>
-    public string? IdDocumentType { get; set; }
-
-    /// <summary>
-    /// Safe issuing authority label supplied for Operator Console review.
-    /// </summary>
-    public string? IssuingAuthority { get; set; }
-
-    /// <summary>
-    /// Optional entitlement document expiry date.
-    /// </summary>
-    public DateOnly? ExpiryDate { get; set; }
-
-    /// <summary>
     /// Complete statutory ID/control value accepted only on this secure write path.
     /// It is not returned through public WebPay readback contracts.
     /// </summary>

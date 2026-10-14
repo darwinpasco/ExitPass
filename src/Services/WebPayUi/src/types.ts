@@ -342,10 +342,7 @@ export type WebPayStatutoryDiscountDecisionRequest = {
   ticketReference?: string | null;
   plateNumber?: string | null;
   entitlementType: StatutoryDiscountEntitlementType;
-  idDocumentType?: string;
-  issuingAuthority?: string;
-  expiryDate?: string | null;
-  idControlReference: string;
+  idControlReference?: string;
   maskedIdReference: string;
   evidenceCaptureRequested: boolean;
   requesterAttestation: boolean;

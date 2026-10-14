@@ -633,7 +633,7 @@ export function buildStatutoryDiscountDecisionBody(
     throw new Error("Resolve your parking session before requesting a statutory discount.");
   }
 
-  const idControlReference = request.idControlReference.trim();
+  const idControlReference = request.idControlReference?.trim() ?? "";
   const idReference = idControlReference ? maskStatutoryIdReference(idControlReference) : null;
   if (idReference && !idReference.ok) {
     throw new Error(idReference.message);
@@ -648,11 +648,14 @@ export function buildStatutoryDiscountDecisionBody(
     requestReference: request.requestReference.trim() || createRequestReference(),
     parkingSessionId: request.parkingSessionId.trim(),
     entitlementType,
-    idControlReference,
     maskedIdReference,
     evidenceCaptureRequested: Boolean(request.evidenceCaptureRequested),
     requesterAttestation: true
   };
+
+  if (idControlReference) {
+    body.idControlReference = idControlReference;
+  }
 
   if (request.siteId?.trim()) {
     body.siteId = request.siteId.trim();
@@ -668,10 +671,6 @@ export function buildStatutoryDiscountDecisionBody(
 
   if (request.plateNumber?.trim()) {
     body.plateNumber = request.plateNumber.trim().toUpperCase();
-  }
-
-  if (request.expiryDate?.trim()) {
-    body.expiryDate = request.expiryDate.trim();
   }
 
   if (request.attestationNotes?.trim()) {

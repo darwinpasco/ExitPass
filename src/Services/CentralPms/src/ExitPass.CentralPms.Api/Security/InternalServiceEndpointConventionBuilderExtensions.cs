@@ -35,4 +35,13 @@ public static class InternalServiceEndpointConventionBuilderExtensions
         builder.WithMetadata(new ServicePrincipalEndpointMetadata());
         return builder;
     }
+
+    /// <summary>Admits a canonical ACTIVE APT certificate on this endpoint only.</summary>
+    public static TBuilder AcceptGovernedAptDevicePrincipal<TBuilder>(this TBuilder builder)
+        where TBuilder : IEndpointConventionBuilder
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.WithMetadata(new GovernedAptDeviceEndpointMetadata());
+        return builder;
+    }
 }

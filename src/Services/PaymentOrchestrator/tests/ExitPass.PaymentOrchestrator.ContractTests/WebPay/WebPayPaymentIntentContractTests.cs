@@ -136,5 +136,9 @@ public sealed class WebPayPaymentIntentContractTests
         Assert.DoesNotContain("idControlReference", readJson, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("maskedIdReference", readJson, StringComparison.OrdinalIgnoreCase);
         Assert.Null(typeof(WebPayStatutoryDiscountDecisionResponse).GetProperty(nameof(request.IdControlReference)));
+        Assert.Null(typeof(WebPayStatutoryDiscountDecisionRequest).GetProperty("BirthDate"));
+        Assert.Null(typeof(WebPayStatutoryDiscountDecisionRequest).GetProperty("ExpiryDate"));
+        Assert.Null(typeof(WebPayStatutoryDiscountDecisionRequest).GetProperty("IdDocumentType"));
+        Assert.Null(typeof(WebPayStatutoryDiscountDecisionRequest).GetProperty("IssuingAuthority"));
     }
 }
