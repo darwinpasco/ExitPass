@@ -105,6 +105,89 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal("5000", posIntegration.LastFiscalContext.ReferenceContext["change_amount_minor_units"]);
     }
 
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_MapsFrozenInvoiceCustomerInformationSnapshot()
+    {
+        var repo = new InMemoryFiscalReferenceRepository(InvoiceCustomerInformation());
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var service = CreateService(CashPayment(), repo, posIntegration);
+
+        await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        var customer = posIntegration.LastFiscalContext!.InvoiceCustomerInformation;
+        Assert.NotNull(customer);
+        Assert.Equal("Darwin Pasco", customer.CustomerName);
+        Assert.Equal("123 Dona Juana Townhomes, Pasig City", customer.Address);
+        Assert.Equal("171459612", customer.Tin);
+        Assert.Equal("Pro Parking Inc", customer.BusinessStyle);
+        Assert.Null(customer.StatutoryIdNumber);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_WithoutCustomerInformation_PreservesEmptyCustomerBehavior()
+    {
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var service = CreateService(CashPayment(), repo, posIntegration);
+
+        await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.Null(posIntegration.LastFiscalContext!.InvoiceCustomerInformation);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_AppliedStatutoryPayment_MapsSnapshotAndApprovedStatutoryId()
+    {
+        var repo = new InMemoryFiscalReferenceRepository(InvoiceCustomerInformation());
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var service = CreateService(
+            CashPayment(amountDueMinorUnits: 8_929),
+            repo,
+            posIntegration,
+            new FakeStatutoryFiscalLinkageReader(TerminalCashStatutoryFiscalLinkageResult.Complete(StatutoryContext())));
+
+        await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        var customer = posIntegration.LastFiscalContext!.InvoiceCustomerInformation;
+        Assert.NotNull(customer);
+        Assert.Equal("Darwin Pasco", customer.CustomerName);
+        Assert.Equal("123 Dona Juana Townhomes, Pasig City", customer.Address);
+        Assert.Equal("171459612", customer.Tin);
+        Assert.Equal("Pro Parking Inc", customer.BusinessStyle);
+        Assert.Equal("SC-1234", customer.StatutoryIdNumber);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_RecoveryMapping_ReusesFrozenCustomerSnapshot()
+    {
+        var repo = new InMemoryFiscalReferenceRepository(InvoiceCustomerInformation());
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Disabled);
+        var service = CreateService(CashPayment(), repo, posIntegration);
+
+        var pending = await service.IssueOrReadAsync(Command(), CancellationToken.None);
+        repo.CustomerInformationForNewReferences = new FiscalInvoiceCustomerInformationSnapshot(
+            "Changed Customer",
+            "Changed Address",
+            "000000000",
+            "Changed Business",
+            2,
+            DateTimeOffset.UtcNow);
+        var frozenReference = await repo.FindByFiscalIssuanceReferenceIdAsync(
+            pending.FiscalIssuanceReferenceId,
+            CancellationToken.None);
+        var recoveryContext = InvokeBuildFiscalContext(CashPayment(), frozenReference!);
+
+        Assert.Equal(FiscalIssuanceIntegrationState.PendingFiscalIssuance, pending.FiscalIssuanceState);
+        Assert.Equal(1, repo.CreateCount);
+        Assert.Equal(1, posIntegration.IssueCallCount);
+        var customer = recoveryContext.InvoiceCustomerInformation;
+        Assert.NotNull(customer);
+        Assert.Equal("Darwin Pasco", customer.CustomerName);
+        Assert.Equal("123 Dona Juana Townhomes, Pasig City", customer.Address);
+        Assert.Equal("171459612", customer.Tin);
+        Assert.Equal("Pro Parking Inc", customer.BusinessStyle);
+    }
+
     [Theory]
     [InlineData(10_000, 8_929, 1_071)]
     [InlineData(35_000, 31_250, 3_750)]
@@ -875,6 +958,27 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             AppliedAt: DateTimeOffset.Parse("2026-07-28T01:21:00Z"),
             IdControlReference: "SC-1234");
 
+    private static FiscalInvoiceCustomerInformationSnapshot InvoiceCustomerInformation() =>
+        new(
+            "Darwin Pasco",
+            "123 Dona Juana Townhomes, Pasig City",
+            "171459612",
+            "Pro Parking Inc",
+            1,
+            DateTimeOffset.Parse("2026-09-28T06:30:00Z", CultureInfo.InvariantCulture));
+
+    private static CentralPmsFiscalDocumentMappingContext InvokeBuildFiscalContext(
+        TerminalCashPaymentReadback cashPayment,
+        FiscalIssuanceReferenceRecord reference)
+    {
+        var method = typeof(TerminalCashFiscalIssuanceService).GetMethod(
+            "BuildFiscalContext",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(method);
+        return Assert.IsType<CentralPmsFiscalDocumentMappingContext>(
+            method.Invoke(null, [cashPayment, reference, null]));
+    }
+
     private static string Serialize(object value) =>
         System.Text.Json.JsonSerializer.Serialize(value);
 
@@ -1180,11 +1284,16 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             throw new NotSupportedException("Recovery locking is not used by ordinary issuance tests.");
     }
 
-    private sealed class InMemoryFiscalReferenceRepository : IFiscalIssuanceReferenceRepository
+    private sealed class InMemoryFiscalReferenceRepository(
+        FiscalInvoiceCustomerInformationSnapshot? customerInformationForNewReferences = null)
+        : IFiscalIssuanceReferenceRepository
     {
         private readonly List<FiscalIssuanceReferenceRecord> _records = [];
 
         public int CreateCount { get; private set; }
+
+        public FiscalInvoiceCustomerInformationSnapshot? CustomerInformationForNewReferences { get; set; } =
+            customerInformationForNewReferences;
 
         public Task<FiscalIssuanceReferenceRecord> CreateAsync(
             CreateFiscalIssuanceReferenceRequest request,
@@ -1227,7 +1336,10 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
                 LastUpdatedAt: now,
                 RecordedByServiceIdentityId: null,
                 request.FiscalDocumentTypeCodeId,
-                request.FiscalDocumentTypeCodeKey);
+                request.FiscalDocumentTypeCodeKey)
+            {
+                InvoiceCustomerInformationSnapshot = CustomerInformationForNewReferences
+            };
             _records.Add(record);
             return Task.FromResult(record);
         }

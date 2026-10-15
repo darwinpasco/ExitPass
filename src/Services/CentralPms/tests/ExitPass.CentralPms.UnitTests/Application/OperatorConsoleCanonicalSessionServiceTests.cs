@@ -1,3 +1,4 @@
+using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Domain.Common;
@@ -20,7 +21,7 @@ public sealed class OperatorConsoleCanonicalSessionServiceTests
     private static readonly Guid CorrelationId = Guid.Parse("31000000-0000-0000-0000-000000000007");
 
     [Fact]
-    public async Task EnsureAsync_WithFreshScopedProjection_PersistsOnlyThroughSessionRepository()
+    public async Task EnsureAsync_WithDirectSiteScope_ResolvesCanonicalSiteGroupAndPersistsSession()
     {
         var lookup = Substitute.For<IVendorSessionProjectionLookupService>();
         var repository = Substitute.For<IOperatorConsoleCanonicalSessionRepository>();
@@ -45,6 +46,39 @@ public sealed class OperatorConsoleCanonicalSessionServiceTests
             Arg.Is<OperatorConsoleCanonicalSessionPersistenceCommand>(request =>
                 request.Projection.VendorSessionProjectionId == ProjectionId),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task EnsureAsync_WithoutSiteScope_FailsBeforeCanonicalResolution()
+    {
+        var lookup = Substitute.For<IVendorSessionProjectionLookupService>();
+        var repository = Substitute.For<IOperatorConsoleCanonicalSessionRepository>();
+        var configuration = ActiveSiteConfiguration();
+
+        var action = () => CreateSut(lookup, repository, configuration).EnsureAsync(
+            Command() with { SiteId = Guid.Empty },
+            CancellationToken.None);
+
+        await action.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("SiteId is required.*");
+        await configuration.DidNotReceiveWithAnyArgs().ListSitesAsync(default);
+        await lookup.DidNotReceiveWithAnyArgs().LookupAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task EnsureAsync_WhenCanonicalActiveSiteGroupCannotBeResolved_FailsClosed()
+    {
+        var lookup = Substitute.For<IVendorSessionProjectionLookupService>();
+        var repository = Substitute.For<IOperatorConsoleCanonicalSessionRepository>();
+        var configuration = ActiveSiteConfiguration(includeSiteGroup: false);
+
+        var action = () => CreateSut(lookup, repository, configuration)
+            .EnsureAsync(Command(), CancellationToken.None);
+
+        await action.Should().ThrowAsync<OperatorConsoleCanonicalSessionException>()
+            .Where(exception => exception.ErrorCode == "OPERATOR_CANONICAL_SITE_SCOPE_UNRESOLVED");
+        await lookup.DidNotReceiveWithAnyArgs().LookupAsync(default!, default);
+        await repository.DidNotReceiveWithAnyArgs().EnsureAsync(default!, default);
     }
 
     [Fact]
@@ -87,19 +121,53 @@ public sealed class OperatorConsoleCanonicalSessionServiceTests
 
     private static OperatorConsoleCanonicalSessionService CreateSut(
         IVendorSessionProjectionLookupService lookup,
-        IOperatorConsoleCanonicalSessionRepository repository)
+        IOperatorConsoleCanonicalSessionRepository repository,
+        IManagementConfigurationRepository? configuration = null)
     {
         var clock = Substitute.For<ISystemClock>();
         clock.UtcNow.Returns(Now);
         return new OperatorConsoleCanonicalSessionService(
             lookup,
             repository,
+            configuration ?? ActiveSiteConfiguration(),
             Options.Create(new VendorSessionProjectionOptions { MaxProjectionAgeMinutes = 1 }),
             clock);
     }
 
     private static OperatorConsoleCanonicalSessionCommand Command() =>
-        new(SiteId, SiteGroupId, VendorSystemId, "TICKET_REFERENCE", "TICKET-3101", null, CorrelationId);
+        new(SiteId, VendorSystemId, "TICKET_REFERENCE", "TICKET-3101", null, CorrelationId);
+
+    private static IManagementConfigurationRepository ActiveSiteConfiguration(bool includeSiteGroup = true)
+    {
+        var configuration = Substitute.For<IManagementConfigurationRepository>();
+        configuration.ListSitesAsync(Arg.Any<CancellationToken>()).Returns(
+        [
+            new ManagementSite(
+                SiteId,
+                SiteGroupId,
+                "PITX-L3",
+                "PITX Level 3",
+                "PARKING",
+                "Asia/Manila",
+                null,
+                null,
+                "Paranaque",
+                "Metro Manila",
+                "PH",
+                null,
+                "ACTIVE",
+                PublicLookupEnabled: true,
+                PaymentEnabled: true,
+                Now.AddYears(-1),
+                EffectiveTo: null,
+                RowVersion: 1)
+        ]);
+        configuration.ListSiteGroupsAsync(Arg.Any<CancellationToken>()).Returns(
+            includeSiteGroup
+                ? [new ManagementSiteGroup(SiteGroupId, "PITX", "PITX", "Asia/Manila", "PHP", "ACTIVE")]
+                : []);
+        return configuration;
+    }
 
     private static VendorSessionProjection Projection() =>
         new(

@@ -23,6 +23,7 @@ public sealed record CustomerDigitalSalesInvoiceCapability(
 public sealed record CustomerDigitalSalesInvoicePresentation(
     Guid FiscalIssuanceReferenceId,
     Guid SiteId,
+    string? FiscalDocumentNumber,
     JsonElement Presentation,
     string CanonicalText);
 
@@ -180,6 +181,7 @@ public sealed class CustomerDigitalSalesInvoiceCapabilityService : ICustomerDigi
         return new CustomerDigitalSalesInvoicePresentation(
             reference.FiscalIssuanceReferenceId,
             expectedSiteId,
+            reference.FiscalDocumentNumber,
             presentation.Clone(),
             canonicalTextElement.GetString()!);
     }

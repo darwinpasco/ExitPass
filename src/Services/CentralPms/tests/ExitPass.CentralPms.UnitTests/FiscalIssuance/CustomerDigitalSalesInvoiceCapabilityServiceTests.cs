@@ -29,6 +29,7 @@ public sealed class CustomerDigitalSalesInvoiceCapabilityServiceTests : IDisposa
         result.Should().NotBeNull();
         result!.FiscalIssuanceReferenceId.Should().Be(ReferenceId);
         result.SiteId.Should().Be(SiteId);
+        result.FiscalDocumentNumber.Should().Be("SI-00000049");
         result.Presentation.GetProperty("documentTitle").GetString().Should().Be("Sales Invoice");
         capability.PublicPagePath.Should().Be("/webpay/sales-invoice");
         capability.Token.Should().NotContain(ReferenceId.ToString("D"));

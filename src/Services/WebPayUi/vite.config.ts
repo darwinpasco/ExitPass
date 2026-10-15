@@ -3,10 +3,21 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 const defaultApiProxyTarget = "http://127.0.0.1:56063";
+const defaultCentralPmsProxyTarget = "https://localhost:56064";
+const customerDigitalSalesInvoicePath = "/v1/webpay/digital-sales-invoices/presentation";
 
-export function createWebPayViteConfig(apiProxyTarget = defaultApiProxyTarget): UserConfig {
+export function createWebPayViteConfig(
+  apiProxyTarget = defaultApiProxyTarget,
+  centralPmsProxyTarget = defaultCentralPmsProxyTarget
+): UserConfig {
   const trimmedApiProxyTarget = apiProxyTarget.trim() || defaultApiProxyTarget;
+  const trimmedCentralPmsProxyTarget = centralPmsProxyTarget.trim().replace(/\/+$/, "") || defaultCentralPmsProxyTarget;
   const proxy = {
+    [customerDigitalSalesInvoicePath]: {
+      target: trimmedCentralPmsProxyTarget,
+      changeOrigin: true,
+      secure: false
+    },
     "/v1": {
       target: trimmedApiProxyTarget,
       changeOrigin: true
@@ -42,5 +53,8 @@ export function createWebPayViteConfig(apiProxyTarget = defaultApiProxyTarget): 
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "VITE_");
-  return createWebPayViteConfig(env.VITE_WEBPAY_API_PROXY_TARGET);
+  return createWebPayViteConfig(
+    env.VITE_WEBPAY_API_PROXY_TARGET,
+    env.VITE_WEBPAY_CENTRAL_PMS_PROXY_TARGET
+  );
 });

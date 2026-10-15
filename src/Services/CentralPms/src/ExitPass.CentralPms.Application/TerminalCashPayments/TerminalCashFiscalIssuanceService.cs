@@ -698,8 +698,27 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             PaymentFinalityRef: reference.UpstreamFinalityReference,
             VendorAckRef: null,
             AppliedStatutoryFiscalFacts: BuildAppliedStatutoryFiscalFacts(cashPayment, statutoryContext),
-            SiteId: cashPayment.SiteId);
+            SiteId: cashPayment.SiteId,
+            InvoiceCustomerInformation: HasNoInvoiceCustomerInformation(
+                reference.InvoiceCustomerInformationSnapshot,
+                statutoryContext?.IdControlReference)
+                ? null
+                : new CentralPmsInvoiceCustomerInformationContext(
+                    reference.InvoiceCustomerInformationSnapshot?.CustomerName,
+                    reference.InvoiceCustomerInformationSnapshot?.Address,
+                    reference.InvoiceCustomerInformationSnapshot?.Tin,
+                    reference.InvoiceCustomerInformationSnapshot?.BusinessStyle,
+                    statutoryContext?.IdControlReference));
     }
+
+    private static bool HasNoInvoiceCustomerInformation(
+        FiscalInvoiceCustomerInformationSnapshot? snapshot,
+        string? statutoryIdNumber) =>
+        string.IsNullOrWhiteSpace(snapshot?.CustomerName) &&
+        string.IsNullOrWhiteSpace(snapshot?.Address) &&
+        string.IsNullOrWhiteSpace(snapshot?.Tin) &&
+        string.IsNullOrWhiteSpace(snapshot?.BusinessStyle) &&
+        string.IsNullOrWhiteSpace(statutoryIdNumber);
 
     private static void EnsureStatutoryFiscalLinkageCanBeFiscalized(
         TerminalCashStatutoryFiscalLinkageResult linkage)

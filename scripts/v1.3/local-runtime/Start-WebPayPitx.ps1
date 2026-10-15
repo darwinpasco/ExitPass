@@ -38,7 +38,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "WebPay production build failed with exit code $LASTEXITCODE."
     }
-    & npm.cmd run preview -- --host localhost --port 5174 --strictPort
+    & npm.cmd run preview -- --host 127.0.0.1 --port 5174 --strictPort
     exit $LASTEXITCODE
 } finally {
     Pop-Location

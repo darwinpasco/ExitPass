@@ -1,6 +1,7 @@
 import type {
   ActivePaymentAttemptState,
   ApiError,
+  CustomerDigitalSalesInvoiceResponse,
   ParkingSessionResolveRequest,
   ParkingSessionResolveResponse,
   PaymentIntentRequest,
@@ -25,6 +26,7 @@ const statutoryDiscountPendingLifecycleRediscoveryPath = "/v1/webpay/statutory-d
 const statutoryDiscountDecisionPath = "/v1/webpay/statutory-discounts/decisions";
 const activePaymentAttemptErrorCode = "ACTIVE_PAYMENT_ATTEMPT_EXISTS";
 const refreshRequiredErrorCode = "PAYABLE_BASIS_REFRESH_REQUIRED";
+const customerDigitalSalesInvoicePath = "/v1/webpay/digital-sales-invoices/presentation";
 
 export class ActivePaymentAttemptError extends Error {
   public readonly activePaymentAttempt: ActivePaymentAttemptState;
@@ -132,6 +134,28 @@ export function getApiBaseUrl(): string {
 
 export function createCorrelationId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `webpay-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+export async function retrieveCustomerDigitalSalesInvoice(
+  accessToken: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<CustomerDigitalSalesInvoiceResponse> {
+  const token = accessToken.trim();
+  if (!token) {
+    throw new Error("Sales Invoice unavailable or link expired.");
+  }
+
+  const response = await fetchImpl(`${getApiBaseUrl()}${customerDigitalSalesInvoicePath}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accessToken: token })
+  });
+  const payload = (await response.json().catch(() => null)) as CustomerDigitalSalesInvoiceResponse | null;
+  if (!response.ok || !payload || typeof payload.canonicalText !== "string" || !payload.canonicalText.trim()) {
+    throw new Error("Sales Invoice unavailable or link expired.");
+  }
+
+  return payload;
 }
 
 export function createRequestReference(): string {

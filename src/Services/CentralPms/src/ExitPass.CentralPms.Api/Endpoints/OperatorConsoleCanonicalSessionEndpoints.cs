@@ -72,15 +72,14 @@ public static class OperatorConsoleCanonicalSessionEndpoints
         try
         {
             identity = OperatorConsoleIdentityContext.Resolve(request);
-            if (!identity.SiteId.HasValue || !identity.SiteGroupId.HasValue)
+            if (!identity.SiteId.HasValue)
             {
-                throw new ArgumentException("The authenticated Site and Site Group scope are required.");
+                throw new ArgumentException("The authenticated Site scope is required.");
             }
 
             var result = await service.EnsureAsync(
                 new OperatorConsoleCanonicalSessionCommand(
                     identity.SiteId.Value,
-                    identity.SiteGroupId.Value,
                     body.VendorSystemId,
                     body.LookupMode,
                     body.TicketReference,
