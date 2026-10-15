@@ -17,11 +17,26 @@ describe("WebPay Vite dev server config", () => {
       target: "http://127.0.0.1:56063",
       changeOrigin: true
     });
+    expect(config.server?.proxy?.["/v1/webpay/digital-sales-invoices/presentation"]).toMatchObject({
+      target: "https://localhost:56064",
+      changeOrigin: true,
+      secure: false
+    });
     expect(config.preview).toMatchObject({ port: 5174, strictPort: true });
     expect(config.preview?.proxy?.["/v1"]).toMatchObject({
       target: "http://127.0.0.1:56063",
       changeOrigin: true
     });
+  });
+
+  it("WebPayCustomerDigitalSalesInvoiceProxy_UsesConfiguredCentralPmsTargetOnlyForCapabilityRead", () => {
+    const config = createWebPayViteConfig("http://localhost:19063", "https://localhost:19064/");
+
+    expect(config.server?.proxy?.["/v1/webpay/digital-sales-invoices/presentation"]).toMatchObject({
+      target: "https://localhost:19064",
+      secure: false
+    });
+    expect(config.server?.proxy?.["/v1"]).toMatchObject({ target: "http://localhost:19063" });
   });
 
   it("WebPayDevServer_WhenProxyTargetEnvIsProvided_UsesConfiguredTarget", () => {

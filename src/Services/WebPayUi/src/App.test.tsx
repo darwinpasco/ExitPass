@@ -3419,7 +3419,7 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.queryByText("Not available")).not.toBeInTheDocument();
     const printableInvoice = screen.getByLabelText("Printable Sales Invoice");
     expect(printableInvoice).toHaveTextContent("SI-20260523-000001");
-    expect(printableInvoice.querySelector("pre")?.textContent).toBe(canonicalSalesInvoiceText.trimEnd());
+    expect(printableInvoice.querySelector("pre")?.textContent).toBe(canonicalSalesInvoiceText);
     expect(printableInvoice).toHaveTextContent("BUSINESS DATE");
     expect(printableInvoice).toHaveTextContent("CASHIER");
     expect(printableInvoice).toHaveTextContent("System");
@@ -3491,7 +3491,7 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
 
     const invoice = await screen.findByLabelText("Printable Sales Invoice");
-    expect(invoice.querySelector("pre")?.textContent).toBe(canonicalSalesInvoiceText.trimEnd());
+    expect(invoice.querySelector("pre")?.textContent).toBe(canonicalSalesInvoiceText);
     expect(screen.getByRole("button", { name: /download sales invoice/i })).toBeInTheDocument();
   });
 
@@ -3533,7 +3533,7 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
 
     const invoice = await screen.findByLabelText("Printable Sales Invoice");
-    expect(invoice.querySelector("pre")?.textContent).toBe(canonicalSalesInvoiceText.trimEnd());
+    expect(invoice.querySelector("pre")?.textContent).toBe(canonicalSalesInvoiceText);
     expect(invoice).not.toHaveTextContent("Restart 38 Site A");
   });
 

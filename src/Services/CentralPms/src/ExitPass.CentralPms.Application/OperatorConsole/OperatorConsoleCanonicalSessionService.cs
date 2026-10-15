@@ -1,3 +1,4 @@
+using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Options;
@@ -11,6 +12,7 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 public sealed class OperatorConsoleCanonicalSessionService(
     IVendorSessionProjectionLookupService projectionLookup,
     IOperatorConsoleCanonicalSessionRepository repository,
+    IManagementConfigurationRepository siteConfigurationRepository,
     IOptions<VendorSessionProjectionOptions> projectionOptions,
     ISystemClock clock) : IOperatorConsoleCanonicalSessionService
 {
@@ -23,7 +25,6 @@ public sealed class OperatorConsoleCanonicalSessionService(
     {
         ArgumentNullException.ThrowIfNull(command);
         ValidateGuid(command.SiteId, nameof(command.SiteId));
-        ValidateGuid(command.SiteGroupId, nameof(command.SiteGroupId));
         ValidateGuid(command.VendorSystemId, nameof(command.VendorSystemId));
         ValidateGuid(command.CorrelationId, nameof(command.CorrelationId));
 
@@ -41,6 +42,7 @@ public sealed class OperatorConsoleCanonicalSessionService(
         }
 
         var requestedAt = clock.UtcNow;
+        var siteGroupId = await ResolveActiveSiteGroupAsync(command.SiteId, requestedAt, cancellationToken);
         VendorSessionProjectionLookupResult lookup;
         try
         {
@@ -49,7 +51,7 @@ public sealed class OperatorConsoleCanonicalSessionService(
                     ticketReference,
                     plateNumber,
                     command.SiteId,
-                    command.SiteGroupId,
+                    siteGroupId,
                     ParkingLotIndexCode: null,
                     requestedAt,
                     command.CorrelationId,
@@ -75,7 +77,7 @@ public sealed class OperatorConsoleCanonicalSessionService(
 
         if (projection.ProjectionStatus != VendorSessionProjectionStatus.Active ||
             projection.SiteId != command.SiteId ||
-            projection.SiteGroupId != command.SiteGroupId ||
+            projection.SiteGroupId != siteGroupId ||
             projection.VendorSystemId != command.VendorSystemId ||
             projection.SourceAdapterIdentityId is null ||
             projection.EnterTime is null ||
@@ -94,6 +96,37 @@ public sealed class OperatorConsoleCanonicalSessionService(
             persisted.ReusedExistingSession,
             projection.VendorSessionProjectionId,
             command.CorrelationId);
+    }
+
+    private async Task<Guid> ResolveActiveSiteGroupAsync(
+        Guid siteId,
+        DateTimeOffset requestedAt,
+        CancellationToken cancellationToken)
+    {
+        var matchingSites = (await siteConfigurationRepository.ListSitesAsync(cancellationToken))
+            .Where(site =>
+                site.SiteId == siteId &&
+                string.Equals(site.Status, "ACTIVE", StringComparison.Ordinal) &&
+                site.EffectiveFrom <= requestedAt &&
+                (!site.EffectiveTo.HasValue || site.EffectiveTo.Value > requestedAt))
+            .ToArray();
+        if (matchingSites.Length != 1)
+        {
+            throw new OperatorConsoleCanonicalSessionException("OPERATOR_CANONICAL_SITE_SCOPE_UNRESOLVED");
+        }
+
+        var siteGroupId = matchingSites[0].SiteGroupId;
+        var matchingSiteGroups = (await siteConfigurationRepository.ListSiteGroupsAsync(cancellationToken))
+            .Where(siteGroup =>
+                siteGroup.SiteGroupId == siteGroupId &&
+                string.Equals(siteGroup.Status, "ACTIVE", StringComparison.Ordinal))
+            .ToArray();
+        if (matchingSiteGroups.Length != 1)
+        {
+            throw new OperatorConsoleCanonicalSessionException("OPERATOR_CANONICAL_SITE_SCOPE_UNRESOLVED");
+        }
+
+        return siteGroupId;
     }
 
     private static string Normalize(string value) =>

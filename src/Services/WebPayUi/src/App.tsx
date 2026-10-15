@@ -32,6 +32,7 @@ import {
   normalizeTicketReference,
   rediscoverStatutoryDiscountPendingLifecycle,
   retrieveReceiptPresentation,
+  retrieveCustomerDigitalSalesInvoice,
   retrieveStatutoryReceiptPresentation,
   retrievePaymentStatus,
   retrieveStatutoryDiscountAvailability,
@@ -60,6 +61,7 @@ import type {
   WebPayStatutoryDiscountAvailabilityResponse,
   WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse,
   WebPayReceiptPresentationResponse,
+  CustomerDigitalSalesInvoiceResponse,
   WebPayStatutoryDiscountDecisionResponse
 } from "./types";
 import type { StatutoryRecoveryStage, WebPayStatutoryRecoveryRecord } from "./statutoryRecovery";
@@ -252,6 +254,9 @@ export function App() {
   const invoiceCustomerSessionIdRef = useRef<string | null>(null);
 
   const returnPageMode = getReturnPageMode(window.location.pathname);
+  if (isCustomerDigitalSalesInvoicePage(window.location.pathname)) {
+    return <CustomerDigitalSalesInvoicePage />;
+  }
   if (returnPageMode) {
     return <WebPayReturnPage mode={returnPageMode} />;
   }
@@ -1664,6 +1669,53 @@ export function App() {
   );
 }
 
+function CustomerDigitalSalesInvoicePage() {
+  const [accessToken] = useState(() => readCustomerDigitalSalesInvoiceAccessToken(window.location.hash));
+  const [invoice, setInvoice] = useState<CustomerDigitalSalesInvoiceResponse | null>(null);
+  const [status, setStatus] = useState<"checking" | "available" | "error">(accessToken ? "checking" : "error");
+
+  useEffect(() => {
+    window.history.replaceState(null, "", window.location.pathname);
+    if (!accessToken) return;
+
+    let active = true;
+    void retrieveCustomerDigitalSalesInvoice(accessToken)
+      .then((result) => {
+        if (!active) return;
+        setInvoice(result);
+        setStatus("available");
+      })
+      .catch(() => {
+        if (!active) return;
+        setInvoice(null);
+        setStatus("error");
+      });
+
+    return () => { active = false; };
+  }, [accessToken]);
+
+  const receipt = invoice ? {
+    fiscalDocumentNumber: invoice.fiscalDocumentNumber,
+    authoritativePresentation: {
+      presentation: invoice.presentation,
+      canonicalText: invoice.canonicalText
+    }
+  } : null;
+
+  return (
+    <main className="app-shell public-sales-invoice-page">
+      <SalesInvoicePresentationPanel
+        receipt={receipt}
+        status={status}
+        message={status === "error" ? "Sales Invoice unavailable or link expired." : ""}
+        correlationId=""
+        onRefresh={() => undefined}
+        canRefresh={false}
+      />
+    </main>
+  );
+}
+
 function StatutoryDiscountRequestPanel({
   readOnly,
   evidenceReviewable,
@@ -2578,7 +2630,7 @@ function SalesInvoicePresentationPanel({
   onRefresh,
   canRefresh
 }: {
-  receipt: WebPayReceiptPresentationResponse | null;
+  receipt: Pick<WebPayReceiptPresentationResponse, "fiscalDocumentNumber" | "authoritativePresentation"> | null;
   status: "idle" | "checking" | "available" | "pending" | "error";
   message: string;
   correlationId: string;
@@ -2586,7 +2638,8 @@ function SalesInvoicePresentationPanel({
   canRefresh: boolean;
 }) {
   const presentation = receipt?.authoritativePresentation?.presentation ?? null;
-  const canonicalText = receipt?.authoritativePresentation?.canonicalText?.trimEnd() ?? "";
+  const canonicalText = receipt?.authoritativePresentation?.canonicalText ?? "";
+  const hasCanonicalText = canonicalText.trim().length > 0;
   const receiptElementRef = useRef<HTMLElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
@@ -2613,14 +2666,14 @@ function SalesInvoicePresentationPanel({
         </div>
       )}
 
-      {status === "available" && receipt && !canonicalText && (
+      {status === "available" && receipt && !hasCanonicalText && (
         <div className="invoice-status is-error" role="alert">
           <strong>Sales Invoice presentation is unavailable</strong>
           <span>The POS-authoritative Sales Invoice text could not be verified.</span>
         </div>
       )}
 
-      {status === "available" && receipt && canonicalText && (
+      {status === "available" && receipt && hasCanonicalText && (
         <>
           <article
             ref={receiptElementRef}
@@ -2635,7 +2688,7 @@ function SalesInvoicePresentationPanel({
 
       {status !== "checking" && (
         <div className="invoice-actions">
-          {status === "available" && receipt && canonicalText && (
+          {status === "available" && receipt && hasCanonicalText && (
             <button
               type="button"
               className="primary-button"
@@ -3469,6 +3522,15 @@ function getReturnPageMode(pathname: string): ReturnPageMode | null {
   }
 
   return null;
+}
+
+function isCustomerDigitalSalesInvoicePage(pathname: string): boolean {
+  return pathname.replace(/\/+$/, "").toLowerCase() === "/webpay/sales-invoice";
+}
+
+function readCustomerDigitalSalesInvoiceAccessToken(hash: string): string {
+  if (!hash.startsWith("#")) return "";
+  return new URLSearchParams(hash.slice(1)).get("access")?.trim() ?? "";
 }
 
 function getQueryParam(name: string): string {

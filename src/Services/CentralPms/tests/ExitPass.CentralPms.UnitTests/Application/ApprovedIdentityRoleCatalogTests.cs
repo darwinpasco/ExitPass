@@ -89,6 +89,19 @@ public sealed class ApprovedIdentityRoleCatalogTests
         ApprovedIdentityRoleCatalog.IsUserEligibleForApplication(null, "MANAGEMENT_PLATFORM").Should().BeFalse();
     }
 
+    [Fact]
+    public void SiteOperator_RemainsOperatorConsoleSiteOnly()
+    {
+        ApprovedIdentityRoleCatalog.TryGetPolicy(ApprovedIdentityRoleCatalog.SiteOperator, out var policy)
+            .Should().BeTrue();
+        policy!.AllowedApplicationAudiences.Should().Equal(ApprovedIdentityRoleCatalog.OperatorConsoleAudience);
+        policy.AllowedAssignmentScopes.Should().Equal(ApprovedIdentityRoleCatalog.SiteScope);
+        policy.DefaultAssignmentScope.Should().Be(ApprovedIdentityRoleCatalog.SiteScope);
+        ApprovedIdentityRoleCatalog.IsScopeAllowed(
+            ApprovedIdentityRoleCatalog.SiteOperator,
+            ApprovedIdentityRoleCatalog.SiteGroupScope).Should().BeFalse();
+    }
+
     [Theory]
     [InlineData("statutory-discounts.review.queue.read")]
     [InlineData("statutory-discounts.review.detail.read")]

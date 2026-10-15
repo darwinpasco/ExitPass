@@ -231,6 +231,12 @@ export type WebPayReceiptPresentationResponse = {
   correlationId: string;
 };
 
+export type CustomerDigitalSalesInvoiceResponse = {
+  fiscalDocumentNumber?: string | null;
+  presentation: SalesInvoicePresentationDocument;
+  canonicalText: string;
+};
+
 export type ApiError = {
   errorCode?: string;
   message?: string;

@@ -44,11 +44,11 @@ if ($PreflightOnly) {
 }
 
 if ([string]::IsNullOrWhiteSpace($env:VITE_WEBPAY_PUBLIC_BASE_URL)) {
-    $env:VITE_WEBPAY_PUBLIC_BASE_URL = if ([string]::IsNullOrWhiteSpace($env:WEBPAY_PUBLIC_BASE_URL)) {
-        "https://operator-console-exitpass.ngrok.dev"
-    } else {
-        $env:WEBPAY_PUBLIC_BASE_URL.TrimEnd("/")
+    if ([string]::IsNullOrWhiteSpace($env:WEBPAY_PUBLIC_BASE_URL)) {
+        throw "Customer Digital Sales Invoice QR requires VITE_WEBPAY_PUBLIC_BASE_URL or WEBPAY_PUBLIC_BASE_URL to be set to the public WebPay origin."
     }
+
+    $env:VITE_WEBPAY_PUBLIC_BASE_URL = $env:WEBPAY_PUBLIC_BASE_URL.TrimEnd("/")
 }
 Write-Host "Customer Digital Sales Invoice origin: $($env:VITE_WEBPAY_PUBLIC_BASE_URL)"
 

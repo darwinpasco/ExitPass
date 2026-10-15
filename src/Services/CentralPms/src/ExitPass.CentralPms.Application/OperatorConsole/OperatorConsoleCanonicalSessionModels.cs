@@ -4,7 +4,6 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 
 public sealed record OperatorConsoleCanonicalSessionCommand(
     Guid SiteId,
-    Guid SiteGroupId,
     Guid VendorSystemId,
     string LookupMode,
     string? TicketReference,

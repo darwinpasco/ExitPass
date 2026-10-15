@@ -132,6 +132,7 @@ public static class CustomerDigitalSalesInvoiceEndpoints
             document.SiteId);
 
         return Results.Ok(new CustomerDigitalSalesInvoiceResponse(
+            document.FiscalDocumentNumber,
             document.Presentation,
             document.CanonicalText));
     }
@@ -153,6 +154,7 @@ public static class CustomerDigitalSalesInvoiceEndpoints
 public sealed record CustomerDigitalSalesInvoiceRequest(string AccessToken);
 
 public sealed record CustomerDigitalSalesInvoiceResponse(
+    string? FiscalDocumentNumber,
     System.Text.Json.JsonElement Presentation,
     string CanonicalText);
 

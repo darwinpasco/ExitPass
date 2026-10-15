@@ -79,5 +79,9 @@ describe("Operator Console Vite dev server config", () => {
     expect(launcher).toContain("npm.cmd run build");
     expect(launcher).toContain("npm.cmd run preview");
     expect(launcher).not.toMatch(/npm(?:\.cmd)?\s+run\s+dev/i);
+    expect(launcher).toContain("VITE_WEBPAY_PUBLIC_BASE_URL");
+    expect(launcher).toContain("WEBPAY_PUBLIC_BASE_URL");
+    expect(launcher).not.toContain("https://operator-console-exitpass.ngrok.dev");
+    expect(launcher).toContain("requires VITE_WEBPAY_PUBLIC_BASE_URL or WEBPAY_PUBLIC_BASE_URL");
   });
 });

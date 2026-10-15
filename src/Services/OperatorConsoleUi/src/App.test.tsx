@@ -1489,7 +1489,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.queryByText("POS Server Sales Invoice ID")).not.toBeInTheDocument();
   });
 
-  it("FiscalStatusViewer_ViewsCanonicalInvoicePrintsInBrowserAndQrEncodesOnlyCustomerUrl", async () => {
+  it("FiscalIssuanceStatusPage_RendersCanonicalInvoiceAndCustomerWebPayQrWithoutPrintAction", async () => {
     const client = createMockOperatorConsoleApiClient({
       fiscalStatuses: [fiscalStatus({
         posServerFiscalDocumentReadStatus: "AVAILABLE",
@@ -1498,24 +1498,36 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       })]
     });
     const getDigitalSalesInvoice = vi.spyOn(client, "getDigitalSalesInvoice");
-    const print = vi.spyOn(window, "print").mockImplementation(() => undefined);
     render(<App apiClient={client} initialPath="/operator-console/fiscal-issuance-status" />);
 
     await lookupFiscalStatus("SI-00000001-UAT");
     await userEvent.click(await screen.findByRole("button", { name: "View Sales Invoice" }));
 
     const digitalSalesInvoice = await screen.findByRole("article", { name: "Canonical Digital Sales Invoice" });
+    const receipt = digitalSalesInvoice.querySelector(".canonicalSalesInvoiceReceipt");
+    const canonicalText = digitalSalesInvoice.querySelector(".canonicalSalesInvoiceText");
     expect(digitalSalesInvoice).toBeInTheDocument();
-    expect(digitalSalesInvoice).toHaveTextContent("MOCK-USABILITY-20260924-01");
+    expect(receipt).toBeInTheDocument();
+    expect(canonicalText).toBeInTheDocument();
+    expect(canonicalText?.textContent).toBe(
+      "SALES INVOICE\r\nORIGINAL\r\nSI NO SI-00000049\r\nBUSINESS DATE 2026-09-24\r\nCASHIER System\r\nTICKET MOCK-USABILITY-20260924-01\r\nPLATE USR2401\r\nPARKING FEE\r\nPAYMENT\r\nAMOUNT DUE 100.00\r\nTOTAL PAID 100.00\r\nCUSTOMER INFORMATION\r\nNAME          Darwin Pasco\r\nADDRESS       123 Doña Juana\r\n              Townhomes, Pasig City\r\nTIN           171459612\r\nBUS. STYLE    Pro Parking Inc\r\nCustomer Sign ____________________\r\nTHIS SERVES AS YOUR SALES INVOICE\r\n===== NOTHING FOLLOWS =====\r\n"
+    );
+    expect(receipt).toContainElement(canonicalText as HTMLElement);
+    expect(digitalSalesInvoice.querySelectorAll("dl, dt, dd")).toHaveLength(0);
     await waitFor(() => expect(QRCode.toDataURL).toHaveBeenCalledOnce());
     const encodedValue = vi.mocked(QRCode.toDataURL).mock.calls[0][0];
-    expect(encodedValue).toContain("/webpay/sales-invoice#access=fixture-opaque-capability");
+    expect(encodedValue).toBe("https://webpay.example.test/webpay/sales-invoice#access=fixture-opaque-capability");
+    expect(encodedValue).not.toContain("operator-console");
+    expect(encodedValue).not.toContain(fiscalReferenceId);
+    expect(encodedValue).not.toContain("MOCK-USABILITY-20260924-01");
+    expect(encodedValue).not.toContain("USR2401");
+    expect(encodedValue).not.toContain("Darwin Pasco");
     expect(encodedValue).not.toContain("MOCK-USABILITY-20260924-01");
     expect(encodedValue).not.toContain("documentTitle");
     expect(getDigitalSalesInvoice).toHaveBeenCalledWith(fiscalReferenceId);
-
-    await userEvent.click(screen.getByRole("button", { name: "Print Sales Invoice" }));
-    expect(print).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "View Sales Invoice" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Print Sales Invoice" })).not.toBeInTheDocument();
+    expect(screen.getByText("Scan to view or download your Sales Invoice.")).toBeInTheDocument();
   });
 
   it("TicketLookup_FinalPaymentAndIssuedExitAuthorizationDisablesNewStatutoryRequest", async () => {

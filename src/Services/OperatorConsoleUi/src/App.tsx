@@ -8,6 +8,7 @@ import {
 } from "./apiClient";
 import type { OperatorConsoleHumanSession } from "./humanAuthentication";
 import { formatPhpMoney } from "./phpCurrency";
+import { buildCustomerDigitalSalesInvoiceUrl } from "./customerDigitalSalesInvoiceUrl";
 import type {
   AccessReadinessResponse,
   AuditReportItem,
@@ -3006,7 +3007,18 @@ function SalesInvoiceActions({ status, client }: {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [qrDataUrl, setQrDataUrl] = useState("");
-  const customerUrl = invoice ? customerDigitalSalesInvoiceUrl(invoice.customerDigitalSalesInvoicePath) : "";
+  let customerUrl = "";
+  let customerUrlError = "";
+  if (invoice) {
+    try {
+      customerUrl = buildCustomerDigitalSalesInvoiceUrl(
+        invoice.customerDigitalSalesInvoicePath,
+        import.meta.env.VITE_WEBPAY_PUBLIC_BASE_URL
+      );
+    } catch (cause) {
+      customerUrlError = cause instanceof Error ? cause.message : "The public WebPay origin is not configured.";
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -3036,23 +3048,26 @@ function SalesInvoiceActions({ status, client }: {
       <button type="button" onClick={viewInvoice} disabled={loading}>
         {loading ? "Retrieving Sales Invoice..." : "View Sales Invoice"}
       </button>
-      {invoice && <button type="button" onClick={() => window.print()}>Print Sales Invoice</button>}
     </div>
     {error && <p className="errorMessage" role="alert">{error}</p>}
+    {customerUrlError && <p className="errorMessage" role="alert">{customerUrlError}</p>}
     {invoice && <article className="canonicalSalesInvoice" aria-label="Canonical Digital Sales Invoice">
-      <h3 id="digital-sales-invoice-title">{invoice.presentation.documentTitle ?? "Sales Invoice"}</h3>
-      <pre className="canonicalSalesInvoiceText">{invoice.canonicalText}</pre>
+      <h3 className="canonicalSalesInvoiceHeading" id="digital-sales-invoice-title">
+        {invoice.presentation.documentTitle ?? "Sales Invoice"}
+      </h3>
+      <div className="canonicalSalesInvoiceReceipt">
+        <pre className="canonicalSalesInvoiceText">{invoice.canonicalText}</pre>
+      </div>
       {qrDataUrl && <figure className="customerInvoiceQr">
         <img src={qrDataUrl} alt="QR code for the customer Digital Sales Invoice URL" />
-        <figcaption>Scan to view or download this Sales Invoice. Access expires in 24 hours.</figcaption>
+        <figcaption>
+          <strong>Digital Sales Invoice</strong>
+          <span>Scan to view or download your Sales Invoice.</span>
+          <span>Link expires in 24 hours.</span>
+        </figcaption>
       </figure>}
     </article>}
   </section>;
-}
-
-function customerDigitalSalesInvoiceUrl(path: string) {
-  const configuredBase = import.meta.env.VITE_WEBPAY_PUBLIC_BASE_URL?.trim();
-  return new URL(path, configuredBase || window.location.origin).toString();
 }
 
 function isCompletedTransaction(result: OperatorTicketLookupResult) {
