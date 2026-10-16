@@ -17,6 +17,7 @@ public enum FiscalReportingGatewayAction
     BirSalesSummaryDownloadJson,
     BirSalesSummaryDownloadCsv,
     AnnexE1Generate,
+    AnnexE1CurrentRead,
     AnnexE1Read,
     AnnexE1Download
 }

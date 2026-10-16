@@ -227,6 +227,30 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
     }
 
     [Fact]
+    public async Task AnnexE1CurrentReadUsesServerResolvedScopeAndReadPermission()
+    {
+        var handler = new CaptureHandler(_ => Json("{\"succeeded\":true,\"workbook\":{}}"));
+        var gateway = Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/")));
+
+        await gateway.SendAsync(Request(FiscalReportingGatewayAction.AnnexE1CurrentRead) with
+        {
+            CalendarYear = 2026,
+            CalendarMonth = 10
+        });
+
+        var request = handler.Requests.Single();
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("/v1/fiscal-reports/annex-e/e1/workbooks/current", request.RequestUri!.AbsolutePath);
+        Assert.Contains($"sitePosServerId={Pos:D}", request.RequestUri.Query);
+        Assert.Contains($"fiscalIdentityId={Identity:D}", request.RequestUri.Query);
+        Assert.Contains("currencyCode=PHP", request.RequestUri.Query);
+        Assert.Contains("calendarYear=2026", request.RequestUri.Query);
+        Assert.Contains("calendarMonth=10", request.RequestUri.Query);
+        Assert.Contains("profile=pos-server-bir-annex-e1-rmo24-2023%3Av1", request.RequestUri.Query);
+        Assert.Equal("fiscal_annex_e.read", Header(request, "X-PosServer-Admin-Permission"));
+    }
+
+    [Fact]
     public async Task UnavailablePosFailsCleanlyAndIsRetryable()
     {
         var gateway = Gateway(new ThrowingHandler(), OptionsFor(Endpoint(Site, "https://site-a.example/")));

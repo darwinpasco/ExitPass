@@ -289,22 +289,60 @@ describe("Operator Console fiscal reporting", () => {
     expect(client.generateBirSalesSummary).not.toHaveBeenCalled();
   });
 
-  it("offers the POS Annex E-1 workbook only after an authoritative summary is available", async () => {
+  it("loads the current POS Annex E-1 without generating another revision", async () => {
     const client = createOperatorFiscalReportingFixture();
+    client.readCurrentAnnexE1 = vi.fn(client.readCurrentAnnexE1);
     client.generateAnnexE1 = vi.fn(client.generateAnnexE1);
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
 
     await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
     expect(screen.queryByRole("button", { name: "Generate Annex E-1" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Generate Annex E-1" }));
 
-    await waitFor(() => expect(client.generateAnnexE1).toHaveBeenCalledWith("SITE-PITX", 2026, 9));
-    expect(await screen.findByRole("link", { name: "Download Annex E-1" })).toHaveAttribute("href", expect.stringContaining("/annex-e/e1/workbooks/"));
+    await waitFor(() => expect(client.readCurrentAnnexE1).toHaveBeenCalledWith("SITE-PITX", 2026, 9));
+    expect(await screen.findByRole("link", { name: "Download XLSX" })).toHaveAttribute("href", expect.stringContaining("/annex-e/e1/workbooks/"));
+    expect(screen.getByText(/Current Annex E-1:/)).toHaveTextContent("revision 1");
+    expect(client.generateAnnexE1).not.toHaveBeenCalled();
+  });
+
+  it("clears the prior workbook when the month changes and treats no current workbook as a normal state", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    const existing = await client.readCurrentAnnexE1("SITE-PITX", 2026, 9);
+    client.readCurrentAnnexE1 = vi.fn(async (_site, year, month) =>
+      year === 2026 && month === 9 ? existing : undefined);
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
+    await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
+    expect(await screen.findByText(/Current Annex E-1:/)).toBeInTheDocument();
+
+    const month = screen.getByLabelText("Annex E-1 calendar month");
+    await userEvent.clear(month);
+    await userEvent.type(month, "2026-10");
+
+    expect(await screen.findByText("No Annex E-1 workbook has been generated for this month.")).toBeInTheDocument();
+    expect(screen.queryByText(/Current Annex E-1:/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Generate Annex E-1" })).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps actual current-workbook service failures visible", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    client.readCurrentAnnexE1 = vi.fn(async () => {
+      throw new Error("The Site POS Server is temporarily unavailable.");
+    });
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
+    await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The Site POS Server is temporarily unavailable.");
+    expect(screen.queryByRole("button", { name: "Generate Annex E-1" })).not.toBeInTheDocument();
   });
 
   it("shows the safe POS failure when Annex E-1 accounting prerequisites are missing", async () => {
     const client = createOperatorFiscalReportingFixture();
+    client.readCurrentAnnexE1 = vi.fn(async () => undefined);
     client.generateAnnexE1 = vi.fn(async () => {
       throw new Error("Annex E-1 requires complete authoritative accounting facts for the selected month.");
     });
@@ -317,7 +355,7 @@ describe("Operator Console fiscal reporting", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Annex E-1 requires complete authoritative accounting facts for the selected month."
     );
-    expect(screen.queryByRole("link", { name: "Download Annex E-1" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Download XLSX" })).not.toBeInTheDocument();
   });
 });
 
