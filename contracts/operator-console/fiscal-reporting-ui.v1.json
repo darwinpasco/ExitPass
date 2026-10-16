@@ -12,6 +12,13 @@
     "fiscal-reporting.z.generate"
   ],
   "zGeneration": { "separateFromRead": true, "explicitConfirmation": true, "warningRequired": true },
+  "birSalesSummary": {
+    "readPermission": "fiscal-reporting.z.read",
+    "generatePermission": "fiscal-reporting.z.generate",
+    "requiresCommittedZReading": true,
+    "exports": ["json", "csv"],
+    "annexE1Export": "xlsx"
+  },
   "browserCalculation": false,
   "browserArtifactGeneration": false,
   "developmentScenario": { "query": "operatorFiscalReportingScenario=ready", "productionIgnored": true }

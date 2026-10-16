@@ -142,6 +142,91 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
     }
 
     [Fact]
+    public async Task BirSalesSummaryGenerationUsesServerOwnedFiscalScopeAndDedicatedPosPermission()
+    {
+        var periodId = Guid.Parse("40000000-0000-4000-8000-000000000071");
+        var handler = new CaptureHandler(_ => Json("{\"succeeded\":true,\"summary\":{}}", HttpStatusCode.Created));
+
+        var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.BirSalesSummaryGenerate) with
+            {
+                OperationKey = "bir-summary-operation",
+                FiscalReportingPeriodId = periodId,
+                GoverningZReadingReference = "Z-20260915-001"
+            });
+
+        Assert.Equal(201, result.HttpStatusCode);
+        var outbound = Assert.Single(handler.Requests);
+        Assert.Equal("/v1/fiscal-reports/bir-sales-summaries/", outbound.RequestUri!.AbsolutePath);
+        Assert.Equal("bir_sales_summary.generate", Header(outbound, "X-PosServer-Admin-Permission"));
+        var body = handler.Bodies.Single();
+        Assert.Contains($"\"sitePosServerId\":\"{Pos:D}\"", body);
+        Assert.Contains($"\"fiscalIdentityId\":\"{Identity:D}\"", body);
+        Assert.Contains("\"currencyCode\":\"PHP\"", body);
+        Assert.Contains($"\"fiscalReportingPeriodId\":\"{periodId:D}\"", body);
+        Assert.Contains("\"governingZReadingReference\":\"Z-20260915-001\"", body);
+    }
+
+    [Theory]
+    [InlineData(FiscalReportingGatewayAction.BirSalesSummaryDownloadJson, "json")]
+    [InlineData(FiscalReportingGatewayAction.BirSalesSummaryDownloadCsv, "csv")]
+    public async Task BirSalesSummaryExportsArePassedThroughWithAuthoritativeHash(
+        FiscalReportingGatewayAction action,
+        string format)
+    {
+        var summaryId = Guid.Parse("40000000-0000-4000-8000-000000000072");
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent("authoritative-export"u8.ToArray())
+        };
+        response.Content.Headers.ContentType = new(format == "json" ? "application/json" : "text/csv");
+        response.Content.Headers.ContentDisposition = new("attachment") { FileName = $"bir-sales-summary.{format}" };
+        response.Headers.Add("X-Content-SHA256", "fiscal-hash");
+        var handler = new CaptureHandler(_ => response);
+
+        var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(action) with { SummaryId = summaryId });
+
+        Assert.Equal($"/v1/fiscal-reports/bir-sales-summaries/{summaryId:D}/exports/{format}", handler.Requests.Single().RequestUri!.AbsolutePath);
+        Assert.Equal("bir_sales_summary.export", Header(handler.Requests.Single(), "X-PosServer-Admin-Permission"));
+        Assert.Equal("fiscal-hash", result.ContentSha256);
+        Assert.Equal($"bir-sales-summary.{format}", result.FileName);
+        Assert.Equal("authoritative-export"u8.ToArray(), result.Body);
+    }
+
+    [Fact]
+    public async Task AnnexE1GenerationAndDownloadUseTheExistingPosWorkbookContract()
+    {
+        var workbookId = Guid.Parse("40000000-0000-4000-8000-000000000073");
+        var handler = new CaptureHandler(request => request.Method == HttpMethod.Post
+            ? Json("{\"succeeded\":true,\"workbook\":{}}", HttpStatusCode.Created)
+            : new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent("xlsx-bytes"u8.ToArray())
+                {
+                    Headers = { ContentType = new("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") }
+                }
+            });
+        var gateway = Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/")));
+
+        await gateway.SendAsync(Request(FiscalReportingGatewayAction.AnnexE1Generate) with
+        {
+            OperationKey = "annex-operation",
+            CalendarYear = 2026,
+            CalendarMonth = 9
+        });
+        await gateway.SendAsync(Request(FiscalReportingGatewayAction.AnnexE1Download) with { WorkbookId = workbookId });
+
+        Assert.Equal("/v1/fiscal-reports/annex-e/e1/workbooks", handler.Requests[0].RequestUri!.AbsolutePath);
+        Assert.Equal("fiscal_annex_e.generate", Header(handler.Requests[0], "X-PosServer-Admin-Permission"));
+        Assert.Contains("\"calendarYear\":2026", handler.Bodies[0]);
+        Assert.Contains("\"calendarMonth\":9", handler.Bodies[0]);
+        Assert.Contains("\"profile\":\"pos-server-bir-annex-e1-rmo24-2023:v1\"", handler.Bodies[0]);
+        Assert.Equal($"/v1/fiscal-reports/annex-e/e1/workbooks/{workbookId:D}/content", handler.Requests[1].RequestUri!.AbsolutePath);
+        Assert.Equal("fiscal_annex_e.export", Header(handler.Requests[1], "X-PosServer-Admin-Permission"));
+    }
+
+    [Fact]
     public async Task UnavailablePosFailsCleanlyAndIsRetryable()
     {
         var gateway = Gateway(new ThrowingHandler(), OptionsFor(Endpoint(Site, "https://site-a.example/")));

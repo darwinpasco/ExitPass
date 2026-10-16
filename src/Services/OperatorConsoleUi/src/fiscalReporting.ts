@@ -116,6 +116,47 @@ export interface History {
     currentPeriod?: FiscalPeriod;
     readings: Reading[];
 }
+export interface BirSalesSummaryAmounts extends Amounts {
+    seniorCitizenDiscountAmountMinorUnits: number;
+    pwdDiscountAmountMinorUnits: number;
+    otherStatutoryDiscountAmountMinorUnits: number;
+    vatExemptionAmountMinorUnits: number;
+    refundAmountMinorUnits: number;
+    returnAmountMinorUnits: number;
+}
+export interface BirSalesSummaryCounterSnapshot {
+    previousResetCounterValue: number;
+    resultingResetCounterValue: number;
+    previousZCounterValue: number;
+    resultingZCounterValue: number;
+    previousGrandTotalAmountMinorUnits: number;
+    resultingGrandTotalAmountMinorUnits: number;
+}
+export interface BirSalesSummary {
+    birSalesSummaryReportId: string;
+    governingZReadingReference: string;
+    fiscalReportingPeriodId: string;
+    businessDayDate: string;
+    beginningSalesInvoiceReference?: string;
+    endingSalesInvoiceReference?: string;
+    transactionCount: number;
+    amounts: BirSalesSummaryAmounts;
+    counterSnapshot: BirSalesSummaryCounterSnapshot;
+    currencyCode: string;
+    generatedAt: string;
+    reportStatus: string;
+    supportReference: string;
+}
+export interface AnnexE1Workbook {
+    workbookId: string;
+    annexEReference: string;
+    calendarYear: number;
+    calendarMonth: number;
+    currencyCode: string;
+    fileName: string;
+    generatedAt: string;
+    status: string;
+}
 export interface EjInvoice {
     fiscalDocumentId: string;
     fiscalDocumentNumber: string;
@@ -143,8 +184,19 @@ export interface CloseableFiscalBusinessDatesSnapshot {
 export interface CloseAllFiscalBusinessDatesResult {
     succeeded: boolean;
     closedCount: number;
+    birSalesSummaryPendingCount: number;
     message?: string;
     stoppedAt?: string;
+}
+export interface BirSalesSummaryCompletion {
+    status: "COMMITTED" | "PENDING";
+    summaryId?: string;
+    code: string;
+    retryable: boolean;
+    message?: string;
+}
+export interface CloseFiscalBusinessDateResult {
+    birSalesSummaryCompletion?: BirSalesSummaryCompletion;
 }
 export interface OperatorFiscalReportingClient {
     listAuthorizedSites?(): Promise<FiscalReportingSite[]>;
@@ -164,11 +216,17 @@ export interface OperatorFiscalReportingClient {
     closeBusinessDate(
         site: string,
         period: CloseableFiscalBusinessDate,
-    ): Promise<void>;
+    ): Promise<CloseFiscalBusinessDateResult>;
     closeAllBusinessDates(
         site: string,
     ): Promise<CloseAllFiscalBusinessDatesResult>;
     readingUrl(site: string, kind: "x" | "z", reference: string): string;
+    generateBirSalesSummary(site: string, reading: Reading): Promise<BirSalesSummary>;
+    readBirSalesSummary(site: string, summaryId: string): Promise<BirSalesSummary>;
+    birSalesSummaryUrl(site: string, summaryId: string, format: "json" | "csv"): string;
+    generateAnnexE1(site: string, calendarYear: number, calendarMonth: number): Promise<AnnexE1Workbook>;
+    readAnnexE1(site: string, workbookId: string): Promise<AnnexE1Workbook>;
+    annexE1Url(site: string, workbookId: string): string;
 }
 
 function siteList(value: unknown): FiscalReportingSite[] {
@@ -292,7 +350,7 @@ export function createOperatorFiscalReportingClient(
             return closeable(await json(p(s, "/z-readings/closeable-periods")));
         },
         async closeBusinessDate(s, period) {
-            await json(
+            const value = await json(
                 p(
                     s,
                     `/z-readings/closeable-periods/${encodeURIComponent(period.fiscalReportingPeriodId)}/close`,
@@ -303,6 +361,11 @@ export function createOperatorFiscalReportingClient(
                     confirmClose: true,
                 }),
             );
+            return {
+                birSalesSummaryCompletion: birCompletion(
+                    value.birSalesSummaryCompletion,
+                ),
+            };
         },
         async closeAllBusinessDates(s) {
             const value = await json(
@@ -315,6 +378,10 @@ export function createOperatorFiscalReportingClient(
             return {
                 succeeded: value.succeeded === true,
                 closedCount: num(value.closedCount),
+                birSalesSummaryPendingCount:
+                    typeof value.birSalesSummaryPendingCount === "number"
+                        ? num(value.birSalesSummaryPendingCount)
+                        : 0,
                 message:
                     typeof value.message === "string"
                         ? value.message
@@ -327,6 +394,38 @@ export function createOperatorFiscalReportingClient(
         },
         readingUrl(s, k, r) {
             return p(s, `/${k}-readings/${encodeURIComponent(r)}/download`);
+        },
+        async generateBirSalesSummary(s, reading) {
+            const value = await json(
+                p(s, "/bir-sales-summaries"),
+                mutation({
+                    operationKey: crypto.randomUUID(),
+                    fiscalReportingPeriodId: reading.fiscalReportingPeriodId,
+                    governingZReadingReference: reading.reportReference,
+                }),
+            );
+            return birSummary(rec(value.summary));
+        },
+        async readBirSalesSummary(s, summaryId) {
+            const value = await json(p(s, `/bir-sales-summaries/${encodeURIComponent(summaryId)}`));
+            return birSummary(rec(value.summary));
+        },
+        birSalesSummaryUrl(s, summaryId, format) {
+            return p(s, `/bir-sales-summaries/${encodeURIComponent(summaryId)}/download?format=${format}`);
+        },
+        async generateAnnexE1(s, calendarYear, calendarMonth) {
+            const value = await json(
+                p(s, "/annex-e/e1/workbooks"),
+                mutation({ operationKey: crypto.randomUUID(), calendarYear, calendarMonth }),
+            );
+            return annexWorkbook(rec(value.workbook));
+        },
+        async readAnnexE1(s, workbookId) {
+            const value = await json(p(s, `/annex-e/e1/workbooks/${encodeURIComponent(workbookId)}`));
+            return annexWorkbook(rec(value.workbook));
+        },
+        annexE1Url(s, workbookId) {
+            return p(s, `/annex-e/e1/workbooks/${encodeURIComponent(workbookId)}/download`);
         },
     };
 }
@@ -382,6 +481,46 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
         issuedAt: "2026-09-10T01:00:00Z",
         printableText: compactCanonicalSalesInvoiceFixture,
     };
+    const summary: BirSalesSummary = {
+        birSalesSummaryReportId: "93000000-0000-4000-8000-000000000001",
+        governingZReadingReference: "Z-20260910-001",
+        fiscalReportingPeriodId: period.fiscalReportingPeriodId,
+        businessDayDate: period.businessDayDate,
+        beginningSalesInvoiceReference: "SI-00000001",
+        endingSalesInvoiceReference: "SI-00000001",
+        transactionCount: 1,
+        amounts: {
+            ...amounts,
+            seniorCitizenDiscountAmountMinorUnits: 0,
+            pwdDiscountAmountMinorUnits: 0,
+            otherStatutoryDiscountAmountMinorUnits: 0,
+            vatExemptionAmountMinorUnits: 0,
+            refundAmountMinorUnits: 0,
+            returnAmountMinorUnits: 0,
+        },
+        counterSnapshot: {
+            previousResetCounterValue: 0,
+            resultingResetCounterValue: 0,
+            previousZCounterValue: 90,
+            resultingZCounterValue: 91,
+            previousGrandTotalAmountMinorUnits: 100000,
+            resultingGrandTotalAmountMinorUnits: 111200,
+        },
+        currencyCode: "PHP",
+        generatedAt: "2026-09-10T08:16:00Z",
+        reportStatus: "COMMITTED",
+        supportReference: "BIRSS-93000000",
+    };
+    const workbook: AnnexE1Workbook = {
+        workbookId: "94000000-0000-4000-8000-000000000001",
+        annexEReference: "ANNEX-E1-202609-001",
+        calendarYear: 2026,
+        calendarMonth: 9,
+        currencyCode: "PHP",
+        fileName: "annex-e1-2026-09.xlsx",
+        generatedAt: "2026-10-01T00:00:00Z",
+        status: "COMMITTED",
+    };
     return {
         listAuthorizedSites: async () => [
             {
@@ -420,13 +559,85 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
                 },
             ],
         }),
-        closeBusinessDate: async () => {},
+        closeBusinessDate: async () => ({
+            birSalesSummaryCompletion: {
+                status: "COMMITTED",
+                summaryId: "95000000-0000-4000-8000-000000000001",
+                code: "bir_sales_summary_committed",
+                retryable: false,
+            },
+        }),
         closeAllBusinessDates: async () => ({
             succeeded: true,
             closedCount: 1,
+            birSalesSummaryPendingCount: 0,
         }),
         readingUrl: (s, k, x) =>
             `/v1/ops/operator-console/fiscal-reporting/sites/${s}/${k}-readings/${x}/download`,
+        generateBirSalesSummary: async () => summary,
+        readBirSalesSummary: async () => summary,
+        birSalesSummaryUrl: (s, id, format) =>
+            `/v1/ops/operator-console/fiscal-reporting/sites/${s}/bir-sales-summaries/${id}/download?format=${format}`,
+        generateAnnexE1: async () => workbook,
+        readAnnexE1: async () => workbook,
+        annexE1Url: (s, id) =>
+            `/v1/ops/operator-console/fiscal-reporting/sites/${s}/annex-e/e1/workbooks/${id}/download`,
+    };
+}
+
+function birSummary(value: Record<string, unknown>): BirSalesSummary {
+    const amounts = rec(value.amounts);
+    const counters = rec(value.counterSnapshot);
+    return {
+        birSalesSummaryReportId: str(value.birSalesSummaryReportId),
+        governingZReadingReference: str(value.governingZReadingReference),
+        fiscalReportingPeriodId: str(value.fiscalReportingPeriodId),
+        businessDayDate: str(value.businessDayDate),
+        beginningSalesInvoiceReference: optionalString(value.beginningSalesInvoiceReference),
+        endingSalesInvoiceReference: optionalString(value.endingSalesInvoiceReference),
+        transactionCount: num(value.transactionCount),
+        amounts: {
+            grossSalesAmountMinorUnits: num(amounts.grossSalesAmountMinorUnits),
+            netSalesAmountMinorUnits: num(amounts.netSalesAmountMinorUnits),
+            vatableSalesAmountMinorUnits: num(amounts.vatableSalesAmountMinorUnits),
+            vatAmountMinorUnits: num(amounts.vatAmountMinorUnits),
+            vatExemptSalesAmountMinorUnits: num(amounts.vatExemptSalesAmountMinorUnits),
+            zeroRatedSalesAmountMinorUnits: num(amounts.zeroRatedSalesAmountMinorUnits),
+            discountAmountMinorUnits: num(amounts.discountAmountMinorUnits),
+            seniorCitizenDiscountAmountMinorUnits: num(amounts.seniorCitizenDiscountAmountMinorUnits),
+            pwdDiscountAmountMinorUnits: num(amounts.pwdDiscountAmountMinorUnits),
+            otherStatutoryDiscountAmountMinorUnits: num(amounts.otherStatutoryDiscountAmountMinorUnits),
+            vatExemptionAmountMinorUnits: num(amounts.vatExemptionAmountMinorUnits),
+            voidAmountMinorUnits: num(amounts.voidAmountMinorUnits),
+            refundAmountMinorUnits: num(amounts.refundAmountMinorUnits),
+            returnAmountMinorUnits: num(amounts.returnAmountMinorUnits),
+            adjustmentAmountMinorUnits: num(amounts.adjustmentAmountMinorUnits),
+        },
+        counterSnapshot: {
+            previousResetCounterValue: num(counters.previousResetCounterValue),
+            resultingResetCounterValue: num(counters.resultingResetCounterValue),
+            previousZCounterValue: num(counters.previousZCounterValue),
+            resultingZCounterValue: num(counters.resultingZCounterValue),
+            previousGrandTotalAmountMinorUnits: num(counters.previousGrandTotalAmountMinorUnits),
+            resultingGrandTotalAmountMinorUnits: num(counters.resultingGrandTotalAmountMinorUnits),
+        },
+        currencyCode: str(value.currencyCode),
+        generatedAt: str(value.generatedAt),
+        reportStatus: str(value.reportStatus),
+        supportReference: str(value.supportReference),
+    };
+}
+
+function annexWorkbook(value: Record<string, unknown>): AnnexE1Workbook {
+    return {
+        workbookId: str(value.workbookId),
+        annexEReference: str(value.annexEReference),
+        calendarYear: num(value.calendarYear),
+        calendarMonth: num(value.calendarMonth),
+        currencyCode: str(value.currencyCode),
+        fileName: str(value.fileName),
+        generatedAt: str(value.generatedAt),
+        status: str(value.status),
     };
 }
 function hist(
@@ -439,6 +650,26 @@ function hist(
         readings: v.readings.map((x) => read(rec(x), kind)),
     };
 }
+function birCompletion(value: unknown): BirSalesSummaryCompletion | undefined {
+    if (value === undefined || value === null) return undefined;
+    const completion = rec(value);
+    const status = str(completion.status);
+    if (status !== "COMMITTED" && status !== "PENDING") throw bad();
+    return {
+        status,
+        summaryId:
+            typeof completion.summaryId === "string"
+                ? completion.summaryId
+                : undefined,
+        code: str(completion.code),
+        retryable: completion.retryable === true,
+        message:
+            typeof completion.message === "string"
+                ? completion.message
+                : undefined,
+    };
+}
+
 function closeable(
     value: Record<string, unknown>,
 ): CloseableFiscalBusinessDatesSnapshot {
@@ -535,6 +766,9 @@ function rec(v: unknown): Record<string, unknown> {
 function str(v: unknown) {
     if (typeof v !== "string" || !v) throw bad();
     return v;
+}
+function optionalString(v: unknown) {
+    return typeof v === "string" && v ? v : undefined;
 }
 function num(v: unknown) {
     if (typeof v !== "number" || !Number.isSafeInteger(v)) throw bad();

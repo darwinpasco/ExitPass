@@ -8,7 +8,9 @@ using ExitPass.CentralPms.Application.FiscalReporting;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using FluentAssertions;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -174,7 +176,7 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
     public async Task CloseOne_UsesThePosPeriodAndExpectedVersionWithoutEnumeratingAnotherSite()
     {
         var periodId = Guid.Parse("88000000-0000-0000-0000-000000000021");
-        var gateway = new FakeGateway(_ => Response(201, "{\"succeeded\":true}"));
+        var gateway = new FakeGateway(_ => Response(201, "{\"succeeded\":true,\"birSalesSummaryCompletion\":{\"status\":\"PENDING\",\"code\":\"bir_sales_summary_persistence_failed\",\"retryable\":true}}"));
         using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
         using var client = factory.CreateClient();
 
@@ -183,6 +185,7 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
             new { operationKey = "close-one", expectedStateVersion = 23, confirmClose = true });
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("\"status\":\"PENDING\"");
         var request = gateway.Requests.Should().ContainSingle().Subject;
         request.SiteId.Should().Be(SiteId);
         request.Action.Should().Be(FiscalReportingGatewayAction.ZClosePeriod);
@@ -256,6 +259,32 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
     }
 
     [Fact]
+    public async Task CloseAll_PreservesSuccessfulZResultsAndReportsPendingBirCompletions()
+    {
+        var periods = new[] { Period("2026-09-20", 10), Period("2026-09-21", 11) };
+        var closeCalls = 0;
+        var gateway = new FakeGateway(request => request.Action switch
+        {
+            FiscalReportingGatewayAction.ZCloseablePeriods => Response(200, CloseablePeriodsJson(periods)),
+            FiscalReportingGatewayAction.ZClosePeriod when ++closeCalls == 1 => Response(201, "{\"succeeded\":true,\"birSalesSummaryCompletion\":{\"status\":\"COMMITTED\",\"summaryId\":\"88000000-0000-0000-0000-000000000099\",\"code\":\"bir_sales_summary_committed\",\"retryable\":false}}"),
+            FiscalReportingGatewayAction.ZClosePeriod => Response(201, "{\"succeeded\":true,\"birSalesSummaryCompletion\":{\"status\":\"PENDING\",\"code\":\"bir_sales_summary_persistence_failed\",\"retryable\":true}}"),
+            _ => throw new InvalidOperationException("Unexpected gateway action.")
+        });
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/z-readings/closeable-periods/close-all",
+            new { operationKey = "close-all-pending-bir", confirmClose = true });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"closedCount\":2");
+        body.Should().Contain("\"birSalesSummaryPendingCount\":1");
+        body.Should().Contain("BIR Sales Summary operation(s) are pending");
+    }
+
+    [Fact]
     public async Task CloseAll_OutsideAuthenticatedSiteScope_IsConcealedBeforePosIsCalled()
     {
         var gateway = new FakeGateway();
@@ -268,6 +297,147 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
         gateway.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BirSalesSummaryGenerationUsesOnlyAuthenticatedSiteAndSelectedCommittedZ()
+    {
+        var periodId = Guid.Parse("88000000-0000-0000-0000-000000000031");
+        var gateway = new FakeGateway(_ => Response(201, "{\"succeeded\":true,\"summary\":{}}"));
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", TestAntiforgery.ValidToken);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/bir-sales-summaries",
+            new
+            {
+                operationKey = "bir-summary",
+                fiscalReportingPeriodId = periodId,
+                governingZReadingReference = "Z-20260920-001",
+                sitePosServerId = OtherSiteId,
+                fiscalIdentityId = OtherSiteId
+            });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var request = gateway.Requests.Should().ContainSingle().Subject;
+        request.SiteId.Should().Be(SiteId);
+        request.Action.Should().Be(FiscalReportingGatewayAction.BirSalesSummaryGenerate);
+        request.FiscalReportingPeriodId.Should().Be(periodId);
+        request.GoverningZReadingReference.Should().Be("Z-20260920-001");
+    }
+
+    [Fact]
+    public async Task BirSalesSummaryOutsideAuthenticatedSiteScopeIsConcealed()
+    {
+        var gateway = new FakeGateway();
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{OtherSiteId:D}/bir-sales-summaries/{Guid.NewGuid():D}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        gateway.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BirSalesSummaryGenerationRequiresCsrfValidation()
+    {
+        var gateway = new FakeGateway();
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/bir-sales-summaries",
+            new { operationKey = "missing-csrf", fiscalReportingPeriodId = Guid.NewGuid(), governingZReadingReference = "Z-CSRF" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("CSRF_VALIDATION_FAILED");
+        gateway.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AnnexE1GenerationRequiresCsrfValidation()
+    {
+        var gateway = new FakeGateway();
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks",
+            new { operationKey = "missing-csrf", calendarYear = 2026, calendarMonth = 9 });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("CSRF_VALIDATION_FAILED");
+        gateway.Requests.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("bir_sales_summary_period_not_closed", "The BIR Sales Summary can be generated after the fiscal business date has been closed and its Z Reading has been committed.")]
+    [InlineData("bir_sales_summary_z_not_committed", "The BIR Sales Summary is unavailable until the governing Z Reading is committed.")]
+    [InlineData("bir_sales_summary_reconciliation_failed", "The authoritative fiscal report did not reconcile.")]
+    public async Task BirSalesSummarySafePosFailureIsPropagatedWithoutDiagnostics(string code, string message)
+    {
+        var gateway = new FakeGateway(_ => Response(409, $"{{\"succeeded\":false,\"code\":\"{code}\",\"message\":\"{message}\"}}"));
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", TestAntiforgery.ValidToken);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/bir-sales-summaries",
+            new { operationKey = "safe-failure", fiscalReportingPeriodId = Guid.NewGuid(), governingZReadingReference = "Z-FAILED" });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain(code).And.Contain(message).And.NotContain("stack trace");
+    }
+
+    [Theory]
+    [InlineData("json", "application/json", "bir-summary.json")]
+    [InlineData("csv", "text/csv", "bir-summary.csv")]
+    public async Task BirSalesSummaryExportProxiesAuthoritativeBytesAndMetadata(string format, string contentType, string fileName)
+    {
+        var bytes = Encoding.UTF8.GetBytes($"authoritative-{format}");
+        var gateway = new FakeGateway(_ => new FiscalReportingGatewayResponse(200, contentType, bytes, "ok", fileName, ContentSha256: "sha256-value"));
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/bir-sales-summaries/{Guid.NewGuid():D}/download?format={format}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await response.Content.ReadAsByteArrayAsync()).Should().Equal(bytes);
+        response.Content.Headers.ContentType!.MediaType.Should().Be(contentType);
+        response.Content.Headers.ContentDisposition!.FileName!.Trim('"').Should().Be(fileName);
+        response.Headers.GetValues("X-Content-SHA256").Should().ContainSingle("sha256-value");
+    }
+
+    [Fact]
+    public async Task AnnexE1GenerationAndDownloadUseTheSiteScopedGatewayWithoutByteConversion()
+    {
+        var workbookId = Guid.Parse("88000000-0000-0000-0000-000000000032");
+        var bytes = "authoritative-xlsx"u8.ToArray();
+        var gateway = new FakeGateway(request => request.Action == FiscalReportingGatewayAction.AnnexE1Download
+            ? new(200, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes, "ok", "annex-e1.xlsx", ContentSha256: "xlsx-hash")
+            : Response(201, $"{{\"succeeded\":true,\"workbook\":{{\"workbookId\":\"{workbookId:D}\"}}}}"));
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", TestAntiforgery.ValidToken);
+
+        using var generation = await client.PostAsJsonAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks",
+            new { operationKey = "annex", calendarYear = 2026, calendarMonth = 9, fiscalIdentityId = OtherSiteId });
+        using var download = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks/{workbookId:D}/download");
+
+        generation.StatusCode.Should().Be(HttpStatusCode.Created);
+        download.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await download.Content.ReadAsByteArrayAsync()).Should().Equal(bytes);
+        gateway.Requests.Should().OnlyContain(request => request.SiteId == SiteId);
+        gateway.Requests[0].CalendarYear.Should().Be(2026);
+        gateway.Requests[0].CalendarMonth.Should().Be(9);
+        gateway.Requests[1].WorkbookId.Should().Be(workbookId);
     }
 
     private static string EjUrl(Guid siteId, string identifier) =>
@@ -323,9 +493,27 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
                 services.AddSingleton<IFiscalIssuanceReferenceRepository>(references);
                 services.RemoveAll<ICentralPmsRbacRepository>();
                 services.AddSingleton<ICentralPmsRbacRepository>(new FakeRbacRepository(role));
+                services.RemoveAll<IAntiforgery>();
+                services.AddSingleton<IAntiforgery, TestAntiforgery>();
             });
 
     private sealed record TestPrincipalOptions(string Role, bool IncludePermission, bool Authenticated);
+
+    private sealed class TestAntiforgery : IAntiforgery
+    {
+        public const string ValidToken = "fiscal-reporting-csrf";
+
+        public AntiforgeryTokenSet GetAndStoreTokens(HttpContext httpContext) => GetTokens(httpContext);
+        public AntiforgeryTokenSet GetTokens(HttpContext httpContext) =>
+            new(ValidToken, "test-cookie", "__RequestVerificationToken", "X-CSRF-Token");
+        public Task<bool> IsRequestValidAsync(HttpContext httpContext) =>
+            Task.FromResult(httpContext.Request.Headers["X-CSRF-Token"] == ValidToken);
+        public Task ValidateRequestAsync(HttpContext httpContext) =>
+            httpContext.Request.Headers["X-CSRF-Token"] == ValidToken
+                ? Task.CompletedTask
+                : Task.FromException(new AntiforgeryValidationException("The test CSRF token is invalid."));
+        public void SetCookieTokenAndHeader(HttpContext httpContext) { }
+    }
 
     private sealed class TestAuthenticationHandler : AuthenticationHandler<AuthenticationSchemeOptions>
     {

@@ -10,6 +10,7 @@ public sealed class HttpFiscalReportingPosServerGateway(
     HttpClient httpClient,
     ISitePosServerBindingResolver bindingResolver) : IFiscalReportingPosServerGateway
 {
+    private const string AnnexE1Profile = "pos-server-bir-annex-e1-rmo24-2023:v1";
     private const string ApiKeyHeader = "X-PosServer-Admin-Key";
     private const string PermissionHeader = "X-PosServer-Admin-Permission";
     public async Task<FiscalReportingGatewayResponse> SendAsync(FiscalReportingGatewayRequest request, CancellationToken cancellationToken = default)
@@ -26,7 +27,10 @@ public sealed class HttpFiscalReportingPosServerGateway(
             var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
             var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/json; charset=utf-8";
             var fileName = response.Content.Headers.ContentDisposition?.FileNameStar ?? response.Content.Headers.ContentDisposition?.FileName?.Trim('"');
-            return new((int)response.StatusCode, contentType, bytes, response.IsSuccessStatusCode ? "pos_fiscal_reporting_succeeded" : "pos_fiscal_reporting_failed", fileName, (int)response.StatusCode >= 500);
+            var contentSha256 = response.Headers.TryGetValues("X-Content-SHA256", out var hashes)
+                ? hashes.SingleOrDefault()
+                : response.Headers.ETag?.Tag?.Trim('"').Replace("sha256-", string.Empty, StringComparison.OrdinalIgnoreCase);
+            return new((int)response.StatusCode, contentType, bytes, response.IsSuccessStatusCode ? "pos_fiscal_reporting_succeeded" : "pos_fiscal_reporting_failed", fileName, (int)response.StatusCode >= 500, contentSha256);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
         {
@@ -95,6 +99,30 @@ public sealed class HttpFiscalReportingPosServerGateway(
                 expectedStateVersion = RequireExpectedStateVersion(request)
             }),
             FiscalReportingGatewayAction.ZDownload => (HttpMethod.Get, $"/v1/fiscal-reports/z-readings/{Uri.EscapeDataString(RequireReference(request))}/exports/pdf", "fiscal_z_reading.export", null),
+            FiscalReportingGatewayAction.BirSalesSummaryGenerate => (HttpMethod.Post, "/v1/fiscal-reports/bir-sales-summaries/", "bir_sales_summary.generate", new
+            {
+                operationKey = request.OperationKey,
+                sitePosServerId = endpoint.SitePosServerId,
+                fiscalIdentityId = endpoint.FiscalIdentityId,
+                currencyCode = endpoint.CurrencyCode,
+                fiscalReportingPeriodId = RequirePeriodId(request),
+                governingZReadingReference = RequireGoverningZReference(request)
+            }),
+            FiscalReportingGatewayAction.BirSalesSummaryRead => (HttpMethod.Get, $"/v1/fiscal-reports/bir-sales-summaries/{RequireGuid(request.SummaryId, "summary"):D}", "bir_sales_summary.read", null),
+            FiscalReportingGatewayAction.BirSalesSummaryDownloadJson => (HttpMethod.Get, $"/v1/fiscal-reports/bir-sales-summaries/{RequireGuid(request.SummaryId, "summary"):D}/exports/json", "bir_sales_summary.export", null),
+            FiscalReportingGatewayAction.BirSalesSummaryDownloadCsv => (HttpMethod.Get, $"/v1/fiscal-reports/bir-sales-summaries/{RequireGuid(request.SummaryId, "summary"):D}/exports/csv", "bir_sales_summary.export", null),
+            FiscalReportingGatewayAction.AnnexE1Generate => (HttpMethod.Post, "/v1/fiscal-reports/annex-e/e1/workbooks", "fiscal_annex_e.generate", new
+            {
+                operationKey = request.OperationKey,
+                sitePosServerId = endpoint.SitePosServerId,
+                fiscalIdentityId = endpoint.FiscalIdentityId,
+                currencyCode = endpoint.CurrencyCode,
+                calendarYear = RequireCalendarPart(request.CalendarYear, 2000, 9999, "year"),
+                calendarMonth = RequireCalendarPart(request.CalendarMonth, 1, 12, "month"),
+                profile = AnnexE1Profile
+            }),
+            FiscalReportingGatewayAction.AnnexE1Read => (HttpMethod.Get, $"/v1/fiscal-reports/annex-e/e1/workbooks/{RequireGuid(request.WorkbookId, "workbook"):D}", "fiscal_annex_e.read", null),
+            FiscalReportingGatewayAction.AnnexE1Download => (HttpMethod.Get, $"/v1/fiscal-reports/annex-e/e1/workbooks/{RequireGuid(request.WorkbookId, "workbook"):D}/content", "fiscal_annex_e.export", null),
             _ => throw new InvalidOperationException("Unsupported fiscal reporting gateway action.")
         };
         var outbound=Build(endpoint,method,path,permission,request.CorrelationId);
@@ -140,6 +168,9 @@ public sealed class HttpFiscalReportingPosServerGateway(
     private static string RequireReference(FiscalReportingGatewayRequest r)=>!string.IsNullOrWhiteSpace(r.ReportReference)?r.ReportReference.Trim():throw new ArgumentException("Report reference is required.");
     private static Guid RequirePeriodId(FiscalReportingGatewayRequest r)=>r.FiscalReportingPeriodId is { } value&&value!=Guid.Empty?value:throw new ArgumentException("Fiscal reporting period is required.");
     private static long RequireExpectedStateVersion(FiscalReportingGatewayRequest r)=>r.ExpectedStateVersion is >0? r.ExpectedStateVersion.Value:throw new ArgumentException("Expected fiscal-period state version is required.");
+    private static Guid RequireGuid(Guid? value,string name)=>value is { } id&&id!=Guid.Empty?id:throw new ArgumentException($"A valid {name} identifier is required.");
+    private static string RequireGoverningZReference(FiscalReportingGatewayRequest r)=>!string.IsNullOrWhiteSpace(r.GoverningZReadingReference)?r.GoverningZReadingReference.Trim():throw new ArgumentException("The governing Z Reading reference is required.");
+    private static int RequireCalendarPart(int? value,int minimum,int maximum,string name)=>value.HasValue&&value.Value>=minimum&&value.Value<=maximum?value.Value:throw new ArgumentException($"A valid calendar {name} is required.");
     private static FiscalReportingGatewayResponse Failure(int status,string code,bool retryable)=>new(status,"application/json; charset=utf-8",Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new{succeeded=false,code,message="The authoritative fiscal reporting operation could not be completed."})),code,Retryable:retryable);
     private sealed record ResolvedEndpoint(Uri BaseUri,Guid SitePosServerId,Guid FiscalIdentityId,string CurrencyCode,string ApiKey);
 }
