@@ -15,6 +15,7 @@
     "GET /bir-sales-summaries/{summaryId}",
     "GET /bir-sales-summaries/{summaryId}/download?format=json|csv",
     "POST /annex-e/e1/workbooks",
+    "GET /annex-e/e1/workbooks/current",
     "GET /annex-e/e1/workbooks/{workbookId}",
     "GET /annex-e/e1/workbooks/{workbookId}/download"
   ],

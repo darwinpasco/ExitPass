@@ -150,6 +150,7 @@ export interface BirSalesSummary {
 export interface AnnexE1Workbook {
     workbookId: string;
     annexEReference: string;
+    revision: number;
     calendarYear: number;
     calendarMonth: number;
     currencyCode: string;
@@ -225,6 +226,7 @@ export interface OperatorFiscalReportingClient {
     readBirSalesSummary(site: string, summaryId: string): Promise<BirSalesSummary>;
     birSalesSummaryUrl(site: string, summaryId: string, format: "json" | "csv"): string;
     generateAnnexE1(site: string, calendarYear: number, calendarMonth: number): Promise<AnnexE1Workbook>;
+    readCurrentAnnexE1(site: string, calendarYear: number, calendarMonth: number): Promise<AnnexE1Workbook | undefined>;
     readAnnexE1(site: string, workbookId: string): Promise<AnnexE1Workbook>;
     annexE1Url(site: string, workbookId: string): string;
 }
@@ -420,6 +422,30 @@ export function createOperatorFiscalReportingClient(
             );
             return annexWorkbook(rec(value.workbook));
         },
+        async readCurrentAnnexE1(s, calendarYear, calendarMonth) {
+            const query = new URLSearchParams({
+                calendarYear: String(calendarYear),
+                calendarMonth: String(calendarMonth),
+            });
+            const response = await fetchImpl(
+                p(s, `/annex-e/e1/workbooks/current?${query}`),
+                {
+                    credentials: "same-origin",
+                    cache: "no-store",
+                    headers: {
+                        Accept: "application/json",
+                        "X-Correlation-Id": crypto.randomUUID(),
+                    },
+                },
+            );
+            const value = await responseJson(response);
+            if (response.status === 404) return undefined;
+            if (!response.ok)
+                throw new Error(
+                    safeErrorMessage(value) || "Annex E-1 current workbook could not be loaded.",
+                );
+            return annexWorkbook(rec(rec(value).workbook));
+        },
         async readAnnexE1(s, workbookId) {
             const value = await json(p(s, `/annex-e/e1/workbooks/${encodeURIComponent(workbookId)}`));
             return annexWorkbook(rec(value.workbook));
@@ -514,6 +540,7 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
     const workbook: AnnexE1Workbook = {
         workbookId: "94000000-0000-4000-8000-000000000001",
         annexEReference: "ANNEX-E1-202609-001",
+        revision: 1,
         calendarYear: 2026,
         calendarMonth: 9,
         currencyCode: "PHP",
@@ -579,6 +606,7 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
         birSalesSummaryUrl: (s, id, format) =>
             `/v1/ops/operator-console/fiscal-reporting/sites/${s}/bir-sales-summaries/${id}/download?format=${format}`,
         generateAnnexE1: async () => workbook,
+        readCurrentAnnexE1: async () => workbook,
         readAnnexE1: async () => workbook,
         annexE1Url: (s, id) =>
             `/v1/ops/operator-console/fiscal-reporting/sites/${s}/annex-e/e1/workbooks/${id}/download`,
@@ -632,6 +660,7 @@ function annexWorkbook(value: Record<string, unknown>): AnnexE1Workbook {
     return {
         workbookId: str(value.workbookId),
         annexEReference: str(value.annexEReference),
+        revision: num(value.revision),
         calendarYear: num(value.calendarYear),
         calendarMonth: num(value.calendarMonth),
         currencyCode: str(value.currencyCode),

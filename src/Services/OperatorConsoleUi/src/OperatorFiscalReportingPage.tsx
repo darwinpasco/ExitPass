@@ -30,6 +30,8 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
   const [summary, setSummary] = useState<BirSalesSummary>();
   const [annexMonth, setAnnexMonth] = useState("");
   const [annexWorkbook, setAnnexWorkbook] = useState<AnnexE1Workbook>();
+  const [annexLookupComplete, setAnnexLookupComplete] = useState(false);
+  const [annexLoading, setAnnexLoading] = useState(false);
   const [birError, setBirError] = useState<string>();
   const [annexError, setAnnexError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -134,6 +136,33 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     setSelectedZReference(committed?.reportReference ?? "");
     setAnnexMonth(committed?.businessDayDate.slice(0, 7) ?? "");
   }, [z]);
+  useEffect(() => {
+    const match = /^(\d{4})-(\d{2})$/.exec(annexMonth);
+    setAnnexWorkbook(undefined);
+    setAnnexError(undefined);
+    setAnnexLookupComplete(false);
+    if (!siteId || !match) {
+      setAnnexLoading(false);
+      return;
+    }
+    let active = true;
+    setAnnexLoading(true);
+    void client.readCurrentAnnexE1(siteId, Number(match[1]), Number(match[2]))
+      .then((workbook) => {
+        if (!active) return;
+        setAnnexWorkbook(workbook);
+        setAnnexLookupComplete(true);
+      })
+      .catch((cause) => {
+        if (!active) return;
+        setAnnexError(operationMessage(cause, "Annex E-1 current workbook could not be loaded."));
+        setAnnexLookupComplete(true);
+      })
+      .finally(() => {
+        if (active) setAnnexLoading(false);
+      });
+    return () => { active = false; };
+  }, [client, siteId, annexMonth]);
 
   function changeSite(nextSiteId: string) {
     setStart("");
@@ -147,6 +176,8 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     setSummary(undefined);
     setAnnexMonth("");
     setAnnexWorkbook(undefined);
+    setAnnexLookupComplete(false);
+    setAnnexLoading(false);
     setBirError(undefined);
     setAnnexError(undefined);
     setEjError(undefined);
@@ -268,12 +299,20 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     setAnnexError(undefined);
     try {
       setAnnexWorkbook(await client.generateAnnexE1(siteId, Number(match[1]), Number(match[2])));
+      setAnnexLookupComplete(true);
     } catch (cause) {
       setAnnexWorkbook(undefined);
       setAnnexError(operationMessage(cause, "Annex E-1 is unavailable because its governed accounting prerequisites are incomplete."));
     } finally {
       setBusy(false);
     }
+  }
+
+  function changeAnnexMonth(value: string) {
+    setAnnexWorkbook(undefined);
+    setAnnexError(undefined);
+    setAnnexLookupComplete(false);
+    setAnnexMonth(value);
   }
 
   if (!siteReferences.length) return <NoAuthorizedSite message="Your operator session has no Site scope." />;
@@ -328,8 +367,10 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
           onRead={() => void readBirSalesSummary()}
           summaryUrl={(format) => summary ? client.birSalesSummaryUrl(siteId, summary.birSalesSummaryReportId, format) : "#"}
           annexMonth={annexMonth}
-          onAnnexMonthChange={setAnnexMonth}
+          onAnnexMonthChange={changeAnnexMonth}
           annexWorkbook={annexWorkbook}
+          annexLookupComplete={annexLookupComplete}
+          annexLoading={annexLoading}
           annexError={annexError}
           onGenerateAnnex={() => void generateAnnexE1()}
           annexUrl={annexWorkbook ? client.annexE1Url(siteId, annexWorkbook.workbookId) : "#"}
@@ -339,7 +380,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
 }
 
 function BirSalesSummaryPanel({ zHistory, selectedZReference, onSelectZ, summaryId, onSummaryIdChange, summary, error,
-  canGenerate, busy, onGenerate, onRead, summaryUrl, annexMonth, onAnnexMonthChange, annexWorkbook, annexError,
+  canGenerate, busy, onGenerate, onRead, summaryUrl, annexMonth, onAnnexMonthChange, annexWorkbook, annexLookupComplete, annexLoading, annexError,
   onGenerateAnnex, annexUrl }: {
   zHistory?: History;
   selectedZReference: string;
@@ -356,6 +397,8 @@ function BirSalesSummaryPanel({ zHistory, selectedZReference, onSelectZ, summary
   annexMonth: string;
   onAnnexMonthChange: (value: string) => void;
   annexWorkbook?: AnnexE1Workbook;
+  annexLookupComplete: boolean;
+  annexLoading: boolean;
   annexError?: string;
   onGenerateAnnex: () => void;
   annexUrl: string;
@@ -409,7 +452,7 @@ function BirSalesSummaryPanel({ zHistory, selectedZReference, onSelectZ, summary
         <SummaryValue label="Generated (PHT)" value={formatPhtInstant(summary.generatedAt)} />
       </dl>
       <div className="reportFilters"><a className="primaryButton" href={summaryUrl("json")}>Download JSON</a><a className="primaryButton" href={summaryUrl("csv")}>Download CSV</a></div>
-      <section aria-labelledby="annex-e1-title"><h4 id="annex-e1-title">Annex E-1</h4><p>Monthly deterministic BIR Sales Summary workbook from POS authority.</p><div className="reportFilters"><label>Calendar month<input type="month" aria-label="Annex E-1 calendar month" value={annexMonth} onChange={(event) => onAnnexMonthChange(event.target.value)} /></label><button type="button" onClick={onGenerateAnnex} disabled={!canGenerate || busy || !annexMonth}>Generate Annex E-1</button>{annexWorkbook && <a className="primaryButton" href={annexUrl}>Download Annex E-1</a>}</div>{annexError && <p className="errorMessage" role="alert">{annexError}</p>}{annexWorkbook && <p role="status">{annexWorkbook.annexEReference} is ready ({annexWorkbook.fileName}).</p>}</section>
+      <section aria-labelledby="annex-e1-title"><h4 id="annex-e1-title">Annex E-1</h4><p>Monthly deterministic BIR Sales Summary workbook from POS authority.</p><div className="reportFilters"><label>Calendar month<input type="month" aria-label="Annex E-1 calendar month" value={annexMonth} onChange={(event) => onAnnexMonthChange(event.target.value)} /></label>{annexLookupComplete && !annexWorkbook && !annexError && <button type="button" onClick={onGenerateAnnex} disabled={!canGenerate || busy || annexLoading || !annexMonth}>Generate Annex E-1</button>}{annexWorkbook && <a className="primaryButton" href={annexUrl}>Download XLSX</a>}</div>{annexLoading && <p role="status">Loading current Annex E-1 workbook...</p>}{annexError && <p className="errorMessage" role="alert">{annexError}</p>}{annexLookupComplete && !annexWorkbook && !annexError && <p role="status">No Annex E-1 workbook has been generated for this month.</p>}{annexWorkbook && <p role="status">Current Annex E-1: {annexWorkbook.annexEReference}, revision {annexWorkbook.revision}, generated {formatPhtInstant(annexWorkbook.generatedAt)} PHT ({annexWorkbook.fileName}).</p>}</section>
     </>}
   </div>;
 }

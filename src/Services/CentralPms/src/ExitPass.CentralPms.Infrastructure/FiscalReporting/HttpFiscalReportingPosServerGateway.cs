@@ -121,6 +121,9 @@ public sealed class HttpFiscalReportingPosServerGateway(
                 calendarMonth = RequireCalendarPart(request.CalendarMonth, 1, 12, "month"),
                 profile = AnnexE1Profile
             }),
+            FiscalReportingGatewayAction.AnnexE1CurrentRead => (HttpMethod.Get,
+                $"/v1/fiscal-reports/annex-e/e1/workbooks/current?{scope}&calendarYear={RequireCalendarPart(request.CalendarYear, 2000, 9999, "year")}&calendarMonth={RequireCalendarPart(request.CalendarMonth, 1, 12, "month")}&profile={Uri.EscapeDataString(AnnexE1Profile)}",
+                "fiscal_annex_e.read", null),
             FiscalReportingGatewayAction.AnnexE1Read => (HttpMethod.Get, $"/v1/fiscal-reports/annex-e/e1/workbooks/{RequireGuid(request.WorkbookId, "workbook"):D}", "fiscal_annex_e.read", null),
             FiscalReportingGatewayAction.AnnexE1Download => (HttpMethod.Get, $"/v1/fiscal-reports/annex-e/e1/workbooks/{RequireGuid(request.WorkbookId, "workbook"):D}/content", "fiscal_annex_e.export", null),
             _ => throw new InvalidOperationException("Unsupported fiscal reporting gateway action.")

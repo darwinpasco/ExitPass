@@ -104,6 +104,9 @@ public static class FiscalReportingEndpoints
         group.MapPost("/annex-e/e1/workbooks", (Guid siteId,GenerateAnnexE1WorkbookRequest body,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,IAntiforgery antiforgery,CancellationToken ct)=>
             GenerateAnnexE1Async(siteId,operatorScoped,body,request,gateway,references,rbac,logs,antiforgery,ct))
             .WithMetadata(new ReconciliationPolicyMetadata(BirGeneratePolicy));
+        group.MapGet("/annex-e/e1/workbooks/current", (Guid siteId,int calendarYear,int calendarMonth,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
+            Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.AnnexE1CurrentRead,null,null,null,null,null,false,ct,calendarYear:calendarYear,calendarMonth:calendarMonth))
+            .WithMetadata(new ReconciliationPolicyMetadata(BirReadPolicy));
         group.MapGet("/annex-e/e1/workbooks/{workbookId:guid}", (Guid siteId,Guid workbookId,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
             Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.AnnexE1Read,null,null,null,null,null,false,ct,workbookId:workbookId))
             .WithMetadata(new ReconciliationPolicyMetadata(BirReadPolicy));

@@ -49,6 +49,28 @@ describe("Operator fiscal-reporting HTTP client", () => {
       "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/annex-e/e1/workbooks/workbook-1/download"
     );
   });
+
+  it("reads the current Annex E-1 by Site and month and treats 404 as no current workbook", async () => {
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      succeeded: true,
+      workbook: workbookPayload()
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch, () => "csrf-token");
+
+    const current = await client.readCurrentAnnexE1("SITE-PITX", 2026, 10);
+    expect(current?.workbookId).toBe("613af721-3b65-4bc4-9ce3-d2a032c26ab3");
+    expect(current?.revision).toBe(2);
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/annex-e/e1/workbooks/current?calendarYear=2026&calendarMonth=10"
+    );
+    expect(fetchImpl.mock.calls[0][1]?.method).toBeUndefined();
+
+    fetchImpl.mockResolvedValueOnce(new Response(JSON.stringify({
+      succeeded: false,
+      code: "annex_e1_not_found"
+    }), { status: 404, headers: { "Content-Type": "application/json" } }));
+    await expect(client.readCurrentAnnexE1("SITE-PITX", 2026, 11)).resolves.toBeUndefined();
+  });
   it("maps a plain-text upstream exception response to a controlled operation error", async () => {
     const fetchImpl = vi.fn(async () => new Response(
       "ExitPass.PosServer.Runtime.InternalException: private stack trace",
@@ -161,5 +183,19 @@ function summaryPayload() {
     generatedAt: "2026-09-10T08:16:00Z",
     reportStatus: "COMMITTED",
     supportReference: "BIRSS-TEST"
+  };
+}
+
+function workbookPayload() {
+  return {
+    workbookId: "613af721-3b65-4bc4-9ce3-d2a032c26ab3",
+    annexEReference: "AE1-202610-2AA202E51C8398A1-R002",
+    revision: 2,
+    calendarYear: 2026,
+    calendarMonth: 10,
+    currencyCode: "PHP",
+    fileName: "annex-e1-2026-10.xlsx",
+    generatedAt: "2026-10-16T08:00:00Z",
+    status: "COMMITTED"
   };
 }

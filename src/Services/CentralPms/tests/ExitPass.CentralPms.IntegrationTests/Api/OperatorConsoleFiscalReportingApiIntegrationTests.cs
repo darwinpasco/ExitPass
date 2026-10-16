@@ -440,6 +440,34 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         gateway.Requests[1].WorkbookId.Should().Be(workbookId);
     }
 
+    [Fact]
+    public async Task AnnexE1CurrentWorkbookReadIsSiteScopedAndPreservesNoCurrent()
+    {
+        var workbookId = Guid.Parse("613af721-3b65-4bc4-9ce3-d2a032c26ab3");
+        var gateway = new FakeGateway(request => request.CalendarMonth == 10
+            ? Response(200, $"{{\"succeeded\":true,\"workbook\":{{\"workbookId\":\"{workbookId:D}\",\"revision\":2}}}}")
+            : Response(404, "{\"succeeded\":false,\"code\":\"annex_e1_not_found\"}"));
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+
+        using var current = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks/current?calendarYear=2026&calendarMonth=10");
+        using var missing = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks/current?calendarYear=2026&calendarMonth=11");
+        using var crossSite = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{OtherSiteId:D}/annex-e/e1/workbooks/current?calendarYear=2026&calendarMonth=10");
+
+        current.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await current.Content.ReadAsStringAsync()).Should().Contain(workbookId.ToString("D")).And.Contain("\"revision\":2");
+        missing.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        crossSite.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        gateway.Requests.Should().HaveCount(2);
+        gateway.Requests.Should().OnlyContain(request =>
+            request.Action == FiscalReportingGatewayAction.AnnexE1CurrentRead &&
+            request.SiteId == SiteId &&
+            request.CalendarYear == 2026);
+    }
+
     private static string EjUrl(Guid siteId, string identifier) =>
         $"/v1/ops/operator-console/fiscal-reporting/sites/{siteId:D}/electronic-journal" +
         $"?periodStart=2026-09-23T00%3A00%3A00Z&periodEnd=2026-09-25T00%3A00%3A00Z&search={Uri.EscapeDataString(identifier)}";
