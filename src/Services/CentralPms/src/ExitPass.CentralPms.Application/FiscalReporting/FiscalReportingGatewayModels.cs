@@ -11,7 +11,14 @@ public enum FiscalReportingGatewayAction
     ZCloseablePeriods,
     ZClosePeriod,
     ZGenerate,
-    ZDownload
+    ZDownload,
+    BirSalesSummaryGenerate,
+    BirSalesSummaryRead,
+    BirSalesSummaryDownloadJson,
+    BirSalesSummaryDownloadCsv,
+    AnnexE1Generate,
+    AnnexE1Read,
+    AnnexE1Download
 }
 
 public sealed record FiscalReportingGatewayRequest(
@@ -25,7 +32,12 @@ public sealed record FiscalReportingGatewayRequest(
     string? OperationKey = null,
     string? ReportReference = null,
     Guid? FiscalReportingPeriodId = null,
-    long? ExpectedStateVersion = null);
+    long? ExpectedStateVersion = null,
+    Guid? SummaryId = null,
+    Guid? WorkbookId = null,
+    string? GoverningZReadingReference = null,
+    int? CalendarYear = null,
+    int? CalendarMonth = null);
 
 public sealed record FiscalReportingGatewayResponse(
     int HttpStatusCode,
@@ -33,7 +45,8 @@ public sealed record FiscalReportingGatewayResponse(
     byte[] Body,
     string Code,
     string? FileName = null,
-    bool Retryable = false);
+    bool Retryable = false,
+    string? ContentSha256 = null);
 
 public interface IFiscalReportingPosServerGateway
 {

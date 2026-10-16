@@ -179,7 +179,7 @@ describe("Operator Console fiscal reporting", () => {
     client.readCloseablePeriods = vi.fn()
       .mockResolvedValueOnce(initialCloseable)
       .mockResolvedValue({ fiscalBusinessDates: [] });
-    client.closeBusinessDate = vi.fn(async () => undefined);
+    client.closeBusinessDate = vi.fn(async () => ({ birSalesSummaryCompletion: { status: "COMMITTED" as const, summaryId: "summary-1", code: "bir_sales_summary_committed", retryable: false } }));
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
     await userEvent.click(await screen.findByRole("tab", { name: "Z Reading" }));
     await userEvent.click(screen.getByRole("button", { name: "Close Business Date" }));
@@ -193,6 +193,24 @@ describe("Operator Console fiscal reporting", () => {
     await userEvent.click(screen.getByRole("alertdialog", { name: "Confirm Fiscal Business Date close" }).querySelector("button.dangerButton")!);
     await waitFor(() => expect(client.closeBusinessDate).toHaveBeenCalledWith("SITE-PITX", expect.objectContaining({ fiscalBusinessDate: "2026-09-10", expectedStateVersion: 14 })));
     expect(await screen.findByText("Fiscal Business Date 2026-09-10 closed for PITX Test Site.")).toBeInTheDocument();
+  });
+
+  it("reports BIR Summary pending without reporting the committed Z close as failed", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    const initialCloseable = await client.readCloseablePeriods("SITE-PITX");
+    client.readCloseablePeriods = vi.fn()
+      .mockResolvedValueOnce(initialCloseable)
+      .mockResolvedValue({ fiscalBusinessDates: [] });
+    client.closeBusinessDate = vi.fn(async () => ({ birSalesSummaryCompletion: { status: "PENDING" as const, code: "bir_sales_summary_persistence_failed", retryable: true } }));
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Z Reading" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close Business Date" }));
+    await userEvent.click(screen.getByRole("alertdialog", { name: "Confirm Fiscal Business Date close" }).querySelector("button.dangerButton")!);
+
+    expect(await screen.findByText("Fiscal Business Date 2026-09-10 closed for PITX Test Site.")).toBeInTheDocument();
+    expect(screen.getByText("Fiscal Business Date closed and Z Reading committed. BIR Sales Summary is pending and can be retried from BIR Sales Summary.")).toBeInTheDocument();
+    expect(screen.queryByText(/Z Reading.*failed/i)).not.toBeInTheDocument();
   });
 
   it("confirms and closes all POS-returned periods for only the current Site", async () => {
@@ -216,7 +234,7 @@ describe("Operator Console fiscal reporting", () => {
         reportReference: `Z-BATCH-${index + 1}`
       }))
     }));
-    client.closeAllBusinessDates = vi.fn(async () => ({ succeeded: true, closedCount: 3 }));
+    client.closeAllBusinessDates = vi.fn(async () => ({ succeeded: true, closedCount: 3, birSalesSummaryPendingCount: 0 }));
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
 
     await userEvent.click(await screen.findByRole("tab", { name: "Z Reading" }));
@@ -236,6 +254,70 @@ describe("Operator Console fiscal reporting", () => {
     expect(await screen.findByText("Z-20260910-001")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Generate Z Reading" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Close Business Date" })).not.toBeInTheDocument();
+  });
+
+  it("generates and presents the POS-authoritative BIR Sales Summary without recalculation", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    client.generateBirSalesSummary = vi.fn(client.generateBirSalesSummary);
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
+    expect(await screen.findByLabelText("Closed Fiscal Business Date")).toHaveValue("Z-20260910-001");
+    await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
+
+    await waitFor(() => expect(client.generateBirSalesSummary).toHaveBeenCalledWith(
+      "SITE-PITX",
+      expect.objectContaining({ reportReference: "Z-20260910-001", reportStatus: "COMMITTED" })
+    ));
+    expect(screen.getByLabelText("BIR Sales Summary values")).toHaveTextContent("Gross Sales₱112.00");
+    expect(screen.getByLabelText("BIR Sales Summary values")).toHaveTextContent("Previous Grand Total Amount₱1,000.00");
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute("href", expect.stringContaining("format=json"));
+    expect(screen.getByRole("link", { name: "Download CSV" })).toHaveAttribute("href", expect.stringContaining("format=csv"));
+  });
+
+  it("does not permit BIR summary generation while only an open fiscal business date exists", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    const history = await client.readZ("SITE-PITX");
+    client.readZ = vi.fn(async () => ({ currentPeriod: history.currentPeriod, readings: [] }));
+    client.generateBirSalesSummary = vi.fn(client.generateBirSalesSummary);
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
+
+    expect(screen.getByText("The BIR Sales Summary can be generated after the fiscal business date has been closed and its Z Reading has been committed.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Generate / View Summary" })).not.toBeInTheDocument();
+    expect(client.generateBirSalesSummary).not.toHaveBeenCalled();
+  });
+
+  it("offers the POS Annex E-1 workbook only after an authoritative summary is available", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    client.generateAnnexE1 = vi.fn(client.generateAnnexE1);
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
+    expect(screen.queryByRole("button", { name: "Generate Annex E-1" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Generate Annex E-1" }));
+
+    await waitFor(() => expect(client.generateAnnexE1).toHaveBeenCalledWith("SITE-PITX", 2026, 9));
+    expect(await screen.findByRole("link", { name: "Download Annex E-1" })).toHaveAttribute("href", expect.stringContaining("/annex-e/e1/workbooks/"));
+  });
+
+  it("shows the safe POS failure when Annex E-1 accounting prerequisites are missing", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    client.generateAnnexE1 = vi.fn(async () => {
+      throw new Error("Annex E-1 requires complete authoritative accounting facts for the selected month.");
+    });
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
+    await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Generate Annex E-1" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Annex E-1 requires complete authoritative accounting facts for the selected month."
+    );
+    expect(screen.queryByRole("link", { name: "Download Annex E-1" })).not.toBeInTheDocument();
   });
 });
 

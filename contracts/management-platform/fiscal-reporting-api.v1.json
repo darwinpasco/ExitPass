@@ -10,7 +10,13 @@
     "GET /x-readings/{reportReference}/download",
     "GET /z-readings",
     "POST /z-readings",
-    "GET /z-readings/{reportReference}/download"
+    "GET /z-readings/{reportReference}/download",
+    "POST /bir-sales-summaries",
+    "GET /bir-sales-summaries/{summaryId}",
+    "GET /bir-sales-summaries/{summaryId}/download?format=json|csv",
+    "POST /annex-e/e1/workbooks",
+    "GET /annex-e/e1/workbooks/{workbookId}",
+    "GET /annex-e/e1/workbooks/{workbookId}/download"
   ],
   "routingFailures": ["missing_binding", "inactive_binding", "ambiguous_binding", "unavailable_pos", "invalid_period", "unauthorized_scope"],
   "zRequest": { "confirmClose": true, "periodSelectedByBrowser": false, "sequenceSelectedByBrowser": false },
