@@ -19,7 +19,9 @@
     "GET /annex-e/e1/workbooks/{workbookId}",
     "GET /annex-e/e1/workbooks/{workbookId}/download?format=xlsx|pdf",
     "GET /monthly-esales?calendarYear={year}&calendarMonth={month}",
-    "GET /monthly-esales/download?calendarYear={year}&calendarMonth={month}&format=json|csv|pdf"
+    "GET /monthly-esales/download?calendarYear={year}&calendarMonth={month}&format=json|csv|pdf",
+    "GET /audit-trail?from={timestamp}&to={timestamp}[&actionCode={code}][&actor={actor}][&result={result}][&reference={reference}]",
+    "GET /audit-trail/download?from={timestamp}&to={timestamp}&format=pdf|csv|json[&actionCode={code}][&actor={actor}][&result={result}][&reference={reference}]"
   ],
   "routingFailures": ["missing_binding", "inactive_binding", "ambiguous_binding", "unavailable_pos", "invalid_period", "unauthorized_scope"],
   "zRequest": { "confirmClose": true, "periodSelectedByBrowser": false, "sequenceSelectedByBrowser": false },

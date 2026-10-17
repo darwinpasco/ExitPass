@@ -25,7 +25,9 @@ public enum FiscalReportingGatewayAction
     MonthlyESalesRead,
     MonthlyESalesDownloadJson,
     MonthlyESalesDownloadCsv,
-    MonthlyESalesDownloadPdf
+    MonthlyESalesDownloadPdf,
+    AuditTrailRead,
+    AuditTrailDownload
 }
 
 public sealed record FiscalReportingGatewayRequest(
@@ -45,7 +47,11 @@ public sealed record FiscalReportingGatewayRequest(
     string? GoverningZReadingReference = null,
     int? CalendarYear = null,
     int? CalendarMonth = null,
-    string? ExportFormat = null);
+    string? ExportFormat = null,
+    string? ActionCode = null,
+    string? ActorFilter = null,
+    string? ResultFilter = null,
+    string? ReferenceFilter = null);
 
 public sealed record FiscalReportingGatewayResponse(
     int HttpStatusCode,

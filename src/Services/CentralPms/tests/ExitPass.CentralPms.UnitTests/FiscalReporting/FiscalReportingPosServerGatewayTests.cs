@@ -318,6 +318,67 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
     }
 
     [Fact]
+    public async Task AuditTrailReadUsesServerResolvedSiteScopeNarrowPermissionAndEncodedFilters()
+    {
+        var handler = new CaptureHandler(_ => Json("{\"succeeded\":true,\"report\":{\"rows\":[]}}"));
+        await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.AuditTrailRead) with
+            {
+                PeriodStart = DateTimeOffset.Parse("2026-10-16T16:00:00Z"),
+                PeriodEnd = DateTimeOffset.Parse("2026-10-17T16:00:00Z"),
+                ActionCode = "fiscal_document_committed",
+                ActorFilter = "System User",
+                ResultFilter = "ALLOWED",
+                ReferenceFilter = "SI-00000116"
+            });
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/v1/fiscal-reports/audit-trail/", request.RequestUri!.AbsolutePath);
+        Assert.Contains($"sitePosServerId={Pos:D}", request.RequestUri.Query);
+        Assert.DoesNotContain(Identity.ToString("D"), request.RequestUri.Query, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("from=2026-10-16T16%3A00%3A00.0000000%2B00%3A00", request.RequestUri.Query);
+        Assert.Contains("to=2026-10-17T16%3A00%3A00.0000000%2B00%3A00", request.RequestUri.Query);
+        Assert.Contains("actionCode=fiscal_document_committed", request.RequestUri.Query);
+        Assert.Contains("actor=System%20User", request.RequestUri.Query);
+        Assert.Contains("result=ALLOWED", request.RequestUri.Query);
+        Assert.Contains("reference=SI-00000116", request.RequestUri.Query);
+        Assert.Equal("fiscal_audit_trail.read", Header(request, "X-PosServer-Admin-Permission"));
+        Assert.Equal("pos-secret", Header(request, "X-PosServer-Admin-Key"));
+    }
+
+    [Theory]
+    [InlineData("pdf", "application/pdf")]
+    [InlineData("csv", "text/csv")]
+    [InlineData("json", "application/json")]
+    public async Task AuditTrailExportsProxyAuthoritativeBytesAndMetadata(string format, string contentType)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Encoding.UTF8.GetBytes($"audit-{format}"))
+        };
+        response.Content.Headers.ContentType = new(contentType);
+        response.Content.Headers.ContentDisposition = new("attachment") { FileName = $"audit-trail-20261017-20261017.{format}" };
+        response.Headers.Add("X-Content-SHA256", "audit-hash");
+        var handler = new CaptureHandler(_ => response);
+
+        var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.AuditTrailDownload) with
+            {
+                PeriodStart = DateTimeOffset.Parse("2026-10-16T16:00:00Z"),
+                PeriodEnd = DateTimeOffset.Parse("2026-10-17T16:00:00Z"),
+                ExportFormat = format
+            });
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/v1/fiscal-reports/audit-trail/download", request.RequestUri!.AbsolutePath);
+        Assert.Contains("format=" + format, request.RequestUri.Query);
+        Assert.Equal("fiscal_audit_trail.export", Header(request, "X-PosServer-Admin-Permission"));
+        Assert.Equal($"audit-trail-20261017-20261017.{format}", result.FileName);
+        Assert.Equal("audit-hash", result.ContentSha256);
+        Assert.Equal(Encoding.UTF8.GetBytes($"audit-{format}"), result.Body);
+    }
+
+    [Fact]
     public async Task UnavailablePosFailsCleanlyAndIsRetryable()
     {
         var gateway = Gateway(new ThrowingHandler(), OptionsFor(Endpoint(Site, "https://site-a.example/")));

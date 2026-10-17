@@ -109,6 +109,34 @@ describe("Operator Console fiscal reporting", () => {
     expect(screen.queryByRole("link", { name: "Print / download" })).not.toBeInTheDocument();
   });
 
+  it("renders the bounded Audit Trail, exact sample column order, filters, downloads, and action legend", async () => {
+    const client = createPitxFiscalReportingClient();
+    client.readAuditTrail = vi.fn(client.readAuditTrail);
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Audit Trail" }));
+    expect(screen.getByLabelText("Audit Trail from PHT")).toHaveAttribute("type", "datetime-local");
+    expect(screen.getByLabelText("Audit Trail to PHT")).toHaveAttribute("type", "datetime-local");
+    await userEvent.selectOptions(screen.getByLabelText("Audit Trail result"), "ALLOWED");
+    await userEvent.type(screen.getByLabelText("Audit Trail user or actor"), "System");
+    await userEvent.type(screen.getByLabelText("Audit Trail SI or reference"), "SI-00000116");
+    await userEvent.click(screen.getByRole("button", { name: "View Audit Trail" }));
+
+    await waitFor(() => expect(client.readAuditTrail).toHaveBeenCalled());
+    const table = await screen.findByRole("table", { name: "Audit Trail" });
+    expect(within(table).getAllByRole("columnheader").map((item) => item.textContent)).toEqual([
+      "Date", "Terminal", "UserID", "User Role", "Action Category", "Action Description",
+      "SI No.", "Before Value", "After Value", "Reason/Remarks"
+    ]);
+    expect(within(table).getByText("SALES TRANSACTION")).toBeInTheDocument();
+    expect(within(table).getByText("SI-00000001")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Download PDF" })).toHaveAttribute("href", expect.stringContaining("format=pdf"));
+    expect(screen.getByRole("link", { name: "Download CSV" })).toHaveAttribute("href", expect.stringContaining("format=csv"));
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute("href", expect.stringContaining("format=json"));
+    expect(screen.getByText("Action Code Legend")).toBeInTheDocument();
+    expect(screen.getByText(/fiscal_document_committed - SALES TRANSACTION/)).toBeInTheDocument();
+  });
+
   it("shows the site-scoped authoritative Sales Invoice receipt without reconstructing it", async () => {
     render(<OperatorFiscalReportingPage client={createOperatorFiscalReportingFixture()} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
     const invoice = await screen.findByText("SI-00000001");

@@ -2116,6 +2116,13 @@ dd {
 .periodCard dt { font-size: .78rem; text-transform: uppercase; }
 .periodCard dd { margin: .25rem 0 0; }
 .tableViewport { max-width: 100%; width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+.auditDescription { margin: 0; min-width: 12rem; white-space: pre-wrap; font: inherit; }
+.auditLegend { margin-top: 1rem; border-top: 1px solid #d8dee8; padding-top: .75rem; }
+.auditLegend summary { cursor: pointer; font-weight: 700; }
+.auditLegend dl { display: grid; gap: .65rem; }
+.auditLegend dl div { display: grid; grid-template-columns: minmax(14rem, 1fr) 2fr; gap: 1rem; }
+.auditLegend dt { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+.auditLegend dd { margin: 0; }
 .zConfirmation { border: 2px solid #a11b1b; background: #fff1f1; padding: 1rem; border-radius: .6rem; }
 .dangerButton { background: #a11b1b; color: white; }
 .primaryButton { display: inline-flex; align-items: center; padding: .6rem .8rem; background: #173f6b; color: #fff; border-radius: .35rem; text-decoration: none; }
