@@ -200,6 +200,38 @@ export interface EjInvoice {
     issuedAt: string;
     printableText: string;
 }
+export interface AuditTrailActionDefinition {
+    code: string;
+    displayName: string;
+    definition: string;
+}
+export interface AuditTrailRow {
+    auditReference: string;
+    occurredAt: string;
+    terminal?: string;
+    userId?: string;
+    userRole?: string;
+    actionCode: string;
+    actionCategory: string;
+    actionDescription: string;
+    salesInvoiceNumber?: string;
+    beforeValue?: string;
+    afterValue?: string;
+    reasonRemarks?: string;
+    result: string;
+}
+export interface AuditTrailReport {
+    from: string;
+    to: string;
+    actionCodes: AuditTrailActionDefinition[];
+    rows: AuditTrailRow[];
+}
+export interface AuditTrailFilters {
+    actionCode?: string;
+    actor?: string;
+    result?: string;
+    reference?: string;
+}
 export interface FiscalReportingSite {
     siteId: string;
     siteCode: string;
@@ -243,6 +275,8 @@ export interface OperatorFiscalReportingClient {
         search?: string,
     ): Promise<EjInvoice[]>;
     ejUrl(site: string, start: string, end: string, search?: string): string;
+    readAuditTrail(site: string, start: string, end: string, filters?: AuditTrailFilters): Promise<AuditTrailReport>;
+    auditTrailUrl(site: string, start: string, end: string, format: "pdf" | "csv" | "json", filters?: AuditTrailFilters): string;
     readX(site: string): Promise<History>;
     generateX(site: string): Promise<void>;
     readZ(site: string): Promise<History>;
@@ -372,6 +406,15 @@ export function createOperatorFiscalReportingClient(
             const x = new URLSearchParams({ periodStart: a, periodEnd: b });
             if (q?.trim()) x.set("search", q.trim());
             return p(s, `/electronic-journal/download?${x}`);
+        },
+        async readAuditTrail(s, a, b, filters) {
+            const value = await json(p(s, `/audit-trail?${auditTrailQuery(a, b, filters)}`));
+            return auditTrailReport(rec(value.report));
+        },
+        auditTrailUrl(s, a, b, format, filters) {
+            const query = auditTrailQuery(a, b, filters);
+            query.set("format", format);
+            return p(s, `/audit-trail/download?${query}`);
         },
         async readX(s) {
             return hist(await json(p(s, "/x-readings")), "X_READING");
@@ -649,6 +692,28 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
         readEj: async () => [ej],
         ejUrl: (s) =>
             `/v1/ops/operator-console/fiscal-reporting/sites/${s}/electronic-journal/download`,
+        readAuditTrail: async () => ({
+            from: "2026-09-10T00:00:00Z",
+            to: "2026-09-11T00:00:00Z",
+            actionCodes: [{ code: "fiscal_document_committed", displayName: "SALES TRANSACTION", definition: "A Sales Invoice was committed." }],
+            rows: [{
+                auditReference: "EJ-0001",
+                occurredAt: "2026-09-10T01:00:00Z",
+                terminal: "PITX-L3-WEBPAY-01",
+                userId: "pos-server-fiscal-document-runtime",
+                userRole: "SYSTEM",
+                actionCode: "fiscal_document_committed",
+                actionCategory: "SALES TRANSACTION",
+                actionDescription: "Plate:ABC1234\nPayment:CASH",
+                salesInvoiceNumber: "SI-00000001",
+                beforeValue: "P 0.00",
+                afterValue: "P 112.00",
+                reasonRemarks: "-",
+                result: "SUCCESS",
+            }],
+        }),
+        auditTrailUrl: (s, a, b, format) =>
+            `/v1/ops/operator-console/fiscal-reporting/sites/${s}/audit-trail/download?from=${encodeURIComponent(a)}&to=${encodeURIComponent(b)}&format=${format}`,
         readX: async () => ({
             currentPeriod: period,
             readings: [r("X_READING")],
@@ -698,6 +763,45 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
         readMonthlyESales: async () => ({ status: "FINAL", report: monthlyESales }),
         monthlyESalesUrl: (s, year, month, format) =>
             `/v1/ops/operator-console/fiscal-reporting/sites/${s}/monthly-esales/download?calendarYear=${year}&calendarMonth=${month}&format=${format}`,
+    };
+}
+
+function auditTrailQuery(start: string, end: string, filters?: AuditTrailFilters) {
+    const query = new URLSearchParams({ from: start, to: end });
+    if (filters?.actionCode?.trim()) query.set("actionCode", filters.actionCode.trim());
+    if (filters?.actor?.trim()) query.set("actor", filters.actor.trim());
+    if (filters?.result?.trim()) query.set("result", filters.result.trim());
+    if (filters?.reference?.trim()) query.set("reference", filters.reference.trim());
+    return query;
+}
+
+function auditTrailReport(value: Record<string, unknown>): AuditTrailReport {
+    if (!Array.isArray(value.actionCodes) || !Array.isArray(value.rows)) throw bad();
+    return {
+        from: str(value.from),
+        to: str(value.to),
+        actionCodes: value.actionCodes.map((item) => {
+            const action = rec(item);
+            return { code: str(action.code), displayName: str(action.displayName), definition: str(action.definition) };
+        }),
+        rows: value.rows.map((item) => {
+            const row = rec(item);
+            return {
+                auditReference: str(row.auditReference),
+                occurredAt: str(row.occurredAt),
+                terminal: optionalString(row.terminal),
+                userId: optionalString(row.userId),
+                userRole: optionalString(row.userRole),
+                actionCode: str(row.actionCode),
+                actionCategory: str(row.actionCategory),
+                actionDescription: str(row.actionDescription),
+                salesInvoiceNumber: optionalString(row.salesInvoiceNumber),
+                beforeValue: optionalString(row.beforeValue),
+                afterValue: optionalString(row.afterValue),
+                reasonRemarks: optionalString(row.reasonRemarks),
+                result: str(row.result),
+            };
+        }),
     };
 }
 

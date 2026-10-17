@@ -140,6 +140,12 @@ public sealed class HttpFiscalReportingPosServerGateway(
             FiscalReportingGatewayAction.MonthlyESalesDownloadPdf => (HttpMethod.Get,
                 $"/v1/fiscal-reports/monthly-esales/download?{scope}&calendarYear={RequireCalendarPart(request.CalendarYear, 2000, 9999, "year")}&calendarMonth={RequireCalendarPart(request.CalendarMonth, 1, 12, "month")}&format=pdf",
                 "monthly_esales.export", null),
+            FiscalReportingGatewayAction.AuditTrailRead => (HttpMethod.Get,
+                $"/v1/fiscal-reports/audit-trail/?sitePosServerId={endpoint.SitePosServerId:D}{AuditTrailQuery(request)}",
+                "fiscal_audit_trail.read", null),
+            FiscalReportingGatewayAction.AuditTrailDownload => (HttpMethod.Get,
+                $"/v1/fiscal-reports/audit-trail/download?sitePosServerId={endpoint.SitePosServerId:D}{AuditTrailQuery(request)}&format={RequireAuditTrailFormat(request)}",
+                "fiscal_audit_trail.export", null),
             _ => throw new InvalidOperationException("Unsupported fiscal reporting gateway action.")
         };
         var outbound=Build(endpoint,method,path,permission,request.CorrelationId);
@@ -181,6 +187,25 @@ public sealed class HttpFiscalReportingPosServerGateway(
         if (value.StartsWith(correlationPrefix,StringComparison.OrdinalIgnoreCase))
             return $"&correlationReference={Uri.EscapeDataString(value[correlationPrefix.Length..].Trim())}";
         return $"&fiscalDocumentNumber={Uri.EscapeDataString(value)}";
+    }
+    private static string AuditTrailQuery(FiscalReportingGatewayRequest request)
+    {
+        if (request.PeriodStart is null || request.PeriodEnd is null) throw new ArgumentException("A bounded Audit Trail range is required.");
+        var query = new StringBuilder()
+            .Append("&from=").Append(Uri.EscapeDataString(request.PeriodStart.Value.ToUniversalTime().ToString("O")))
+            .Append("&to=").Append(Uri.EscapeDataString(request.PeriodEnd.Value.ToUniversalTime().ToString("O")));
+        Add("actionCode", request.ActionCode); Add("actor", request.ActorFilter); Add("result", request.ResultFilter); Add("reference", request.ReferenceFilter);
+        return query.ToString();
+
+        void Add(string name, string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value)) query.Append('&').Append(name).Append('=').Append(Uri.EscapeDataString(value.Trim()));
+        }
+    }
+    private static string RequireAuditTrailFormat(FiscalReportingGatewayRequest request)
+    {
+        var format = request.ExportFormat?.Trim().ToLowerInvariant();
+        return format is "pdf" or "csv" or "json" ? format : throw new ArgumentException("The Audit Trail export format is unsupported.");
     }
     private static string RequireReference(FiscalReportingGatewayRequest r)=>!string.IsNullOrWhiteSpace(r.ReportReference)?r.ReportReference.Trim():throw new ArgumentException("Report reference is required.");
     private static string RequireReadingExportFormat(FiscalReportingGatewayRequest r)

@@ -630,6 +630,84 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         request.SiteId.Should().Be(SiteId);
     }
 
+    [Fact]
+    public async Task AuditTrailReadIsBoundedSiteScopedAndPassesSafeFiltersOnly()
+    {
+        var gateway = new FakeGateway(_ => Response(200, "{\"succeeded\":true,\"report\":{\"rows\":[]}}"));
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+        var url = $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/audit-trail" +
+                  "?from=2026-10-16T16%3A00%3A00Z&to=2026-10-17T16%3A00%3A00Z" +
+                  "&actionCode=fiscal_document_committed&actor=System&result=ALLOWED&reference=SI-00000116" +
+                  $"&sitePosServerId={OtherSiteId:D}";
+
+        using var response = await client.GetAsync(url);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var request = gateway.Requests.Should().ContainSingle().Subject;
+        request.Action.Should().Be(FiscalReportingGatewayAction.AuditTrailRead);
+        request.SiteId.Should().Be(SiteId);
+        request.PeriodStart.Should().Be(DateTimeOffset.Parse("2026-10-16T16:00:00Z"));
+        request.PeriodEnd.Should().Be(DateTimeOffset.Parse("2026-10-17T16:00:00Z"));
+        request.ActionCode.Should().Be("fiscal_document_committed");
+        request.ActorFilter.Should().Be("System");
+        request.ResultFilter.Should().Be("ALLOWED");
+        request.ReferenceFilter.Should().Be("SI-00000116");
+    }
+
+    [Theory]
+    [InlineData("pdf", "application/pdf", "audit-trail-20261017-20261017.pdf")]
+    [InlineData("csv", "text/csv", "audit-trail-20261017-20261017.csv")]
+    [InlineData("json", "application/json", "audit-trail-20261017-20261017.json")]
+    public async Task AuditTrailDownloadPreservesAuthoritativeBytesAndMetadata(string format, string contentType, string fileName)
+    {
+        var bytes = Encoding.UTF8.GetBytes($"authoritative-audit-{format}");
+        var gateway = new FakeGateway(_ => new FiscalReportingGatewayResponse(200, contentType, bytes, "ok", fileName, ContentSha256: "audit-sha"));
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/audit-trail/download?from=2026-10-16T16%3A00%3A00Z&to=2026-10-17T16%3A00%3A00Z&format={format}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await response.Content.ReadAsByteArrayAsync()).Should().Equal(bytes);
+        response.Content.Headers.ContentType!.MediaType.Should().Be(contentType);
+        response.Content.Headers.ContentDisposition!.FileName!.Trim('"').Should().Be(fileName);
+        response.Headers.GetValues("X-Content-SHA256").Should().ContainSingle("audit-sha");
+        gateway.Requests.Should().ContainSingle().Which.Action.Should().Be(FiscalReportingGatewayAction.AuditTrailDownload);
+        gateway.Requests[0].ExportFormat.Should().Be(format);
+    }
+
+    [Theory]
+    [InlineData("/audit-trail")]
+    [InlineData("/audit-trail/download?format=pdf")]
+    public async Task AuditTrailRejectsUnboundedAndCrossSiteRequestsBeforeCallingPos(string suffix)
+    {
+        var gateway = new FakeGateway();
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+
+        using var unbounded = await client.GetAsync($"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}{suffix}");
+        using var crossSite = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{OtherSiteId:D}/audit-trail?from=2026-10-16T16%3A00%3A00Z&to=2026-10-17T16%3A00%3A00Z");
+
+        unbounded.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        crossSite.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        gateway.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AuditTrailDownloadRejectsUnsupportedFormatBeforeCallingPos()
+    {
+        var gateway = new FakeGateway();
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/audit-trail/download?from=2026-10-16T16%3A00%3A00Z&to=2026-10-17T16%3A00%3A00Z&format=xml");
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        gateway.Requests.Should().BeEmpty();
+    }
+
     private static string EjUrl(Guid siteId, string identifier) =>
         $"/v1/ops/operator-console/fiscal-reporting/sites/{siteId:D}/electronic-journal" +
         $"?periodStart=2026-09-23T00%3A00%3A00Z&periodEnd=2026-09-25T00%3A00%3A00Z&search={Uri.EscapeDataString(identifier)}";

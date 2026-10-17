@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import {
   fiscalReportingPermissions,
+  type AuditTrailFilters,
+  type AuditTrailReport,
   type AnnexE1Workbook,
   type BirSalesSummary,
   type CloseableFiscalBusinessDate,
@@ -18,11 +20,16 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
 }) {
   const [sites, setSites] = useState<FiscalReportingSite[]>();
   const [siteId, setSiteId] = useState("");
-  const [tab, setTab] = useState<"ej" | "x" | "z" | "bir" | "esales">("ej");
+  const [tab, setTab] = useState<"ej" | "audit" | "x" | "z" | "bir" | "esales">("ej");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [search, setSearch] = useState("");
   const [ej, setEj] = useState<EjInvoice[]>();
+  const [auditTrail, setAuditTrail] = useState<AuditTrailReport>();
+  const [auditAction, setAuditAction] = useState("");
+  const [auditActor, setAuditActor] = useState("");
+  const [auditResult, setAuditResult] = useState("");
+  const [auditReference, setAuditReference] = useState("");
   const [x, setX] = useState<History>();
   const [z, setZ] = useState<History>();
   const [closeablePeriods, setCloseablePeriods] = useState<CloseableFiscalBusinessDate[]>([]);
@@ -41,6 +48,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
   const [busy, setBusy] = useState(false);
   const [catalogError, setCatalogError] = useState<string>();
   const [ejError, setEjError] = useState<string>();
+  const [auditError, setAuditError] = useState<string>();
   const [xHistoryError, setXHistoryError] = useState<string>();
   const [xGenerateError, setXGenerateError] = useState<string>();
   const [zHistoryError, setZHistoryError] = useState<string>();
@@ -67,6 +75,29 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     } catch (cause) {
       setEjError(operationMessage(cause, "Electronic Journal could not be loaded."));
     }
+  }
+
+  async function loadAuditTrail() {
+    if (!siteId) return;
+    const range = phtRangeToUtc(start, end);
+    setAuditError(undefined);
+    setAuditTrail(undefined);
+    if (!range) {
+      setAuditError("Enter a valid PHT period start and end. The start must be before the end.");
+      return;
+    }
+    setBusy(true);
+    try {
+      setAuditTrail(await client.readAuditTrail(siteId, range.start, range.end, auditFilters()));
+    } catch (cause) {
+      setAuditError(operationMessage(cause, "Audit Trail could not be loaded."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function auditFilters(): AuditTrailFilters {
+    return { actionCode: auditAction, actor: auditActor, result: auditResult, reference: auditReference };
   }
 
   async function loadReportingData() {
@@ -173,6 +204,8 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     setStart("");
     setEnd("");
     setEj(undefined);
+    setAuditTrail(undefined);
+    setAuditError(undefined);
     setX(undefined);
     setZ(undefined);
     setCloseablePeriods([]);
@@ -356,15 +389,22 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
   const selectedSiteName = sites.find((site) => site.siteId === siteId)?.siteName ?? "the selected Site";
 
   return <section className="panel fiscalReporting" aria-labelledby="operator-fiscal-reporting-title">
-    <div className="pageTitle"><div><p className="eyebrow">Site POS authority</p><h2 id="operator-fiscal-reporting-title">Fiscal Reporting</h2><p>Electronic Journal, X Reading, Z Reading, Daily BIR Sales Summary, and Monthly eSales are retrieved through Central PMS from the bound Site POS Server.</p></div><span className="statusPill">Site scoped</span></div>
+    <div className="pageTitle"><div><p className="eyebrow">Site POS authority</p><h2 id="operator-fiscal-reporting-title">Fiscal Reporting</h2><p>Electronic Journal, Audit Trail, X Reading, Z Reading, Daily BIR Sales Summary, and Monthly eSales are retrieved through Central PMS from the bound Site POS Server.</p></div><span className="statusPill">Site scoped</span></div>
     {sites.length === 1
       ? <div className="siteSelector" aria-label="Authorized Site"><span>Authorized Site</span><strong>{sites[0].siteName}</strong></div>
       : <label className="siteSelector">Authorized Site<select value={siteId} onChange={(event) => changeSite(event.target.value)}>{sites.map((site) => <option key={site.siteId} value={site.siteId}>{site.siteName}</option>)}</select></label>}
-    <div className="reportTabs" role="tablist" aria-label="Fiscal report type"><button type="button" role="tab" aria-selected={tab === "ej"} onClick={() => setTab("ej")}>Electronic Journal</button><button type="button" role="tab" aria-selected={tab === "x"} onClick={() => setTab("x")}>X Reading</button><button type="button" role="tab" aria-selected={tab === "z"} onClick={() => setTab("z")}>Z Reading</button><button type="button" role="tab" aria-selected={tab === "bir"} onClick={() => setTab("bir")}>Daily BIR Sales Summary</button><button type="button" role="tab" aria-selected={tab === "esales"} onClick={() => setTab("esales")}>Monthly eSales</button></div>
+    <div className="reportTabs" role="tablist" aria-label="Fiscal report type"><button type="button" role="tab" aria-selected={tab === "ej"} onClick={() => setTab("ej")}>Electronic Journal</button><button type="button" role="tab" aria-selected={tab === "audit"} onClick={() => setTab("audit")}>Audit Trail</button><button type="button" role="tab" aria-selected={tab === "x"} onClick={() => setTab("x")}>X Reading</button><button type="button" role="tab" aria-selected={tab === "z"} onClick={() => setTab("z")}>Z Reading</button><button type="button" role="tab" aria-selected={tab === "bir"} onClick={() => setTab("bir")}>Daily BIR Sales Summary</button><button type="button" role="tab" aria-selected={tab === "esales"} onClick={() => setTab("esales")}>Monthly eSales</button></div>
     {busy && <p role="status">Loading authoritative POS reporting data...</p>}
     {message && <p className="successMessage" role="status">{message}</p>}
     {birCompletionWarning && <p className="stateMessage warning" role="status">{birCompletionWarning}</p>}
     {tab === "ej" && (has(fiscalReportingPermissions.ejRead) ? <div className="fiscalPane" role="tabpanel"><h3>Electronic Journal</h3><p>Exact visible Sales Invoice text supplied by POS authority. The browser does not create the journal artifact.</p><div className="reportFilters"><label>Period start (PHT)<input type="datetime-local" step="1" aria-label="EJ period start PHT" value={start} onChange={(e) => setStart(e.target.value)} /></label><label>Period end (PHT)<input type="datetime-local" step="1" aria-label="EJ period end PHT" value={end} onChange={(e) => setEnd(e.target.value)} /></label><label>Ticket, Plate or SI Number<input aria-label="Search Electronic Journal" value={search} onChange={(e) => setSearch(e.target.value)} /></label><button type="button" onClick={() => void loadEj(true)}>View journal</button>{has(fiscalReportingPermissions.ejExport) && !!ej?.length && downloadRange && <a className="primaryButton" href={client.ejUrl(siteId, downloadRange.start, downloadRange.end, search)}>Download authoritative .txt</a>}</div>{ejError && <p className="errorMessage" role="alert">{ejError}</p>}{ej?.length === 0 && <p role="status">No Sales Invoice activity exists for this period.</p>}{ej?.map((invoice) => <article className="invoiceText" key={invoice.fiscalDocumentId}><header><strong>{invoice.fiscalDocumentNumber}</strong><span>{formatPhtInstant(invoice.issuedAt)} PHT</span></header><pre>{invoice.printableText}</pre></article>)}</div> : <p className="stateMessage warning">Electronic Journal permission is required.</p>)}
+    {tab === "audit" && (has(fiscalReportingPermissions.zRead) ? <AuditTrailPanel
+      start={start} end={end} onStart={setStart} onEnd={setEnd}
+      action={auditAction} onAction={setAuditAction} actor={auditActor} onActor={setAuditActor}
+      result={auditResult} onResult={setAuditResult} reference={auditReference} onReference={setAuditReference}
+      report={auditTrail} error={auditError} busy={busy} onRead={() => void loadAuditTrail()}
+      downloadUrl={(format) => downloadRange ? client.auditTrailUrl(siteId, downloadRange.start, downloadRange.end, format, auditFilters()) : "#"}
+    /> : <p className="stateMessage warning">Fiscal reporting read permission is required to access Audit Trail.</p>)}
     {tab === "x" && <ReadingPanel kind="X" history={x} error={xHistoryError} actionError={xGenerateError} canRead={has(fiscalReportingPermissions.xRead)} canGenerate={has(fiscalReportingPermissions.xGenerate)} onGenerate={generateX} download={(reference, format) => client.readingUrl(siteId, "x", reference, format)} />}
     {tab === "z" && <>
       {has(fiscalReportingPermissions.zRead) && <section className="fiscalPane" aria-labelledby="open-fiscal-business-dates-title">
@@ -421,6 +461,45 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
         />
       : <p className="stateMessage warning">Z Reading permission is required to access Monthly eSales.</p>)}
   </section>;
+}
+
+function AuditTrailPanel({ start, end, onStart, onEnd, action, onAction, actor, onActor, result, onResult,
+  reference, onReference, report, error, busy, onRead, downloadUrl }: {
+  start: string;
+  end: string;
+  onStart: (value: string) => void;
+  onEnd: (value: string) => void;
+  action: string;
+  onAction: (value: string) => void;
+  actor: string;
+  onActor: (value: string) => void;
+  result: string;
+  onResult: (value: string) => void;
+  reference: string;
+  onReference: (value: string) => void;
+  report?: AuditTrailReport;
+  error?: string;
+  busy: boolean;
+  onRead: () => void;
+  downloadUrl: (format: "pdf" | "csv" | "json") => string;
+}) {
+  return <div className="fiscalPane" role="tabpanel">
+    <div className="readingTitle"><div><h3>Audit Trail</h3><p>POS-owned actor, action, access, and governed change evidence for a bounded Site interval.</p></div></div>
+    <div className="reportFilters">
+      <label>From (PHT)<input type="datetime-local" step="1" aria-label="Audit Trail from PHT" value={start} onChange={(event) => onStart(event.target.value)} /></label>
+      <label>To (PHT)<input type="datetime-local" step="1" aria-label="Audit Trail to PHT" value={end} onChange={(event) => onEnd(event.target.value)} /></label>
+      <label>Action Category<select aria-label="Audit Trail action category" value={action} onChange={(event) => onAction(event.target.value)}><option value="">All actions</option>{report?.actionCodes.map((item) => <option key={item.code} value={item.code}>{item.displayName}</option>)}</select></label>
+      <label>User / Actor<input aria-label="Audit Trail user or actor" value={actor} onChange={(event) => onActor(event.target.value)} /></label>
+      <label>Result<select aria-label="Audit Trail result" value={result} onChange={(event) => onResult(event.target.value)}><option value="">All results</option><option value="SUCCESS">Success</option><option value="ALLOWED">Allowed</option><option value="DENIED">Denied</option><option value="FAILED">Failed</option></select></label>
+      <label>SI / Reference<input aria-label="Audit Trail SI or reference" value={reference} onChange={(event) => onReference(event.target.value)} /></label>
+      <button type="button" onClick={onRead} disabled={busy}>View Audit Trail</button>
+      {report && <><a className="primaryButton" href={downloadUrl("pdf")}>Download PDF</a><a className="primaryButton" href={downloadUrl("csv")}>Download CSV</a><a className="primaryButton" href={downloadUrl("json")}>Download JSON</a></>}
+    </div>
+    {error && <p className="errorMessage" role="alert">{error}</p>}
+    {report?.rows.length === 0 && <p role="status">No durable audit activity exists for this bounded interval.</p>}
+    {report && report.rows.length > 0 && <div className="tableViewport"><table aria-label="Audit Trail"><thead><tr><th>Date</th><th>Terminal</th><th>UserID</th><th>User Role</th><th>Action Category</th><th>Action Description</th><th>SI No.</th><th>Before Value</th><th>After Value</th><th>Reason/Remarks</th></tr></thead><tbody>{report.rows.map((row) => <tr key={row.auditReference}><td>{formatPhtInstant(row.occurredAt)} PHT</td><td>{row.terminal ?? ""}</td><td>{row.userId ?? ""}</td><td>{row.userRole ?? ""}</td><td>{row.actionCategory}</td><td><pre className="auditDescription">{row.actionDescription}</pre></td><td>{row.salesInvoiceNumber ?? ""}</td><td>{row.beforeValue ?? ""}</td><td>{row.afterValue ?? ""}</td><td>{row.reasonRemarks ?? "-"}</td></tr>)}</tbody></table></div>}
+    {report && <details className="auditLegend"><summary>Action Code Legend</summary><dl>{report.actionCodes.map((item) => <div key={item.code}><dt>{item.code} - {item.displayName}</dt><dd>{item.definition}</dd></div>)}</dl></details>}
+  </div>;
 }
 
 function MonthlyESalesPanel({ month, onMonthChange, result, error, busy, onRead, downloadUrl }: {
