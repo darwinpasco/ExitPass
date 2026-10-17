@@ -305,7 +305,11 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
                 .Select(line => line with { LineTypeCodeId = null })
                 .ToArray(),
             Tenders = PosServerFiscalDocumentRequestMapperTests.ValidContext().Tenders
-                .Select(tender => tender with { TenderTypeCodeId = null })
+                .Select(tender => tender with
+                {
+                    TenderTypeCodeId = null,
+                    TenderContext = new Dictionary<string, string> { ["payment_method"] = "card" }
+                })
                 .ToArray(),
             Totals = PosServerFiscalDocumentRequestMapperTests.ValidContext().Totals
                 .Select(total => total with { TotalTypeCodeId = null })
@@ -328,6 +332,79 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         result.MappedRequest.DiscountPrivilegeDetails.Should().ContainSingle()
             .Which.DiscountPrivilegeTypeCodeId.Should().Be(SitePosServerTestOptions.FiscalDiscountPrivilegeTypeCodeId);
         result.MappedRequest.Totals.Should().OnlyContain(total => total.TotalTypeCodeId == SitePosServerTestOptions.FiscalTotalTypeCodeId);
+    }
+
+    [Theory]
+    [InlineData("cash")]
+    [InlineData("card")]
+    [InlineData("qrph")]
+    [InlineData("gcash")]
+    [InlineData("maya")]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_PreservesCanonicalTenderClassification(string classification)
+    {
+        var options = EnabledOptions();
+        var expected = options.Endpoints.Single().FiscalTenderTypeCodeIds[classification];
+        PosServerFiscalDocumentCreateRequest? mappedRequest = null;
+        var calculator = Substitute.For<IFiscalSemanticRequestHashCalculator>();
+        calculator.Calculate(Arg.Do<PosServerFiscalDocumentCreateRequest>(request => mappedRequest = request))
+            .Returns(new FiscalSemanticRequestHashResult(
+                FiscalSemanticRequestHashSourceStatus.Incomplete,
+                null,
+                FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+                FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                0,
+                "stop_after_mapping",
+                "stop_after_mapping"));
+        var context = PosServerFiscalDocumentRequestMapperTests.ValidContext() with
+        {
+            Tenders =
+            [
+                PosServerFiscalDocumentRequestMapperTests.ValidContext().Tenders.Single() with
+                {
+                    TenderTypeCodeId = null,
+                    TenderContext = new Dictionary<string, string> { ["payment_method"] = classification.ToUpperInvariant() }
+                }
+            ]
+        };
+        var sut = CreateSut(options, semanticRequestHashCalculator: calculator);
+
+        var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            context,
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.LocalContextInvalid);
+        mappedRequest.Should().NotBeNull();
+        mappedRequest!.Tenders.Should().ContainSingle().Which.TenderTypeCodeId.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_UnknownTenderClassification_FailsClosed()
+    {
+        var options = EnabledOptions();
+        var context = PosServerFiscalDocumentRequestMapperTests.ValidContext() with
+        {
+            Tenders =
+            [
+                PosServerFiscalDocumentRequestMapperTests.ValidContext().Tenders.Single() with
+                {
+                    TenderTypeCodeId = null,
+                    TenderContext = new Dictionary<string, string> { ["payment_method"] = "crypto_coin_xyz" }
+                }
+            ]
+        };
+
+        var sut = CreateSut(options);
+
+        var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            context,
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.LocalContextInvalid);
+        result.Errors.Should().Contain("fiscal_tender_classification_not_configured:crypto_coin_xyz");
     }
 
     [Fact]

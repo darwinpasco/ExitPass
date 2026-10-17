@@ -158,6 +158,41 @@ export interface AnnexE1Workbook {
     generatedAt: string;
     status: string;
 }
+export interface MonthlyESalesRow {
+    machineIdentificationNumber: string;
+    calendarMonth: number;
+    calendarYear: number;
+    transactionCount: number;
+    monthlySalesAmountMinorUnits: number;
+    monthlySalesDisplay: string;
+    endingSalesInvoiceReference?: string;
+    vatableSalesAmountMinorUnits: number;
+    vatAmountMinorUnits: number;
+    vatExemptSalesAmountMinorUnits: number;
+    zeroRatedSalesAmountMinorUnits: number;
+    sourcePeriodCount: number;
+    firstBusinessDate: string;
+    lastBusinessDate: string;
+}
+export interface MonthlyESalesReport {
+    sitePosServerId: string;
+    fiscalIdentityId: string;
+    calendarYear: number;
+    calendarMonth: number;
+    currencyCode: string;
+    taxpayerTin: string;
+    submissionDueDate?: string;
+    submissionDueDateBasis?: string;
+    submissionReadiness: string;
+    submissionReadinessMessage: string;
+    rows: MonthlyESalesRow[];
+}
+export interface MonthlyESalesReadResult {
+    status: "FINAL" | "INCOMPLETE";
+    report?: MonthlyESalesReport;
+    code?: string;
+    message?: string;
+}
 export interface EjInvoice {
     fiscalDocumentId: string;
     fiscalDocumentNumber: string;
@@ -221,14 +256,16 @@ export interface OperatorFiscalReportingClient {
     closeAllBusinessDates(
         site: string,
     ): Promise<CloseAllFiscalBusinessDatesResult>;
-    readingUrl(site: string, kind: "x" | "z", reference: string): string;
+    readingUrl(site: string, kind: "x" | "z", reference: string, format: "pdf" | "json"): string;
     generateBirSalesSummary(site: string, reading: Reading): Promise<BirSalesSummary>;
     readBirSalesSummary(site: string, summaryId: string): Promise<BirSalesSummary>;
-    birSalesSummaryUrl(site: string, summaryId: string, format: "json" | "csv"): string;
+    birSalesSummaryUrl(site: string, summaryId: string, format: "json" | "csv" | "pdf"): string;
     generateAnnexE1(site: string, calendarYear: number, calendarMonth: number): Promise<AnnexE1Workbook>;
     readCurrentAnnexE1(site: string, calendarYear: number, calendarMonth: number): Promise<AnnexE1Workbook | undefined>;
     readAnnexE1(site: string, workbookId: string): Promise<AnnexE1Workbook>;
-    annexE1Url(site: string, workbookId: string): string;
+    annexE1Url(site: string, workbookId: string, format?: "xlsx" | "pdf"): string;
+    readMonthlyESales(site: string, calendarYear: number, calendarMonth: number): Promise<MonthlyESalesReadResult>;
+    monthlyESalesUrl(site: string, calendarYear: number, calendarMonth: number, format: "json" | "csv" | "pdf"): string;
 }
 
 function siteList(value: unknown): FiscalReportingSite[] {
@@ -394,8 +431,8 @@ export function createOperatorFiscalReportingClient(
                         : undefined,
             };
         },
-        readingUrl(s, k, r) {
-            return p(s, `/${k}-readings/${encodeURIComponent(r)}/download`);
+        readingUrl(s, k, r, format) {
+            return p(s, `/${k}-readings/${encodeURIComponent(r)}/download?format=${format}`);
         },
         async generateBirSalesSummary(s, reading) {
             const value = await json(
@@ -450,8 +487,28 @@ export function createOperatorFiscalReportingClient(
             const value = await json(p(s, `/annex-e/e1/workbooks/${encodeURIComponent(workbookId)}`));
             return annexWorkbook(rec(value.workbook));
         },
-        annexE1Url(s, workbookId) {
-            return p(s, `/annex-e/e1/workbooks/${encodeURIComponent(workbookId)}/download`);
+        annexE1Url(s, workbookId, format = "xlsx") {
+            return p(s, `/annex-e/e1/workbooks/${encodeURIComponent(workbookId)}/download?format=${format}`);
+        },
+        async readMonthlyESales(s, calendarYear, calendarMonth) {
+            const query = new URLSearchParams({ calendarYear: String(calendarYear), calendarMonth: String(calendarMonth) });
+            const response = await fetchImpl(p(s, `/monthly-esales?${query}`), {
+                credentials: "same-origin",
+                cache: "no-store",
+                headers: { Accept: "application/json", "X-Correlation-Id": crypto.randomUUID() },
+            });
+            const value = await responseJson(response);
+            const envelope = rec(value);
+            if (response.ok) return { status: "FINAL", report: monthlyESalesReport(rec(envelope.report)) };
+            const code = typeof envelope.code === "string" ? envelope.code : undefined;
+            if (code === "monthly_esales_month_not_complete" || code === "monthly_esales_source_missing" || code === "monthly_esales_sources_incomplete") {
+                return { status: "INCOMPLETE", code, message: safeErrorMessage(value) };
+            }
+            throw new Error(safeErrorMessage(value) || "Monthly eSales could not be loaded.");
+        },
+        monthlyESalesUrl(s, calendarYear, calendarMonth, format) {
+            const query = new URLSearchParams({ calendarYear: String(calendarYear), calendarMonth: String(calendarMonth), format });
+            return p(s, `/monthly-esales/download?${query}`);
         },
     };
 }
@@ -548,6 +605,34 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
         generatedAt: "2026-10-01T00:00:00Z",
         status: "COMMITTED",
     };
+    const monthlyESales: MonthlyESalesReport = {
+        sitePosServerId: "3a138565-1b88-55f8-c83d-5380db6edccc",
+        fiscalIdentityId: "ad02beb5-b8cd-4545-9ff2-5586782c686a",
+        calendarYear: 2026,
+        calendarMonth: 9,
+        currencyCode: "PHP",
+        taxpayerTin: "999-999-999-000",
+        submissionDueDate: "2026-10-10",
+        submissionDueDateBasis: "ODD_TIN",
+        submissionReadiness: "TECHNICAL_UAT",
+        submissionReadinessMessage: "UAT fiscal identifier - not for BIR submission.",
+        rows: [{
+            machineIdentificationNumber: "MIN-TEST-PITX-L3-001",
+            calendarMonth: 9,
+            calendarYear: 2026,
+            transactionCount: 1,
+            monthlySalesAmountMinorUnits: 11200,
+            monthlySalesDisplay: "112.00",
+            endingSalesInvoiceReference: "SI-00000001",
+            vatableSalesAmountMinorUnits: 10000,
+            vatAmountMinorUnits: 1200,
+            vatExemptSalesAmountMinorUnits: 0,
+            zeroRatedSalesAmountMinorUnits: 0,
+            sourcePeriodCount: 1,
+            firstBusinessDate: "2026-09-10",
+            lastBusinessDate: "2026-09-10",
+        }],
+    };
     return {
         listAuthorizedSites: async () => [
             {
@@ -599,8 +684,8 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
             closedCount: 1,
             birSalesSummaryPendingCount: 0,
         }),
-        readingUrl: (s, k, x) =>
-            `/v1/ops/operator-console/fiscal-reporting/sites/${s}/${k}-readings/${x}/download`,
+        readingUrl: (s, k, x, format) =>
+            `/v1/ops/operator-console/fiscal-reporting/sites/${s}/${k}-readings/${x}/download?format=${format}`,
         generateBirSalesSummary: async () => summary,
         readBirSalesSummary: async () => summary,
         birSalesSummaryUrl: (s, id, format) =>
@@ -608,8 +693,11 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
         generateAnnexE1: async () => workbook,
         readCurrentAnnexE1: async () => workbook,
         readAnnexE1: async () => workbook,
-        annexE1Url: (s, id) =>
-            `/v1/ops/operator-console/fiscal-reporting/sites/${s}/annex-e/e1/workbooks/${id}/download`,
+        annexE1Url: (s, id, format = "xlsx") =>
+            `/v1/ops/operator-console/fiscal-reporting/sites/${s}/annex-e/e1/workbooks/${id}/download?format=${format}`,
+        readMonthlyESales: async () => ({ status: "FINAL", report: monthlyESales }),
+        monthlyESalesUrl: (s, year, month, format) =>
+            `/v1/ops/operator-console/fiscal-reporting/sites/${s}/monthly-esales/download?calendarYear=${year}&calendarMonth=${month}&format=${format}`,
     };
 }
 
@@ -667,6 +755,40 @@ function annexWorkbook(value: Record<string, unknown>): AnnexE1Workbook {
         fileName: str(value.fileName),
         generatedAt: str(value.generatedAt),
         status: str(value.status),
+    };
+}
+function monthlyESalesReport(value: Record<string, unknown>): MonthlyESalesReport {
+    if (!Array.isArray(value.rows)) throw bad();
+    return {
+        sitePosServerId: str(value.sitePosServerId),
+        fiscalIdentityId: str(value.fiscalIdentityId),
+        calendarYear: num(value.calendarYear),
+        calendarMonth: num(value.calendarMonth),
+        currencyCode: str(value.currencyCode),
+        taxpayerTin: str(value.taxpayerTin),
+        submissionDueDate: optionalString(value.submissionDueDate),
+        submissionDueDateBasis: optionalString(value.submissionDueDateBasis),
+        submissionReadiness: str(value.submissionReadiness),
+        submissionReadinessMessage: str(value.submissionReadinessMessage),
+        rows: value.rows.map((item) => {
+            const row = rec(item);
+            return {
+                machineIdentificationNumber: str(row.machineIdentificationNumber),
+                calendarMonth: num(row.calendarMonth),
+                calendarYear: num(row.calendarYear),
+                transactionCount: num(row.transactionCount),
+                monthlySalesAmountMinorUnits: num(row.monthlySalesAmountMinorUnits),
+                monthlySalesDisplay: str(row.monthlySalesDisplay),
+                endingSalesInvoiceReference: optionalString(row.endingSalesInvoiceReference),
+                vatableSalesAmountMinorUnits: num(row.vatableSalesAmountMinorUnits),
+                vatAmountMinorUnits: num(row.vatAmountMinorUnits),
+                vatExemptSalesAmountMinorUnits: num(row.vatExemptSalesAmountMinorUnits),
+                zeroRatedSalesAmountMinorUnits: num(row.zeroRatedSalesAmountMinorUnits),
+                sourcePeriodCount: num(row.sourcePeriodCount),
+                firstBusinessDate: str(row.firstBusinessDate),
+                lastBusinessDate: str(row.lastBusinessDate),
+            };
+        }),
     };
 }
 function hist(

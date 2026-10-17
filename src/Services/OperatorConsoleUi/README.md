@@ -10,9 +10,9 @@ Password and TOTP values remain in component memory only and are never placed in
 
 ## Fiscal Reporting
 
-`/operator-console/fiscal-reporting` provides Site-scoped Electronic Journal, X Reading, Z Reading, BIR Sales Summary, and Annex E-1 access. The browser calls the Operator Console Central PMS boundary; it never calls POS Server directly, calculates fiscal totals, chooses a Z period/sequence, or creates fiscal report artifacts.
+`/operator-console/fiscal-reporting` provides Site-scoped Electronic Journal, X Reading, Z Reading, Daily BIR Sales Summary, and Annex E-1 - BIR Sales Summary Report access. The browser calls the Operator Console Central PMS boundary; it never calls POS Server directly, calculates fiscal totals, chooses a Z period/sequence, or creates fiscal report artifacts.
 
-Access uses six independent permissions: `fiscal-reporting.ej.read`, `fiscal-reporting.ej.export`, `fiscal-reporting.x.read`, `fiscal-reporting.x.generate`, `fiscal-reporting.z.read`, and `fiscal-reporting.z.generate`. BIR Sales Summary and Annex E-1 reuse the Z read/generate boundary because their authoritative inputs require a committed Z Reading. Z generation is separately privileged and requires an explicit close confirmation.
+Access uses six independent permissions: `fiscal-reporting.ej.read`, `fiscal-reporting.ej.export`, `fiscal-reporting.x.read`, `fiscal-reporting.x.generate`, `fiscal-reporting.z.read`, and `fiscal-reporting.z.generate`. Daily BIR Sales Summary and Annex E-1 reuse the Z read/generate boundary because their authoritative inputs require a committed Z Reading. Z generation is separately privileged and requires an explicit close confirmation.
 
 For local visual validation only, append `operatorFiscalReportingScenario=ready`. The fixture is guarded by `import.meta.env.DEV` and is absent from production behavior.
 

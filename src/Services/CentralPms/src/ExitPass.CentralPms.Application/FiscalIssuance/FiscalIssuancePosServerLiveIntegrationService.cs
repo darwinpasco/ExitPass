@@ -270,7 +270,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
                 .Select(line => line with { LineTypeCodeId = endpoint.FiscalLineTypeCodeId })
                 .ToArray(),
             Tenders = context.Tenders
-                .Select(tender => tender with { TenderTypeCodeId = endpoint.FiscalTenderTypeCodeId })
+                .Select(tender => tender with { TenderTypeCodeId = ResolveTenderTypeCodeId(endpoint, tender) })
                 .ToArray(),
             TaxDetails = context.TaxDetails
                 .Select(tax => tax with
@@ -289,6 +289,55 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
                 .Select(total => total with { TotalTypeCodeId = endpoint.FiscalTotalTypeCodeId })
                 .ToArray()
         };
+    }
+
+    private static Guid ResolveTenderTypeCodeId(
+        SitePosServerEndpointOptions endpoint,
+        CentralPmsFiscalTenderContext tender)
+    {
+        if (tender.TenderTypeCodeId is { } existing && existing != Guid.Empty)
+        {
+            return existing;
+        }
+
+        var classification = ResolveTenderClassification(tender);
+        if (classification is null)
+        {
+            throw new ArgumentException("fiscal_tender_classification_required");
+        }
+
+        var match = endpoint.FiscalTenderTypeCodeIds.FirstOrDefault(pair =>
+            string.Equals(pair.Key?.Trim(), classification, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(match.Key) || match.Value == Guid.Empty)
+        {
+            throw new ArgumentException($"fiscal_tender_classification_not_configured:{classification}");
+        }
+
+        return match.Value;
+    }
+
+    private static string? ResolveTenderClassification(CentralPmsFiscalTenderContext tender)
+    {
+        var value = tender.TenderContext
+            .Where(pair => pair.Key is "payment_method" or "paymentMethod")
+            .Select(pair => pair.Value)
+            .FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate));
+
+        if (string.IsNullOrWhiteSpace(value) &&
+            string.Equals(tender.ProviderRef?.Trim(), "CASH", StringComparison.OrdinalIgnoreCase))
+        {
+            value = "cash";
+        }
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim().Replace('-', '_').ToLowerInvariant();
+        return normalized.StartsWith("paymongo_", StringComparison.Ordinal)
+            ? normalized["paymongo_".Length..]
+            : normalized;
     }
 }
 
@@ -530,6 +579,8 @@ public sealed class SitePosServerEndpointOptions
     public Guid? FiscalLineTypeCodeId { get; set; }
 
     public Guid? FiscalTenderTypeCodeId { get; set; }
+
+    public Dictionary<string, Guid> FiscalTenderTypeCodeIds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public Guid? FiscalTaxTypeCodeId { get; set; }
 

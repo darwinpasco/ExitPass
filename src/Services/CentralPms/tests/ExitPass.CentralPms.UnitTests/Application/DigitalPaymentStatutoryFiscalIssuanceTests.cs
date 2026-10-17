@@ -50,6 +50,8 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         var request = new PosServerFiscalDocumentRequestMapper().Map(fixture.CapturedMapping!);
         Assert.Equal(grossAmountMinorUnits, request.PayableBasis.PayableAmountMinorUnits);
         Assert.Equal(grossAmountMinorUnits, Assert.Single(request.Tenders).AmountMinorUnits);
+        Assert.Null(Assert.Single(fixture.CapturedMapping!.Tenders).TenderTypeCodeId);
+        Assert.Equal("GCASH", Assert.Single(fixture.CapturedMapping.Tenders).TenderContext["payment_method"]);
         Assert.Equal(grossAmountMinorUnits, Assert.Single(request.Totals).AmountMinorUnits);
         Assert.Empty(request.PayableBasis.DiscountReferences);
         Assert.Empty(request.DiscountPrivilegeDetails);
@@ -129,6 +131,8 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         Assert.Equal(SiteAId, request.SiteId);
         Assert.Equal(8929, request.PayableBasis.PayableAmountMinorUnits);
         Assert.Equal(8929, Assert.Single(request.Tenders).AmountMinorUnits);
+        Assert.Null(Assert.Single(fixture.CapturedMapping!.Tenders).TenderTypeCodeId);
+        Assert.Equal("GCASH", Assert.Single(fixture.CapturedMapping.Tenders).TenderContext["payment_method"]);
         Assert.Equal(8929, Assert.Single(request.Totals).AmountMinorUnits);
 
         var line = Assert.Single(request.DocumentLines);

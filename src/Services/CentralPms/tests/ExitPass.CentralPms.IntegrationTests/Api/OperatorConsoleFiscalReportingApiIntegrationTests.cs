@@ -155,6 +155,69 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         gateway.CallCount.Should().Be(0);
     }
 
+    [Theory]
+    [InlineData("x", null, FiscalReportingGatewayAction.XDownload, "pdf")]
+    [InlineData("x", "pdf", FiscalReportingGatewayAction.XDownload, "pdf")]
+    [InlineData("x", "json", FiscalReportingGatewayAction.XDownload, "json")]
+    [InlineData("z", null, FiscalReportingGatewayAction.ZDownload, "pdf")]
+    [InlineData("z", "pdf", FiscalReportingGatewayAction.ZDownload, "pdf")]
+    [InlineData("z", "json", FiscalReportingGatewayAction.ZDownload, "json")]
+    public async Task ReadingDownload_UsesValidatedFormatAndPreservesTheSiteScopedGateway(
+        string kind,string? format,FiscalReportingGatewayAction expectedAction,string expectedFormat)
+    {
+        var contentType=expectedFormat=="json"?"application/json; charset=utf-8":"application/pdf";
+        var fileName=$"reading.{expectedFormat}";
+        var gateway=new FakeGateway(_=>new FiscalReportingGatewayResponse(
+            200,contentType,Encoding.UTF8.GetBytes(expectedFormat=="json"?"{}":"%PDF-1.4"),"ok",fileName));
+        using var factory=CreateFactory(gateway,new FakeReferenceRepository(),role:"OPERATIONS_SUPERVISOR");
+        using var client=factory.CreateClient();
+        var suffix=format is null?string.Empty:$"?format={format}";
+
+        using var response=await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/{kind}-readings/{kind.ToUpperInvariant()}-20261017-001/download{suffix}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.ToString().Should().Be(contentType);
+        response.Content.Headers.ContentDisposition!.FileName!.Trim('"').Should().Be(fileName);
+        var request=gateway.Requests.Should().ContainSingle().Subject;
+        request.SiteId.Should().Be(SiteId);
+        request.Action.Should().Be(expectedAction);
+        request.ExportFormat.Should().Be(expectedFormat);
+    }
+
+    [Theory]
+    [InlineData("x")]
+    [InlineData("z")]
+    public async Task ReadingDownload_RejectsUnsupportedFormatBeforeCallingPos(string kind)
+    {
+        var gateway=new FakeGateway();
+        using var factory=CreateFactory(gateway,new FakeReferenceRepository(),role:"OPERATIONS_SUPERVISOR");
+        using var client=factory.CreateClient();
+
+        using var response=await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/{kind}-readings/{kind.ToUpperInvariant()}-20261017-001/download?format=csv");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("fiscal_report_export_format_unsupported");
+        gateway.CallCount.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("x")]
+    [InlineData("z")]
+    public async Task ReadingDownload_ConcealsOutOfScopeSiteBeforeFormatValidation(string kind)
+    {
+        var gateway=new FakeGateway();
+        using var factory=CreateFactory(gateway,new FakeReferenceRepository(),role:"OPERATIONS_SUPERVISOR");
+        using var client=factory.CreateClient();
+
+        using var response=await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{OtherSiteId:D}/{kind}-readings/{kind.ToUpperInvariant()}-20261017-001/download?format=csv");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        gateway.CallCount.Should().Be(0);
+    }
+
     [Fact]
     public async Task CloseablePeriods_UsesExactlyTheAuthenticatedSiteScope()
     {
@@ -281,7 +344,7 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         var body = await response.Content.ReadAsStringAsync();
         body.Should().Contain("\"closedCount\":2");
         body.Should().Contain("\"birSalesSummaryPendingCount\":1");
-        body.Should().Contain("BIR Sales Summary operation(s) are pending");
+        body.Should().Contain("Daily BIR Sales Summary operation(s) are pending");
     }
 
     [Fact]
@@ -396,6 +459,7 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
     [Theory]
     [InlineData("json", "application/json", "bir-summary.json")]
     [InlineData("csv", "text/csv", "bir-summary.csv")]
+    [InlineData("pdf", "application/pdf", "bir-summary.pdf")]
     public async Task BirSalesSummaryExportProxiesAuthoritativeBytesAndMetadata(string format, string contentType, string fileName)
     {
         var bytes = Encoding.UTF8.GetBytes($"authoritative-{format}");
@@ -441,6 +505,27 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
     }
 
     [Fact]
+    public async Task AnnexE1PdfDownloadUsesTheExistingWorkbookAndPreservesAuthoritativeBytes()
+    {
+        var workbookId = Guid.Parse("88000000-0000-0000-0000-000000000032");
+        var bytes = "%PDF-1.4 annex"u8.ToArray();
+        var gateway = new FakeGateway(_ => new(200, "application/pdf", bytes, "ok", "annex-e1.pdf", ContentSha256: "pdf-hash"));
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks/{workbookId:D}/download?format=pdf");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await response.Content.ReadAsByteArrayAsync()).Should().Equal(bytes);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("application/pdf");
+        var request = gateway.Requests.Should().ContainSingle().Subject;
+        request.Action.Should().Be(FiscalReportingGatewayAction.AnnexE1DownloadPdf);
+        request.WorkbookId.Should().Be(workbookId);
+        request.SiteId.Should().Be(SiteId);
+    }
+
+    [Fact]
     public async Task AnnexE1CurrentWorkbookReadIsSiteScopedAndPreservesNoCurrent()
     {
         var workbookId = Guid.Parse("613af721-3b65-4bc4-9ce3-d2a032c26ab3");
@@ -466,6 +551,83 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
             request.Action == FiscalReportingGatewayAction.AnnexE1CurrentRead &&
             request.SiteId == SiteId &&
             request.CalendarYear == 2026);
+    }
+
+    [Fact]
+    public async Task MonthlyESalesReadUsesOnlyAuthenticatedSiteAndReadPermission()
+    {
+        var gateway = new FakeGateway(_ => Response(200, "{\"succeeded\":true,\"report\":{\"calendarYear\":2026,\"calendarMonth\":9}}"));
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/monthly-esales?calendarYear=2026&calendarMonth=9&sitePosServerId={OtherSiteId:D}&fiscalIdentityId={OtherSiteId:D}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var request = gateway.Requests.Should().ContainSingle().Subject;
+        request.Action.Should().Be(FiscalReportingGatewayAction.MonthlyESalesRead);
+        request.SiteId.Should().Be(SiteId);
+        request.CalendarYear.Should().Be(2026);
+        request.CalendarMonth.Should().Be(9);
+        request.OperationKey.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task MonthlyESalesOutsideAuthenticatedSiteScopeIsConcealed()
+    {
+        var gateway = new FakeGateway();
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{OtherSiteId:D}/monthly-esales?calendarYear=2026&calendarMonth=9");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        gateway.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task MonthlyESalesReadRequiresExistingFiscalReportingReadPermission()
+    {
+        var gateway = new FakeGateway();
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR", includePermission: false);
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/monthly-esales?calendarYear=2026&calendarMonth=9");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        gateway.Requests.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("json", "application/json", "monthly-esales-technical-uat-202609.json")]
+    [InlineData("csv", "text/csv", "monthly-esales-technical-uat-202609.csv")]
+    [InlineData("pdf", "application/pdf", "monthly-esales-technical-uat-202609.pdf")]
+    public async Task MonthlyESalesDownloadPreservesAuthoritativeBytesAndMetadata(string format, string contentType, string fileName)
+    {
+        var bytes = Encoding.UTF8.GetBytes($"authoritative-monthly-{format}");
+        var gateway = new FakeGateway(_ => new FiscalReportingGatewayResponse(200, contentType, bytes, "ok", fileName, ContentSha256: "monthly-sha"));
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/monthly-esales/download?calendarYear=2026&calendarMonth=9&format={format}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await response.Content.ReadAsByteArrayAsync()).Should().Equal(bytes);
+        response.Content.Headers.ContentType!.MediaType.Should().Be(contentType);
+        response.Content.Headers.ContentDisposition!.FileName!.Trim('"').Should().Be(fileName);
+        response.Headers.GetValues("X-Content-SHA256").Should().ContainSingle("monthly-sha");
+        var request = gateway.Requests.Should().ContainSingle().Subject;
+        request.Action.Should().Be(format switch
+        {
+            "json" => FiscalReportingGatewayAction.MonthlyESalesDownloadJson,
+            "csv" => FiscalReportingGatewayAction.MonthlyESalesDownloadCsv,
+            "pdf" => FiscalReportingGatewayAction.MonthlyESalesDownloadPdf,
+            _ => throw new InvalidOperationException($"Unexpected test format '{format}'.")
+        });
+        request.SiteId.Should().Be(SiteId);
     }
 
     private static string EjUrl(Guid siteId, string identifier) =>
@@ -575,6 +737,7 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
             {
                 claims.Add(new(CentralPmsRbacPolicyCatalog.PermissionClaimType, "fiscal-reporting.ej.read"));
                 claims.Add(new(CentralPmsRbacPolicyCatalog.PermissionClaimType, "fiscal-issuance.status.read"));
+                claims.Add(new(CentralPmsRbacPolicyCatalog.PermissionClaimType, "fiscal-reporting.x.read"));
                 claims.Add(new(CentralPmsRbacPolicyCatalog.PermissionClaimType, "fiscal-reporting.z.read"));
                 claims.Add(new(CentralPmsRbacPolicyCatalog.PermissionClaimType, "fiscal-reporting.z.generate"));
             }
