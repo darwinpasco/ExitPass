@@ -57,8 +57,8 @@ public static class FiscalReportingEndpoints
         group.MapPost("/x-readings", (Guid siteId,GenerateReadingRequest body,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
             Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.XGenerate,null,null,null,body.OperationKey,null,false,ct))
             .WithMetadata(new ReconciliationPolicyMetadata(XGeneratePolicy));
-        group.MapGet("/x-readings/{reportReference}/download", (Guid siteId,string reportReference,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
-            Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.XDownload,null,null,null,null,reportReference,false,ct))
+        group.MapGet("/x-readings/{reportReference}/download", (Guid siteId,string reportReference,string? format,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
+            DownloadReadingAsync(siteId,operatorScoped,reportReference,format,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.XDownload,ct))
             .WithMetadata(new ReconciliationPolicyMetadata(XReadPolicy));
         group.MapGet("/z-readings", (Guid siteId,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
             Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.ZHistory,null,null,null,null,null,false,ct))
@@ -79,8 +79,8 @@ public static class FiscalReportingEndpoints
                 Execute(siteId,false,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.ZGenerate,null,null,null,body.OperationKey,null,body.ConfirmClose,ct))
                 .WithMetadata(new ReconciliationPolicyMetadata(ZGeneratePolicy));
         }
-        group.MapGet("/z-readings/{reportReference}/download", (Guid siteId,string reportReference,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
-            Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.ZDownload,null,null,null,null,reportReference,false,ct))
+        group.MapGet("/z-readings/{reportReference}/download", (Guid siteId,string reportReference,string? format,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
+            DownloadReadingAsync(siteId,operatorScoped,reportReference,format,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.ZDownload,ct))
             .WithMetadata(new ReconciliationPolicyMetadata(ZReadPolicy));
         group.MapPost("/bir-sales-summaries", (Guid siteId,GenerateBirSalesSummaryRequest body,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,IAntiforgery antiforgery,CancellationToken ct)=>
             GenerateBirSalesSummaryAsync(siteId,operatorScoped,body,request,gateway,references,rbac,logs,antiforgery,ct))
@@ -94,6 +94,7 @@ public static class FiscalReportingEndpoints
             {
                 "json" => FiscalReportingGatewayAction.BirSalesSummaryDownloadJson,
                 "csv" => FiscalReportingGatewayAction.BirSalesSummaryDownloadCsv,
+                "pdf" => FiscalReportingGatewayAction.BirSalesSummaryDownloadPdf,
                 _ => (FiscalReportingGatewayAction?)null
             };
             if (!action.HasValue) return Results.BadRequest(new { succeeded=false,code="bir_sales_summary_export_format_unsupported",message="The requested export format is unsupported." });
@@ -110,9 +111,35 @@ public static class FiscalReportingEndpoints
         group.MapGet("/annex-e/e1/workbooks/{workbookId:guid}", (Guid siteId,Guid workbookId,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
             Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.AnnexE1Read,null,null,null,null,null,false,ct,workbookId:workbookId))
             .WithMetadata(new ReconciliationPolicyMetadata(BirReadPolicy));
-        group.MapGet("/annex-e/e1/workbooks/{workbookId:guid}/download", (Guid siteId,Guid workbookId,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
-            Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.AnnexE1Download,null,null,null,null,null,false,ct,workbookId:workbookId,download:true))
+        group.MapGet("/annex-e/e1/workbooks/{workbookId:guid}/download", async (Guid siteId,Guid workbookId,string? format,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
+        {
+            var action = (format??"xlsx").ToLowerInvariant() switch
+            {
+                "xlsx" => FiscalReportingGatewayAction.AnnexE1Download,
+                "pdf" => FiscalReportingGatewayAction.AnnexE1DownloadPdf,
+                _ => (FiscalReportingGatewayAction?)null
+            };
+            if(!action.HasValue)return Results.BadRequest(new{succeeded=false,code="annex_e1_export_format_unsupported",message="The requested export format is unsupported."});
+            return await Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,action.Value,
+                null,null,null,null,null,false,ct,workbookId:workbookId,download:true).ConfigureAwait(false);
+        })
             .WithMetadata(new ReconciliationPolicyMetadata(BirReadPolicy));
+        group.MapGet("/monthly-esales", (Guid siteId,int calendarYear,int calendarMonth,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
+            Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.MonthlyESalesRead,null,null,null,null,null,false,ct,calendarYear:calendarYear,calendarMonth:calendarMonth))
+            .WithMetadata(new ReconciliationPolicyMetadata(BirReadPolicy));
+        group.MapGet("/monthly-esales/download", async (Guid siteId,int calendarYear,int calendarMonth,string format,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
+        {
+            var action = format.ToLowerInvariant() switch
+            {
+                "json" => FiscalReportingGatewayAction.MonthlyESalesDownloadJson,
+                "csv" => FiscalReportingGatewayAction.MonthlyESalesDownloadCsv,
+                "pdf" => FiscalReportingGatewayAction.MonthlyESalesDownloadPdf,
+                _ => (FiscalReportingGatewayAction?)null
+            };
+            if (!action.HasValue) return Results.BadRequest(new { succeeded=false,code="monthly_esales_export_format_unsupported",message="The requested export format is unsupported." });
+            return await Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,action.Value,
+                null,null,null,null,null,false,ct,calendarYear:calendarYear,calendarMonth:calendarMonth,download:true).ConfigureAwait(false);
+        }).WithMetadata(new ReconciliationPolicyMetadata(BirReadPolicy));
     }
 
     private static async Task<IResult> GenerateBirSalesSummaryAsync(
@@ -154,6 +181,15 @@ public static class FiscalReportingEndpoints
                 message="The secure fiscal reporting request could not be validated."
             });
         }
+    }
+
+    private static async Task<IResult> DownloadReadingAsync(
+        Guid siteId,bool operatorScoped,string reportReference,string? format,HttpRequest request,
+        IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,
+        ICentralPmsRbacRepository rbac,ILoggerFactory logs,FiscalReportingGatewayAction action,CancellationToken ct)
+    {
+        return await Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,action,
+            null,null,null,null,reportReference,false,ct,download:true,exportFormat:format).ConfigureAwait(false);
     }
 
     private static async Task<IResult> ClosePeriodAsync(
@@ -262,7 +298,7 @@ public static class FiscalReportingEndpoints
             closedCount,
             birSalesSummaryPendingCount,
             message = birSalesSummaryPendingCount > 0
-                ? $"{closedCount} Fiscal Business Dates closed. {birSalesSummaryPendingCount} BIR Sales Summary operation(s) are pending and can be retried from BIR Sales Summary."
+                ? $"{closedCount} Fiscal Business Dates closed. {birSalesSummaryPendingCount} Daily BIR Sales Summary operation(s) are pending and can be retried from Daily BIR Sales Summary."
                 : null,
             correlationId = authorization.CorrelationId
         });
@@ -398,7 +434,7 @@ public static class FiscalReportingEndpoints
         ILoggerFactory loggerFactory,FiscalReportingGatewayAction action,DateTimeOffset? start,DateTimeOffset? end,string? search,
         string? operationKey,string? reportReference,bool confirmClose,CancellationToken ct,
         Guid? fiscalReportingPeriodId=null,Guid? summaryId=null,Guid? workbookId=null,string? governingZReadingReference=null,
-        int? calendarYear=null,int? calendarMonth=null,bool download=false)
+        int? calendarYear=null,int? calendarMonth=null,bool download=false,string? exportFormat=null)
     {
         var correlation=Guid.TryParse(request.Headers["X-Correlation-Id"].ToString(),out var parsed)&&parsed!=Guid.Empty?parsed:Guid.NewGuid();
         var actor=request.HttpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)??"unavailable";
@@ -413,6 +449,12 @@ public static class FiscalReportingEndpoints
         {
             logger.LogWarning("Fiscal reporting operation denied. actor={Actor} site={Site} action={Action} result=denied correlation_id={Correlation}",actor,siteId,action,correlation);
             return Results.NotFound(new{succeeded=false,code="fiscal_reporting_scope_not_found",correlationId=correlation,message="The requested fiscal reporting scope is unavailable."});
+        }
+        if(action is FiscalReportingGatewayAction.XDownload or FiscalReportingGatewayAction.ZDownload)
+        {
+            exportFormat=string.IsNullOrWhiteSpace(exportFormat)?"pdf":exportFormat.Trim().ToLowerInvariant();
+            if(exportFormat is not ("pdf" or "json"))
+                return Results.BadRequest(new{succeeded=false,code="fiscal_report_export_format_unsupported",correlationId=correlation,message="The requested export format is unsupported."});
         }
         if(action==FiscalReportingGatewayAction.ZGenerate&&!confirmClose)
         {
@@ -436,7 +478,7 @@ public static class FiscalReportingEndpoints
 
         var result=await gateway.SendAsync(new(siteId,action,correlation,actor,start,end,resolvedSearch,operationKey,reportReference,
             fiscalReportingPeriodId,SummaryId:summaryId,WorkbookId:workbookId,GoverningZReadingReference:governingZReadingReference,
-            CalendarYear:calendarYear,CalendarMonth:calendarMonth),ct).ConfigureAwait(false);
+            CalendarYear:calendarYear,CalendarMonth:calendarMonth,ExportFormat:exportFormat),ct).ConfigureAwait(false);
         logger.Log(result.HttpStatusCode<400?LogLevel.Information:LogLevel.Warning,
             "Fiscal reporting operation completed. actor={Actor} site={Site} action={Action} result={Result} report={Report} correlation_id={Correlation}",
             actor,siteId,action,result.Code,reportReference,correlation);

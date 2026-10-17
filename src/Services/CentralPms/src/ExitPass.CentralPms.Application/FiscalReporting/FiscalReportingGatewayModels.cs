@@ -16,10 +16,16 @@ public enum FiscalReportingGatewayAction
     BirSalesSummaryRead,
     BirSalesSummaryDownloadJson,
     BirSalesSummaryDownloadCsv,
+    BirSalesSummaryDownloadPdf,
     AnnexE1Generate,
     AnnexE1CurrentRead,
     AnnexE1Read,
-    AnnexE1Download
+    AnnexE1Download,
+    AnnexE1DownloadPdf,
+    MonthlyESalesRead,
+    MonthlyESalesDownloadJson,
+    MonthlyESalesDownloadCsv,
+    MonthlyESalesDownloadPdf
 }
 
 public sealed record FiscalReportingGatewayRequest(
@@ -38,7 +44,8 @@ public sealed record FiscalReportingGatewayRequest(
     Guid? WorkbookId = null,
     string? GoverningZReadingReference = null,
     int? CalendarYear = null,
-    int? CalendarMonth = null);
+    int? CalendarMonth = null,
+    string? ExportFormat = null);
 
 public sealed record FiscalReportingGatewayResponse(
     int HttpStatusCode,

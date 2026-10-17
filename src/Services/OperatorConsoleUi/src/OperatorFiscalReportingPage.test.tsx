@@ -99,6 +99,16 @@ describe("Operator Console fiscal reporting", () => {
     expect(screen.getByText("2026-09-14 07:30:00 PHT")).toBeInTheDocument();
   });
 
+  it.each(["X", "Z"] as const)("shows explicit PDF and JSON actions for %s Reading without the old ambiguous action", async (kind) => {
+    render(<OperatorFiscalReportingPage client={createPitxFiscalReportingClient()} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: `${kind} Reading` }));
+
+    expect(await screen.findByRole("link", { name: "Download PDF" })).toHaveAttribute("href", expect.stringContaining("format=pdf"));
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute("href", expect.stringContaining("format=json"));
+    expect(screen.queryByRole("link", { name: "Print / download" })).not.toBeInTheDocument();
+  });
+
   it("shows the site-scoped authoritative Sales Invoice receipt without reconstructing it", async () => {
     render(<OperatorFiscalReportingPage client={createOperatorFiscalReportingFixture()} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
     const invoice = await screen.findByText("SI-00000001");
@@ -209,7 +219,7 @@ describe("Operator Console fiscal reporting", () => {
     await userEvent.click(screen.getByRole("alertdialog", { name: "Confirm Fiscal Business Date close" }).querySelector("button.dangerButton")!);
 
     expect(await screen.findByText("Fiscal Business Date 2026-09-10 closed for PITX Test Site.")).toBeInTheDocument();
-    expect(screen.getByText("Fiscal Business Date closed and Z Reading committed. BIR Sales Summary is pending and can be retried from BIR Sales Summary.")).toBeInTheDocument();
+    expect(screen.getByText("Fiscal Business Date closed and Z Reading committed. Daily BIR Sales Summary is pending and can be retried from Daily BIR Sales Summary.")).toBeInTheDocument();
     expect(screen.queryByText(/Z Reading.*failed/i)).not.toBeInTheDocument();
   });
 
@@ -256,12 +266,14 @@ describe("Operator Console fiscal reporting", () => {
     expect(screen.queryByRole("button", { name: "Close Business Date" })).not.toBeInTheDocument();
   });
 
-  it("generates and presents the POS-authoritative BIR Sales Summary without recalculation", async () => {
+  it("generates and presents the POS-authoritative Daily BIR Sales Summary without recalculation", async () => {
     const client = createOperatorFiscalReportingFixture();
     client.generateBirSalesSummary = vi.fn(client.generateBirSalesSummary);
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
 
-    await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
+    const dailySummaryTab = await screen.findByRole("tab", { name: "Daily BIR Sales Summary" });
+    expect(screen.queryByRole("tab", { name: "BIR Sales Summary" })).not.toBeInTheDocument();
+    await userEvent.click(dailySummaryTab);
     expect(await screen.findByLabelText("Closed Fiscal Business Date")).toHaveValue("Z-20260910-001");
     await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
 
@@ -269,10 +281,13 @@ describe("Operator Console fiscal reporting", () => {
       "SITE-PITX",
       expect.objectContaining({ reportReference: "Z-20260910-001", reportStatus: "COMMITTED" })
     ));
-    expect(screen.getByLabelText("BIR Sales Summary values")).toHaveTextContent("Gross Sales₱112.00");
-    expect(screen.getByLabelText("BIR Sales Summary values")).toHaveTextContent("Previous Grand Total Amount₱1,000.00");
+    expect(screen.getByLabelText("Daily BIR Sales Summary values")).toHaveTextContent("Gross Sales₱112.00");
+    expect(screen.getByLabelText("Daily BIR Sales Summary values")).toHaveTextContent("Previous Grand Total Amount₱1,000.00");
+    expect(screen.getByRole("heading", { name: "Annex E-1 - BIR Sales Summary Report" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute("href", expect.stringContaining("format=json"));
     expect(screen.getByRole("link", { name: "Download CSV" })).toHaveAttribute("href", expect.stringContaining("format=csv"));
+    expect(screen.getAllByRole("link", { name: "Download PDF" })[0]).toHaveAttribute("href", expect.stringContaining("/bir-sales-summaries/"));
+    expect(screen.getAllByRole("link", { name: "Download PDF" })[0]).toHaveAttribute("href", expect.stringContaining("format=pdf"));
   });
 
   it("does not permit BIR summary generation while only an open fiscal business date exists", async () => {
@@ -282,9 +297,9 @@ describe("Operator Console fiscal reporting", () => {
     client.generateBirSalesSummary = vi.fn(client.generateBirSalesSummary);
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
 
-    await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Daily BIR Sales Summary" }));
 
-    expect(screen.getByText("The BIR Sales Summary can be generated after the fiscal business date has been closed and its Z Reading has been committed.")).toBeInTheDocument();
+    expect(screen.getByText("The Daily BIR Sales Summary can be generated after the fiscal business date has been closed and its Z Reading has been committed.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Generate / View Summary" })).not.toBeInTheDocument();
     expect(client.generateBirSalesSummary).not.toHaveBeenCalled();
   });
@@ -295,7 +310,7 @@ describe("Operator Console fiscal reporting", () => {
     client.generateAnnexE1 = vi.fn(client.generateAnnexE1);
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
 
-    await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Daily BIR Sales Summary" }));
     expect(screen.queryByRole("button", { name: "Generate Annex E-1" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
 
@@ -312,7 +327,7 @@ describe("Operator Console fiscal reporting", () => {
       year === 2026 && month === 9 ? existing : undefined);
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
 
-    await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Daily BIR Sales Summary" }));
     await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
     expect(await screen.findByText(/Current Annex E-1:/)).toBeInTheDocument();
 
@@ -333,7 +348,7 @@ describe("Operator Console fiscal reporting", () => {
     });
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
 
-    await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Daily BIR Sales Summary" }));
     await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("The Site POS Server is temporarily unavailable.");
@@ -348,7 +363,7 @@ describe("Operator Console fiscal reporting", () => {
     });
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
 
-    await userEvent.click(await screen.findByRole("tab", { name: "BIR Sales Summary" }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Daily BIR Sales Summary" }));
     await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
     await userEvent.click(await screen.findByRole("button", { name: "Generate Annex E-1" }));
 
@@ -356,6 +371,60 @@ describe("Operator Console fiscal reporting", () => {
       "Annex E-1 requires complete authoritative accounting facts for the selected month."
     );
     expect(screen.queryByRole("link", { name: "Download XLSX" })).not.toBeInTheDocument();
+  });
+
+  it("presents POS-authoritative Monthly eSales values and downloads without recalculation", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    client.readMonthlyESales = vi.fn(client.readMonthlyESales);
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Monthly eSales" }));
+    expect(screen.getByLabelText("Monthly eSales calendar month")).toHaveValue("2026-09");
+    await userEvent.click(screen.getByRole("button", { name: "View Monthly eSales" }));
+
+    await waitFor(() => expect(client.readMonthlyESales).toHaveBeenCalledWith("SITE-PITX", 2026, 9));
+    const values = screen.getByLabelText("Monthly eSales values");
+    expect(values).toHaveTextContent("MIN-TEST-PITX-L3-001");
+    expect(values).toHaveTextContent("PHP 112.00");
+    expect(values).toHaveTextContent("SI-00000001");
+    expect(screen.getByLabelText("Monthly eSales filing metadata")).not.toHaveTextContent("2026-10-10");
+    expect(screen.queryByText("Submission Due Date")).not.toBeInTheDocument();
+    expect(screen.queryByText("Submission Readiness")).not.toBeInTheDocument();
+    expect(screen.queryByText("TECHNICAL UAT - NOT FOR BIR SUBMISSION")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute("href", expect.stringContaining("format=json"));
+    expect(screen.getByRole("link", { name: "Download CSV" })).toHaveAttribute("href", expect.stringContaining("format=csv"));
+    expect(screen.getByRole("link", { name: "Download PDF" })).toHaveAttribute("href", expect.stringContaining("format=pdf"));
+  });
+
+  it("shows incomplete Monthly eSales source dates as a neutral non-final state", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    client.readMonthlyESales = vi.fn(async () => ({
+      status: "INCOMPLETE" as const,
+      code: "monthly_esales_sources_incomplete",
+      message: "Monthly eSales cannot be finalized because committed BIR Sales Summaries are missing for: 2026-09-04, 2026-09-05."
+    }));
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Monthly eSales" }));
+    await userEvent.click(screen.getByRole("button", { name: "View Monthly eSales" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("2026-09-04, 2026-09-05");
+    expect(screen.queryByLabelText("Monthly eSales values")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Download CSV" })).not.toBeInTheDocument();
+  });
+
+  it("clears Monthly eSales results when the selected month changes", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Monthly eSales" }));
+    await userEvent.click(screen.getByRole("button", { name: "View Monthly eSales" }));
+    expect(await screen.findByLabelText("Monthly eSales values")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Monthly eSales calendar month"), { target: { value: "2026-10" } });
+    expect(screen.queryByLabelText("Monthly eSales values")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Download JSON" })).not.toBeInTheDocument();
   });
 });
 

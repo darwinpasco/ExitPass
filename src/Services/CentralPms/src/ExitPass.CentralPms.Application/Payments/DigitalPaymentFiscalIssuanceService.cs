@@ -25,7 +25,6 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
 {
     private const string FiscalDocumentTypeCodeKey = "sales_invoice";
     private static readonly Guid FiscalLineTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000201");
-    private static readonly Guid FiscalTenderTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000301");
     private static readonly Guid FiscalTotalTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000601");
     private readonly IDigitalPaymentFiscalContextReader _contextReader;
     private readonly IFiscalIssuanceReferenceRepository _references;
@@ -145,6 +144,8 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             ["appliedTariffSnapshotId"] = context.TariffSnapshotId.ToString("D")
         };
         var lineContext = new Dictionary<string, string>();
+        var tenderContext = new Dictionary<string, string> { ["channel"] = "DIGITAL" };
+        AddDisplayFact(tenderContext, "payment_method", context.PaymentMethod);
         var referenceContext = new Dictionary<string, string>
         {
             ["site_id"] = context.SiteId.ToString("D"),
@@ -203,14 +204,14 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
                 context.TariffSnapshotId.ToString("D"),
                 lineContext)],
             [new CentralPmsFiscalTenderContext(
-                statutory is null ? null : FiscalTenderTypeCodeId,
+                null,
                 amount,
                 context.Currency,
                 attemptRef,
                 confirmationRef,
                 upstreamReference,
                 command.ProviderReference,
-                new Dictionary<string, string> { ["channel"] = "DIGITAL" })],
+                tenderContext)],
             BuildTaxDetails(statutory, ordinaryVat, context.Currency),
             BuildDiscountPrivilegeDetails(statutory, context.Currency),
             [new CentralPmsFiscalTotalContext(

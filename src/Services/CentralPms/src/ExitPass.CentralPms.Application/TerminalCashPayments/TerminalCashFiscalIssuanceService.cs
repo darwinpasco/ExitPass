@@ -945,6 +945,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     private static Dictionary<string, string> BuildTenderContext(TerminalCashPaymentReadback cashPayment) =>
         new()
         {
+            ["payment_method"] = "cash",
             ["paymentMethod"] = "CASH",
             ["terminalCashTenderId"] = cashPayment.TerminalCashTenderId.ToString("D")
         };

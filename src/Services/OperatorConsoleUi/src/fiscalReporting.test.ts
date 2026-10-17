@@ -45,9 +45,22 @@ describe("Operator fiscal-reporting HTTP client", () => {
       "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/bir-sales-summaries/summary-1/download?format=json"
     );
     expect(client.birSalesSummaryUrl("SITE-PITX", "summary-1", "csv")).toContain("format=csv");
+    expect(client.birSalesSummaryUrl("SITE-PITX", "summary-1", "pdf")).toContain("format=pdf");
     expect(client.annexE1Url("SITE-PITX", "workbook-1")).toBe(
-      "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/annex-e/e1/workbooks/workbook-1/download"
+      "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/annex-e/e1/workbooks/workbook-1/download?format=xlsx"
     );
+    expect(client.annexE1Url("SITE-PITX", "workbook-1", "pdf")).toContain("format=pdf");
+  });
+
+  it("builds explicit PDF and JSON X/Z Reading download URLs", () => {
+    const client = createOperatorFiscalReportingClient(vi.fn() as unknown as typeof fetch);
+
+    expect(client.readingUrl("SITE-PITX", "x", "X-20261017-001", "pdf")).toBe(
+      "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/x-readings/X-20261017-001/download?format=pdf"
+    );
+    expect(client.readingUrl("SITE-PITX", "x", "X-20261017-001", "json")).toContain("format=json");
+    expect(client.readingUrl("SITE-PITX", "z", "Z-20261016-001", "pdf")).toContain("format=pdf");
+    expect(client.readingUrl("SITE-PITX", "z", "Z-20261016-001", "json")).toContain("format=json");
   });
 
   it("reads the current Annex E-1 by Site and month and treats 404 as no current workbook", async () => {
@@ -70,6 +83,50 @@ describe("Operator fiscal-reporting HTTP client", () => {
       code: "annex_e1_not_found"
     }), { status: 404, headers: { "Content-Type": "application/json" } }));
     await expect(client.readCurrentAnnexE1("SITE-PITX", 2026, 11)).resolves.toBeUndefined();
+  });
+
+  it("reads Monthly eSales through the Site-scoped route without browser-supplied fiscal authority", async () => {
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      succeeded: true,
+      code: "monthly_esales_read",
+      report: monthlyESalesPayload()
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch, () => "csrf-token");
+
+    const result = await client.readMonthlyESales("SITE-PITX", 2026, 9);
+
+    expect(result.status).toBe("FINAL");
+    expect(result.report?.rows[0].monthlySalesAmountMinorUnits).toBe(195000);
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe("/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/monthly-esales?calendarYear=2026&calendarMonth=9");
+    expect(init?.method).toBeUndefined();
+    expect(String(url)).not.toContain("sitePosServerId");
+    expect(String(url)).not.toContain("fiscalIdentityId");
+  });
+
+  it("maps Monthly eSales source incompleteness to a safe non-final result", async () => {
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      succeeded: false,
+      code: "monthly_esales_sources_incomplete",
+      message: "Monthly eSales cannot be finalized because committed BIR Sales Summaries are missing for: 2026-09-04, 2026-09-05."
+    }), { status: 409, headers: { "Content-Type": "application/json" } }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    await expect(client.readMonthlyESales("SITE-PITX", 2026, 9)).resolves.toEqual({
+      status: "INCOMPLETE",
+      code: "monthly_esales_sources_incomplete",
+      message: "Monthly eSales cannot be finalized because committed BIR Sales Summaries are missing for: 2026-09-04, 2026-09-05."
+    });
+  });
+
+  it("builds deterministic Monthly eSales PDF, CSV, and JSON proxy download URLs", () => {
+    const client = createOperatorFiscalReportingClient(vi.fn() as unknown as typeof fetch);
+
+    expect(client.monthlyESalesUrl("SITE-PITX", 2026, 9, "json")).toBe(
+      "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/monthly-esales/download?calendarYear=2026&calendarMonth=9&format=json"
+    );
+    expect(client.monthlyESalesUrl("SITE-PITX", 2026, 9, "csv")).toContain("format=csv");
+    expect(client.monthlyESalesUrl("SITE-PITX", 2026, 9, "pdf")).toContain("format=pdf");
   });
   it("maps a plain-text upstream exception response to a controlled operation error", async () => {
     const fetchImpl = vi.fn(async () => new Response(
@@ -197,5 +254,36 @@ function workbookPayload() {
     fileName: "annex-e1-2026-10.xlsx",
     generatedAt: "2026-10-16T08:00:00Z",
     status: "COMMITTED"
+  };
+}
+
+function monthlyESalesPayload() {
+  return {
+    sitePosServerId: "3a138565-1b88-55f8-c83d-5380db6edccc",
+    fiscalIdentityId: "ad02beb5-b8cd-4545-9ff2-5586782c686a",
+    calendarYear: 2026,
+    calendarMonth: 9,
+    currencyCode: "PHP",
+    taxpayerTin: "999-999-999-000",
+    submissionDueDate: "2026-10-10",
+    submissionDueDateBasis: "ODD_TIN",
+    submissionReadiness: "TECHNICAL_UAT",
+    submissionReadinessMessage: "UAT fiscal identifier - not for BIR submission.",
+    rows: [{
+      machineIdentificationNumber: "MIN-TEST-PITX-L3-001",
+      calendarMonth: 9,
+      calendarYear: 2026,
+      transactionCount: 39,
+      monthlySalesAmountMinorUnits: 195000,
+      monthlySalesDisplay: "1950.00",
+      endingSalesInvoiceReference: "SI-00000090",
+      vatableSalesAmountMinorUnits: 174107,
+      vatAmountMinorUnits: 20893,
+      vatExemptSalesAmountMinorUnits: 0,
+      zeroRatedSalesAmountMinorUnits: 0,
+      sourcePeriodCount: 18,
+      firstBusinessDate: "2026-09-04",
+      lastBusinessDate: "2026-09-30"
+    }]
   };
 }

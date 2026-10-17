@@ -7,6 +7,7 @@ import {
   type EjInvoice,
   type FiscalReportingSite,
   type History,
+  type MonthlyESalesReadResult,
   type OperatorFiscalReportingClient
 } from "./fiscalReporting";
 
@@ -17,7 +18,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
 }) {
   const [sites, setSites] = useState<FiscalReportingSite[]>();
   const [siteId, setSiteId] = useState("");
-  const [tab, setTab] = useState<"ej" | "x" | "z" | "bir">("ej");
+  const [tab, setTab] = useState<"ej" | "x" | "z" | "bir" | "esales">("ej");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [search, setSearch] = useState("");
@@ -32,6 +33,9 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
   const [annexWorkbook, setAnnexWorkbook] = useState<AnnexE1Workbook>();
   const [annexLookupComplete, setAnnexLookupComplete] = useState(false);
   const [annexLoading, setAnnexLoading] = useState(false);
+  const [monthlyESalesMonth, setMonthlyESalesMonth] = useState("");
+  const [monthlyESalesResult, setMonthlyESalesResult] = useState<MonthlyESalesReadResult>();
+  const [monthlyESalesError, setMonthlyESalesError] = useState<string>();
   const [birError, setBirError] = useState<string>();
   const [annexError, setAnnexError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -135,6 +139,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     const committed = z?.readings.find((reading) => reading.reportStatus === "COMMITTED");
     setSelectedZReference(committed?.reportReference ?? "");
     setAnnexMonth(committed?.businessDayDate.slice(0, 7) ?? "");
+    setMonthlyESalesMonth(committed?.businessDayDate.slice(0, 7) ?? "");
   }, [z]);
   useEffect(() => {
     const match = /^(\d{4})-(\d{2})$/.exec(annexMonth);
@@ -178,6 +183,9 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     setAnnexWorkbook(undefined);
     setAnnexLookupComplete(false);
     setAnnexLoading(false);
+    setMonthlyESalesMonth("");
+    setMonthlyESalesResult(undefined);
+    setMonthlyESalesError(undefined);
     setBirError(undefined);
     setAnnexError(undefined);
     setEjError(undefined);
@@ -225,7 +233,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
         setZ(nextHistory);
         setMessage(`Fiscal Business Date ${closingPeriod.fiscalBusinessDate} closed for ${selectedSiteName}.`);
         if (closeResult.birSalesSummaryCompletion?.status === "PENDING") {
-          setBirCompletionWarning("Fiscal Business Date closed and Z Reading committed. BIR Sales Summary is pending and can be retried from BIR Sales Summary.");
+          setBirCompletionWarning("Fiscal Business Date closed and Z Reading committed. Daily BIR Sales Summary is pending and can be retried from Daily BIR Sales Summary.");
         }
       } else {
         const closingPeriods = [...closeablePeriods];
@@ -240,7 +248,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
         setZ(nextHistory);
         setMessage(result.message ?? `${result.closedCount} Fiscal Business Dates closed for ${selectedSiteName}.`);
         if (result.birSalesSummaryPendingCount > 0) {
-          setBirCompletionWarning(`${result.birSalesSummaryPendingCount} BIR Sales Summary operation(s) are pending and can be retried from BIR Sales Summary.`);
+          setBirCompletionWarning(`${result.birSalesSummaryPendingCount} Daily BIR Sales Summary operation(s) are pending and can be retried from Daily BIR Sales Summary.`);
         }
       }
       setCloseConfirmation(undefined);
@@ -262,7 +270,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
   async function generateBirSalesSummary() {
     const reading = z?.readings.find((item) => item.reportReference === selectedZReference && item.reportStatus === "COMMITTED");
     if (!reading) {
-      setBirError("The BIR Sales Summary is unavailable until the governing Z Reading is committed.");
+      setBirError("The Daily BIR Sales Summary is unavailable until the governing Z Reading is committed.");
       return;
     }
     setBusy(true);
@@ -272,7 +280,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
       setSummary(value);
       setSummaryId(value.birSalesSummaryReportId);
     } catch (cause) {
-      setBirError(operationMessage(cause, "BIR Sales Summary generation failed safely."));
+      setBirError(operationMessage(cause, "Daily BIR Sales Summary generation failed safely."));
     } finally {
       setBusy(false);
     }
@@ -286,7 +294,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
       setSummary(await client.readBirSalesSummary(siteId, summaryId.trim()));
     } catch (cause) {
       setSummary(undefined);
-      setBirError(operationMessage(cause, "No BIR Sales Summary has been generated for this fiscal business date."));
+      setBirError(operationMessage(cause, "No Daily BIR Sales Summary has been generated for this fiscal business date."));
     } finally {
       setBusy(false);
     }
@@ -315,6 +323,27 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     setAnnexMonth(value);
   }
 
+  async function readMonthlyESales() {
+    const match = /^(\d{4})-(\d{2})$/.exec(monthlyESalesMonth);
+    if (!match) return;
+    setBusy(true);
+    setMonthlyESalesResult(undefined);
+    setMonthlyESalesError(undefined);
+    try {
+      setMonthlyESalesResult(await client.readMonthlyESales(siteId, Number(match[1]), Number(match[2])));
+    } catch (cause) {
+      setMonthlyESalesError(operationMessage(cause, "Monthly eSales could not be loaded."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function changeMonthlyESalesMonth(value: string) {
+    setMonthlyESalesResult(undefined);
+    setMonthlyESalesError(undefined);
+    setMonthlyESalesMonth(value);
+  }
+
   if (!siteReferences.length) return <NoAuthorizedSite message="Your operator session has no Site scope." />;
   if (sites === undefined) return <section className="stateMessage"><h2>Loading authorized Site</h2><p>Resolving canonical Site names for fiscal reporting.</p></section>;
   if (!sites.length) {
@@ -327,16 +356,16 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
   const selectedSiteName = sites.find((site) => site.siteId === siteId)?.siteName ?? "the selected Site";
 
   return <section className="panel fiscalReporting" aria-labelledby="operator-fiscal-reporting-title">
-    <div className="pageTitle"><div><p className="eyebrow">Site POS authority</p><h2 id="operator-fiscal-reporting-title">Fiscal Reporting</h2><p>Electronic Journal, X Reading, Z Reading, and BIR Sales Summary are retrieved through Central PMS from the bound Site POS Server.</p></div><span className="statusPill">Site scoped</span></div>
+    <div className="pageTitle"><div><p className="eyebrow">Site POS authority</p><h2 id="operator-fiscal-reporting-title">Fiscal Reporting</h2><p>Electronic Journal, X Reading, Z Reading, Daily BIR Sales Summary, and Monthly eSales are retrieved through Central PMS from the bound Site POS Server.</p></div><span className="statusPill">Site scoped</span></div>
     {sites.length === 1
       ? <div className="siteSelector" aria-label="Authorized Site"><span>Authorized Site</span><strong>{sites[0].siteName}</strong></div>
       : <label className="siteSelector">Authorized Site<select value={siteId} onChange={(event) => changeSite(event.target.value)}>{sites.map((site) => <option key={site.siteId} value={site.siteId}>{site.siteName}</option>)}</select></label>}
-    <div className="reportTabs" role="tablist" aria-label="Fiscal report type"><button type="button" role="tab" aria-selected={tab === "ej"} onClick={() => setTab("ej")}>Electronic Journal</button><button type="button" role="tab" aria-selected={tab === "x"} onClick={() => setTab("x")}>X Reading</button><button type="button" role="tab" aria-selected={tab === "z"} onClick={() => setTab("z")}>Z Reading</button><button type="button" role="tab" aria-selected={tab === "bir"} onClick={() => setTab("bir")}>BIR Sales Summary</button></div>
+    <div className="reportTabs" role="tablist" aria-label="Fiscal report type"><button type="button" role="tab" aria-selected={tab === "ej"} onClick={() => setTab("ej")}>Electronic Journal</button><button type="button" role="tab" aria-selected={tab === "x"} onClick={() => setTab("x")}>X Reading</button><button type="button" role="tab" aria-selected={tab === "z"} onClick={() => setTab("z")}>Z Reading</button><button type="button" role="tab" aria-selected={tab === "bir"} onClick={() => setTab("bir")}>Daily BIR Sales Summary</button><button type="button" role="tab" aria-selected={tab === "esales"} onClick={() => setTab("esales")}>Monthly eSales</button></div>
     {busy && <p role="status">Loading authoritative POS reporting data...</p>}
     {message && <p className="successMessage" role="status">{message}</p>}
     {birCompletionWarning && <p className="stateMessage warning" role="status">{birCompletionWarning}</p>}
     {tab === "ej" && (has(fiscalReportingPermissions.ejRead) ? <div className="fiscalPane" role="tabpanel"><h3>Electronic Journal</h3><p>Exact visible Sales Invoice text supplied by POS authority. The browser does not create the journal artifact.</p><div className="reportFilters"><label>Period start (PHT)<input type="datetime-local" step="1" aria-label="EJ period start PHT" value={start} onChange={(e) => setStart(e.target.value)} /></label><label>Period end (PHT)<input type="datetime-local" step="1" aria-label="EJ period end PHT" value={end} onChange={(e) => setEnd(e.target.value)} /></label><label>Ticket, Plate or SI Number<input aria-label="Search Electronic Journal" value={search} onChange={(e) => setSearch(e.target.value)} /></label><button type="button" onClick={() => void loadEj(true)}>View journal</button>{has(fiscalReportingPermissions.ejExport) && !!ej?.length && downloadRange && <a className="primaryButton" href={client.ejUrl(siteId, downloadRange.start, downloadRange.end, search)}>Download authoritative .txt</a>}</div>{ejError && <p className="errorMessage" role="alert">{ejError}</p>}{ej?.length === 0 && <p role="status">No Sales Invoice activity exists for this period.</p>}{ej?.map((invoice) => <article className="invoiceText" key={invoice.fiscalDocumentId}><header><strong>{invoice.fiscalDocumentNumber}</strong><span>{formatPhtInstant(invoice.issuedAt)} PHT</span></header><pre>{invoice.printableText}</pre></article>)}</div> : <p className="stateMessage warning">Electronic Journal permission is required.</p>)}
-    {tab === "x" && <ReadingPanel kind="X" history={x} error={xHistoryError} actionError={xGenerateError} canRead={has(fiscalReportingPermissions.xRead)} canGenerate={has(fiscalReportingPermissions.xGenerate)} onGenerate={generateX} download={(reference) => client.readingUrl(siteId, "x", reference)} />}
+    {tab === "x" && <ReadingPanel kind="X" history={x} error={xHistoryError} actionError={xGenerateError} canRead={has(fiscalReportingPermissions.xRead)} canGenerate={has(fiscalReportingPermissions.xGenerate)} onGenerate={generateX} download={(reference, format) => client.readingUrl(siteId, "x", reference, format)} />}
     {tab === "z" && <>
       {has(fiscalReportingPermissions.zRead) && <section className="fiscalPane" aria-labelledby="open-fiscal-business-dates-title">
         <div className="readingTitle"><div><h3 id="open-fiscal-business-dates-title">Open Fiscal Business Dates</h3><p>Authoritative closeable periods for {selectedSiteName}. The active pre-cutoff period is excluded by POS authority.</p></div>{has(fiscalReportingPermissions.zGenerate) && closeablePeriods.length > 1 && <button className="dangerButton" type="button" onClick={() => setCloseConfirmation({ kind: "all" })}>Close All Open Business Dates</button>}</div>
@@ -350,7 +379,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
         {closeConfirmation.kind === "all" && <p>Each business date will generate its own Z Reading and advance the Site's Z counter once. Processing stops at the first failure.</p>}
         <button className="dangerButton" type="button" onClick={() => void closeBusinessDates()} disabled={busy}>{closeConfirmation.kind === "single" ? "Close Business Date" : "Close All Open Business Dates"}</button><button type="button" onClick={() => setCloseConfirmation(undefined)} disabled={busy}>Cancel</button>
       </div>}
-      <ReadingPanel kind="Z" history={z} error={zHistoryError} canRead={has(fiscalReportingPermissions.zRead)} canGenerate={false} download={(reference) => client.readingUrl(siteId, "z", reference)} />
+      <ReadingPanel kind="Z" history={z} error={zHistoryError} canRead={has(fiscalReportingPermissions.zRead)} canGenerate={false} download={(reference, format) => client.readingUrl(siteId, "z", reference, format)} />
     </>}
     {tab === "bir" && (has(fiscalReportingPermissions.zRead)
       ? <BirSalesSummaryPanel
@@ -373,15 +402,60 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
           annexLoading={annexLoading}
           annexError={annexError}
           onGenerateAnnex={() => void generateAnnexE1()}
-          annexUrl={annexWorkbook ? client.annexE1Url(siteId, annexWorkbook.workbookId) : "#"}
+          annexXlsxUrl={annexWorkbook ? client.annexE1Url(siteId, annexWorkbook.workbookId, "xlsx") : "#"}
+          annexPdfUrl={annexWorkbook ? client.annexE1Url(siteId, annexWorkbook.workbookId, "pdf") : "#"}
         />
-      : <p className="stateMessage warning">Z Reading permission is required to access BIR Sales Summary.</p>)}
+      : <p className="stateMessage warning">Z Reading permission is required to access Daily BIR Sales Summary.</p>)}
+    {tab === "esales" && (has(fiscalReportingPermissions.zRead)
+      ? <MonthlyESalesPanel
+          month={monthlyESalesMonth}
+          onMonthChange={changeMonthlyESalesMonth}
+          result={monthlyESalesResult}
+          error={monthlyESalesError}
+          busy={busy}
+          onRead={() => void readMonthlyESales()}
+          downloadUrl={(format) => {
+            const match = /^(\d{4})-(\d{2})$/.exec(monthlyESalesMonth);
+            return match ? client.monthlyESalesUrl(siteId, Number(match[1]), Number(match[2]), format) : "#";
+          }}
+        />
+      : <p className="stateMessage warning">Z Reading permission is required to access Monthly eSales.</p>)}
   </section>;
+}
+
+function MonthlyESalesPanel({ month, onMonthChange, result, error, busy, onRead, downloadUrl }: {
+  month: string;
+  onMonthChange: (value: string) => void;
+  result?: MonthlyESalesReadResult;
+  error?: string;
+  busy: boolean;
+  onRead: () => void;
+  downloadUrl: (format: "json" | "csv" | "pdf") => string;
+}) {
+  const report = result?.report;
+  return <div className="fiscalPane" role="tabpanel">
+    <div className="readingTitle"><div><h3>Monthly eSales</h3><p>POS-authoritative monthly sales by governed Machine Identification Number. This report prepares an export and does not submit to BIR.</p></div></div>
+    <div className="reportFilters">
+      <label>Calendar month<input type="month" aria-label="Monthly eSales calendar month" value={month} onChange={(event) => onMonthChange(event.target.value)} /></label>
+      <button type="button" onClick={onRead} disabled={busy || !month}>View Monthly eSales</button>
+      {report && <><a className="primaryButton" href={downloadUrl("pdf")}>Download PDF</a><a className="primaryButton" href={downloadUrl("csv")}>Download CSV</a><a className="primaryButton" href={downloadUrl("json")}>Download JSON</a></>}
+    </div>
+    {error && <p className="errorMessage" role="alert">{error}</p>}
+    {result?.status === "INCOMPLETE" && <p className="stateMessage warning" role="status">{result.message}</p>}
+    {report && <>
+      <dl className="periodCard" aria-label="Monthly eSales filing metadata">
+        <SummaryValue label="Reporting Month" value={`${String(report.calendarMonth).padStart(2, "0")}/${report.calendarYear}`} />
+        <SummaryValue label="Taxpayer TIN" value={report.taxpayerTin || "Unavailable"} />
+        <SummaryValue label="Currency" value={report.currencyCode} />
+      </dl>
+      <div className="tableViewport"><table aria-label="Monthly eSales values"><thead><tr><th>MIN</th><th>Transactions</th><th>Gross Monthly Sales</th><th>End Range</th><th>VATable Sales</th><th>VAT</th><th>VAT Exempt Sales</th><th>Zero-Rated Sales</th><th>Source Periods</th><th>Business Dates</th></tr></thead><tbody>{report.rows.map((row) => <tr key={row.machineIdentificationNumber}><td>{row.machineIdentificationNumber}</td><td>{row.transactionCount}</td><td>{report.currencyCode} {row.monthlySalesDisplay}</td><td>{row.endingSalesInvoiceReference ?? ""}</td><td>{money(row.vatableSalesAmountMinorUnits, report.currencyCode)}</td><td>{money(row.vatAmountMinorUnits, report.currencyCode)}</td><td>{money(row.vatExemptSalesAmountMinorUnits, report.currencyCode)}</td><td>{money(row.zeroRatedSalesAmountMinorUnits, report.currencyCode)}</td><td>{row.sourcePeriodCount}</td><td>{row.firstBusinessDate} to {row.lastBusinessDate}</td></tr>)}</tbody></table></div>
+    </>}
+  </div>;
 }
 
 function BirSalesSummaryPanel({ zHistory, selectedZReference, onSelectZ, summaryId, onSummaryIdChange, summary, error,
   canGenerate, busy, onGenerate, onRead, summaryUrl, annexMonth, onAnnexMonthChange, annexWorkbook, annexLookupComplete, annexLoading, annexError,
-  onGenerateAnnex, annexUrl }: {
+  onGenerateAnnex, annexXlsxUrl, annexPdfUrl }: {
   zHistory?: History;
   selectedZReference: string;
   onSelectZ: (value: string) => void;
@@ -393,7 +467,7 @@ function BirSalesSummaryPanel({ zHistory, selectedZReference, onSelectZ, summary
   busy: boolean;
   onGenerate: () => void;
   onRead: () => void;
-  summaryUrl: (format: "json" | "csv") => string;
+  summaryUrl: (format: "json" | "csv" | "pdf") => string;
   annexMonth: string;
   onAnnexMonthChange: (value: string) => void;
   annexWorkbook?: AnnexE1Workbook;
@@ -401,27 +475,28 @@ function BirSalesSummaryPanel({ zHistory, selectedZReference, onSelectZ, summary
   annexLoading: boolean;
   annexError?: string;
   onGenerateAnnex: () => void;
-  annexUrl: string;
+  annexXlsxUrl: string;
+  annexPdfUrl: string;
 }) {
   const committedReadings = zHistory?.readings.filter((reading) => reading.reportStatus === "COMMITTED") ?? [];
   return <div className="fiscalPane" role="tabpanel">
-    <div className="readingTitle"><div><h3>BIR Sales Summary</h3><p>Authoritative final sales summary governed by a closed Fiscal Business Date and its committed Z Reading.</p></div></div>
+    <div className="readingTitle"><div><h3>Daily BIR Sales Summary</h3><p>Authoritative daily sales summary governed by a closed Fiscal Business Date and its committed Z Reading.</p></div></div>
     {committedReadings.length === 0
       ? <p role="status">{zHistory?.currentPeriod
-          ? "The BIR Sales Summary can be generated after the fiscal business date has been closed and its Z Reading has been committed."
+          ? "The Daily BIR Sales Summary can be generated after the fiscal business date has been closed and its Z Reading has been committed."
           : "No closed fiscal business date is available."}</p>
       : <div className="reportFilters">
           <label>Closed Fiscal Business Date<select aria-label="Closed Fiscal Business Date" value={selectedZReference} onChange={(event) => onSelectZ(event.target.value)}>{committedReadings.map((reading) => <option key={reading.reportReference} value={reading.reportReference}>{reading.businessDayDate} - {reading.reportReference}</option>)}</select></label>
           <button type="button" onClick={onGenerate} disabled={!canGenerate || busy || !selectedZReference}>Generate / View Summary</button>
         </div>}
-    {!canGenerate && <p className="stateMessage warning">Z Reading generation authority is required to generate the BIR Sales Summary.</p>}
+    {!canGenerate && <p className="stateMessage warning">Z Reading generation authority is required to generate the Daily BIR Sales Summary.</p>}
     <div className="reportFilters">
-      <label>Existing Summary ID<input aria-label="Existing BIR Sales Summary ID" value={summaryId} onChange={(event) => onSummaryIdChange(event.target.value)} /></label>
+      <label>Existing Daily Summary ID<input aria-label="Existing Daily BIR Sales Summary ID" value={summaryId} onChange={(event) => onSummaryIdChange(event.target.value)} /></label>
       <button type="button" onClick={onRead} disabled={busy || !summaryId.trim()}>View generated summary</button>
     </div>
     {error && <p className="errorMessage" role="alert">{error}</p>}
     {summary && <>
-      <dl className="periodCard" aria-label="BIR Sales Summary values">
+      <dl className="periodCard" aria-label="Daily BIR Sales Summary values">
         <SummaryValue label="Business Date" value={summary.businessDayDate} />
         <SummaryValue label="Summary ID" value={summary.birSalesSummaryReportId} />
         <SummaryValue label="Support Reference" value={summary.supportReference} />
@@ -451,8 +526,8 @@ function BirSalesSummaryPanel({ zHistory, selectedZReference, onSelectZ, summary
         <SummaryValue label="Currency" value={summary.currencyCode} />
         <SummaryValue label="Generated (PHT)" value={formatPhtInstant(summary.generatedAt)} />
       </dl>
-      <div className="reportFilters"><a className="primaryButton" href={summaryUrl("json")}>Download JSON</a><a className="primaryButton" href={summaryUrl("csv")}>Download CSV</a></div>
-      <section aria-labelledby="annex-e1-title"><h4 id="annex-e1-title">Annex E-1</h4><p>Monthly deterministic BIR Sales Summary workbook from POS authority.</p><div className="reportFilters"><label>Calendar month<input type="month" aria-label="Annex E-1 calendar month" value={annexMonth} onChange={(event) => onAnnexMonthChange(event.target.value)} /></label>{annexLookupComplete && !annexWorkbook && !annexError && <button type="button" onClick={onGenerateAnnex} disabled={!canGenerate || busy || annexLoading || !annexMonth}>Generate Annex E-1</button>}{annexWorkbook && <a className="primaryButton" href={annexUrl}>Download XLSX</a>}</div>{annexLoading && <p role="status">Loading current Annex E-1 workbook...</p>}{annexError && <p className="errorMessage" role="alert">{annexError}</p>}{annexLookupComplete && !annexWorkbook && !annexError && <p role="status">No Annex E-1 workbook has been generated for this month.</p>}{annexWorkbook && <p role="status">Current Annex E-1: {annexWorkbook.annexEReference}, revision {annexWorkbook.revision}, generated {formatPhtInstant(annexWorkbook.generatedAt)} PHT ({annexWorkbook.fileName}).</p>}</section>
+      <div className="reportFilters"><a className="primaryButton" href={summaryUrl("pdf")}>Download PDF</a><a className="primaryButton" href={summaryUrl("csv")}>Download CSV</a><a className="primaryButton" href={summaryUrl("json")}>Download JSON</a></div>
+      <section aria-labelledby="annex-e1-title"><h4 id="annex-e1-title">Annex E-1 - BIR Sales Summary Report</h4><p>Official monthly BIR Sales Summary Report workbook from POS authority.</p><div className="reportFilters"><label>Calendar month<input type="month" aria-label="Annex E-1 calendar month" value={annexMonth} onChange={(event) => onAnnexMonthChange(event.target.value)} /></label>{annexLookupComplete && !annexWorkbook && !annexError && <button type="button" onClick={onGenerateAnnex} disabled={!canGenerate || busy || annexLoading || !annexMonth}>Generate Annex E-1</button>}{annexWorkbook && <><a className="primaryButton" href={annexPdfUrl}>Download PDF</a><a className="primaryButton" href={annexXlsxUrl}>Download XLSX</a></>}</div>{annexLoading && <p role="status">Loading current Annex E-1 workbook...</p>}{annexError && <p className="errorMessage" role="alert">{annexError}</p>}{annexLookupComplete && !annexWorkbook && !annexError && <p role="status">No Annex E-1 workbook has been generated for this month.</p>}{annexWorkbook && <p role="status">Current Annex E-1: {annexWorkbook.annexEReference}, revision {annexWorkbook.revision}, generated {formatPhtInstant(annexWorkbook.generatedAt)} PHT ({annexWorkbook.fileName}).</p>}</section>
     </>}
   </div>;
 }
@@ -465,9 +540,9 @@ function NoAuthorizedSite({ message }: { message: string }) {
   return <section className="stateMessage warning"><h2>No authorized fiscal Site</h2><p><strong>NO_AUTHORIZED_SITE</strong></p><p>{message}</p></section>;
 }
 
-function ReadingPanel({ kind, history, error, actionError, canRead, canGenerate, onGenerate, download }: { kind: "X" | "Z"; history?: History; error?: string; actionError?: string; canRead: boolean; canGenerate: boolean; onGenerate?: () => void; download: (reference: string) => string }) {
+function ReadingPanel({ kind, history, error, actionError, canRead, canGenerate, onGenerate, download }: { kind: "X" | "Z"; history?: History; error?: string; actionError?: string; canRead: boolean; canGenerate: boolean; onGenerate?: () => void; download: (reference: string, format: "pdf" | "json") => string }) {
   if (!canRead) return <p className="stateMessage warning">{kind} Reading permission is required.</p>;
-  return <div className="fiscalPane" role="tabpanel"><div className="readingTitle"><div><h3>{kind} Reading</h3><p>{kind === "X" ? "Non-closing observation of the current reporting period." : "Closing fiscal report history."}</p></div>{canGenerate && history?.currentPeriod && <button type="button" onClick={onGenerate}>Generate {kind} Reading</button>}</div>{error && <p className="errorMessage" role="alert">{error}</p>}{actionError && <p className="errorMessage" role="alert">{actionError}</p>}{history?.currentPeriod ? <dl className="periodCard"><div><dt>Fiscal Business Date</dt><dd>{history.currentPeriod.businessDayDate}</dd></div><div><dt>Period start (PHT)</dt><dd>{formatPhtInstant(history.currentPeriod.periodStartAt)}</dd></div><div><dt>Period end (PHT)</dt><dd>{formatPhtInstant(history.currentPeriod.periodEndAt)}</dd></div><div><dt>Status</dt><dd>{history.currentPeriod.status}</dd></div></dl> : <p role="status">{kind === "X" && canGenerate ? "No open fiscal reporting period is currently available for X generation." : "No open fiscal reporting period is available."}</p>}<div className="tableViewport"><table><thead><tr><th>Reference</th><th>Generated (PHT)</th><th>Transactions</th><th>Gross sales</th><th>VATable</th><th>VAT</th><th>VAT exempt</th><th>Zero rated</th><th>Discounts</th><th>Voids</th><th>Adjustments</th><th>Net sales</th><th>Tenders</th><th>Output</th></tr></thead><tbody>{history?.readings.map((reading) => <tr key={reading.reportReference}><td>{reading.reportReference}</td><td>{formatPhtInstant(reading.generatedAt)} PHT</td><td>{reading.transactionCount}</td><td>{money(reading.amounts.grossSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.vatableSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.vatAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.vatExemptSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.zeroRatedSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.discountAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.voidAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.adjustmentAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.netSalesAmountMinorUnits, reading.currencyCode)}</td><td>{reading.tenders.length ? reading.tenders.map((tender) => `${tender.classification}: ${money(tender.amountMinorUnits, tender.currencyCode)}`).join("; ") : "None"}</td><td><a href={download(reading.reportReference)}>Print / download</a></td></tr>)}</tbody></table></div></div>;
+  return <div className="fiscalPane" role="tabpanel"><div className="readingTitle"><div><h3>{kind} Reading</h3><p>{kind === "X" ? "Non-closing observation of the current reporting period." : "Closing fiscal report history."}</p></div>{canGenerate && history?.currentPeriod && <button type="button" onClick={onGenerate}>Generate {kind} Reading</button>}</div>{error && <p className="errorMessage" role="alert">{error}</p>}{actionError && <p className="errorMessage" role="alert">{actionError}</p>}{history?.currentPeriod ? <dl className="periodCard"><div><dt>Fiscal Business Date</dt><dd>{history.currentPeriod.businessDayDate}</dd></div><div><dt>Period start (PHT)</dt><dd>{formatPhtInstant(history.currentPeriod.periodStartAt)}</dd></div><div><dt>Period end (PHT)</dt><dd>{formatPhtInstant(history.currentPeriod.periodEndAt)}</dd></div><div><dt>Status</dt><dd>{history.currentPeriod.status}</dd></div></dl> : <p role="status">{kind === "X" && canGenerate ? "No open fiscal reporting period is currently available for X generation." : "No open fiscal reporting period is available."}</p>}<div className="tableViewport"><table><thead><tr><th>Reference</th><th>Generated (PHT)</th><th>Transactions</th><th>Gross sales</th><th>VATable</th><th>VAT</th><th>VAT exempt</th><th>Zero rated</th><th>Discounts</th><th>Voids</th><th>Adjustments</th><th>Net sales</th><th>Tenders</th><th>Output</th></tr></thead><tbody>{history?.readings.map((reading) => <tr key={reading.reportReference}><td>{reading.reportReference}</td><td>{formatPhtInstant(reading.generatedAt)} PHT</td><td>{reading.transactionCount}</td><td>{money(reading.amounts.grossSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.vatableSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.vatAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.vatExemptSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.zeroRatedSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.discountAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.voidAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.adjustmentAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.netSalesAmountMinorUnits, reading.currencyCode)}</td><td>{reading.tenders.length ? reading.tenders.map((tender) => `${tender.classification}: ${money(tender.amountMinorUnits, tender.currencyCode)}`).join("; ") : "None"}</td><td><div className="reportFilters"><a href={download(reading.reportReference, "pdf")}>Download PDF</a><a href={download(reading.reportReference, "json")}>Download JSON</a></div></td></tr>)}</tbody></table></div></div>;
 }
 
 function operationMessage(cause: unknown, fallback: string) {

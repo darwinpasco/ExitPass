@@ -115,27 +115,38 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
     }
 
     [Theory]
-    [InlineData(FiscalReportingGatewayAction.XDownload, "/v1/fiscal-reports/x-readings/X-20260915-001/exports/pdf", "fiscal_x_reading.export")]
-    [InlineData(FiscalReportingGatewayAction.ZDownload, "/v1/fiscal-reports/z-readings/Z-20260915-001/exports/pdf", "fiscal_z_reading.export")]
-    public async Task ReadingDownloadsRequestTheAuthoritativePdfExport(
+    [InlineData(FiscalReportingGatewayAction.XDownload, null, "/v1/fiscal-reports/x-readings/X-20260915-001/exports/pdf", "application/pdf", "reading-57mm.pdf", "fiscal_x_reading.export")]
+    [InlineData(FiscalReportingGatewayAction.XDownload, "pdf", "/v1/fiscal-reports/x-readings/X-20260915-001/exports/pdf", "application/pdf", "reading-57mm.pdf", "fiscal_x_reading.export")]
+    [InlineData(FiscalReportingGatewayAction.XDownload, "json", "/v1/fiscal-reports/x-readings/X-20260915-001/exports/json", "application/json; charset=utf-8", "x-reading.json", "fiscal_x_reading.export")]
+    [InlineData(FiscalReportingGatewayAction.ZDownload, null, "/v1/fiscal-reports/z-readings/Z-20260915-001/exports/pdf", "application/pdf", "reading-57mm.pdf", "fiscal_z_reading.export")]
+    [InlineData(FiscalReportingGatewayAction.ZDownload, "pdf", "/v1/fiscal-reports/z-readings/Z-20260915-001/exports/pdf", "application/pdf", "reading-57mm.pdf", "fiscal_z_reading.export")]
+    [InlineData(FiscalReportingGatewayAction.ZDownload, "json", "/v1/fiscal-reports/z-readings/Z-20260915-001/exports/json", "application/json; charset=utf-8", "z-reading.json", "fiscal_z_reading.export")]
+    public async Task ReadingDownloadsRequestTheSelectedAuthoritativeExport(
         FiscalReportingGatewayAction action,
+        string? format,
         string expectedPath,
+        string contentType,
+        string fileName,
         string expectedPermission)
     {
         var response = new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new ByteArrayContent("%PDF-1.4"u8.ToArray())
+            Content = new ByteArrayContent(format == "json" ? "{}"u8.ToArray() : "%PDF-1.4"u8.ToArray())
         };
-        response.Content.Headers.ContentType = new("application/pdf");
-        response.Content.Headers.ContentDisposition = new("attachment") { FileName = "reading-57mm.pdf" };
+        response.Content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(contentType);
+        response.Content.Headers.ContentDisposition = new("attachment") { FileName = fileName };
         var handler = new CaptureHandler(_ => response);
 
         var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
-            Request(action) with { ReportReference = action == FiscalReportingGatewayAction.XDownload ? "X-20260915-001" : "Z-20260915-001" });
+            Request(action) with
+            {
+                ReportReference = action == FiscalReportingGatewayAction.XDownload ? "X-20260915-001" : "Z-20260915-001",
+                ExportFormat = format
+            });
 
         Assert.Equal(200, result.HttpStatusCode);
-        Assert.Equal("application/pdf", result.ContentType);
-        Assert.Equal("reading-57mm.pdf", result.FileName);
+        Assert.Equal(contentType, result.ContentType);
+        Assert.Equal(fileName, result.FileName);
         Assert.Equal(expectedPath, handler.Requests.Single().RequestUri!.AbsolutePath);
         Assert.Empty(handler.Requests.Single().RequestUri!.Query);
         Assert.Equal(expectedPermission, Header(handler.Requests.Single(), "X-PosServer-Admin-Permission"));
@@ -170,6 +181,7 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
     [Theory]
     [InlineData(FiscalReportingGatewayAction.BirSalesSummaryDownloadJson, "json")]
     [InlineData(FiscalReportingGatewayAction.BirSalesSummaryDownloadCsv, "csv")]
+    [InlineData(FiscalReportingGatewayAction.BirSalesSummaryDownloadPdf, "pdf")]
     public async Task BirSalesSummaryExportsArePassedThroughWithAuthoritativeHash(
         FiscalReportingGatewayAction action,
         string format)
@@ -179,7 +191,7 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
         {
             Content = new ByteArrayContent("authoritative-export"u8.ToArray())
         };
-        response.Content.Headers.ContentType = new(format == "json" ? "application/json" : "text/csv");
+        response.Content.Headers.ContentType = new(format switch { "json" => "application/json", "csv" => "text/csv", _ => "application/pdf" });
         response.Content.Headers.ContentDisposition = new("attachment") { FileName = $"bir-sales-summary.{format}" };
         response.Headers.Add("X-Content-SHA256", "fiscal-hash");
         var handler = new CaptureHandler(_ => response);
@@ -216,6 +228,7 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
             CalendarMonth = 9
         });
         await gateway.SendAsync(Request(FiscalReportingGatewayAction.AnnexE1Download) with { WorkbookId = workbookId });
+        await gateway.SendAsync(Request(FiscalReportingGatewayAction.AnnexE1DownloadPdf) with { WorkbookId = workbookId });
 
         Assert.Equal("/v1/fiscal-reports/annex-e/e1/workbooks", handler.Requests[0].RequestUri!.AbsolutePath);
         Assert.Equal("fiscal_annex_e.generate", Header(handler.Requests[0], "X-PosServer-Admin-Permission"));
@@ -224,6 +237,9 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
         Assert.Contains("\"profile\":\"pos-server-bir-annex-e1-rmo24-2023:v1\"", handler.Bodies[0]);
         Assert.Equal($"/v1/fiscal-reports/annex-e/e1/workbooks/{workbookId:D}/content", handler.Requests[1].RequestUri!.AbsolutePath);
         Assert.Equal("fiscal_annex_e.export", Header(handler.Requests[1], "X-PosServer-Admin-Permission"));
+        Assert.Equal($"/v1/fiscal-reports/annex-e/e1/workbooks/{workbookId:D}/content", handler.Requests[2].RequestUri!.AbsolutePath);
+        Assert.Equal("?format=pdf", handler.Requests[2].RequestUri.Query);
+        Assert.Equal("fiscal_annex_e.export", Header(handler.Requests[2], "X-PosServer-Admin-Permission"));
     }
 
     [Fact]
@@ -248,6 +264,57 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
         Assert.Contains("calendarMonth=10", request.RequestUri.Query);
         Assert.Contains("profile=pos-server-bir-annex-e1-rmo24-2023%3Av1", request.RequestUri.Query);
         Assert.Equal("fiscal_annex_e.read", Header(request, "X-PosServer-Admin-Permission"));
+    }
+
+    [Fact]
+    public async Task MonthlyESalesReadUsesServerResolvedFiscalScopeAndNarrowReadPermission()
+    {
+        var handler = new CaptureHandler(_ => Json("{\"succeeded\":true,\"report\":{}}"));
+
+        await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.MonthlyESalesRead) with { CalendarYear = 2026, CalendarMonth = 9 });
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("/v1/fiscal-reports/monthly-esales/", request.RequestUri!.AbsolutePath);
+        Assert.Contains($"sitePosServerId={Pos:D}", request.RequestUri.Query);
+        Assert.Contains($"fiscalIdentityId={Identity:D}", request.RequestUri.Query);
+        Assert.Contains("currencyCode=PHP", request.RequestUri.Query);
+        Assert.Contains("calendarYear=2026", request.RequestUri.Query);
+        Assert.Contains("calendarMonth=9", request.RequestUri.Query);
+        Assert.Equal("monthly_esales.read", Header(request, "X-PosServer-Admin-Permission"));
+    }
+
+    [Theory]
+    [InlineData(FiscalReportingGatewayAction.MonthlyESalesDownloadJson, "json", "application/json")]
+    [InlineData(FiscalReportingGatewayAction.MonthlyESalesDownloadCsv, "csv", "text/csv")]
+    [InlineData(FiscalReportingGatewayAction.MonthlyESalesDownloadPdf, "pdf", "application/pdf")]
+    public async Task MonthlyESalesExportsProxyAuthoritativeBytesAndMetadata(
+        FiscalReportingGatewayAction action,
+        string format,
+        string contentType)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Encoding.UTF8.GetBytes($"monthly-{format}"))
+        };
+        response.Content.Headers.ContentType = new(contentType);
+        response.Content.Headers.ContentDisposition = new("attachment") { FileName = $"monthly-esales-202609.{format}" };
+        response.Headers.Add("X-Content-SHA256", "monthly-hash");
+        var handler = new CaptureHandler(_ => response);
+
+        var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(action) with { CalendarYear = 2026, CalendarMonth = 9 });
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/v1/fiscal-reports/monthly-esales/download", request.RequestUri!.AbsolutePath);
+        Assert.Contains($"sitePosServerId={Pos:D}", request.RequestUri.Query);
+        Assert.Contains($"fiscalIdentityId={Identity:D}", request.RequestUri.Query);
+        Assert.Contains("format=" + format, request.RequestUri.Query);
+        Assert.Equal("monthly_esales.export", Header(request, "X-PosServer-Admin-Permission"));
+        Assert.Equal($"monthly-esales-202609.{format}", result.FileName);
+        Assert.Equal("monthly-hash", result.ContentSha256);
+        Assert.Equal(Encoding.UTF8.GetBytes($"monthly-{format}"), result.Body);
     }
 
     [Fact]
