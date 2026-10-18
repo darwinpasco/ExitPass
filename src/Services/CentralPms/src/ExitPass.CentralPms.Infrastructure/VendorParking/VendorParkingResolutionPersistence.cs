@@ -953,25 +953,12 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                   AND NOT EXISTS (
                       SELECT 1 FROM core.payment_attempts AS attempt
                       WHERE attempt.tariff_snapshot_id = tariff.tariff_snapshot_id)
-                  AND (
-                      (
-                          tariff.tariff_version_reference LIKE @continuity_tariff_prefix
-                          AND exit_auth.exit_authorization_id IS NULL
-                      )
-                      OR
-                      (
-                          tariff.tariff_version_reference NOT LIKE @continuity_tariff_prefix
-                          AND exit_auth.exit_authorization_id IS NOT NULL
-                      )
-                  )
+                  AND exit_auth.exit_authorization_id IS NOT NULL
             );
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = tariffSnapshotId;
-        command.Parameters.AddWithValue(
-            "continuity_tariff_prefix",
-            $"{ContinuityTariffCalculator.TariffVersionPrefix}%");
         return await command.ExecuteScalarAsync(cancellationToken) is true;
     }
 

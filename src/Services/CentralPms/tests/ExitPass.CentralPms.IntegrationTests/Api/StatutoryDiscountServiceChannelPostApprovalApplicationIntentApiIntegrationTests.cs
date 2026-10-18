@@ -39,6 +39,57 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     private static readonly Guid WebPayServiceIdentityId = Guid.Parse("9b000000-0000-0000-0000-000000000005");
     private static readonly Guid AptServiceIdentityId = Guid.Parse("9b000000-0000-0000-0000-000000000006");
 
+    [Fact]
+    public async Task CompletedContinuityZeroPayableFinality_WithIssuedAuthorization_ReusesAppliedTariff()
+    {
+        const string sourceChannel = StatutoryDiscountSourceChannels.WebPay;
+        var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
+            nameof(CompletedContinuityZeroPayableFinality_WithIssuedAuthorization_ReusesAppliedTariff),
+            benefitType: OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionBenefitType,
+            discountBaseScope: OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionDiscountBaseScope,
+            fullFeeExempt: true);
+        await SeedServiceAuthorizationAsync(context);
+
+        try
+        {
+            using var factory = CreateFactory(context, new ZeroPayablePosCallEvidence());
+            using var serviceClient = factory.CreateClient();
+            using var operatorClient = factory.CreateClient();
+            AddServiceHeaders(serviceClient, sourceChannel);
+            AddOperatorHeaders(operatorClient, context);
+
+            var intake = await PostSharedDecisionAsync(
+                serviceClient,
+                Request(context, sourceChannel, applyPayableBasis: false),
+                $"continuity-readback-intake-{context.ParkingSessionId:N}",
+                context.CorrelationId,
+                HttpStatusCode.Created);
+            await CompleteReviewAsync(operatorClient, context, intake.StatutoryDiscountDecisionCommandId, "APPROVE");
+
+            var application = await PostSharedDecisionAsync(
+                serviceClient,
+                Request(context, sourceChannel, applyPayableBasis: true),
+                $"continuity-readback-apply-{context.ParkingSessionId:N}",
+                Guid.NewGuid(),
+                HttpStatusCode.OK);
+
+            application.ExitAuthorization.Should().NotBeNull();
+            application.ExitAuthorization!.AuthorizationStatus.Should().Be("ISSUED");
+            application.AppliedTariffSnapshotId.Should().NotBeNull();
+            await MarkTariffAsContinuityAsync(application.AppliedTariffSnapshotId!.Value);
+
+            await AssertCompletedExpiredZeroPayableVendorReadbackAsync(
+                context,
+                application.AppliedTariffSnapshotId.Value);
+        }
+        finally
+        {
+            await CleanupServiceAssignmentsAsync(context);
+            await CleanupFiscalIssuanceReferencesAsync(context.ParkingSessionId);
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
+        }
+    }
+
     [Theory]
     [InlineData(StatutoryDiscountSourceChannels.WebPay)]
     [InlineData(StatutoryDiscountSourceChannels.AssistedPaymentTerminal)]
@@ -1602,6 +1653,21 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 () => persistence.PersistAsync(request, CancellationToken.None));
             rejected.ErrorCode.Should().Be("EFFECTIVE_PAYABLE_BASIS_INVALID");
         }
+    }
+
+    private static async Task MarkTariffAsContinuityAsync(Guid tariffSnapshotId)
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(
+            StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new Npgsql.NpgsqlCommand(
+            """
+            UPDATE core.tariff_snapshots
+            SET tariff_version_reference = 'EXITPASS-CONTINUITY:ZERO-PAYABLE-COMPLETION-TEST'
+            WHERE tariff_snapshot_id = @tariff_snapshot_id;
+            """, connection);
+        command.Parameters.AddWithValue("tariff_snapshot_id", tariffSnapshotId);
+        (await command.ExecuteNonQueryAsync()).Should().Be(1);
     }
 
     private static CustomWebApplicationFactory CreateFactory(
