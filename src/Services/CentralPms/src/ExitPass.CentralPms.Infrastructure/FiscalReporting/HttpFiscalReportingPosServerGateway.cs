@@ -15,7 +15,7 @@ public sealed class HttpFiscalReportingPosServerGateway(
     private const string PermissionHeader = "X-PosServer-Admin-Permission";
     public async Task<FiscalReportingGatewayResponse> SendAsync(FiscalReportingGatewayRequest request, CancellationToken cancellationToken = default)
     {
-        var resolution = Resolve(request.SiteId);
+        var resolution = Resolve(request.SiteId, RequiresAnnexE1GovernedCredential(request));
         if (resolution.Error is not null) return Failure(503, resolution.Error, true);
         try
         {
@@ -112,6 +112,24 @@ public sealed class HttpFiscalReportingPosServerGateway(
             FiscalReportingGatewayAction.BirSalesSummaryDownloadJson => (HttpMethod.Get, $"/v1/fiscal-reports/bir-sales-summaries/{RequireGuid(request.SummaryId, "summary"):D}/exports/json", "bir_sales_summary.export", null),
             FiscalReportingGatewayAction.BirSalesSummaryDownloadCsv => (HttpMethod.Get, $"/v1/fiscal-reports/bir-sales-summaries/{RequireGuid(request.SummaryId, "summary"):D}/exports/csv", "bir_sales_summary.export", null),
             FiscalReportingGatewayAction.BirSalesSummaryDownloadPdf => (HttpMethod.Get, $"/v1/fiscal-reports/bir-sales-summaries/{RequireGuid(request.SummaryId, "summary"):D}/exports/pdf", "bir_sales_summary.export", null),
+            FiscalReportingGatewayAction.AnnexE1KnownZeroAttest => (HttpMethod.Post, "/v1/fiscal-reports/annex-e/e1/known-zero-attestations", "fiscal_annex_e.known_zero.attest", new
+            {
+                operationKey = request.OperationKey,
+                sitePosServerId = endpoint.SitePosServerId,
+                fiscalIdentityId = endpoint.FiscalIdentityId,
+                currencyCode = endpoint.CurrencyCode,
+                fiscalReportingPeriodId = RequirePeriodId(request),
+                factType = request.FactType,
+                factStatus = request.FactStatus,
+                amountMinorUnits = request.AmountMinorUnits,
+                sourceDocumentCount = request.SourceDocumentCount,
+                firstSourceReference = request.FirstSourceReference,
+                lastSourceReference = request.LastSourceReference,
+                sourceEventReference = request.SourceEventReference,
+                approvalReference = request.ApprovalReference,
+                supersedesFactId = request.SupersedesFactId,
+                correctionReason = request.CorrectionReason
+            }),
             FiscalReportingGatewayAction.AnnexE1Generate => (HttpMethod.Post, "/v1/fiscal-reports/annex-e/e1/workbooks", "fiscal_annex_e.generate", new
             {
                 operationKey = request.OperationKey,
@@ -120,7 +138,10 @@ public sealed class HttpFiscalReportingPosServerGateway(
                 currencyCode = endpoint.CurrencyCode,
                 calendarYear = RequireCalendarPart(request.CalendarYear, 2000, 9999, "year"),
                 calendarMonth = RequireCalendarPart(request.CalendarMonth, 1, 12, "month"),
-                profile = AnnexE1Profile
+                profile = AnnexE1Profile,
+                supersedesWorkbookId = request.SupersedesWorkbookId,
+                correctionReason = request.CorrectionReason,
+                correctionApprovalReference = request.CorrectionApprovalReference
             }),
             FiscalReportingGatewayAction.AnnexE1CurrentRead => (HttpMethod.Get,
                 $"/v1/fiscal-reports/annex-e/e1/workbooks/current?{scope}&calendarYear={RequireCalendarPart(request.CalendarYear, 2000, 9999, "year")}&calendarMonth={RequireCalendarPart(request.CalendarMonth, 1, 12, "month")}&profile={Uri.EscapeDataString(AnnexE1Profile)}",
@@ -148,32 +169,50 @@ public sealed class HttpFiscalReportingPosServerGateway(
                 "fiscal_audit_trail.export", null),
             _ => throw new InvalidOperationException("Unsupported fiscal reporting gateway action.")
         };
-        var outbound=Build(endpoint,method,path,permission,request.CorrelationId);
+        var effectivePermission = IsAnnexE1Correction(request)
+            ? null
+            : permission;
+        var outbound=Build(endpoint,method,path,effectivePermission,request.CorrelationId);
         if(body is not null) outbound.Content=JsonContent.Create(body);
         return outbound;
     }
 
-    private HttpRequestMessage Build(ResolvedEndpoint endpoint, HttpMethod method, string path, string permission, Guid correlation)
+    private HttpRequestMessage Build(ResolvedEndpoint endpoint, HttpMethod method, string path, string? permission, Guid correlation)
     {
         var request=new HttpRequestMessage(method,new Uri(endpoint.BaseUri,path));
         request.Headers.TryAddWithoutValidation(ApiKeyHeader,endpoint.ApiKey);
-        request.Headers.TryAddWithoutValidation(PermissionHeader,permission);
+        if (permission is not null) request.Headers.TryAddWithoutValidation(PermissionHeader,permission);
         request.Headers.TryAddWithoutValidation("X-Correlation-Id",correlation.ToString("D"));
         request.Headers.TryAddWithoutValidation("X-Actor-Reference","central-pms-fiscal-reporting");
         return request;
     }
 
-    private (ResolvedEndpoint? Endpoint,string? Error) Resolve(Guid siteId)
+    private (ResolvedEndpoint? Endpoint,string? Error) Resolve(Guid siteId, bool governedAnnexE1Credential)
     {
         var binding=bindingResolver.Resolve(new SitePosServerBindingRequest(siteId));
         if(!binding.IsSuccess || binding.Endpoint is null) return (null,binding.Code);
         var value=binding.Endpoint;
         if(value.SitePosServerId==Guid.Empty || !value.FiscalIdentityId.HasValue || value.FiscalIdentityId.Value==Guid.Empty || string.IsNullOrWhiteSpace(value.CurrencyCode)) return (null,"site_pos_server_fiscal_reporting_scope_unavailable");
         if(!Uri.TryCreate(value.BaseUrl,UriKind.Absolute,out var baseUri) || baseUri.AbsolutePath!="/" || !string.IsNullOrEmpty(baseUri.Query) || !string.IsNullOrEmpty(baseUri.Fragment)) return (null,"site_pos_server_endpoint_url_invalid");
-        if(string.IsNullOrWhiteSpace(value.ApiKeyFile) || !File.Exists(value.ApiKeyFile)) return (null,"site_pos_server_api_key_file_unavailable");
-        var key=File.ReadAllText(value.ApiKeyFile).Trim(); if(string.IsNullOrWhiteSpace(key)) return (null,"site_pos_server_api_key_file_empty");
+        var apiKeyFile = governedAnnexE1Credential ? value.AnnexE1GovernedCorrectionApiKeyFile : value.ApiKeyFile;
+        var unavailableCode = governedAnnexE1Credential
+            ? "site_pos_server_annex_e1_governed_api_key_file_unavailable"
+            : "site_pos_server_api_key_file_unavailable";
+        var emptyCode = governedAnnexE1Credential
+            ? "site_pos_server_annex_e1_governed_api_key_file_empty"
+            : "site_pos_server_api_key_file_empty";
+        if(string.IsNullOrWhiteSpace(apiKeyFile) || !File.Exists(apiKeyFile)) return (null,unavailableCode);
+        var key=File.ReadAllText(apiKeyFile).Trim(); if(string.IsNullOrWhiteSpace(key)) return (null,emptyCode);
         return (new(baseUri,value.SitePosServerId,value.FiscalIdentityId.Value,value.CurrencyCode.Trim().ToUpperInvariant(),key),null);
     }
+
+    private static bool RequiresAnnexE1GovernedCredential(FiscalReportingGatewayRequest request) =>
+        request.Action == FiscalReportingGatewayAction.AnnexE1KnownZeroAttest ||
+        IsAnnexE1Correction(request);
+
+    private static bool IsAnnexE1Correction(FiscalReportingGatewayRequest request) =>
+        request.Action == FiscalReportingGatewayAction.AnnexE1Generate &&
+        (request.SupersedesWorkbookId.HasValue || request.CorrectionReason is not null || request.CorrectionApprovalReference is not null);
 
     private static string Scope(ResolvedEndpoint e)=>$"sitePosServerId={e.SitePosServerId:D}&fiscalIdentityId={e.FiscalIdentityId:D}&currencyCode={e.CurrencyCode}";
     private static string Period(FiscalReportingGatewayRequest r)=>$"&effectiveFrom={Uri.EscapeDataString(r.PeriodStart?.ToUniversalTime().ToString("O")??string.Empty)}&effectiveTo={Uri.EscapeDataString(r.PeriodEnd?.ToUniversalTime().ToString("O")??string.Empty)}";

@@ -568,6 +568,8 @@ public sealed class SitePosServerEndpointOptions
 
     public string? ApiKeyFile { get; set; }
 
+    public string? AnnexE1GovernedCorrectionApiKeyFile { get; set; }
+
     public string? Environment { get; set; }
 
     public bool Enabled { get; set; }

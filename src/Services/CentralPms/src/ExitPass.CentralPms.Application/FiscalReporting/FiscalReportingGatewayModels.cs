@@ -17,6 +17,7 @@ public enum FiscalReportingGatewayAction
     BirSalesSummaryDownloadJson,
     BirSalesSummaryDownloadCsv,
     BirSalesSummaryDownloadPdf,
+    AnnexE1KnownZeroAttest,
     AnnexE1Generate,
     AnnexE1CurrentRead,
     AnnexE1Read,
@@ -51,7 +52,19 @@ public sealed record FiscalReportingGatewayRequest(
     string? ActionCode = null,
     string? ActorFilter = null,
     string? ResultFilter = null,
-    string? ReferenceFilter = null);
+    string? ReferenceFilter = null,
+    string? FactType = null,
+    string? FactStatus = null,
+    long? AmountMinorUnits = null,
+    long? SourceDocumentCount = null,
+    string? FirstSourceReference = null,
+    string? LastSourceReference = null,
+    string? SourceEventReference = null,
+    string? ApprovalReference = null,
+    Guid? SupersedesFactId = null,
+    string? CorrectionReason = null,
+    Guid? SupersedesWorkbookId = null,
+    string? CorrectionApprovalReference = null);
 
 public sealed record FiscalReportingGatewayResponse(
     int HttpStatusCode,

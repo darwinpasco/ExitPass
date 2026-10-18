@@ -436,6 +436,211 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         gateway.Requests.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task AnnexE1KnownZeroAuthorizedHumanSubmissionForwardsExactZeroContract()
+    {
+        var periodId = Guid.Parse("88000000-0000-0000-0000-000000000041");
+        var gateway = new FakeGateway(_ => Response(201, "{\"succeeded\":true,\"code\":\"annex_e1_fact_recorded\"}"));
+        using var factory = CreateFactory(gateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            additionalPermissions:["fiscal-reporting.annex-e1.known-zero.attest"]);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/known-zero-attestations",
+            new
+            {
+                operationKey="oct17-naac-zero",fiscalReportingPeriodId=periodId,factType="naac_discount",
+                factStatus="attested_zero",amountMinorUnits=0,sourceDocumentCount=0,
+                firstSourceReference=(string?)null,lastSourceReference=(string?)null,sourceEventReference=(string?)null,
+                approvalReference="FINANCE-APPROVAL-20261018-001"
+            });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var request = gateway.Requests.Should().ContainSingle().Subject;
+        request.Action.Should().Be(FiscalReportingGatewayAction.AnnexE1KnownZeroAttest);
+        request.SiteId.Should().Be(SiteId);
+        request.FiscalReportingPeriodId.Should().Be(periodId);
+        request.FactType.Should().Be("naac_discount");
+        request.FactStatus.Should().Be("attested_zero");
+        request.AmountMinorUnits.Should().Be(0);
+        request.SourceDocumentCount.Should().Be(0);
+        request.ApprovalReference.Should().Be("FINANCE-APPROVAL-20261018-001");
+        factory.Services.GetRequiredService<ICentralPmsRbacRepository>()
+            .Should().BeOfType<FakeRbacRepository>().Which.AuditEvents
+            .Should().ContainSingle(audit => audit.EventType == "ANNEX_E1_KNOWN_ZERO_ATTESTATION" && audit.TargetId == periodId);
+    }
+
+    [Theory]
+    [InlineData("", 0, 0, null)]
+    [InlineData("N/A", 0, 0, null)]
+    [InlineData("FINANCE-APPROVAL", 1, 0, null)]
+    [InlineData("FINANCE-APPROVAL", 0, 1, null)]
+    [InlineData("FINANCE-APPROVAL", 0, 0, "SI-00000116")]
+    public async Task AnnexE1KnownZeroRejectsMissingApprovalNonzeroAndSourceBearingRequests(
+        string approvalReference,long amount,long sourceCount,string? firstSourceReference)
+    {
+        var gateway = new FakeGateway();
+        using var factory = CreateFactory(gateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            additionalPermissions:["fiscal-reporting.annex-e1.known-zero.attest"]);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/known-zero-attestations",
+            new
+            {
+                operationKey="invalid-zero",fiscalReportingPeriodId=Guid.NewGuid(),factType="naac_discount",
+                factStatus="attested_zero",amountMinorUnits=amount,sourceDocumentCount=sourceCount,
+                firstSourceReference,lastSourceReference=(string?)null,sourceEventReference=(string?)null,approvalReference
+            });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("annex_e1_known_zero_invalid");
+        gateway.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AnnexE1KnownZeroRequiresCsrfDedicatedPermissionAndAuthenticatedSiteScope()
+    {
+        var route = $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/known-zero-attestations";
+        var payload = new
+        {
+            operationKey="zero-auth",fiscalReportingPeriodId=Guid.NewGuid(),factType="vat_on_returns",
+            factStatus="attested_zero",amountMinorUnits=0,sourceDocumentCount=0,approvalReference="FINANCE-APPROVAL"
+        };
+
+        var noPermissionGateway = new FakeGateway();
+        using var noPermissionFactory = CreateFactory(noPermissionGateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR");
+        using var noPermissionClient = noPermissionFactory.CreateClient();
+        noPermissionClient.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+        using var noPermission = await noPermissionClient.PostAsJsonAsync(route,payload);
+        noPermission.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        noPermissionGateway.Requests.Should().BeEmpty();
+
+        var csrfGateway = new FakeGateway();
+        using var csrfFactory = CreateFactory(csrfGateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            additionalPermissions:["fiscal-reporting.annex-e1.known-zero.attest"]);
+        using var csrfClient = csrfFactory.CreateClient();
+        using var csrf = await csrfClient.PostAsJsonAsync(route,payload);
+        csrf.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await csrf.Content.ReadAsStringAsync()).Should().Contain("CSRF_VALIDATION_FAILED");
+        csrfGateway.Requests.Should().BeEmpty();
+
+        var scopeGateway = new FakeGateway();
+        using var scopeFactory = CreateFactory(scopeGateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            additionalPermissions:["fiscal-reporting.annex-e1.known-zero.attest"]);
+        using var scopeClient = scopeFactory.CreateClient();
+        scopeClient.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+        using var wrongSite = await scopeClient.PostAsJsonAsync(route.Replace(SiteId.ToString("D"),OtherSiteId.ToString("D")),payload);
+        wrongSite.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        scopeGateway.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AnnexE1KnownZeroOperationKeyReplayIsForwardedUnchangedForPosIdempotency()
+    {
+        var gateway = new FakeGateway(_ => Response(200,"{\"succeeded\":true,\"code\":\"annex_e1_fact_replayed\"}"));
+        using var factory = CreateFactory(gateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            additionalPermissions:["fiscal-reporting.annex-e1.known-zero.attest"]);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+        var payload = new
+        {
+            operationKey="stable-operation-key",fiscalReportingPeriodId=Guid.NewGuid(),factType="residual_vat_adjustment",
+            factStatus="attested_zero",amountMinorUnits=0,sourceDocumentCount=0,approvalReference="FINANCE-APPROVAL-REPLAY"
+        };
+
+        using var first = await client.PostAsJsonAsync($"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/known-zero-attestations",payload);
+        using var replay = await client.PostAsJsonAsync($"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/known-zero-attestations",payload);
+
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+        replay.StatusCode.Should().Be(HttpStatusCode.OK);
+        gateway.Requests.Should().HaveCount(2).And.OnlyContain(request => request.OperationKey == "stable-operation-key");
+    }
+
+    [Fact]
+    public async Task AnnexE1CorrectionRequiresCompleteSupersessionContractAndDedicatedPermission()
+    {
+        var predecessor = Guid.Parse("613af721-3b65-4bc4-9ce3-d2a032c26ab3");
+        var gateway = new FakeGateway();
+        using var factory = CreateFactory(gateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            additionalPermissions:["fiscal-reporting.annex-e1.correct"]);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+        var route = $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks";
+
+        using var missingReason = await client.PostAsJsonAsync(route,new {operationKey="r003-a",calendarYear=2026,calendarMonth=10,supersedesWorkbookId=predecessor,correctionApprovalReference="APPROVAL-R003"});
+        using var missingApproval = await client.PostAsJsonAsync(route,new {operationKey="r003-b",calendarYear=2026,calendarMonth=10,supersedesWorkbookId=predecessor,correctionReason="authorized_restatement"});
+        using var missingPredecessor = await client.PostAsJsonAsync(route,new {operationKey="r003-c",calendarYear=2026,calendarMonth=10,correctionReason="authorized_restatement",correctionApprovalReference="APPROVAL-R003"});
+
+        missingReason.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        missingApproval.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        missingPredecessor.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        gateway.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AnnexE1CorrectionForwardsSupersessionFieldsUnchangedAndPreservesPosFailures()
+    {
+        var predecessor = Guid.Parse("613af721-3b65-4bc4-9ce3-d2a032c26ab3");
+        var gateway = new FakeGateway(_ => Response(403,"{\"succeeded\":false,\"code\":\"annex_e1_correction_denied\",\"message\":\"Correction authority is required.\"}"));
+        using var factory = CreateFactory(gateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            additionalPermissions:["fiscal-reporting.annex-e1.correct"]);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks",
+            new {operationKey="annex-r003",calendarYear=2026,calendarMonth=10,supersedesWorkbookId=predecessor,correctionReason="authorized_restatement",correctionApprovalReference="FINANCE-APPROVAL-R003"});
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("annex_e1_correction_denied");
+        var request = gateway.Requests.Should().ContainSingle().Subject;
+        request.SupersedesWorkbookId.Should().Be(predecessor);
+        request.CorrectionReason.Should().Be("authorized_restatement");
+        request.CorrectionApprovalReference.Should().Be("FINANCE-APPROVAL-R003");
+    }
+
+    [Fact]
+    public async Task AnnexE1CorrectionIsDeniedWithoutDedicatedCentralPermission()
+    {
+        var gateway = new FakeGateway();
+        using var factory = CreateFactory(gateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks",
+            new {operationKey="annex-r003",calendarYear=2026,calendarMonth=10,supersedesWorkbookId=Guid.NewGuid(),correctionReason="authorized_restatement",correctionApprovalReference="FINANCE-APPROVAL-R003"});
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        gateway.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AnnexE1MissingAccountingFactsRemainFailClosedAndReadsDoNotGenerateOrAttest()
+    {
+        var gateway = new FakeGateway(request => request.Action == FiscalReportingGatewayAction.AnnexE1Generate
+            ? Response(422,"{\"succeeded\":false,\"code\":\"annex_e1_source_missing\"}")
+            : Response(200,"{\"succeeded\":true,\"workbook\":null}"));
+        using var factory = CreateFactory(gateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+
+        using var generation = await client.PostAsJsonAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks",
+            new {operationKey="missing-source",calendarYear=2026,calendarMonth=10});
+        using var read = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks/current?calendarYear=2026&calendarMonth=10");
+
+        generation.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await generation.Content.ReadAsStringAsync()).Should().Contain("annex_e1_source_missing");
+        read.StatusCode.Should().Be(HttpStatusCode.OK);
+        gateway.Requests.Should().HaveCount(2);
+        gateway.Requests.Should().NotContain(request => request.Action == FiscalReportingGatewayAction.AnnexE1KnownZeroAttest);
+    }
+
     [Theory]
     [InlineData("bir_sales_summary_period_not_closed", "The BIR Sales Summary can be generated after the fiscal business date has been closed and its Z Reading has been committed.")]
     [InlineData("bir_sales_summary_z_not_committed", "The BIR Sales Summary is unavailable until the governing Z Reading is committed.")]
@@ -739,7 +944,8 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         FakeReferenceRepository references,
         string role,
         bool includePermission = true,
-        bool authenticated = true) =>
+        bool authenticated = true,
+        IReadOnlyCollection<string>? additionalPermissions = null) =>
         new CustomWebApplicationFactory()
             .WithConfigurationOverrides(new Dictionary<string, string?>
             {
@@ -748,7 +954,7 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
             })
             .WithServiceOverrides(services =>
             {
-                services.AddSingleton(new TestPrincipalOptions(role, includePermission, authenticated));
+                services.AddSingleton(new TestPrincipalOptions(role, includePermission, authenticated, additionalPermissions ?? []));
                 services.AddAuthentication(options =>
                     {
                         options.DefaultAuthenticateScheme = Scheme;
@@ -765,7 +971,11 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
                 services.AddSingleton<IAntiforgery, TestAntiforgery>();
             });
 
-    private sealed record TestPrincipalOptions(string Role, bool IncludePermission, bool Authenticated);
+    private sealed record TestPrincipalOptions(
+        string Role,
+        bool IncludePermission,
+        bool Authenticated,
+        IReadOnlyCollection<string> AdditionalPermissions);
 
     private sealed class TestAntiforgery : IAntiforgery
     {
@@ -819,6 +1029,8 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
                 claims.Add(new(CentralPmsRbacPolicyCatalog.PermissionClaimType, "fiscal-reporting.z.read"));
                 claims.Add(new(CentralPmsRbacPolicyCatalog.PermissionClaimType, "fiscal-reporting.z.generate"));
             }
+            claims.AddRange(_principal.AdditionalPermissions.Select(permission =>
+                new Claim(CentralPmsRbacPolicyCatalog.PermissionClaimType, permission)));
 
             var identity = new ClaimsIdentity(claims, OperatorConsoleFiscalReportingApiIntegrationTests.Scheme);
             return Task.FromResult(AuthenticateResult.Success(
@@ -928,6 +1140,7 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
 
     private sealed class FakeRbacRepository(string role) : ICentralPmsRbacRepository
     {
+        public List<(string EventType,Guid? TargetId)> AuditEvents { get; } = [];
         public Task<bool> UserHasAnyPermissionAsync(Guid userId, IReadOnlyCollection<string> permissionCodes, CancellationToken cancellationToken) =>
             Task.FromResult(false);
         public Task<bool> UserHasAnyRoleAsync(Guid userId, IReadOnlyCollection<string> roleCodes, CancellationToken cancellationToken) =>
@@ -936,8 +1149,11 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
             Task.FromResult(false);
         public Task RecordDeniedAsync(string policyName, Guid? userId, Guid? serviceIdentityId, Guid? correlationId, string requestPath, CancellationToken cancellationToken) =>
             Task.CompletedTask;
-        public Task RecordAuditEventAsync(string eventType, string eventResult, string eventReasonCode, string targetEntityType, Guid? targetEntityId, Guid? actorUserId, Guid? actorServiceIdentityId, Guid? correlationId, string summary, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
+        public Task RecordAuditEventAsync(string eventType, string eventResult, string eventReasonCode, string targetEntityType, Guid? targetEntityId, Guid? actorUserId, Guid? actorServiceIdentityId, Guid? correlationId, string summary, CancellationToken cancellationToken)
+        {
+            AuditEvents.Add((eventType,targetEntityId));
+            return Task.CompletedTask;
+        }
     }
 
     private sealed record CloseableTestPeriod(Guid FiscalReportingPeriodId, string FiscalBusinessDate, long Version);

@@ -10,11 +10,16 @@ namespace ExitPass.CentralPms.UnitTests.FiscalReporting;
 public sealed class FiscalReportingPosServerGatewayTests : IDisposable
 {
     private readonly string keyFile = Path.Combine(Path.GetTempPath(), $"exitpass-g4-pos-key-{Guid.NewGuid():N}.txt");
+    private readonly string annexE1GovernedKeyFile = Path.Combine(Path.GetTempPath(), $"exitpass-annex-e1-governed-key-{Guid.NewGuid():N}.txt");
     private static readonly Guid Site = Guid.Parse("10000000-0000-4000-8000-000000000001");
     private static readonly Guid Pos = Guid.Parse("20000000-0000-4000-8000-000000000001");
     private static readonly Guid Identity = Guid.Parse("30000000-0000-4000-8000-000000000001");
 
-    public FiscalReportingPosServerGatewayTests() => File.WriteAllText(keyFile, "pos-secret");
+    public FiscalReportingPosServerGatewayTests()
+    {
+        File.WriteAllText(keyFile, "pos-secret");
+        File.WriteAllText(annexE1GovernedKeyFile, "annex-e1-governed-secret");
+    }
 
     [Fact]
     public async Task CorrectSiteBindingIsSelectedAndCentralAddsTheLeastPrivilegePosCredential()
@@ -243,6 +248,100 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
     }
 
     [Fact]
+    public async Task AnnexE1KnownZeroUsesDedicatedCredentialAndExactPosContract()
+    {
+        var periodId = Guid.Parse("40000000-0000-4000-8000-000000000074");
+        var handler = new CaptureHandler(_ => Json("{\"succeeded\":true,\"code\":\"annex_e1_fact_recorded\"}", HttpStatusCode.Created));
+
+        var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.AnnexE1KnownZeroAttest) with
+            {
+                OperationKey = "oct17-naac-zero",
+                FiscalReportingPeriodId = periodId,
+                FactType = "naac_discount",
+                FactStatus = "attested_zero",
+                AmountMinorUnits = 0,
+                SourceDocumentCount = 0,
+                ApprovalReference = "FINANCE-APPROVAL-20261018-001"
+            });
+
+        Assert.Equal(201, result.HttpStatusCode);
+        var outbound = Assert.Single(handler.Requests);
+        Assert.Equal("/v1/fiscal-reports/annex-e/e1/known-zero-attestations", outbound.RequestUri!.AbsolutePath);
+        Assert.Equal("annex-e1-governed-secret", Header(outbound, "X-PosServer-Admin-Key"));
+        Assert.Equal("fiscal_annex_e.known_zero.attest", Header(outbound, "X-PosServer-Admin-Permission"));
+        var body = handler.Bodies.Single();
+        Assert.Contains($"\"sitePosServerId\":\"{Pos:D}\"", body);
+        Assert.Contains($"\"fiscalIdentityId\":\"{Identity:D}\"", body);
+        Assert.Contains($"\"fiscalReportingPeriodId\":\"{periodId:D}\"", body);
+        Assert.Contains("\"currencyCode\":\"PHP\"", body);
+        Assert.Contains("\"factType\":\"naac_discount\"", body);
+        Assert.Contains("\"factStatus\":\"attested_zero\"", body);
+        Assert.Contains("\"amountMinorUnits\":0", body);
+        Assert.Contains("\"sourceDocumentCount\":0", body);
+        Assert.Contains("\"approvalReference\":\"FINANCE-APPROVAL-20261018-001\"", body);
+    }
+
+    [Fact]
+    public async Task AnnexE1CorrectionUsesDedicatedThreePermissionPrincipalWithoutNarrowingSelector()
+    {
+        var predecessor = Guid.Parse("613af721-3b65-4bc4-9ce3-d2a032c26ab3");
+        var handler = new CaptureHandler(_ => Json("{\"succeeded\":true,\"code\":\"annex_e1_generated\"}", HttpStatusCode.Created));
+
+        var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.AnnexE1Generate) with
+            {
+                OperationKey = "annex-e1-202610-r003",
+                CalendarYear = 2026,
+                CalendarMonth = 10,
+                SupersedesWorkbookId = predecessor,
+                CorrectionReason = "authorized_restatement",
+                CorrectionApprovalReference = "FINANCE-APPROVAL-20261018-R003"
+            });
+
+        Assert.Equal(201, result.HttpStatusCode);
+        var outbound = Assert.Single(handler.Requests);
+        Assert.Equal("annex-e1-governed-secret", Header(outbound, "X-PosServer-Admin-Key"));
+        Assert.False(outbound.Headers.Contains("X-PosServer-Admin-Permission"));
+        var body = handler.Bodies.Single();
+        Assert.Contains($"\"supersedesWorkbookId\":\"{predecessor:D}\"", body);
+        Assert.Contains("\"correctionReason\":\"authorized_restatement\"", body);
+        Assert.Contains("\"correctionApprovalReference\":\"FINANCE-APPROVAL-20261018-R003\"", body);
+    }
+
+    [Fact]
+    public async Task OrdinaryAnnexE1GenerationRetainsNormalPrincipalAndSingleGenerateSelector()
+    {
+        var handler = new CaptureHandler(_ => Json("{\"succeeded\":true}", HttpStatusCode.Created));
+        await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.AnnexE1Generate) with
+            {
+                OperationKey = "ordinary-annex-generation",
+                CalendarYear = 2026,
+                CalendarMonth = 10
+            });
+
+        var outbound = Assert.Single(handler.Requests);
+        Assert.Equal("pos-secret", Header(outbound, "X-PosServer-Admin-Key"));
+        Assert.Equal("fiscal_annex_e.generate", Header(outbound, "X-PosServer-Admin-Permission"));
+    }
+
+    [Fact]
+    public async Task GovernedAnnexE1OperationsFailClosedWhenDedicatedCredentialIsUnavailable()
+    {
+        var endpoint = Endpoint(Site, "https://site-a.example/");
+        endpoint.AnnexE1GovernedCorrectionApiKeyFile = null;
+        var handler = new CaptureHandler(_ => throw new InvalidOperationException("must not send"));
+
+        var result = await Gateway(handler, OptionsFor(endpoint)).SendAsync(
+            Request(FiscalReportingGatewayAction.AnnexE1KnownZeroAttest));
+
+        Assert.Equal(503, result.HttpStatusCode);
+        Assert.Equal("site_pos_server_annex_e1_governed_api_key_file_unavailable", result.Code);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task AnnexE1CurrentReadUsesServerResolvedScopeAndReadPermission()
     {
         var handler = new CaptureHandler(_ => Json("{\"succeeded\":true,\"workbook\":{}}"));
@@ -396,12 +495,17 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
     private SitePosServerEndpointOptions Endpoint(Guid site, string url, bool enabled = true) => new()
     {
         SiteId = site, SitePosServerId = site == Site ? Pos : Guid.NewGuid(), FiscalIdentityId = Identity, CurrencyCode = "PHP",
-        SitePosServerRef = $"POS-{site:D}-{url}", BaseUrl = url, ApiKeyFile = keyFile, Environment = "Production", Enabled = enabled
+        SitePosServerRef = $"POS-{site:D}-{url}", BaseUrl = url, ApiKeyFile = keyFile,
+        AnnexE1GovernedCorrectionApiKeyFile = annexE1GovernedKeyFile, Environment = "Production", Enabled = enabled
     };
     private static HttpResponseMessage Json(string value, HttpStatusCode status = HttpStatusCode.OK) => new(status)
         { Content = new StringContent(value, Encoding.UTF8, "application/json") };
     private static string Header(HttpRequestMessage request, string name) => request.Headers.GetValues(name).Single();
-    public void Dispose() { if (File.Exists(keyFile)) File.Delete(keyFile); }
+    public void Dispose()
+    {
+        if (File.Exists(keyFile)) File.Delete(keyFile);
+        if (File.Exists(annexE1GovernedKeyFile)) File.Delete(annexE1GovernedKeyFile);
+    }
 
     private sealed class CaptureHandler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
     {
