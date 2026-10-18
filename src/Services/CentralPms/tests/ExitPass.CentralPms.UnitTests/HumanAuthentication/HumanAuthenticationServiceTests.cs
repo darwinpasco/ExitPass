@@ -129,6 +129,78 @@ public sealed class HumanAuthenticationServiceTests
     }
 
     [Fact]
+    public async Task Annex_e1_corrector_additive_role_allows_system_administrator_management_session()
+    {
+        var fixture = new Fixture(totpSucceeds: true)
+        {
+            EffectiveRoleCodes =
+            [
+                ApprovedIdentityRoleCatalog.SystemAdministrator,
+                ApprovedIdentityRoleCatalog.AnnexE1GovernedCorrector
+            ]
+        };
+        fixture.Login = fixture.CreateLogin(privileged: true, fixture.Authenticator);
+        fixture.Repository.TryRecordTotpSuccessAsync(Arg.Any<Guid>(), Arg.Any<long>(), Arg.Any<long>(),
+            Arg.Any<DateTimeOffset>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(true);
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.ManagementPlatform, "123456");
+
+        result.HttpStatusCode.Should().Be(200);
+        result.Response.Authenticated.Should().BeTrue();
+        result.Response.Session!.RoleCodes.Should().BeEquivalentTo(
+            ApprovedIdentityRoleCatalog.SystemAdministrator,
+            ApprovedIdentityRoleCatalog.AnnexE1GovernedCorrector);
+    }
+
+    [Fact]
+    public async Task Annex_e1_corrector_management_session_remains_site_scoped_and_permission_isolated()
+    {
+        string[] permissions =
+        [
+            "fiscal-reporting.annex-e1.known-zero.attest",
+            "fiscal-reporting.annex-e1.correct"
+        ];
+        var fixture = new Fixture(totpSucceeds: true)
+        {
+            EffectiveRoleCodes = [ApprovedIdentityRoleCatalog.AnnexE1GovernedCorrector]
+        };
+        fixture.Login = fixture.CreateLogin(privileged: true, fixture.Authenticator);
+        fixture.Repository.TryRecordTotpSuccessAsync(Arg.Any<Guid>(), Arg.Any<long>(), Arg.Any<long>(),
+            Arg.Any<DateTimeOffset>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(true);
+        fixture.Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+                Arg.Any<CancellationToken>())
+            .Returns(_ => new EffectiveHumanAuthorization(
+                permissions, [fixture.SiteId], [], false, fixture.EffectiveRoleCodes));
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.ManagementPlatform, "123456");
+
+        result.Response.Authenticated.Should().BeTrue();
+        result.Response.Session!.Permissions.Should().Equal(permissions);
+        result.Response.Session.SiteReferences.Should().Equal(fixture.SiteId);
+        result.Response.Session.SiteGroupReferences.Should().BeEmpty();
+        result.Response.Session.HasGlobalScope.Should().BeFalse();
+        result.Response.Session.Permissions.Should().NotContain("rbac.manage");
+    }
+
+    [Fact]
+    public async Task Annex_e1_corrector_is_denied_from_operator_console_before_session_issuance()
+    {
+        var fixture = new Fixture
+        {
+            EffectiveRoleCodes = [ApprovedIdentityRoleCatalog.AnnexE1GovernedCorrector]
+        };
+        fixture.Login = fixture.CreateLogin(privileged: true);
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.OperatorConsole);
+
+        result.HttpStatusCode.Should().Be(403);
+        result.Response.ErrorCode.Should().Be("APPLICATION_AUDIENCE_DENIED");
+        await fixture.Repository.DidNotReceiveWithAnyArgs().CreateSessionAsync(
+            default, default, default!, default, default, default, default, default!, default, default,
+            default, default, default, default, default!, default);
+    }
+
+    [Fact]
     public async Task Unavailable_role_policy_fails_closed_before_session_issuance()
     {
         var fixture = new Fixture();
