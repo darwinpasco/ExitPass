@@ -565,6 +565,7 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         var predecessor = Guid.Parse("613af721-3b65-4bc4-9ce3-d2a032c26ab3");
         var gateway = new FakeGateway();
         using var factory = CreateFactory(gateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            includePermission:false,
             additionalPermissions:["fiscal-reporting.annex-e1.correct"]);
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
@@ -586,6 +587,7 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         var predecessor = Guid.Parse("613af721-3b65-4bc4-9ce3-d2a032c26ab3");
         var gateway = new FakeGateway(_ => Response(403,"{\"succeeded\":false,\"code\":\"annex_e1_correction_denied\",\"message\":\"Correction authority is required.\"}"));
         using var factory = CreateFactory(gateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            includePermission:false,
             additionalPermissions:["fiscal-reporting.annex-e1.correct"]);
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
@@ -603,6 +605,35 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
     }
 
     [Fact]
+    public async Task AnnexE1OrdinaryGenerationStillRequiresZGenerationPermission()
+    {
+        var route = $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks";
+        var payload = new {operationKey="annex-ordinary",calendarYear=2026,calendarMonth=10};
+
+        var deniedGateway = new FakeGateway();
+        using var deniedFactory = CreateFactory(deniedGateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            includePermission:false);
+        using var deniedClient = deniedFactory.CreateClient();
+        deniedClient.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+        using var denied = await deniedClient.PostAsJsonAsync(route,payload);
+
+        denied.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        deniedGateway.Requests.Should().BeEmpty();
+
+        var allowedGateway = new FakeGateway(_ => Response(201,"{\"succeeded\":true}"));
+        using var allowedFactory = CreateFactory(allowedGateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            includePermission:false,
+            additionalPermissions:["fiscal-reporting.z.generate"]);
+        using var allowedClient = allowedFactory.CreateClient();
+        allowedClient.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+        using var allowed = await allowedClient.PostAsJsonAsync(route,payload);
+
+        allowed.StatusCode.Should().Be(HttpStatusCode.Created);
+        var request = allowedGateway.Requests.Should().ContainSingle().Subject;
+        request.SupersedesWorkbookId.Should().BeNull();
+    }
+
+    [Fact]
     public async Task AnnexE1CorrectionIsDeniedWithoutDedicatedCentralPermission()
     {
         var gateway = new FakeGateway();
@@ -616,6 +647,47 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         gateway.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AnnexE1CorrectionPreservesAuthenticationCsrfAndSiteScope()
+    {
+        var route = $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks";
+        var payload = new
+        {
+            operationKey="annex-r003-boundaries",calendarYear=2026,calendarMonth=10,
+            supersedesWorkbookId=Guid.NewGuid(),correctionReason="authorized_restatement",
+            correctionApprovalReference="FINANCE-APPROVAL-R003"
+        };
+
+        var unauthenticatedGateway = new FakeGateway();
+        using var unauthenticatedFactory = CreateFactory(unauthenticatedGateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            includePermission:false,authenticated:false,
+            additionalPermissions:["fiscal-reporting.annex-e1.correct"]);
+        using var unauthenticatedClient = unauthenticatedFactory.CreateClient();
+        unauthenticatedClient.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+        using var unauthenticated = await unauthenticatedClient.PostAsJsonAsync(route,payload);
+        unauthenticated.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        unauthenticatedGateway.Requests.Should().BeEmpty();
+
+        var csrfGateway = new FakeGateway();
+        using var csrfFactory = CreateFactory(csrfGateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            includePermission:false,additionalPermissions:["fiscal-reporting.annex-e1.correct"]);
+        using var csrfClient = csrfFactory.CreateClient();
+        using var csrf = await csrfClient.PostAsJsonAsync(route,payload);
+        csrf.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await csrf.Content.ReadAsStringAsync()).Should().Contain("CSRF_VALIDATION_FAILED");
+        csrfGateway.Requests.Should().BeEmpty();
+
+        var scopeGateway = new FakeGateway();
+        using var scopeFactory = CreateFactory(scopeGateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            includePermission:false,additionalPermissions:["fiscal-reporting.annex-e1.correct"]);
+        using var scopeClient = scopeFactory.CreateClient();
+        scopeClient.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+        using var wrongSite = await scopeClient.PostAsJsonAsync(
+            route.Replace(SiteId.ToString("D"),OtherSiteId.ToString("D")),payload);
+        wrongSite.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        scopeGateway.Requests.Should().BeEmpty();
     }
 
     [Fact]
