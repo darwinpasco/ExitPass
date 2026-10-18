@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Security;
+using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.Operations;
@@ -187,6 +188,8 @@ public sealed class VendorPaymentAcknowledgmentOpsApiIntegrationTests
             PaymentAttemptId,
             PaymentConfirmationId,
             ParkingSessionId,
+            CompletionBasisCodes.PaymentFinality,
+            PaymentConfirmationId,
             "HIKCENTRAL",
             "HIK:CARD-279D",
             "TICKET-279D",

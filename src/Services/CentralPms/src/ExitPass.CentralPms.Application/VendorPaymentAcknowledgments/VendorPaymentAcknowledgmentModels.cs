@@ -28,9 +28,11 @@ public static class VendorPaymentAcknowledgmentStatuses
 /// Command to create a durable Vendor PMS acknowledgment record after ExitPass payment finality.
 /// </summary>
 public sealed record CreateVendorPaymentAcknowledgmentCommand(
-    Guid PaymentAttemptId,
-    Guid PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
     Guid? ParkingSessionId,
+    string CompletionBasis,
+    Guid CompletionAuthorityReferenceId,
     string VendorSystemCode,
     string? VendorSessionRef,
     string? TicketNumber,
@@ -76,9 +78,11 @@ public sealed record MarkVendorPaymentAcknowledgmentSkippedDisabledCommand(
 /// </summary>
 public sealed record VendorPaymentAcknowledgmentRecord(
     Guid VendorPaymentAcknowledgmentId,
-    Guid PaymentAttemptId,
-    Guid PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
     Guid? ParkingSessionId,
+    string CompletionBasis,
+    Guid CompletionAuthorityReferenceId,
     string VendorSystemCode,
     string? VendorSessionRef,
     string? TicketNumber,
@@ -102,9 +106,11 @@ public sealed record VendorPaymentAcknowledgmentRecord(
 /// Immutable payment/session basis used to acknowledge paid state to the Vendor PMS.
 /// </summary>
 public sealed record VendorPaymentAcknowledgmentBasis(
-    Guid PaymentAttemptId,
-    Guid PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
     Guid ParkingSessionId,
+    string CompletionBasis,
+    Guid CompletionAuthorityReferenceId,
     string VendorSystemCode,
     string? VendorSessionRef,
     string? TicketNumber,
@@ -125,10 +131,12 @@ public sealed record VendorPaymentAcknowledgmentBasis(
 /// Command to process the Vendor PMS paid-state acknowledgment after ExitPass finality.
 /// </summary>
 public sealed record VendorPaymentAcknowledgmentWorkflowCommand(
-    Guid PaymentAttemptId,
-    Guid PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
     Guid ParkingSessionId,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string CompletionBasis = "PAYMENT_FINALITY",
+    Guid? CompletionAuthorityReferenceId = null);
 
 /// <summary>
 /// Command to dispatch a bounded batch of due Vendor PMS acknowledgment retries.
@@ -140,8 +148,8 @@ public sealed record DispatchVendorPaymentAcknowledgmentRetriesCommand(int Batch
 /// </summary>
 public sealed record VendorPaymentAcknowledgmentRetryDispatchItemResult(
     Guid VendorPaymentAcknowledgmentId,
-    Guid PaymentAttemptId,
-    Guid PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
     Guid? ParkingSessionId,
     string VendorSystemCode,
     string InitialStatus,

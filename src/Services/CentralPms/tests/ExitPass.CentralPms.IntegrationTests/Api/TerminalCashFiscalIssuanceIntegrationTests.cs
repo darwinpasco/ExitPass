@@ -257,7 +257,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     }
 
     [Fact]
-    public async Task TerminalCashFiscalIssuance_ContinuityBasis_IssuesInvoiceAndRequiresManualExit()
+    public async Task TerminalCashFiscalIssuance_ContinuityBasis_ContinuesToAuthorizationAndAcknowledgment()
     {
         var repo = new InMemoryFiscalReferenceRepository();
         var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
@@ -276,11 +276,11 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
 
         Assert.Equal(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded, result.FiscalIssuanceState);
         Assert.Equal(PosFiscalDocumentId, result.PosFiscalDocumentId);
-        Assert.False(result.ExitAuthorizationIssued);
-        Assert.Equal(ExitAuthorizationEligibilityStatuses.ManualExitRequired, result.ExitHandlingStatus);
+        Assert.True(result.ExitAuthorizationIssued);
+        Assert.Equal("ISSUED", result.ExitHandlingStatus);
         Assert.Equal(1, posIntegration.IssueCallCount);
-        Assert.Equal(0, exitAuthorization.CallCount);
-        Assert.Equal(0, acknowledgment.CallCount);
+        Assert.Equal(1, exitAuthorization.CallCount);
+        Assert.Equal(1, acknowledgment.CallCount);
         var request = new PosServerFiscalDocumentRequestMapper().Map(posIntegration.LastFiscalContext!);
         var line = Assert.Single(request.DocumentLines);
         Assert.Equal(8_929, line.GrossAmountMinorUnits);

@@ -97,7 +97,9 @@ public sealed class VendorPaymentAcknowledgmentRetryDispatcherService : IVendorP
                         current.PaymentAttemptId,
                         current.PaymentConfirmationId,
                         current.ParkingSessionId.Value,
-                        current.CorrelationId ?? Guid.Empty),
+                        current.CorrelationId ?? Guid.Empty,
+                        current.CompletionBasis,
+                        current.CompletionAuthorityReferenceId),
                     cancellationToken);
 
                 var final = await _repository.ReadAsync(current.VendorPaymentAcknowledgmentId, cancellationToken);

@@ -3,6 +3,7 @@ using System.Text;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 
 namespace ExitPass.CentralPms.Application.StatutoryDiscounts;
 
@@ -32,6 +33,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
     private readonly IZeroPayableStatutoryFiscalIssuanceService? _zeroPayableFiscalIssuanceService;
     private readonly IIssueExitAuthorizationUseCase? _issueExitAuthorizationUseCase;
     private readonly IContinuityTariffProvenanceReader? _continuityTariffProvenance;
+    private readonly IVendorPaymentAcknowledgmentWorkflow? _vendorPaymentAcknowledgmentWorkflow;
 
     public StatutoryDiscountDecisionFacadeService(
         IStatutoryDiscountStagedCommandService stagedCommandService,
@@ -48,7 +50,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         IStatutoryDiscountZeroPayableFinalityReader zeroPayableFinalityReader,
         IZeroPayableStatutoryFiscalIssuanceService? zeroPayableFiscalIssuanceService = null,
         IIssueExitAuthorizationUseCase? issueExitAuthorizationUseCase = null,
-        IContinuityTariffProvenanceReader? continuityTariffProvenance = null)
+        IContinuityTariffProvenanceReader? continuityTariffProvenance = null,
+        IVendorPaymentAcknowledgmentWorkflow? vendorPaymentAcknowledgmentWorkflow = null)
     {
         _stagedCommandService = stagedCommandService ?? throw new ArgumentNullException(nameof(stagedCommandService));
         _historicalRepository = historicalRepository ?? throw new ArgumentNullException(nameof(historicalRepository));
@@ -65,6 +68,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         _zeroPayableFiscalIssuanceService = zeroPayableFiscalIssuanceService;
         _issueExitAuthorizationUseCase = issueExitAuthorizationUseCase;
         _continuityTariffProvenance = continuityTariffProvenance;
+        _vendorPaymentAcknowledgmentWorkflow = vendorPaymentAcknowledgmentWorkflow;
     }
 
     public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAvailabilityAsync(
@@ -394,21 +398,6 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             authorityResolution.Authority,
             fiscalCompletion?.FiscalPrerequisiteSatisfied == true);
 
-        if (_continuityTariffProvenance is not null &&
-            await _continuityTariffProvenance.IsContinuityTariffAsync(
-                authorityResolution.Authority.ParkingSessionId,
-                authorityResolution.Authority.TariffSnapshotId,
-                paymentAttemptId: null,
-                cancellationToken))
-        {
-            eligibility = new ExitAuthorizationEligibility(
-                CompletionAuthorityEligible: true,
-                ExitAuthorizationIssuanceAllowed: false,
-                Status: ExitAuthorizationEligibilityStatuses.ManualExitRequired,
-                BlockedReason: ExitAuthorizationEligibilityBlockedReasons.ContinuityTariffManualExitRequired,
-                CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality);
-        }
-
         IssueExitAuthorizationResult? exitAuthorization = null;
         if (progressCompletion &&
             eligibility.ExitAuthorizationIssuanceAllowed &&
@@ -432,6 +421,20 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                         FiscalPrerequisiteSatisfied: true),
                     cancellationToken)
                 .ConfigureAwait(false);
+
+            if (_vendorPaymentAcknowledgmentWorkflow is not null)
+            {
+                await _vendorPaymentAcknowledgmentWorkflow.ProcessAsync(
+                        new VendorPaymentAcknowledgmentWorkflowCommand(
+                            PaymentAttemptId: null,
+                            PaymentConfirmationId: null,
+                            ParkingSessionId: authorityResolution.Authority.ParkingSessionId,
+                            CorrelationId: authorityResolution.Authority.CorrelationId,
+                            CompletionBasis: CompletionBasisCodes.ZeroPayableStatutoryFinality,
+                            CompletionAuthorityReferenceId: authorityResolution.Authority.DurableSourceReferenceId),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
 
         return enriched with

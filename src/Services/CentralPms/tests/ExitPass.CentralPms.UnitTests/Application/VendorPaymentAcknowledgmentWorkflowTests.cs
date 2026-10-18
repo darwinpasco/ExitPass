@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
+using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.VendorPmsAdapter.Contracts.Parking;
 using FluentAssertions;
@@ -136,7 +137,7 @@ public sealed class VendorPaymentAcknowledgmentWorkflowTests
     }
 
     [Fact]
-    public async Task ProcessAsync_WhenTariffIsContinuity_DoesNotCreateOrSendVendorAcknowledgment()
+    public async Task ProcessAsync_WhenTariffIsContinuity_CreatesAndSendsVendorAcknowledgment()
     {
         var repository = new FakeAcknowledgmentRepository
         {
@@ -147,9 +148,59 @@ public sealed class VendorPaymentAcknowledgmentWorkflowTests
 
         await sut.ProcessAsync(Command(), CancellationToken.None);
 
-        repository.CreatePendingCalls.Should().Be(0);
-        repository.Record.Should().BeNull();
-        vendorClient.ConfirmParkingFeeCalls.Should().Be(0);
+        repository.CreatePendingCalls.Should().Be(1);
+        repository.Record.Should().NotBeNull();
+        repository.Record!.AcknowledgmentStatus.Should().Be(VendorPaymentAcknowledgmentStatuses.Confirmed);
+        vendorClient.ConfirmParkingFeeCalls.Should().Be(1);
+        vendorClient.LastConfirmationRequest!.ImmediatelyLeave.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_WhenZeroPayableFinality_ConfirmsZeroWithoutPaymentEvidence()
+    {
+        var authorityReference = Guid.Parse("27900000-0000-0000-0000-000000000006");
+        var repository = new FakeAcknowledgmentRepository
+        {
+            Basis = Basis() with
+            {
+                PaymentAttemptId = null,
+                PaymentConfirmationId = null,
+                CompletionBasis = CompletionBasisCodes.ZeroPayableStatutoryFinality,
+                CompletionAuthorityReferenceId = authorityReference,
+                RequestFeeMinorUnits = 0
+            }
+        };
+        var vendorClient = new FakeVendorClient
+        {
+            ConfirmationResponse = new VendorParkingFeeConfirmationResponse(
+                VendorParkingLookupStatus.Confirmed,
+                new VendorParkingFeeConfirmationDto(0, "PHP", FeeTime),
+                "0",
+                false,
+                CorrelationId)
+        };
+        var sut = CreateSut(repository, vendorClient, enabled: true);
+
+        var command = new VendorPaymentAcknowledgmentWorkflowCommand(
+            null,
+            null,
+            ParkingSessionId,
+            CorrelationId,
+            CompletionBasisCodes.ZeroPayableStatutoryFinality,
+            authorityReference);
+
+        await sut.ProcessAsync(command, CancellationToken.None);
+        await sut.ProcessAsync(command, CancellationToken.None);
+
+        repository.Record.Should().NotBeNull();
+        repository.Record!.PaymentAttemptId.Should().BeNull();
+        repository.Record.PaymentConfirmationId.Should().BeNull();
+        repository.Record.CompletionAuthorityReferenceId.Should().Be(authorityReference);
+        repository.Record.AcknowledgmentStatus.Should().Be(VendorPaymentAcknowledgmentStatuses.Confirmed);
+        repository.CreatePendingCalls.Should().Be(1);
+        vendorClient.ConfirmParkingFeeCalls.Should().Be(1);
+        vendorClient.LastConfirmationRequest!.AmountMinor.Should().Be(0);
+        vendorClient.LastConfirmationRequest.ImmediatelyLeave.Should().Be(0);
     }
 
     private static VendorPaymentAcknowledgmentWorkflow CreateSut(
@@ -179,6 +230,8 @@ public sealed class VendorPaymentAcknowledgmentWorkflowTests
             PaymentAttemptId,
             PaymentConfirmationId,
             ParkingSessionId,
+            CompletionBasisCodes.PaymentFinality,
+            PaymentConfirmationId,
             "HIKCENTRAL",
             "HIK:CARD-279",
             ticketNumber,
@@ -192,6 +245,8 @@ public sealed class VendorPaymentAcknowledgmentWorkflowTests
             PaymentAttemptId,
             PaymentConfirmationId,
             ParkingSessionId,
+            CompletionBasisCodes.PaymentFinality,
+            PaymentConfirmationId,
             "HIKCENTRAL",
             "HIK:CARD-279",
             "TICKET-279",
@@ -220,9 +275,7 @@ public sealed class VendorPaymentAcknowledgmentWorkflowTests
         public int CreatePendingCalls { get; private set; }
 
         public Task<VendorPaymentAcknowledgmentBasis?> LoadBasisAsync(
-            Guid paymentAttemptId,
-            Guid paymentConfirmationId,
-            Guid parkingSessionId,
+            VendorPaymentAcknowledgmentWorkflowCommand command,
             CancellationToken cancellationToken) =>
             Task.FromResult(Basis);
 
@@ -243,6 +296,8 @@ public sealed class VendorPaymentAcknowledgmentWorkflowTests
                 command.PaymentAttemptId,
                 command.PaymentConfirmationId,
                 command.ParkingSessionId,
+                command.CompletionBasis,
+                command.CompletionAuthorityReferenceId,
                 command.VendorSystemCode,
                 command.VendorSessionRef,
                 command.TicketNumber,
@@ -348,6 +403,17 @@ public sealed class VendorPaymentAcknowledgmentWorkflowTests
             Task.FromResult(
                 Record is not null &&
                 Record.PaymentConfirmationId == paymentConfirmationId &&
+                string.Equals(Record.VendorSystemCode, vendorSystemCode, StringComparison.Ordinal)
+                    ? Record
+                    : null);
+
+        public Task<VendorPaymentAcknowledgmentRecord?> ReadByCompletionAuthorityAsync(
+            Guid completionAuthorityReferenceId,
+            string vendorSystemCode,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(
+                Record is not null &&
+                Record.CompletionAuthorityReferenceId == completionAuthorityReferenceId &&
                 string.Equals(Record.VendorSystemCode, vendorSystemCode, StringComparison.Ordinal)
                     ? Record
                     : null);

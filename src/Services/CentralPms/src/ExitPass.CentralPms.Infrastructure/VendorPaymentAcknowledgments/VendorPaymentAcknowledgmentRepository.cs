@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
+using ExitPass.CentralPms.Application.Payments;
 using Npgsql;
 using NpgsqlTypes;
 using System.Text;
@@ -16,6 +17,8 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
                 payment_attempt_id,
                 payment_confirmation_id,
                 parking_session_id,
+                completion_basis,
+                completion_authority_reference_id,
                 vendor_system_code,
                 vendor_session_ref,
                 ticket_number,
@@ -48,16 +51,20 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
 
     /// <inheritdoc />
     public async Task<VendorPaymentAcknowledgmentBasis?> LoadBasisAsync(
-        Guid paymentAttemptId,
-        Guid paymentConfirmationId,
-        Guid parkingSessionId,
+        VendorPaymentAcknowledgmentWorkflowCommand command,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        var paymentFinality = string.Equals(
+            command.CompletionBasis,
+            CompletionBasisCodes.PaymentFinality,
+            StringComparison.Ordinal);
+        var sql = paymentFinality ? """
             SELECT
                 pa.payment_attempt_id,
                 pc.payment_confirmation_id,
                 ps.parking_session_id,
+                'PAYMENT_FINALITY'::text AS completion_basis,
+                pc.payment_confirmation_id AS completion_authority_reference_id,
                 ps.site_id,
                 ps.site_group_id,
                 ps.vendor_system_id,
@@ -87,13 +94,56 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
               AND pa.finalized_at IS NOT NULL
               AND ps.source_adapter_identity_id IS NOT NULL
             LIMIT 1;
+            """ : """
+            SELECT
+                NULL::uuid AS payment_attempt_id,
+                NULL::uuid AS payment_confirmation_id,
+                ps.parking_session_id,
+                fr.completion_basis,
+                fr.completion_authority_reference_id,
+                ps.site_id,
+                ps.site_group_id,
+                ps.vendor_system_id,
+                ps.source_adapter_identity_id,
+                vs.vendor_code AS vendor_system_code,
+                ps.vendor_session_ref,
+                ps.plate_number_masked AS plate_number,
+                ps.ticket_number_masked AS ticket_number,
+                COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS card_num,
+                0::bigint AS request_fee_minor_units,
+                ts.currency_code::text AS request_currency_code,
+                ts.tariff_version_reference
+            FROM core.fiscal_issuance_references AS fr
+            INNER JOIN core.parking_sessions AS ps
+                ON ps.parking_session_id = fr.parking_session_id
+               AND ps.parking_session_id = @parking_session_id
+            INNER JOIN core.tariff_snapshots AS ts
+                ON ts.tariff_snapshot_id = fr.tariff_snapshot_id
+            INNER JOIN integration.vendor_systems AS vs
+                ON vs.vendor_system_id = ps.vendor_system_id
+            WHERE fr.completion_basis = 'ZERO_PAYABLE_STATUTORY_FINALITY'
+              AND fr.completion_authority_reference_id = @completion_authority_reference_id
+              AND fr.fiscal_issuance_state = 'FISCAL_ISSUANCE_RECORDED'
+              AND fr.is_active
+              AND NOT fr.is_superseded
+              AND ps.source_adapter_identity_id IS NOT NULL
+            LIMIT 1;
             """;
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var dbCommand = new NpgsqlCommand(sql, connection);
-        dbCommand.Parameters.Add("payment_attempt_id", NpgsqlDbType.Uuid).Value = paymentAttemptId;
-        dbCommand.Parameters.Add("payment_confirmation_id", NpgsqlDbType.Uuid).Value = paymentConfirmationId;
-        dbCommand.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+        if (paymentFinality)
+        {
+            dbCommand.Parameters.Add("payment_attempt_id", NpgsqlDbType.Uuid).Value = command.PaymentAttemptId!.Value;
+            dbCommand.Parameters.Add("payment_confirmation_id", NpgsqlDbType.Uuid).Value = command.PaymentConfirmationId!.Value;
+        }
+        else
+        {
+            dbCommand.Parameters.Add("completion_authority_reference_id", NpgsqlDbType.Uuid).Value =
+                command.CompletionAuthorityReferenceId!.Value;
+        }
+
+        dbCommand.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = command.ParkingSessionId;
 
         await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -102,9 +152,11 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
         }
 
         return new VendorPaymentAcknowledgmentBasis(
-            PaymentAttemptId: reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
-            PaymentConfirmationId: reader.GetGuid(reader.GetOrdinal("payment_confirmation_id")),
+            PaymentAttemptId: GetNullableGuid(reader, "payment_attempt_id"),
+            PaymentConfirmationId: GetNullableGuid(reader, "payment_confirmation_id"),
             ParkingSessionId: reader.GetGuid(reader.GetOrdinal("parking_session_id")),
+            CompletionBasis: reader.GetString(reader.GetOrdinal("completion_basis")),
+            CompletionAuthorityReferenceId: reader.GetGuid(reader.GetOrdinal("completion_authority_reference_id")),
             VendorSystemCode: reader.GetString(reader.GetOrdinal("vendor_system_code")),
             VendorSessionRef: GetNullableString(reader, "vendor_session_ref"),
             TicketNumber: GetNullableString(reader, "ticket_number"),
@@ -132,6 +184,8 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
                 payment_attempt_id,
                 payment_confirmation_id,
                 parking_session_id,
+                completion_basis,
+                completion_authority_reference_id,
                 vendor_system_code,
                 vendor_session_ref,
                 ticket_number,
@@ -149,6 +203,8 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
                 @payment_attempt_id,
                 @payment_confirmation_id,
                 @parking_session_id,
+                @completion_basis,
+                @completion_authority_reference_id,
                 @vendor_system_code,
                 @vendor_session_ref,
                 @ticket_number,
@@ -444,6 +500,32 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
     }
 
     /// <inheritdoc />
+    public async Task<VendorPaymentAcknowledgmentRecord?> ReadByCompletionAuthorityAsync(
+        Guid completionAuthorityReferenceId,
+        string vendorSystemCode,
+        CancellationToken cancellationToken)
+    {
+        var sql = $$"""
+            SELECT
+                {{SelectRecordColumns}}
+            FROM integration.vendor_payment_acknowledgments
+            WHERE completion_authority_reference_id = @completion_authority_reference_id
+              AND vendor_system_code = @vendor_system_code
+            LIMIT 1;
+            """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        dbCommand.Parameters.Add("completion_authority_reference_id", NpgsqlDbType.Uuid).Value = completionAuthorityReferenceId;
+        dbCommand.Parameters.Add("vendor_system_code", NpgsqlDbType.Text).Value = vendorSystemCode.Trim();
+
+        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? ReadRecord(reader)
+            : null;
+    }
+
+    /// <inheritdoc />
     public async Task<VendorPaymentAcknowledgmentRecord?> ReadLatestByPaymentAttemptAsync(
         Guid paymentAttemptId,
         CancellationToken cancellationToken)
@@ -499,9 +581,11 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
         NpgsqlCommand dbCommand,
         CreateVendorPaymentAcknowledgmentCommand command)
     {
-        dbCommand.Parameters.Add("payment_attempt_id", NpgsqlDbType.Uuid).Value = command.PaymentAttemptId;
-        dbCommand.Parameters.Add("payment_confirmation_id", NpgsqlDbType.Uuid).Value = command.PaymentConfirmationId;
+        dbCommand.Parameters.Add("payment_attempt_id", NpgsqlDbType.Uuid).Value = DbValue(command.PaymentAttemptId);
+        dbCommand.Parameters.Add("payment_confirmation_id", NpgsqlDbType.Uuid).Value = DbValue(command.PaymentConfirmationId);
         dbCommand.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = DbValue(command.ParkingSessionId);
+        dbCommand.Parameters.Add("completion_basis", NpgsqlDbType.Text).Value = command.CompletionBasis;
+        dbCommand.Parameters.Add("completion_authority_reference_id", NpgsqlDbType.Uuid).Value = command.CompletionAuthorityReferenceId;
         dbCommand.Parameters.Add("vendor_system_code", NpgsqlDbType.Text).Value = command.VendorSystemCode.Trim();
         dbCommand.Parameters.Add("vendor_session_ref", NpgsqlDbType.Text).Value = DbValue(command.VendorSessionRef);
         dbCommand.Parameters.Add("ticket_number", NpgsqlDbType.Text).Value = DbValue(command.TicketNumber);
@@ -674,9 +758,11 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
     {
         return new VendorPaymentAcknowledgmentRecord(
             VendorPaymentAcknowledgmentId: reader.GetGuid(reader.GetOrdinal("vendor_payment_acknowledgment_id")),
-            PaymentAttemptId: reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
-            PaymentConfirmationId: reader.GetGuid(reader.GetOrdinal("payment_confirmation_id")),
+            PaymentAttemptId: GetNullableGuid(reader, "payment_attempt_id"),
+            PaymentConfirmationId: GetNullableGuid(reader, "payment_confirmation_id"),
             ParkingSessionId: GetNullableGuid(reader, "parking_session_id"),
+            CompletionBasis: reader.GetString(reader.GetOrdinal("completion_basis")),
+            CompletionAuthorityReferenceId: reader.GetGuid(reader.GetOrdinal("completion_authority_reference_id")),
             VendorSystemCode: reader.GetString(reader.GetOrdinal("vendor_system_code")),
             VendorSessionRef: GetNullableString(reader, "vendor_session_ref"),
             TicketNumber: GetNullableString(reader, "ticket_number"),

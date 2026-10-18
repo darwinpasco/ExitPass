@@ -261,6 +261,8 @@ public static class VendorPaymentAcknowledgmentOpsEndpoints
             VendorPaymentAcknowledgmentId = record.VendorPaymentAcknowledgmentId,
             PaymentAttemptId = record.PaymentAttemptId,
             PaymentConfirmationId = record.PaymentConfirmationId,
+            CompletionBasis = record.CompletionBasis,
+            CompletionAuthorityReferenceId = record.CompletionAuthorityReferenceId,
             ParkingSessionId = record.ParkingSessionId,
             VendorSystemCode = record.VendorSystemCode,
             VendorSessionRef = record.VendorSessionRef,

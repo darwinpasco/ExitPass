@@ -440,7 +440,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             counts.TerminalCashCommandAuditCount.Should().Be(0);
             counts.FiscalIssuanceReferenceCount.Should().Be(1);
             counts.ExitAuthorizationCount.Should().Be(1);
-            counts.VendorPaymentAcknowledgmentCount.Should().Be(0);
+            counts.VendorPaymentAcknowledgmentCount.Should().Be(1);
 
             await AssertCompletedExpiredZeroPayableVendorReadbackAsync(context, application.AppliedTariffSnapshotId!.Value);
 
