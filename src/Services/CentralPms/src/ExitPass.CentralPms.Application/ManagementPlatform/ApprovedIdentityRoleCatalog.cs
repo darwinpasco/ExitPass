@@ -16,6 +16,7 @@ public static class ApprovedIdentityRoleCatalog
     public const string SystemAdministrator = "SYSTEM_ADMINISTRATOR";
     public const string OperationsSupervisor = "OPERATIONS_SUPERVISOR";
     public const string FiscalZReadingCloser = "FISCAL_Z_READING_CLOSER";
+    public const string AnnexE1GovernedCorrector = "ANNEX_E1_GOVERNED_CORRECTOR";
     public const string StatutoryDiscountProcessor = "STATUTORY_DISCOUNT_PROCESSOR";
     public const string SiteOperator = "SITE_OPERATOR";
     public const string ParkingAttendant = "PARKING_ATTENDANT";
@@ -41,6 +42,7 @@ public static class ApprovedIdentityRoleCatalog
             [SystemAdministrator] = Policy(SystemAdministrator, "System Administrator", [ManagementPlatformAudience], [GlobalScope], GlobalScope),
             [OperationsSupervisor] = Policy(OperationsSupervisor, "Operations Supervisor", [OperatorConsoleAudience, ManagementPlatformAudience], [SiteScope], SiteScope),
             [FiscalZReadingCloser] = Policy(FiscalZReadingCloser, "Fiscal Z Reading Closer", [OperatorConsoleAudience], [SiteScope], SiteScope),
+            [AnnexE1GovernedCorrector] = Policy(AnnexE1GovernedCorrector, "Annex E-1 Governed Corrector", [ManagementPlatformAudience], [SiteScope], SiteScope),
             [StatutoryDiscountProcessor] = Policy(StatutoryDiscountProcessor, "Statutory Discount Processor", [ManagementPlatformAudience], [GlobalScope], GlobalScope),
             [SiteOperator] = Policy(SiteOperator, "Site Operator", [OperatorConsoleAudience], [SiteScope], SiteScope),
             [ParkingAttendant] = Policy(ParkingAttendant, "Parking Attendant", [NativeParkingAppAudience], [SiteScope], SiteScope),

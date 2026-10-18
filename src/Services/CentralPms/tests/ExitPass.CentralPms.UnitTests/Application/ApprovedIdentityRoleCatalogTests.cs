@@ -18,6 +18,7 @@ public sealed class ApprovedIdentityRoleCatalogTests
         ApprovedIdentityRoleCatalog.IsAssignable("SYSTEM_RBAC_ADMINISTRATOR").Should().BeFalse();
         ApprovedIdentityRoleCatalog.IsAssignable("HEAD_OFFICE_STATUTORY_BENEFIT_REVIEWER").Should().BeFalse();
         ApprovedIdentityRoleCatalog.IsAssignable(ApprovedIdentityRoleCatalog.FiscalZReadingCloser).Should().BeFalse();
+        ApprovedIdentityRoleCatalog.IsAssignable(ApprovedIdentityRoleCatalog.AnnexE1GovernedCorrector).Should().BeFalse();
     }
 
     [Theory]
@@ -29,6 +30,10 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [InlineData("OPERATIONS_SUPERVISOR", "OPERATOR_CONSOLE", true)]
     [InlineData("FISCAL_Z_READING_CLOSER", "OPERATOR_CONSOLE", true)]
     [InlineData("FISCAL_Z_READING_CLOSER", "MANAGEMENT_PLATFORM", false)]
+    [InlineData("ANNEX_E1_GOVERNED_CORRECTOR", "MANAGEMENT_PLATFORM", true)]
+    [InlineData("ANNEX_E1_GOVERNED_CORRECTOR", "OPERATOR_CONSOLE", false)]
+    [InlineData("ANNEX_E1_GOVERNED_CORRECTOR", "APT", false)]
+    [InlineData("ANNEX_E1_GOVERNED_CORRECTOR", "NATIVE_PARKING_APP", false)]
     [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "MANAGEMENT_PLATFORM", true)]
     [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "OPERATOR_CONSOLE", false)]
     [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "APT", false)]
@@ -66,6 +71,9 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [InlineData("OPERATIONS_SUPERVISOR", "GLOBAL", false)]
     [InlineData("FISCAL_Z_READING_CLOSER", "SITE", true)]
     [InlineData("FISCAL_Z_READING_CLOSER", "GLOBAL", false)]
+    [InlineData("ANNEX_E1_GOVERNED_CORRECTOR", "SITE", true)]
+    [InlineData("ANNEX_E1_GOVERNED_CORRECTOR", "SITE_GROUP", false)]
+    [InlineData("ANNEX_E1_GOVERNED_CORRECTOR", "GLOBAL", false)]
     [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "GLOBAL", true)]
     [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "SITE", false)]
     [InlineData("STATUTORY_DISCOUNT_PROCESSOR", "SITE_GROUP", false)]
@@ -81,6 +89,10 @@ public sealed class ApprovedIdentityRoleCatalogTests
     {
         ApprovedIdentityRoleCatalog.IsUserEligibleForApplication(
             [ApprovedIdentityRoleCatalog.SiteOperator, ApprovedIdentityRoleCatalog.FinanceReconciliationAnalyst],
+            ApprovedIdentityRoleCatalog.ManagementPlatformAudience).Should().BeTrue();
+
+        ApprovedIdentityRoleCatalog.IsUserEligibleForApplication(
+            [ApprovedIdentityRoleCatalog.SystemAdministrator, ApprovedIdentityRoleCatalog.AnnexE1GovernedCorrector],
             ApprovedIdentityRoleCatalog.ManagementPlatformAudience).Should().BeTrue();
 
         ApprovedIdentityRoleCatalog.IsUserEligibleForApplication(
@@ -130,7 +142,13 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [Fact]
     public void Policies_ExposeTheCanonicalMetadataForH2()
     {
-        ApprovedIdentityRoleCatalog.Policies.Should().HaveCount(10);
+        ApprovedIdentityRoleCatalog.Policies.Should().HaveCount(11);
+        ApprovedIdentityRoleCatalog.TryGetPolicy(
+            ApprovedIdentityRoleCatalog.AnnexE1GovernedCorrector,
+            out var annexE1Corrector).Should().BeTrue();
+        annexE1Corrector!.AllowedApplicationAudiences.Should().Equal("MANAGEMENT_PLATFORM");
+        annexE1Corrector.AllowedAssignmentScopes.Should().Equal("SITE");
+        annexE1Corrector.DefaultAssignmentScope.Should().Be("SITE");
         ApprovedIdentityRoleCatalog.TryGetPolicy("EXECUTIVE_MANAGEMENT", out var executive).Should().BeTrue();
         executive!.DefaultAssignmentScope.Should().Be("GLOBAL");
         executive.AllowedAssignmentScopes.Should().Equal("GLOBAL");
