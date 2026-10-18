@@ -91,10 +91,16 @@ public class VendorPaymentAcknowledgmentSummary
     public Guid VendorPaymentAcknowledgmentId { get; init; }
 
     /// <summary>ExitPass payment attempt identifier.</summary>
-    public Guid PaymentAttemptId { get; init; }
+    public Guid? PaymentAttemptId { get; init; }
 
     /// <summary>ExitPass payment confirmation identifier.</summary>
-    public Guid PaymentConfirmationId { get; init; }
+    public Guid? PaymentConfirmationId { get; init; }
+
+    /// <summary>Canonical completion basis that authorized vendor acknowledgment.</summary>
+    public string CompletionBasis { get; init; } = string.Empty;
+
+    /// <summary>Durable payment or statutory completion authority reference.</summary>
+    public Guid CompletionAuthorityReferenceId { get; init; }
 
     /// <summary>Central PMS parking session identifier when available.</summary>
     public Guid? ParkingSessionId { get; init; }

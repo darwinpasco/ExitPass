@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
+using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Domain.Common;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
@@ -104,6 +105,46 @@ public sealed class VendorPaymentAcknowledgmentRetryDispatcherServiceTests
         result.FailedCount.Should().Be(1);
         repository.Records[AcknowledgmentId1].AcknowledgmentStatus.Should().Be(VendorPaymentAcknowledgmentStatuses.RetryPending);
         repository.Records[AcknowledgmentId1].VendorCode.Should().Be("VENDOR_UNAVAILABLE");
+    }
+
+    [Fact]
+    public async Task DispatchDueAsync_WhenZeroPayableRetryIsDue_PreservesCompletionAuthorityWithoutPaymentIds()
+    {
+        var authorityReference = Guid.Parse("279c0000-0000-0000-0000-000000000090");
+        var record = Record(AcknowledgmentId1, VendorPaymentAcknowledgmentStatuses.RetryPending) with
+        {
+            PaymentAttemptId = null,
+            PaymentConfirmationId = null,
+            CompletionBasis = CompletionBasisCodes.ZeroPayableStatutoryFinality,
+            CompletionAuthorityReferenceId = authorityReference,
+            RequestFeeMinorUnits = 0
+        };
+        var repository = new FakeAcknowledgmentRepository(record);
+        repository.DueRecords.Add(record);
+        VendorPaymentAcknowledgmentWorkflowCommand? dispatched = null;
+        var workflow = new FakeAcknowledgmentWorkflow
+        {
+            OnProcess = command =>
+            {
+                dispatched = command;
+                repository.Records[AcknowledgmentId1] = repository.Records[AcknowledgmentId1] with
+                {
+                    AcknowledgmentStatus = VendorPaymentAcknowledgmentStatuses.Confirmed
+                };
+            }
+        };
+        var sut = CreateSut(repository, workflow);
+
+        var result = await sut.DispatchDueAsync(
+            new DispatchVendorPaymentAcknowledgmentRetriesCommand(25),
+            CancellationToken.None);
+
+        result.ConfirmedCount.Should().Be(1);
+        dispatched.Should().NotBeNull();
+        dispatched!.PaymentAttemptId.Should().BeNull();
+        dispatched.PaymentConfirmationId.Should().BeNull();
+        dispatched.CompletionBasis.Should().Be(CompletionBasisCodes.ZeroPayableStatutoryFinality);
+        dispatched.CompletionAuthorityReferenceId.Should().Be(authorityReference);
     }
 
     [Fact]
@@ -251,6 +292,8 @@ public sealed class VendorPaymentAcknowledgmentRetryDispatcherServiceTests
             Guid.NewGuid(),
             Guid.NewGuid(),
             Guid.NewGuid(),
+            CompletionBasisCodes.PaymentFinality,
+            Guid.NewGuid(),
             "HIKCENTRAL",
             "HIK:CARD-279",
             "TICKET-279",
@@ -350,9 +393,7 @@ public sealed class VendorPaymentAcknowledgmentRetryDispatcherServiceTests
         }
 
         public Task<VendorPaymentAcknowledgmentBasis?> LoadBasisAsync(
-            Guid paymentAttemptId,
-            Guid paymentConfirmationId,
-            Guid parkingSessionId,
+            VendorPaymentAcknowledgmentWorkflowCommand command,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
@@ -373,6 +414,12 @@ public sealed class VendorPaymentAcknowledgmentRetryDispatcherServiceTests
 
         public Task<VendorPaymentAcknowledgmentRecord?> ReadByPaymentConfirmationAsync(
             Guid paymentConfirmationId,
+            string vendorSystemCode,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<VendorPaymentAcknowledgmentRecord?> ReadByCompletionAuthorityAsync(
+            Guid completionAuthorityReferenceId,
             string vendorSystemCode,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();

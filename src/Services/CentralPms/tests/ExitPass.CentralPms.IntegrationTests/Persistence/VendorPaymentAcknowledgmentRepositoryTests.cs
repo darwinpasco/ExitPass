@@ -86,6 +86,59 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
     }
 
     /// <summary>
+    /// Verifies zero-payable completion is persisted without synthetic payment ancestry and reuses its authority key.
+    /// </summary>
+    [Fact]
+    public async Task CreatePendingAsync_WhenZeroPayableFinality_PersistsCompletionAuthorityWithoutPaymentRows()
+    {
+        var context = CreateContext(nameof(CreatePendingAsync_WhenZeroPayableFinality_PersistsCompletionAuthorityWithoutPaymentRows));
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed zero-payable acknowledgment test data.");
+        var authorityReference = Guid.NewGuid();
+
+        try
+        {
+            var repository = CreateRepository();
+            var command = new CreateVendorPaymentAcknowledgmentCommand(
+                PaymentAttemptId: null,
+                PaymentConfirmationId: null,
+                ParkingSessionId: context.ParkingSessionId,
+                CompletionBasis: ExitPass.CentralPms.Application.Payments.CompletionBasisCodes.ZeroPayableStatutoryFinality,
+                CompletionAuthorityReferenceId: authorityReference,
+                VendorSystemCode: "HIKCENTRAL",
+                VendorSessionRef: "HIK:CARD-ZERO",
+                TicketNumber: "TICKET-ZERO",
+                CardNum: "CARD-ZERO",
+                RequestFeeMinorUnits: 0,
+                RequestCurrencyCode: "PHP",
+                IdempotencyKey: $"vendor-ack-{authorityReference:N}-hikcentral",
+                CorrelationId: context.CorrelationId,
+                CreatedAt: DateTimeOffset.UtcNow);
+
+            var created = await repository.CreatePendingAsync(command, CancellationToken.None);
+            var readback = await repository.ReadByCompletionAuthorityAsync(
+                authorityReference,
+                "HIKCENTRAL",
+                CancellationToken.None);
+
+            Assert.Null(created.PaymentAttemptId);
+            Assert.Null(created.PaymentConfirmationId);
+            Assert.Equal(context.ParkingSessionId, created.ParkingSessionId);
+            Assert.Equal("ZERO_PAYABLE_STATUTORY_FINALITY", created.CompletionBasis);
+            Assert.Equal(authorityReference, created.CompletionAuthorityReferenceId);
+            Assert.Equal(0, created.RequestFeeMinorUnits);
+            Assert.Equal(created.VendorPaymentAcknowledgmentId, readback?.VendorPaymentAcknowledgmentId);
+
+            await Assert.ThrowsAsync<VendorPaymentAcknowledgmentConflictException>(() =>
+                repository.CreatePendingAsync(command, CancellationToken.None));
+        }
+        finally
+        {
+            await CleanupAcknowledgmentsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
     /// Verifies Vendor PMS confirmation result metadata is persisted without changing ExitPass payment finality.
     /// </summary>
     [Fact]
@@ -228,9 +281,13 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
             var repository = CreateRepository();
 
             var basis = await repository.LoadBasisAsync(
-                confirmation.PaymentAttemptId,
-                confirmation.PaymentConfirmationId,
-                attempt.ParkingSessionId,
+                new VendorPaymentAcknowledgmentWorkflowCommand(
+                    confirmation.PaymentAttemptId,
+                    confirmation.PaymentConfirmationId,
+                    attempt.ParkingSessionId,
+                    context.CorrelationId,
+                    ExitPass.CentralPms.Application.Payments.CompletionBasisCodes.PaymentFinality,
+                    confirmation.PaymentConfirmationId),
                 CancellationToken.None);
 
             Assert.NotNull(basis);
@@ -545,6 +602,8 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
             statuses);
 
         Assert.True(await ConstraintExistsAsync(connection, "uq_vendor_payment_ack__payment_confirmation_vendor"));
+        Assert.True(await ConstraintExistsAsync(connection, "ck_vendor_payment_ack__completion_ancestry"));
+        Assert.True(await IndexExistsAsync(connection, "uq_vendor_payment_ack__completion_authority_vendor"));
 
         foreach (var indexName in new[]
                  {
@@ -578,6 +637,8 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
             confirmation.PaymentAttemptId,
             confirmation.PaymentConfirmationId,
             attempt.ParkingSessionId,
+            ExitPass.CentralPms.Application.Payments.CompletionBasisCodes.PaymentFinality,
+            confirmation.PaymentConfirmationId,
             "HIKCENTRAL",
             "HIK:CARD-123",
             "TICKET-123",

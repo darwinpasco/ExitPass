@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.VendorPmsAdapter.Contracts.Parking;
 using ExitPass.VendorPmsAdapter.Contracts.Routing;
@@ -43,9 +44,8 @@ public sealed class VendorPaymentAcknowledgmentWorkflow : IVendorPaymentAcknowle
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        if (command.PaymentAttemptId == Guid.Empty ||
-            command.PaymentConfirmationId == Guid.Empty ||
-            command.ParkingSessionId == Guid.Empty)
+        var normalizedCommand = NormalizeAndValidate(command);
+        if (normalizedCommand is null)
         {
             _logger.LogWarning(
                 "Vendor PMS acknowledgment skipped because required identifiers are missing. payment_attempt_id={PaymentAttemptId} payment_confirmation_id={PaymentConfirmationId} parking_session_id={ParkingSessionId} correlation_id={CorrelationId}",
@@ -56,11 +56,7 @@ public sealed class VendorPaymentAcknowledgmentWorkflow : IVendorPaymentAcknowle
             return;
         }
 
-        var basis = await _repository.LoadBasisAsync(
-            command.PaymentAttemptId,
-            command.PaymentConfirmationId,
-            command.ParkingSessionId,
-            cancellationToken);
+        var basis = await _repository.LoadBasisAsync(normalizedCommand, cancellationToken);
         if (basis is null)
         {
             _logger.LogWarning(
@@ -68,18 +64,6 @@ public sealed class VendorPaymentAcknowledgmentWorkflow : IVendorPaymentAcknowle
                 command.PaymentAttemptId,
                 command.PaymentConfirmationId,
                 command.ParkingSessionId,
-                command.CorrelationId);
-            return;
-        }
-
-        if (basis.TariffVersionReference.StartsWith(
-                ContinuityTariffCalculator.TariffVersionPrefix,
-                StringComparison.Ordinal))
-        {
-            _logger.LogInformation(
-                "Vendor PMS acknowledgment skipped for an ExitPass continuity tariff. payment_attempt_id={PaymentAttemptId} payment_confirmation_id={PaymentConfirmationId} correlation_id={CorrelationId}",
-                basis.PaymentAttemptId,
-                basis.PaymentConfirmationId,
                 command.CorrelationId);
             return;
         }
@@ -208,10 +192,15 @@ public sealed class VendorPaymentAcknowledgmentWorkflow : IVendorPaymentAcknowle
         Guid correlationId,
         CancellationToken cancellationToken)
     {
-        var existing = await _repository.ReadByPaymentConfirmationAsync(
-            basis.PaymentConfirmationId,
-            basis.VendorSystemCode,
-            cancellationToken);
+        var existing = basis.PaymentConfirmationId.HasValue
+            ? await _repository.ReadByPaymentConfirmationAsync(
+                basis.PaymentConfirmationId.Value,
+                basis.VendorSystemCode,
+                cancellationToken)
+            : await _repository.ReadByCompletionAuthorityAsync(
+                basis.CompletionAuthorityReferenceId,
+                basis.VendorSystemCode,
+                cancellationToken);
         if (existing is not null)
         {
             return existing;
@@ -224,23 +213,30 @@ public sealed class VendorPaymentAcknowledgmentWorkflow : IVendorPaymentAcknowle
                     basis.PaymentAttemptId,
                     basis.PaymentConfirmationId,
                     basis.ParkingSessionId,
+                    basis.CompletionBasis,
+                    basis.CompletionAuthorityReferenceId,
                     basis.VendorSystemCode,
                     basis.VendorSessionRef,
                     basis.TicketNumber,
                     basis.CardNum,
                     basis.RequestFeeMinorUnits,
                     basis.RequestCurrencyCode,
-                    $"vendor-ack-{basis.PaymentConfirmationId:N}-{NormalizeIdempotencySegment(basis.VendorSystemCode)}",
+                    $"vendor-ack-{basis.CompletionAuthorityReferenceId:N}-{NormalizeIdempotencySegment(basis.VendorSystemCode)}",
                     correlationId,
                     _systemClock.UtcNow),
                 cancellationToken);
         }
         catch (VendorPaymentAcknowledgmentConflictException)
         {
-            var conflictedRecord = await _repository.ReadByPaymentConfirmationAsync(
-                basis.PaymentConfirmationId,
-                basis.VendorSystemCode,
-                cancellationToken);
+            var conflictedRecord = basis.PaymentConfirmationId.HasValue
+                ? await _repository.ReadByPaymentConfirmationAsync(
+                    basis.PaymentConfirmationId.Value,
+                    basis.VendorSystemCode,
+                    cancellationToken)
+                : await _repository.ReadByCompletionAuthorityAsync(
+                    basis.CompletionAuthorityReferenceId,
+                    basis.VendorSystemCode,
+                    cancellationToken);
 
             if (conflictedRecord is null)
             {
@@ -282,6 +278,50 @@ public sealed class VendorPaymentAcknowledgmentWorkflow : IVendorPaymentAcknowle
     private static string? Normalize(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static VendorPaymentAcknowledgmentWorkflowCommand? NormalizeAndValidate(
+        VendorPaymentAcknowledgmentWorkflowCommand command)
+    {
+        if (command.ParkingSessionId == Guid.Empty || command.CorrelationId == Guid.Empty)
+        {
+            return null;
+        }
+
+        var completionBasis = command.CompletionBasis?.Trim().ToUpperInvariant();
+        if (string.Equals(completionBasis, CompletionBasisCodes.PaymentFinality, StringComparison.Ordinal))
+        {
+            if (!command.PaymentAttemptId.HasValue || command.PaymentAttemptId == Guid.Empty ||
+                !command.PaymentConfirmationId.HasValue || command.PaymentConfirmationId == Guid.Empty)
+            {
+                return null;
+            }
+
+            if (command.CompletionAuthorityReferenceId is { } suppliedAuthority &&
+                suppliedAuthority != command.PaymentConfirmationId.Value)
+            {
+                return null;
+            }
+
+            return command with
+            {
+                CompletionBasis = CompletionBasisCodes.PaymentFinality,
+                CompletionAuthorityReferenceId = command.PaymentConfirmationId
+            };
+        }
+
+        if (string.Equals(completionBasis, CompletionBasisCodes.ZeroPayableStatutoryFinality, StringComparison.Ordinal) &&
+            !command.PaymentAttemptId.HasValue &&
+            !command.PaymentConfirmationId.HasValue &&
+            command.CompletionAuthorityReferenceId is { } authority && authority != Guid.Empty)
+        {
+            return command with
+            {
+                CompletionBasis = CompletionBasisCodes.ZeroPayableStatutoryFinality
+            };
+        }
+
+        return null;
     }
 
     private static string NormalizeIdempotencySegment(string value)

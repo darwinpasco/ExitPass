@@ -422,16 +422,6 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             return (false, null);
         }
 
-        if (_continuityTariffProvenance is not null &&
-            await _continuityTariffProvenance.IsContinuityTariffAsync(
-                cashPayment.ParkingSessionId,
-                cashPayment.TariffSnapshotId,
-                cashPayment.PaymentAttemptId,
-                cancellationToken))
-        {
-            return (false, ExitAuthorizationEligibilityStatuses.ManualExitRequired);
-        }
-
         if (!Guid.TryParse(cashPayment.CashierId, out var cashierUserId) || cashierUserId == Guid.Empty)
         {
             throw Rejected(
@@ -457,7 +447,9 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                             cashPayment.PaymentAttemptId,
                             cashPayment.PaymentConfirmationId,
                             cashPayment.ParkingSessionId,
-                            correlationId),
+                            correlationId,
+                            CompletionBasisCodes.PaymentFinality,
+                            cashPayment.PaymentConfirmationId),
                         cancellationToken)
                     .ConfigureAwait(false);
             }

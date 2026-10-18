@@ -570,6 +570,10 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_ZeroPayableFiscalCompletion_v1.3.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPmsZeroPayableFiscalCompletion_v1.3.sql")),
                 new ApplicationSchemaSource(
+                    "vendor acknowledgment completion authority",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_VendorAcknowledgmentCompletionAuthority_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_VendorAcknowledgmentCompletionAuthority_v1.3.sql")),
+                new ApplicationSchemaSource(
                     "operator-console assisted customer intake",
                     Path.Combine(patchRoot, "infra", "db", "patches", "20260925210000_operator_console_assisted_customer_intake.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate-OperatorConsoleAssistedCustomerIntake.sql")),

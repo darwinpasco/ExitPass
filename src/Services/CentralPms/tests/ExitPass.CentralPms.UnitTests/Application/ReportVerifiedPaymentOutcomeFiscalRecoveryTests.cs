@@ -304,7 +304,7 @@ public sealed class ReportVerifiedPaymentOutcomeFiscalRecoveryTests
     }
 
     [Fact]
-    public async Task ConfirmedContinuityPayment_PreservesFinalityAndFiscalButRequiresManualExit()
+    public async Task ConfirmedContinuityPayment_ContinuesAfterFiscalIssuanceToAuthorizationAndAcknowledgment()
     {
         var provenance = Substitute.For<IContinuityTariffProvenanceReader>();
         provenance.IsContinuityTariffAsync(SessionId, null, AttemptId, Arg.Any<CancellationToken>())
@@ -325,15 +325,23 @@ public sealed class ReportVerifiedPaymentOutcomeFiscalRecoveryTests
         var result = await fixture.Sut.ExecuteAsync(Command(), CancellationToken.None);
 
         Assert.Equal("CONFIRMED", result.AttemptStatus);
-        Assert.Equal(ExitAuthorizationEligibilityStatuses.ManualExitRequired, result.AuthorizationStatus);
-        Assert.Null(result.ExitAuthorizationId);
-        Assert.Null(result.AuthorizationToken);
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        Assert.NotNull(result.ExitAuthorizationId);
+        Assert.Equal("IST-AUTH", result.AuthorizationToken);
         await fixture.Confirmation.Received(1).RecordAsync(
             Arg.Any<RecordPaymentConfirmationCommand>(), VerifiedAt, Arg.Any<CancellationToken>());
         await fixture.FiscalIssuance.Received(1).IssueOrReadAsync(
             Arg.Any<DigitalPaymentFiscalIssuanceCommand>(), Arg.Any<CancellationToken>());
-        await fixture.ExitAuthorization.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
-        await acknowledgment.DidNotReceiveWithAnyArgs().ProcessAsync(default!, default);
+        await fixture.ExitAuthorization.Received(1).ExecuteAsync(
+            Arg.Any<IssueExitAuthorizationCommand>(), Arg.Any<CancellationToken>());
+        await acknowledgment.Received(1).ProcessAsync(
+            Arg.Is<VendorPaymentAcknowledgmentWorkflowCommand>(command =>
+                command.PaymentAttemptId == AttemptId &&
+                command.PaymentConfirmationId == ConfirmationId &&
+                command.ParkingSessionId == SessionId &&
+                command.CompletionBasis == CompletionBasisCodes.PaymentFinality &&
+                command.CompletionAuthorityReferenceId == ConfirmationId),
+            Arg.Any<CancellationToken>());
     }
 
     private static Fixture CreateFixture(

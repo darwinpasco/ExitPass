@@ -120,18 +120,6 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         {
             ValidateCommand(command);
 
-            if (_continuityTariffProvenance is not null &&
-                await _continuityTariffProvenance.IsContinuityTariffAsync(
-                    command.ParkingSessionId,
-                    command.CompletionAuthority?.TariffSnapshotId,
-                    command.PaymentAttemptId,
-                    cancellationToken))
-            {
-                throw new ExitAuthorizationIssuanceConflictException(
-                    ExitAuthorizationEligibilityBlockedReasons.ContinuityTariffManualExitRequired,
-                    "Normal ExitAuthorization is prohibited for an ExitPass continuity tariff.");
-            }
-
             await EvaluateFiscalGatingPreflightAsync(command, activity, cancellationToken);
 
             var dbStart = _systemClock.UtcNow;

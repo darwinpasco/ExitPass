@@ -7,9 +7,7 @@ public interface IVendorPaymentAcknowledgmentRepository
 {
     /// <summary>Loads immutable payment/session data required for Vendor PMS acknowledgment.</summary>
     Task<VendorPaymentAcknowledgmentBasis?> LoadBasisAsync(
-        Guid paymentAttemptId,
-        Guid paymentConfirmationId,
-        Guid parkingSessionId,
+        VendorPaymentAcknowledgmentWorkflowCommand command,
         CancellationToken cancellationToken);
 
     /// <summary>Creates the durable pending acknowledgment record.</summary>
@@ -51,6 +49,12 @@ public interface IVendorPaymentAcknowledgmentRepository
     /// <summary>Reads one durable acknowledgment record by payment confirmation and vendor system.</summary>
     Task<VendorPaymentAcknowledgmentRecord?> ReadByPaymentConfirmationAsync(
         Guid paymentConfirmationId,
+        string vendorSystemCode,
+        CancellationToken cancellationToken);
+
+    /// <summary>Reads one zero-payable acknowledgment by completion authority and vendor system.</summary>
+    Task<VendorPaymentAcknowledgmentRecord?> ReadByCompletionAuthorityAsync(
+        Guid completionAuthorityReferenceId,
         string vendorSystemCode,
         CancellationToken cancellationToken);
 

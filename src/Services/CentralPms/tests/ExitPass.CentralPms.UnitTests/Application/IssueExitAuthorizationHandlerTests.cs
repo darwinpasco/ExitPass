@@ -168,8 +168,11 @@ public sealed class IssueExitAuthorizationHandlerTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenTariffIsContinuity_BlocksBeforeGateway()
+    public async Task ExecuteAsync_WhenTariffIsContinuity_IssuesBackendAuthorization()
     {
+        var now = new DateTimeOffset(2026, 9, 8, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
         var provenance = Substitute.For<IContinuityTariffProvenanceReader>();
         var command = ValidCommand();
         provenance.IsContinuityTariffAsync(
@@ -179,12 +182,13 @@ public sealed class IssueExitAuthorizationHandlerTests
                 Arg.Any<CancellationToken>())
             .Returns(true);
 
-        var action = () => CreateSut(continuityTariffProvenance: provenance)
+        var result = await CreateSut(continuityTariffProvenance: provenance)
             .ExecuteAsync(command, CancellationToken.None);
 
-        var exception = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(action);
-        Assert.Equal(ExitAuthorizationEligibilityBlockedReasons.ContinuityTariffManualExitRequired, exception.ErrorCode);
-        await _gateway.DidNotReceiveWithAnyArgs().IssueAsync(default!, default);
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        await _gateway.Received(1).IssueAsync(
+            Arg.Any<IssueExitAuthorizationDbRequest>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
