@@ -605,7 +605,7 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
     }
 
     [Fact]
-    public async Task AnnexE1OrdinaryGenerationStillRequiresZGenerationPermission()
+    public async Task AnnexE1OrdinaryGenerationUsesReportReadAuthorityWithoutZGenerationPermission()
     {
         var route = $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e1/workbooks";
         var payload = new {operationKey="annex-ordinary",calendarYear=2026,calendarMonth=10};
@@ -620,10 +620,20 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         denied.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         deniedGateway.Requests.Should().BeEmpty();
 
+        var zOnlyGateway = new FakeGateway();
+        using var zOnlyFactory = CreateFactory(zOnlyGateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            includePermission:false,
+            additionalPermissions:["fiscal-reporting.z.generate"]);
+        using var zOnlyClient = zOnlyFactory.CreateClient();
+        zOnlyClient.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
+        using var zOnly = await zOnlyClient.PostAsJsonAsync(route,payload);
+        zOnly.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        zOnlyGateway.Requests.Should().BeEmpty();
+
         var allowedGateway = new FakeGateway(_ => Response(201,"{\"succeeded\":true}"));
         using var allowedFactory = CreateFactory(allowedGateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
             includePermission:false,
-            additionalPermissions:["fiscal-reporting.z.generate"]);
+            additionalPermissions:["fiscal-reporting.z.read"]);
         using var allowedClient = allowedFactory.CreateClient();
         allowedClient.DefaultRequestHeaders.Add("X-CSRF-Token",TestAntiforgery.ValidToken);
         using var allowed = await allowedClient.PostAsJsonAsync(route,payload);

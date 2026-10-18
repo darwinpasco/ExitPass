@@ -192,7 +192,7 @@ public static class FiscalReportingEndpoints
         if (csrfFailure is not null) return csrfFailure;
         var validationFailure = ValidateAnnexE1Generation(body);
         if (validationFailure is not null) return validationFailure;
-        var authorizationPolicy = body.SupersedesWorkbookId.HasValue ? AnnexE1CorrectPolicy : BirGeneratePolicy;
+        var authorizationPolicy = body.SupersedesWorkbookId.HasValue ? AnnexE1CorrectPolicy : BirReadPolicy;
         var authorizationFailure = await AuthorizeSensitiveHumanAsync(request, rbac, authorizationPolicy, ct).ConfigureAwait(false);
         if (authorizationFailure is not null) return authorizationFailure;
         return await Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,
@@ -263,7 +263,7 @@ public static class FiscalReportingEndpoints
             !Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var userId) || userId == Guid.Empty ||
             principal.HasClaim(claim => claim.Type is "service_identity_id" or "client_id"))
         {
-            return Results.Json(new{succeeded=false,code="annex_e1_human_authorization_required",correlationId=correlation,message="An authenticated human approval is required."},statusCode:StatusCodes.Status401Unauthorized);
+            return Results.Json(new{succeeded=false,code="annex_e1_human_authorization_required",correlationId=correlation,message="Authenticated human authorization is required."},statusCode:StatusCodes.Status401Unauthorized);
         }
 
         var required = CentralPmsRbacPolicyCatalog.ResolvePermissions(policy);
