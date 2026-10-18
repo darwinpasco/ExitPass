@@ -2,7 +2,8 @@
 param(
     [switch] $SmokeTest,
     [switch] $SkipEvidenceGovernanceInitialization,
-    [string] $OperatorConsolePublicOrigin = 'https://operator-console-exitpass.ngrok.dev'
+    [string] $OperatorConsolePublicOrigin = 'https://operator-console-exitpass.ngrok.dev',
+    [string] $AnnexE1GovernedCorrectionApiKeyFile
 )
 
 Set-StrictMode -Version Latest
@@ -27,6 +28,13 @@ else {
 }
 $environmentFile = Join-Path $privateRoot 'runtime\restart-41-business\central.env'
 $posApiKeyFile = Join-Path $privateRoot 'runtime\restart-41-business\pos-api-key'
+$annexE1GovernedCorrectionApiKeyFile = if ([string]::IsNullOrWhiteSpace($AnnexE1GovernedCorrectionApiKeyFile)) {
+    Join-Path $privateRoot 'runtime\restart-41-business\central-pms-annex-e1-governed-api-key'
+}
+else {
+    [IO.Path]::GetFullPath($AnnexE1GovernedCorrectionApiKeyFile)
+}
+$annexE1GovernedCorrectionApiKeyContainerPath = '/run/exitpass/annex-e1-governed-api-key'
 $adapterApiKeyFile = Join-Path $privateRoot 'site-adapters\pitx-level-3\central-pms-api-key'
 $dataProtectionKeyDirectory = Join-Path $privateRoot 'data-protection\central-pms'
 $evidenceServicesLauncherPath = Join-Path $PSScriptRoot 'Start-StatutoryEvidenceServices.ps1'
@@ -76,6 +84,41 @@ function Assert-PrivateEnvironmentValue {
     }
 }
 
+function Assert-ReadablePrivateFile {
+    param(
+        [Parameter(Mandatory)][string] $Path,
+        [Parameter(Mandatory)][string] $Description
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "$Description was not found at $Path."
+    }
+
+    try {
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        $stream.Dispose()
+    }
+    catch {
+        throw "$Description is not readable at $Path."
+    }
+}
+
+function Assert-AnnexE1GovernedCredentialConfiguration {
+    param(
+        [Parameter(Mandatory)][string] $EnvironmentFile,
+        [Parameter(Mandatory)][string] $CredentialFile,
+        [Parameter(Mandatory)][string] $ContainerPath
+    )
+
+    Assert-ReadablePrivateFile $CredentialFile 'The Annex E-1 governed-correction credential'
+
+    $settingName = 'FiscalIssuance__PosServerIntegration__Endpoints__0__AnnexE1GovernedCorrectionApiKeyFile'
+    $configuredPath = Get-PrivateEnvironmentValue $EnvironmentFile $settingName
+    if ($configuredPath -cne $ContainerPath) {
+        throw "The private Central PMS environment setting '$settingName' must map to '$ContainerPath'."
+    }
+}
+
 function Wait-ForHealth {
     param([int] $Attempts = 180)
 
@@ -111,6 +154,10 @@ foreach ($requiredFile in @($environmentFile, $posApiKeyFile, $adapterApiKeyFile
         throw "Required persistent PITX private configuration was not found at $requiredFile."
     }
 }
+Assert-AnnexE1GovernedCredentialConfiguration `
+    -EnvironmentFile $environmentFile `
+    -CredentialFile $annexE1GovernedCorrectionApiKeyFile `
+    -ContainerPath $annexE1GovernedCorrectionApiKeyContainerPath
 if (Test-Path -LiteralPath $dataProtectionKeyDirectory) {
     if (-not (Test-Path -LiteralPath $dataProtectionKeyDirectory -PathType Container)) {
         throw "Central PMS Data Protection key path is not a directory: $dataProtectionKeyDirectory"
@@ -233,6 +280,7 @@ try {
         --mount "type=bind,source=$($mtls.RootCertificatePemPath),target=/usr/local/share/ca-certificates/exitpass-local-statutory-root-ca.crt,readonly" `
         --mount "type=bind,source=$($evidenceRuntime.MinioRootCertificatePath),target=/usr/local/share/ca-certificates/exitpass-local-statutory-evidence-root-ca.crt,readonly" `
         --mount "type=bind,source=$posApiKeyFile,target=/run/exitpass/pos-api-key,readonly" `
+        --mount "type=bind,source=$annexE1GovernedCorrectionApiKeyFile,target=$annexE1GovernedCorrectionApiKeyContainerPath,readonly" `
         --mount "type=bind,source=$adapterApiKeyFile,target=/run/exitpass/site-adapter-secrets/pitx-level-3/central-pms-api-key,readonly" `
         --mount "type=bind,source=$dataProtectionKeyDirectory,target=/root/.aspnet/DataProtection-Keys" `
         --label 'com.exitpass.local-runtime=persistent-pitx-central-pms' `
