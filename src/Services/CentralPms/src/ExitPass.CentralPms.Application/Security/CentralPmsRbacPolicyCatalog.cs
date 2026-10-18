@@ -103,6 +103,8 @@ public static class CentralPmsRbacPolicyCatalog
             ["FiscalReportingXGenerate"] = ["fiscal-reporting.x.generate"],
             ["FiscalReportingZRead"] = ["fiscal-reporting.z.read"],
             ["FiscalReportingZGenerate"] = ["fiscal-reporting.z.generate"],
+            ["FiscalReportingAnnexE1KnownZeroAttest"] = ["fiscal-reporting.annex-e1.known-zero.attest"],
+            ["FiscalReportingAnnexE1Correct"] = ["fiscal-reporting.annex-e1.correct"],
             ["FiscalReportingSiteCatalogRead"] =
             [
                 "fiscal-reporting.ej.read",

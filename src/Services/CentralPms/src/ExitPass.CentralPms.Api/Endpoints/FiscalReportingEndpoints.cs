@@ -20,7 +20,26 @@ public static class FiscalReportingEndpoints
     public const string ZGeneratePolicy="FiscalReportingZGenerate";
     public const string BirReadPolicy=ZReadPolicy;
     public const string BirGeneratePolicy=ZGeneratePolicy;
+    public const string AnnexE1KnownZeroAttestPolicy="FiscalReportingAnnexE1KnownZeroAttest";
+    public const string AnnexE1CorrectPolicy="FiscalReportingAnnexE1Correct";
     public const string SiteCatalogPolicy="FiscalReportingSiteCatalogRead";
+
+    private static readonly HashSet<string> AnnexE1KnownZeroFactTypes = new(StringComparer.Ordinal)
+    {
+        "manual_si_or_net_income",
+        "sales_overrun_overflow_net_income",
+        "naac_discount",
+        "solo_parent_discount",
+        "other_vat_adjustment",
+        "vat_on_returns",
+        "residual_vat_adjustment"
+    };
+
+    private static readonly HashSet<string> AnnexE1CorrectionReasons = new(StringComparer.Ordinal)
+    {
+        "authorized_restatement",
+        "source_correction"
+    };
 
     private static readonly string[] FiscalPermissionCodes =
     [
@@ -113,6 +132,9 @@ public static class FiscalReportingEndpoints
         group.MapPost("/annex-e/e1/workbooks", (Guid siteId,GenerateAnnexE1WorkbookRequest body,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,IAntiforgery antiforgery,CancellationToken ct)=>
             GenerateAnnexE1Async(siteId,operatorScoped,body,request,gateway,references,rbac,logs,antiforgery,ct))
             .WithMetadata(new ReconciliationPolicyMetadata(BirGeneratePolicy));
+        group.MapPost("/annex-e/e1/known-zero-attestations", (Guid siteId,AttestAnnexE1KnownZeroRequest body,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,IAntiforgery antiforgery,CancellationToken ct)=>
+            AttestAnnexE1KnownZeroAsync(siteId,operatorScoped,body,request,gateway,references,rbac,logs,antiforgery,ct))
+            .WithMetadata(new ReconciliationPolicyMetadata(AnnexE1KnownZeroAttestPolicy));
         group.MapGet("/annex-e/e1/workbooks/current", (Guid siteId,int calendarYear,int calendarMonth,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
             Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.AnnexE1CurrentRead,null,null,null,null,null,false,ct,calendarYear:calendarYear,calendarMonth:calendarMonth))
             .WithMetadata(new ReconciliationPolicyMetadata(BirReadPolicy));
@@ -168,10 +190,110 @@ public static class FiscalReportingEndpoints
         ICentralPmsRbacRepository rbac,ILoggerFactory logs,IAntiforgery antiforgery,CancellationToken ct)
     {
         var csrfFailure=await ValidateCsrfAsync(request,antiforgery).ConfigureAwait(false);
-        return csrfFailure??await Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,
+        if (csrfFailure is not null) return csrfFailure;
+        var validationFailure = ValidateAnnexE1Generation(body);
+        if (validationFailure is not null) return validationFailure;
+        if (body.SupersedesWorkbookId.HasValue)
+        {
+            var authorizationFailure = await AuthorizeSensitiveHumanAsync(request, rbac, AnnexE1CorrectPolicy, ct).ConfigureAwait(false);
+            if (authorizationFailure is not null) return authorizationFailure;
+        }
+        return await Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,
             FiscalReportingGatewayAction.AnnexE1Generate,null,null,null,body.OperationKey,null,false,ct,
-            calendarYear:body.CalendarYear,calendarMonth:body.CalendarMonth).ConfigureAwait(false);
+            calendarYear:body.CalendarYear,calendarMonth:body.CalendarMonth,
+            supersedesWorkbookId:body.SupersedesWorkbookId,correctionReason:body.CorrectionReason,
+            correctionApprovalReference:body.CorrectionApprovalReference).ConfigureAwait(false);
     }
+
+    private static async Task<IResult> AttestAnnexE1KnownZeroAsync(
+        Guid siteId,bool operatorScoped,AttestAnnexE1KnownZeroRequest body,HttpRequest request,
+        IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,
+        ICentralPmsRbacRepository rbac,ILoggerFactory logs,IAntiforgery antiforgery,CancellationToken ct)
+    {
+        var csrfFailure=await ValidateCsrfAsync(request,antiforgery).ConfigureAwait(false);
+        if (csrfFailure is not null) return csrfFailure;
+        var validationFailure = ValidateAnnexE1KnownZero(body);
+        if (validationFailure is not null) return validationFailure;
+        var authorizationFailure = await AuthorizeSensitiveHumanAsync(request, rbac, AnnexE1KnownZeroAttestPolicy, ct).ConfigureAwait(false);
+        if (authorizationFailure is not null) return authorizationFailure;
+        return await Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,
+            FiscalReportingGatewayAction.AnnexE1KnownZeroAttest,null,null,null,body.OperationKey,null,false,ct,
+            fiscalReportingPeriodId:body.FiscalReportingPeriodId,factType:body.FactType,
+            factStatus:body.FactStatus,amountMinorUnits:body.AmountMinorUnits,
+            sourceDocumentCount:body.SourceDocumentCount,firstSourceReference:body.FirstSourceReference,
+            lastSourceReference:body.LastSourceReference,sourceEventReference:body.SourceEventReference,
+            approvalReference:body.ApprovalReference,supersedesFactId:body.SupersedesFactId,
+            correctionReason:body.CorrectionReason).ConfigureAwait(false);
+    }
+
+    private static IResult? ValidateAnnexE1KnownZero(AttestAnnexE1KnownZeroRequest body)
+    {
+        if (!ValidReference(body.OperationKey, 200) || body.FiscalReportingPeriodId == Guid.Empty ||
+            body.FactType is null || !AnnexE1KnownZeroFactTypes.Contains(body.FactType) ||
+            !string.Equals(body.FactStatus, "attested_zero", StringComparison.Ordinal) ||
+            body.AmountMinorUnits != 0 || body.SourceDocumentCount != 0 ||
+            body.FirstSourceReference is not null || body.LastSourceReference is not null ||
+            body.SourceEventReference is not null || body.SupersedesFactId is not null || body.CorrectionReason is not null ||
+            !ValidApprovalReference(body.ApprovalReference))
+        {
+            return AnnexE1BadRequest(
+                "annex_e1_known_zero_invalid",
+                "The Annex E-1 known-zero attestation must contain an approved zero fact without source or correction values.");
+        }
+        return null;
+    }
+
+    private static IResult? ValidateAnnexE1Generation(GenerateAnnexE1WorkbookRequest body)
+    {
+        if (!ValidReference(body.OperationKey, 200) || body.CalendarYear is < 2000 or > 9999 || body.CalendarMonth is < 1 or > 12)
+            return AnnexE1BadRequest("annex_e1_generation_invalid", "The Annex E-1 generation request is incomplete or invalid.");
+
+        var hasCorrection = body.SupersedesWorkbookId.HasValue || body.CorrectionReason is not null || body.CorrectionApprovalReference is not null;
+        var completeCorrection = body.SupersedesWorkbookId is { } workbookId && workbookId != Guid.Empty &&
+            body.CorrectionReason is not null && AnnexE1CorrectionReasons.Contains(body.CorrectionReason) &&
+            ValidApprovalReference(body.CorrectionApprovalReference);
+        return hasCorrection && !completeCorrection
+            ? AnnexE1BadRequest("annex_e1_correction_invalid", "An Annex E-1 correction requires a predecessor, controlled reason, and genuine approval reference.")
+            : null;
+    }
+
+    private static async Task<IResult?> AuthorizeSensitiveHumanAsync(
+        HttpRequest request,ICentralPmsRbacRepository repository,string policy,CancellationToken cancellationToken)
+    {
+        var principal = request.HttpContext.User;
+        var correlation = Guid.TryParse(request.Headers["X-Correlation-Id"], out var parsed) && parsed != Guid.Empty ? parsed : Guid.NewGuid();
+        if (principal.Identity?.IsAuthenticated != true ||
+            !Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var userId) || userId == Guid.Empty ||
+            principal.HasClaim(claim => claim.Type is "service_identity_id" or "client_id"))
+        {
+            return Results.Json(new{succeeded=false,code="annex_e1_human_authorization_required",correlationId=correlation,message="An authenticated human approval is required."},statusCode:StatusCodes.Status401Unauthorized);
+        }
+
+        var required = CentralPmsRbacPolicyCatalog.ResolvePermissions(policy);
+        var claims = principal.Claims
+            .Where(claim => claim.Type.Equals(CentralPmsRbacPolicyCatalog.PermissionClaimType,StringComparison.OrdinalIgnoreCase) ||
+                            claim.Type.Equals("permission",StringComparison.OrdinalIgnoreCase) ||
+                            claim.Type.Equals("scope",StringComparison.OrdinalIgnoreCase))
+            .SelectMany(claim => claim.Value.Split([' ', ','],StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (required.Any(claims.Contains) || await repository.UserHasAnyPermissionAsync(userId,required,cancellationToken).ConfigureAwait(false))
+            return null;
+
+        await repository.RecordDeniedAsync(policy,userId,null,correlation,request.Path,cancellationToken).ConfigureAwait(false);
+        return Results.Json(new{succeeded=false,code="annex_e1_sensitive_operation_forbidden",correlationId=correlation,message="The caller does not have the required Annex E-1 authority."},statusCode:StatusCodes.Status403Forbidden);
+    }
+
+    private static bool ValidReference(string? value,int maximumLength) =>
+        !string.IsNullOrWhiteSpace(value) && value.Length <= maximumLength && !value.Contains('\r') && !value.Contains('\n');
+
+    private static bool ValidApprovalReference(string? value)
+    {
+        if (!ValidReference(value,200)) return false;
+        return value!.Trim().ToUpperInvariant() is not ("N/A" or "NONE" or "UNKNOWN" or "AUTO");
+    }
+
+    private static IResult AnnexE1BadRequest(string code,string message) =>
+        Results.BadRequest(new{succeeded=false,code,message});
 
     private static async Task<IResult?> ValidateCsrfAsync(HttpRequest request,IAntiforgery antiforgery)
     {
@@ -443,7 +565,11 @@ public static class FiscalReportingEndpoints
         string? operationKey,string? reportReference,bool confirmClose,CancellationToken ct,
         Guid? fiscalReportingPeriodId=null,Guid? summaryId=null,Guid? workbookId=null,string? governingZReadingReference=null,
         int? calendarYear=null,int? calendarMonth=null,bool download=false,string? exportFormat=null,
-        string? actionCode=null,string? actorFilter=null,string? resultFilter=null,string? referenceFilter=null)
+        string? actionCode=null,string? actorFilter=null,string? resultFilter=null,string? referenceFilter=null,
+        string? factType=null,string? factStatus=null,long? amountMinorUnits=null,long? sourceDocumentCount=null,
+        string? firstSourceReference=null,string? lastSourceReference=null,string? sourceEventReference=null,
+        string? approvalReference=null,Guid? supersedesFactId=null,string? correctionReason=null,
+        Guid? supersedesWorkbookId=null,string? correctionApprovalReference=null)
     {
         var correlation=Guid.TryParse(request.Headers["X-Correlation-Id"].ToString(),out var parsed)&&parsed!=Guid.Empty?parsed:Guid.NewGuid();
         var actor=request.HttpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)??"unavailable";
@@ -496,10 +622,44 @@ public static class FiscalReportingEndpoints
         var result=await gateway.SendAsync(new(siteId,action,correlation,actor,start,end,resolvedSearch,operationKey,reportReference,
             fiscalReportingPeriodId,SummaryId:summaryId,WorkbookId:workbookId,GoverningZReadingReference:governingZReadingReference,
             CalendarYear:calendarYear,CalendarMonth:calendarMonth,ExportFormat:exportFormat,ActionCode:actionCode,
-            ActorFilter:actorFilter,ResultFilter:resultFilter,ReferenceFilter:referenceFilter),ct).ConfigureAwait(false);
+            ActorFilter:actorFilter,ResultFilter:resultFilter,ReferenceFilter:referenceFilter,FactType:factType,
+            FactStatus:factStatus,AmountMinorUnits:amountMinorUnits,SourceDocumentCount:sourceDocumentCount,
+            FirstSourceReference:firstSourceReference,LastSourceReference:lastSourceReference,
+            SourceEventReference:sourceEventReference,ApprovalReference:approvalReference,SupersedesFactId:supersedesFactId,
+            CorrectionReason:correctionReason,SupersedesWorkbookId:supersedesWorkbookId,
+            CorrectionApprovalReference:correctionApprovalReference),ct).ConfigureAwait(false);
         logger.Log(result.HttpStatusCode<400?LogLevel.Information:LogLevel.Warning,
             "Fiscal reporting operation completed. actor={Actor} site={Site} action={Action} result={Result} report={Report} correlation_id={Correlation}",
             actor,siteId,action,result.Code,reportReference,correlation);
+        if (actorUserId != Guid.Empty && (action == FiscalReportingGatewayAction.AnnexE1KnownZeroAttest ||
+            (action == FiscalReportingGatewayAction.AnnexE1Generate && supersedesWorkbookId.HasValue)))
+        {
+            try
+            {
+                await rbacRepository.RecordAuditEventAsync(
+                    action == FiscalReportingGatewayAction.AnnexE1KnownZeroAttest
+                        ? "ANNEX_E1_KNOWN_ZERO_ATTESTATION"
+                        : "ANNEX_E1_WORKBOOK_CORRECTION",
+                    result.HttpStatusCode is >=200 and <300 ? "SUCCESS" : "REJECTED",
+                    result.Code,
+                    action == FiscalReportingGatewayAction.AnnexE1KnownZeroAttest
+                        ? "FiscalReportingPeriod"
+                        : "AnnexE1Workbook",
+                    action == FiscalReportingGatewayAction.AnnexE1KnownZeroAttest
+                        ? fiscalReportingPeriodId
+                        : supersedesWorkbookId,
+                    actorUserId,null,correlation,
+                    action == FiscalReportingGatewayAction.AnnexE1KnownZeroAttest
+                        ? "Governed Annex E-1 known-zero attestation completed through POS authority."
+                        : "Governed Annex E-1 correction request completed through POS authority.",ct).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception,
+                    "Central Annex E-1 audit persistence failed after POS result. actor={Actor} site={Site} action={Action} correlation_id={Correlation}",
+                    actor,siteId,action,correlation);
+            }
+        }
         if(result.HttpStatusCode is >=200 and <300 && (download ||
             (result.ContentType.StartsWith("text/plain",StringComparison.OrdinalIgnoreCase) ||
              result.ContentType.StartsWith("application/pdf",StringComparison.OrdinalIgnoreCase))))
@@ -594,7 +754,14 @@ public static class FiscalReportingEndpoints
 public sealed record GenerateReadingRequest(string? OperationKey);
 public sealed record GenerateZReadingRequest(string? OperationKey,bool ConfirmClose);
 public sealed record GenerateBirSalesSummaryRequest(string? OperationKey,Guid FiscalReportingPeriodId,string? GoverningZReadingReference);
-public sealed record GenerateAnnexE1WorkbookRequest(string? OperationKey,int CalendarYear,int CalendarMonth);
+public sealed record GenerateAnnexE1WorkbookRequest(
+    string? OperationKey,int CalendarYear,int CalendarMonth,Guid? SupersedesWorkbookId=null,
+    string? CorrectionReason=null,string? CorrectionApprovalReference=null);
+public sealed record AttestAnnexE1KnownZeroRequest(
+    string? OperationKey,Guid FiscalReportingPeriodId,string? FactType,string? FactStatus,
+    long? AmountMinorUnits,long? SourceDocumentCount,string? FirstSourceReference,
+    string? LastSourceReference,string? SourceEventReference,string? ApprovalReference,
+    Guid? SupersedesFactId=null,string? CorrectionReason=null);
 public sealed record CloseFiscalBusinessDateRequest(string? OperationKey,long ExpectedStateVersion,bool ConfirmClose);
 public sealed record CloseAllFiscalBusinessDatesRequest(string OperationKey,bool ConfirmClose);
 public sealed record FiscalReportingAuthorizedSiteResponse(Guid SiteId,string SiteCode,string SiteName);

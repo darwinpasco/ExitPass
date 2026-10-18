@@ -9,7 +9,9 @@
     "fiscal-reporting.x.read",
     "fiscal-reporting.x.generate",
     "fiscal-reporting.z.read",
-    "fiscal-reporting.z.generate"
+    "fiscal-reporting.z.generate",
+    "fiscal-reporting.annex-e1.known-zero.attest",
+    "fiscal-reporting.annex-e1.correct"
   ],
   "zGeneration": { "separateFromRead": true, "explicitConfirmation": true, "warningRequired": true },
   "birSalesSummary": {
@@ -18,6 +20,15 @@
     "requiresCommittedZReading": true,
     "exports": ["json", "csv"],
     "annexE1Export": "xlsx"
+  },
+  "annexE1GovernedCorrection": {
+    "knownZeroRoute": "/v1/ops/operator-console/fiscal-reporting/sites/{siteId}/annex-e/e1/known-zero-attestations",
+    "workbookRoute": "/v1/ops/operator-console/fiscal-reporting/sites/{siteId}/annex-e/e1/workbooks",
+    "knownZeroPermission": "fiscal-reporting.annex-e1.known-zero.attest",
+    "correctionPermission": "fiscal-reporting.annex-e1.correct",
+    "csrfRequired": true,
+    "automaticAttestation": false,
+    "automaticCorrectionGeneration": false
   },
   "browserCalculation": false,
   "browserArtifactGeneration": false,

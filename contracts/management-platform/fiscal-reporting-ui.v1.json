@@ -9,7 +9,9 @@
     "xRead": "fiscal-reporting.x.read",
     "xGenerate": "fiscal-reporting.x.generate",
     "zRead": "fiscal-reporting.z.read",
-    "zGenerate": "fiscal-reporting.z.generate"
+    "zGenerate": "fiscal-reporting.z.generate",
+    "annexE1KnownZeroAttest": "fiscal-reporting.annex-e1.known-zero.attest",
+    "annexE1Correct": "fiscal-reporting.annex-e1.correct"
   },
   "electronicJournal": {
     "format": "text/plain; charset=utf-8",
@@ -21,5 +23,12 @@
   },
   "xReading": { "authority": "POS_SERVER", "closesPeriod": false, "history": true, "download": true },
   "zReading": { "authority": "POS_SERVER", "closesPeriod": true, "history": true, "download": true, "explicitConfirmation": true },
+  "annexE1GovernedCorrection": {
+    "knownZeroRoute": "/v1/management-platform/fiscal-reporting/sites/{siteId}/annex-e/e1/known-zero-attestations",
+    "workbookRoute": "/v1/management-platform/fiscal-reporting/sites/{siteId}/annex-e/e1/workbooks",
+    "humanApprovalRequired": true,
+    "csrfRequired": true,
+    "posAuthority": true
+  },
   "developmentScenario": { "query": "mpFiscalReportingScenario=ready", "productionIgnored": true }
 }
