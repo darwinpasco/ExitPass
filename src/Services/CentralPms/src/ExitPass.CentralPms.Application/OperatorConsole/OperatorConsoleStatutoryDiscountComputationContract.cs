@@ -1,3 +1,5 @@
+using ExitPass.CentralPms.Application.FiscalIssuance;
+
 namespace ExitPass.CentralPms.Application.OperatorConsole;
 
 /// <summary>
@@ -54,7 +56,10 @@ public static class OperatorConsoleStatutoryDiscountComputationContract
             request.GrossAmountMinorUnits / (1m + VatRate),
             0,
             MidpointRounding.AwayFromZero));
-        var vatMinorUnits = request.GrossAmountMinorUnits - vatExclusiveMinorUnits;
+        // This field preserves the original VAT-inclusive tariff decomposition used by the
+        // immutable payable-basis audit record. Fiscal issuance separately derives the VAT
+        // due on the discounted parking consideration.
+        var originalVatMinorUnits = request.GrossAmountMinorUnits - vatExclusiveMinorUnits;
         var appliedDiscountRate = fullFeeExemption ? FullFeeExemptionRate : StatutoryDiscountRate;
         var statutoryDiscountMinorUnits = fullFeeExemption
             ? vatExclusiveMinorUnits
@@ -62,14 +67,17 @@ public static class OperatorConsoleStatutoryDiscountComputationContract
                 vatExclusiveMinorUnits * appliedDiscountRate,
                 0,
                 MidpointRounding.AwayFromZero));
-        var finalPayableMinorUnits = fullFeeExemption
-            ? 0
-            : vatExclusiveMinorUnits - statutoryDiscountMinorUnits;
+        var discountedVatExclusiveMinorUnits = vatExclusiveMinorUnits - statutoryDiscountMinorUnits;
+        var payableVatMinorUnits = decimal.ToInt64(decimal.Round(
+            discountedVatExclusiveMinorUnits * VatRate,
+            0,
+            MidpointRounding.AwayFromZero));
+        var finalPayableMinorUnits = checked(discountedVatExclusiveMinorUnits + payableVatMinorUnits);
 
         return new OperatorConsoleStatutoryDiscountComputationResult(
             Accepted: true,
             request.GrossAmountMinorUnits,
-            vatMinorUnits,
+            originalVatMinorUnits,
             vatExclusiveMinorUnits,
             statutoryDiscountMinorUnits,
             finalPayableMinorUnits,

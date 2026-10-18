@@ -129,25 +129,26 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         var request = new PosServerFiscalDocumentRequestMapper().Map(fixture.CapturedMapping!);
         Assert.Null(request.BusinessDayDate);
         Assert.Equal(SiteAId, request.SiteId);
-        Assert.Equal(8929, request.PayableBasis.PayableAmountMinorUnits);
-        Assert.Equal(8929, Assert.Single(request.Tenders).AmountMinorUnits);
+        Assert.Equal(10000, request.PayableBasis.PayableAmountMinorUnits);
+        Assert.Equal(10000, Assert.Single(request.Tenders).AmountMinorUnits);
         Assert.Null(Assert.Single(fixture.CapturedMapping!.Tenders).TenderTypeCodeId);
         Assert.Equal("GCASH", Assert.Single(fixture.CapturedMapping.Tenders).TenderContext["payment_method"]);
-        Assert.Equal(8929, Assert.Single(request.Totals).AmountMinorUnits);
+        Assert.Equal(10000, Assert.Single(request.Totals).AmountMinorUnits);
 
         var line = Assert.Single(request.DocumentLines);
         Assert.Equal(11161, line.GrossAmountMinorUnits);
         Assert.Equal(2232, line.DiscountAmountMinorUnits);
-        Assert.Equal(0, line.TaxAmountMinorUnits);
-        Assert.Equal(8929, line.NetAmountMinorUnits);
+        Assert.Equal(1071, line.TaxAmountMinorUnits);
+        Assert.Equal(10000, line.NetAmountMinorUnits);
 
         var tax = Assert.Single(request.TaxDetails);
-        Assert.Equal(11161, tax.TaxableAmountMinorUnits);
-        Assert.Equal(1339, tax.TaxAmountMinorUnits);
-        Assert.Equal("VAT_EXCLUSIVE", tax.TaxContext["basis"]);
+        Assert.Equal(8929, tax.TaxableAmountMinorUnits);
+        Assert.Equal(1071, tax.TaxAmountMinorUnits);
+        Assert.Equal("VAT_INCLUSIVE_NO_EXEMPTION", tax.TaxContext["basis"]);
 
         var privilege = Assert.Single(request.DiscountPrivilegeDetails);
         Assert.Equal(2232, privilege.DiscountAmountMinorUnits);
+        Assert.Equal(0, privilege.VatPrivilegeAmountMinorUnits);
         Assert.Null(privilege.BeneficiaryRef);
         Assert.Null(privilege.EvidenceRef);
 
@@ -158,11 +159,13 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         Assert.Equal(SiteAId, facts.SiteId);
         Assert.Equal(SiteAGroupId, facts.SiteGroupId);
         Assert.Equal("SENIOR_CITIZEN", facts.EntitlementType);
-        Assert.Equal("VAT_EXEMPTION_AND_STATUTORY_DISCOUNT", facts.BenefitClassification);
+        Assert.Equal("STATUTORY_DISCOUNT_ONLY", facts.BenefitClassification);
         Assert.Equal("LOCAL_ORDINANCE", facts.PolicyReference.ResolutionBasis);
         Assert.Equal(PolicyId, facts.PolicyReference.AppliedPolicyReferenceId);
         Assert.Equal("WEBPAY", facts.SourcePaymentChannel);
-        Assert.Equal(8929, facts.FinalPayableAmountMinorUnits);
+        Assert.Equal(1071, facts.VatAmountMinorUnits);
+        Assert.Equal("VAT_INCLUSIVE_NO_EXEMPTION", facts.VatTreatment);
+        Assert.Equal(10000, facts.FinalPayableAmountMinorUnits);
         Assert.Equal("Juan Dela Cruz", request.InvoiceCustomerInformation?.CustomerName);
         Assert.Equal("OSCA-12345", request.InvoiceCustomerInformation?.StatutoryIdNumber);
     }
@@ -397,7 +400,7 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
             SiteAId,
             SiteAGroupId,
             AppliedTariffId,
-            8929,
+            10000,
             "PHP",
             DateTimeOffset.Parse("2026-08-24T02:00:00Z"),
             PosAId,
@@ -435,7 +438,7 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
             1339,
             "VAT_EXCLUSIVE",
             2232,
-            8929,
+            10000,
             "PHP",
             DateTimeOffset.Parse("2026-08-24T01:30:00Z"),
             DateTimeOffset.Parse("2026-08-24T01:45:00Z"),

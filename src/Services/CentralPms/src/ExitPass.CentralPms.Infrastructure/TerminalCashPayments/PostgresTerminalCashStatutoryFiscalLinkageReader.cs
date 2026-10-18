@@ -1,4 +1,5 @@
 using System.Data;
+using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using Npgsql;
@@ -262,7 +263,7 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
                 row.GrossAmountMinorUnits.Value,
                 row.ApprovedVatExclusiveAmountMinorUnits.Value,
                 row.ApprovedVatAmountMinorUnits.Value,
-                "VAT_EXCLUSIVE",
+                ParkingVatInclusiveFiscalTreatment.VatTreatment,
                 row.ApprovedDiscountAmountMinorUnits,
                 row.ApprovedFinalPayableAmountMinorUnits,
                 currency,

@@ -132,6 +132,13 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
         var ordinaryVat = statutory is null
             ? OrdinaryVatInclusiveFiscalTreatment.Calculate(amount)
             : null;
+        var parkingVat = statutory is null
+            ? null
+            : ParkingVatInclusiveFiscalTreatment.Calculate(
+                statutory.OriginalAmountMinorUnits,
+                statutory.VatExclusiveBasisAmountMinorUnits,
+                statutory.StatutoryDiscountAmountMinorUnits,
+                statutory.FinalPayableAmountMinorUnits);
         var lineGrossAmount = statutory?.VatExclusiveBasisAmountMinorUnits ?? ordinaryVat!.VatableSalesMinorUnits;
         var discountAmount = statutory?.StatutoryDiscountAmountMinorUnits ?? 0;
         var attemptRef = command.PaymentAttemptId.ToString("D");
@@ -197,7 +204,7 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
                 lineGrossAmount,
                 lineGrossAmount,
                 discountAmount,
-                ordinaryVat?.VatAmountMinorUnits ?? 0,
+                parkingVat?.VatAmountMinorUnits ?? ordinaryVat?.VatAmountMinorUnits ?? 0,
                 amount,
                 context.Currency,
                 null,
@@ -212,7 +219,7 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
                 upstreamReference,
                 command.ProviderReference,
                 tenderContext)],
-            BuildTaxDetails(statutory, ordinaryVat, context.Currency),
+            BuildTaxDetails(statutory, parkingVat, ordinaryVat, context.Currency),
             BuildDiscountPrivilegeDetails(statutory, context.Currency),
             [new CentralPmsFiscalTotalContext(
                 statutory is null ? null : FiscalTotalTypeCodeId,
@@ -301,10 +308,21 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
         if (statutory.FinalPayableAmountMinorUnits <= 0 ||
             statutory.OriginalAmountMinorUnits <= statutory.FinalPayableAmountMinorUnits ||
             statutory.StatutoryDiscountAmountMinorUnits <= 0 ||
-            statutory.VatExclusiveBasisAmountMinorUnits - statutory.StatutoryDiscountAmountMinorUnits !=
-                statutory.FinalPayableAmountMinorUnits ||
             statutory.VatExclusiveBasisAmountMinorUnits + statutory.VatAmountMinorUnits !=
                 statutory.OriginalAmountMinorUnits)
+        {
+            throw new InvalidOperationException("STATUTORY_FISCAL_ARITHMETIC_INVALID");
+        }
+
+        try
+        {
+            _ = ParkingVatInclusiveFiscalTreatment.Calculate(
+                statutory.OriginalAmountMinorUnits,
+                statutory.VatExclusiveBasisAmountMinorUnits,
+                statutory.StatutoryDiscountAmountMinorUnits,
+                statutory.FinalPayableAmountMinorUnits);
+        }
+        catch (InvalidOperationException)
         {
             throw new InvalidOperationException("STATUTORY_FISCAL_ARITHMETIC_INVALID");
         }
@@ -344,6 +362,7 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
 
     private static IReadOnlyList<CentralPmsFiscalTaxDetailContext> BuildTaxDetails(
         TerminalCashStatutoryFiscalLinkageContext? statutory,
+        ParkingVatInclusiveFiscalFacts? parkingVat,
         OrdinaryVatInclusiveFiscalFacts? ordinaryVat,
         string currency)
     {
@@ -357,12 +376,12 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             new CentralPmsFiscalTaxDetailContext(
                 OrdinaryVatInclusiveFiscalTreatment.VatTaxTypeCodeId,
                 OrdinaryVatInclusiveFiscalTreatment.VatableTaxClassificationCodeId,
-                statutory.VatExclusiveBasisAmountMinorUnits,
-                statutory.VatAmountMinorUnits,
+                parkingVat!.TaxableAmountMinorUnits,
+                parkingVat.VatAmountMinorUnits,
                 currency,
                 1,
                 12m,
-                new Dictionary<string, string> { ["basis"] = statutory.VatTreatment })
+                new Dictionary<string, string> { ["basis"] = ParkingVatInclusiveFiscalTreatment.VatTreatment })
         ];
     }
 
@@ -377,7 +396,7 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
                     null,
                     statutory.VatExclusiveBasisAmountMinorUnits,
                     statutory.StatutoryDiscountAmountMinorUnits,
-                    statutory.VatAmountMinorUnits,
+                    0,
                     currency,
                     1,
                     null,
@@ -418,8 +437,12 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             statutory.AppliedTariffSnapshotId,
             statutory.OriginalAmountMinorUnits,
             statutory.VatExclusiveBasisAmountMinorUnits,
-            statutory.VatAmountMinorUnits,
-            statutory.VatTreatment,
+            ParkingVatInclusiveFiscalTreatment.Calculate(
+                statutory.OriginalAmountMinorUnits,
+                statutory.VatExclusiveBasisAmountMinorUnits,
+                statutory.StatutoryDiscountAmountMinorUnits,
+                statutory.FinalPayableAmountMinorUnits).VatAmountMinorUnits,
+            ParkingVatInclusiveFiscalTreatment.VatTreatment,
             statutory.StatutoryDiscountAmountMinorUnits,
             statutory.FinalPayableAmountMinorUnits,
             statutory.Currency,
@@ -430,11 +453,7 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
     private static string ResolveBenefitClassification(TerminalCashStatutoryFiscalLinkageContext statutory) =>
         statutory.FinalPayableAmountMinorUnits == 0
             ? "FREE_PARKING"
-            : statutory.VatAmountMinorUnits > 0 && statutory.StatutoryDiscountAmountMinorUnits > 0
-                ? "VAT_EXEMPTION_AND_STATUTORY_DISCOUNT"
-                : statutory.VatAmountMinorUnits > 0
-                    ? "VAT_EXEMPTION_ONLY"
-                    : statutory.StatutoryDiscountAmountMinorUnits > 0
+            : statutory.StatutoryDiscountAmountMinorUnits > 0
                         ? "STATUTORY_DISCOUNT_ONLY"
                         : "REDUCED_PARKING_RATE";
 
