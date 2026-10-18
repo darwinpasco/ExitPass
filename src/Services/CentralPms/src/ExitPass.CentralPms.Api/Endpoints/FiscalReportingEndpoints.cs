@@ -130,8 +130,7 @@ public static class FiscalReportingEndpoints
         })
             .WithMetadata(new ReconciliationPolicyMetadata(BirReadPolicy));
         group.MapPost("/annex-e/e1/workbooks", (Guid siteId,GenerateAnnexE1WorkbookRequest body,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,IAntiforgery antiforgery,CancellationToken ct)=>
-            GenerateAnnexE1Async(siteId,operatorScoped,body,request,gateway,references,rbac,logs,antiforgery,ct))
-            .WithMetadata(new ReconciliationPolicyMetadata(BirGeneratePolicy));
+            GenerateAnnexE1Async(siteId,operatorScoped,body,request,gateway,references,rbac,logs,antiforgery,ct));
         group.MapPost("/annex-e/e1/known-zero-attestations", (Guid siteId,AttestAnnexE1KnownZeroRequest body,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,IAntiforgery antiforgery,CancellationToken ct)=>
             AttestAnnexE1KnownZeroAsync(siteId,operatorScoped,body,request,gateway,references,rbac,logs,antiforgery,ct))
             .WithMetadata(new ReconciliationPolicyMetadata(AnnexE1KnownZeroAttestPolicy));
@@ -193,11 +192,9 @@ public static class FiscalReportingEndpoints
         if (csrfFailure is not null) return csrfFailure;
         var validationFailure = ValidateAnnexE1Generation(body);
         if (validationFailure is not null) return validationFailure;
-        if (body.SupersedesWorkbookId.HasValue)
-        {
-            var authorizationFailure = await AuthorizeSensitiveHumanAsync(request, rbac, AnnexE1CorrectPolicy, ct).ConfigureAwait(false);
-            if (authorizationFailure is not null) return authorizationFailure;
-        }
+        var authorizationPolicy = body.SupersedesWorkbookId.HasValue ? AnnexE1CorrectPolicy : BirGeneratePolicy;
+        var authorizationFailure = await AuthorizeSensitiveHumanAsync(request, rbac, authorizationPolicy, ct).ConfigureAwait(false);
+        if (authorizationFailure is not null) return authorizationFailure;
         return await Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,
             FiscalReportingGatewayAction.AnnexE1Generate,null,null,null,body.OperationKey,null,false,ct,
             calendarYear:body.CalendarYear,calendarMonth:body.CalendarMonth,
