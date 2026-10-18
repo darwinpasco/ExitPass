@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Payments;
 
@@ -685,7 +686,7 @@ internal static class StatutoryDiscountDecisionMappings
 
     private static string? ResolveVatTreatment(long? vatExclusiveBasisAmountMinorUnits, long? vatAmountMinorUnits) =>
         vatExclusiveBasisAmountMinorUnits.HasValue || vatAmountMinorUnits.HasValue
-            ? "VAT_EXCLUSIVE"
+            ? ParkingVatInclusiveFiscalTreatment.VatTreatment
             : null;
 
     private static bool ResolvePayableBasisReady(

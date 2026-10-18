@@ -620,10 +620,17 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         var ordinaryVat = statutoryContext is null
             ? OrdinaryVatInclusiveFiscalTreatment.Calculate(amount)
             : null;
+        var parkingVat = statutoryContext is null
+            ? null
+            : ParkingVatInclusiveFiscalTreatment.Calculate(
+                statutoryContext.OriginalAmountMinorUnits,
+                statutoryContext.VatExclusiveBasisAmountMinorUnits,
+                statutoryContext.StatutoryDiscountAmountMinorUnits,
+                statutoryContext.FinalPayableAmountMinorUnits);
         var lineGrossAmount = statutoryContext?.VatExclusiveBasisAmountMinorUnits
             ?? ordinaryVat!.VatableSalesMinorUnits;
         var discountAmount = statutoryContext?.StatutoryDiscountAmountMinorUnits ?? 0;
-        var taxAmount = ordinaryVat?.VatAmountMinorUnits ?? 0;
+        var taxAmount = parkingVat?.VatAmountMinorUnits ?? ordinaryVat?.VatAmountMinorUnits ?? 0;
         var paymentAttemptRef = cashPayment.PaymentAttemptId.ToString("D");
         var paymentConfirmationRef = cashPayment.PaymentConfirmationId.ToString("D");
         var payableBasisContext = BuildPayableBasisReferenceContext(cashPayment, statutoryContext);
@@ -684,7 +691,15 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             ],
             TaxDetails: statutoryContext is null
                 ? [OrdinaryVatInclusiveFiscalTreatment.CreateTaxDetail(ordinaryVat!, currency)]
-                : Array.Empty<CentralPmsFiscalTaxDetailContext>(),
+                : [new CentralPmsFiscalTaxDetailContext(
+                    OrdinaryVatInclusiveFiscalTreatment.VatTaxTypeCodeId,
+                    OrdinaryVatInclusiveFiscalTreatment.VatableTaxClassificationCodeId,
+                    parkingVat!.TaxableAmountMinorUnits,
+                    parkingVat.VatAmountMinorUnits,
+                    currency,
+                    1,
+                    12m,
+                    new Dictionary<string, string> { ["basis"] = ParkingVatInclusiveFiscalTreatment.VatTreatment })],
             DiscountPrivilegeDetails: BuildDiscountPrivilegeDetails(statutoryContext, currency),
             Totals:
             [
@@ -801,7 +816,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 DiscountPrivilegeTypeCodeId: null,
                 BasisAmountMinorUnits: statutoryContext.VatExclusiveBasisAmountMinorUnits,
                 DiscountAmountMinorUnits: statutoryContext.StatutoryDiscountAmountMinorUnits,
-                VatPrivilegeAmountMinorUnits: statutoryContext.VatAmountMinorUnits,
+                VatPrivilegeAmountMinorUnits: 0,
                 CurrencyCode: currency,
                 LineSequence: 1,
                 BeneficiaryRef: null,
@@ -845,8 +860,12 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             AppliedTariffSnapshotId: statutoryContext.AppliedTariffSnapshotId,
             OriginalAmountMinorUnits: statutoryContext.OriginalAmountMinorUnits,
             VatExclusiveBasisAmountMinorUnits: statutoryContext.VatExclusiveBasisAmountMinorUnits,
-            VatAmountMinorUnits: statutoryContext.VatAmountMinorUnits,
-            VatTreatment: statutoryContext.VatTreatment,
+            VatAmountMinorUnits: ParkingVatInclusiveFiscalTreatment.Calculate(
+                statutoryContext.OriginalAmountMinorUnits,
+                statutoryContext.VatExclusiveBasisAmountMinorUnits,
+                statutoryContext.StatutoryDiscountAmountMinorUnits,
+                statutoryContext.FinalPayableAmountMinorUnits).VatAmountMinorUnits,
+            VatTreatment: ParkingVatInclusiveFiscalTreatment.VatTreatment,
             StatutoryDiscountAmountMinorUnits: statutoryContext.StatutoryDiscountAmountMinorUnits,
             FinalPayableAmountMinorUnits: statutoryContext.FinalPayableAmountMinorUnits,
             Currency: statutoryContext.Currency,
@@ -860,16 +879,6 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         if (statutoryContext.FinalPayableAmountMinorUnits == 0)
         {
             return "FREE_PARKING";
-        }
-
-        if (statutoryContext.VatAmountMinorUnits > 0 && statutoryContext.StatutoryDiscountAmountMinorUnits > 0)
-        {
-            return "VAT_EXEMPTION_AND_STATUTORY_DISCOUNT";
-        }
-
-        if (statutoryContext.VatAmountMinorUnits > 0)
-        {
-            return "VAT_EXEMPTION_ONLY";
         }
 
         return statutoryContext.StatutoryDiscountAmountMinorUnits > 0

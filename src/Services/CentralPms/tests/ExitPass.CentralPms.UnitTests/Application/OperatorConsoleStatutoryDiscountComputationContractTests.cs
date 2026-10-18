@@ -10,7 +10,7 @@ namespace ExitPass.CentralPms.UnitTests.Application;
 public sealed class OperatorConsoleStatutoryDiscountComputationContractTests
 {
     /// <summary>
-    /// Proves Senior Citizen parking discounts use VAT-exclusive basis, 20% discount, and half-away-from-zero rounding.
+    /// Proves Senior Citizen parking discounts reduce the VAT-exclusive consideration and retain VAT on the balance.
     /// </summary>
     [Theory]
     [MemberData(nameof(SeniorCitizenCases))]
@@ -35,7 +35,7 @@ public sealed class OperatorConsoleStatutoryDiscountComputationContractTests
     }
 
     /// <summary>
-    /// Proves PWD parking discounts use the same currently supported statutory VAT-exclusive computation contract.
+    /// Proves PWD parking discounts use the same VATable parking computation contract.
     /// </summary>
     [Theory]
     [MemberData(nameof(PwdCases))]
@@ -181,17 +181,17 @@ public sealed class OperatorConsoleStatutoryDiscountComputationContractTests
 
     public static TheoryData<long, long, long, long, long> SeniorCitizenCases() => new()
     {
-        // gross, VAT-exclusive, VAT, 20% statutory discount, final payable
-        { 11200, 10000, 1200, 2000, 8000 },
-        { 12500, 11161, 1339, 2232, 8929 },
+        // gross, original VAT-exclusive basis, original embedded VAT, 20% discount, VAT-inclusive payable
+        { 11200, 10000, 1200, 2000, 8960 },
+        { 12500, 11161, 1339, 2232, 10000 },
         { 6, 5, 1, 1, 4 }
     };
 
     public static TheoryData<long, long, long, long, long> PwdCases() => new()
     {
-        // gross, VAT-exclusive, VAT, 20% statutory discount, final payable
-        { 22400, 20000, 2400, 4000, 16000 },
-        { 9999, 8928, 1071, 1786, 7142 },
+        // gross, original VAT-exclusive basis, original embedded VAT, 20% discount, VAT-inclusive payable
+        { 22400, 20000, 2400, 4000, 17920 },
+        { 9999, 8928, 1071, 1786, 7999 },
         { 6, 5, 1, 1, 4 }
     };
 

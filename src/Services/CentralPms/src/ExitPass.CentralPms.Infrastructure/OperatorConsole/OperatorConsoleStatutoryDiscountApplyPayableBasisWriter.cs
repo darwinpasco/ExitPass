@@ -838,8 +838,14 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
     private static string BuildComputationBasisJson(
         TariffSnapshotRow originalSnapshot,
         ComputedPayableBasis computed,
-        PolicySnapshotContext policy) =>
-        JsonSerializer.Serialize(new
+        PolicySnapshotContext policy)
+    {
+        var discountedVatExclusiveAmountMinorUnits =
+            computed.VatExclusiveAmountMinorUnits - computed.StatutoryDiscountAmountMinorUnits;
+        var payableVatAmountMinorUnits =
+            computed.FinalPayableAmountMinorUnits - discountedVatExclusiveAmountMinorUnits;
+
+        return JsonSerializer.Serialize(new
         {
             basis = "GROSS_INCLUSIVE_OF_VAT",
             sourceTariffSnapshotId = originalSnapshot.TariffSnapshotId,
@@ -847,11 +853,12 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             statutoryDiscountRate = IsFullFeeExemption(policy)
                 ? OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionRate
                 : OperatorConsoleStatutoryDiscountComputationContract.StatutoryDiscountRate,
-            formula = IsFullFeeExemption(policy)
-                ? "final_payable = 0; statutory_discount = round(gross / 1.12); vat_privilege = gross - statutory_discount"
-                : "final_payable = round(gross / 1.12) - round(round(gross / 1.12) * 0.20)",
+            formula = "discounted_vat_exclusive = vat_exclusive - statutory_discount; payable_vat = round(discounted_vat_exclusive * 0.12); final_payable = discounted_vat_exclusive + payable_vat",
             originalAmountMinorUnits = computed.GrossAmountMinorUnits,
             vatExclusiveBasisAmountMinorUnits = computed.VatExclusiveAmountMinorUnits,
+            originalEmbeddedVatAmountMinorUnits = computed.VatAmountMinorUnits,
+            discountedVatExclusiveAmountMinorUnits,
+            payableVatAmountMinorUnits,
             vatAmountMinorUnits = computed.VatAmountMinorUnits,
             statutoryDiscountAmountMinorUnits = computed.StatutoryDiscountAmountMinorUnits,
             finalPayableAmountMinorUnits = computed.FinalPayableAmountMinorUnits,
@@ -879,6 +886,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 snapshotHash = policy.SnapshotHash
             }
         });
+    }
 
     private static (bool Valid, PolicySnapshotContext? Policy, string? IneligibilityReason, string? ErrorCode)
         ValidateAndReadPolicySnapshot(ValidationRow validation)

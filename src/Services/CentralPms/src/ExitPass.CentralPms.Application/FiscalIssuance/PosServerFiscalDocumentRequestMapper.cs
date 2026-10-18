@@ -366,7 +366,8 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
              facts.OriginalAmountMinorUnits <= 0 ||
              facts.FinalPayableAmountMinorUnits != 0 ||
              facts.StatutoryDiscountAmountMinorUnits != facts.VatExclusiveBasisAmountMinorUnits ||
-             facts.VatExclusiveBasisAmountMinorUnits + facts.VatAmountMinorUnits != facts.OriginalAmountMinorUnits ||
+             facts.VatAmountMinorUnits != 0 ||
+             !string.Equals(facts.VatTreatment, ParkingVatInclusiveFiscalTreatment.VatTreatment, StringComparison.Ordinal) ||
              !string.Equals(
                  facts.AppliedTariffSnapshotId.ToString("D"),
                  context.PayableBasis.PayableBasisRef,

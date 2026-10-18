@@ -141,7 +141,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         var repo = new InMemoryFiscalReferenceRepository(InvoiceCustomerInformation());
         var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
         var service = CreateService(
-            CashPayment(amountDueMinorUnits: 8_929),
+            CashPayment(amountDueMinorUnits: 10_000),
             repo,
             posIntegration,
             new FakeStatutoryFiscalLinkageReader(TerminalCashStatutoryFiscalLinkageResult.Complete(StatutoryContext())));
@@ -391,7 +391,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         var repo = new InMemoryFiscalReferenceRepository();
         var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
         var service = CreateService(
-            CashPayment(amountDueMinorUnits: 8_929),
+            CashPayment(amountDueMinorUnits: 10_000),
             repo,
             posIntegration,
             new FakeStatutoryFiscalLinkageReader(TerminalCashStatutoryFiscalLinkageResult.Complete(StatutoryContext())));
@@ -399,15 +399,18 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         await service.IssueOrReadAsync(Command(), CancellationToken.None);
 
         var fiscalContext = posIntegration.LastFiscalContext!;
-        Assert.Equal(8_929, fiscalContext.PayableBasis.PayableAmountMinorUnits);
-        Assert.Equal(8_929, fiscalContext.Tenders.Single().AmountMinorUnits);
-        Assert.Equal(8_929, fiscalContext.Totals.Single().AmountMinorUnits);
+        Assert.Equal(10_000, fiscalContext.PayableBasis.PayableAmountMinorUnits);
+        Assert.Equal(10_000, fiscalContext.Tenders.Single().AmountMinorUnits);
+        Assert.Equal(10_000, fiscalContext.Totals.Single().AmountMinorUnits);
         var line = Assert.Single(fiscalContext.DocumentLines);
         Assert.Equal(11_161, line.GrossAmountMinorUnits);
         Assert.Equal(2_232, line.DiscountAmountMinorUnits);
-        Assert.Equal(0, line.TaxAmountMinorUnits);
-        Assert.Equal(8_929, line.NetAmountMinorUnits);
-        Assert.Empty(fiscalContext.TaxDetails);
+        Assert.Equal(1_071, line.TaxAmountMinorUnits);
+        Assert.Equal(10_000, line.NetAmountMinorUnits);
+        var tax = Assert.Single(fiscalContext.TaxDetails);
+        Assert.Equal(8_929, tax.TaxableAmountMinorUnits);
+        Assert.Equal(1_071, tax.TaxAmountMinorUnits);
+        Assert.Equal("VAT_INCLUSIVE_NO_EXEMPTION", tax.TaxContext["basis"]);
         var discountReference = Assert.Single(fiscalContext.PayableBasis.DiscountReferences);
         Assert.Equal(StatutoryValidationId.ToString("D"), discountReference.DiscountValidationRef);
         Assert.Equal("approved", discountReference.Status);
@@ -419,7 +422,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal(12_500, discountReference.OriginalAmountMinorUnits);
         Assert.Equal(11_161, discountReference.VatExclusiveBasisAmountMinorUnits);
         Assert.Equal(2_232, discountReference.DiscountAmountMinorUnits);
-        Assert.Equal(8_929, discountReference.FinalPayableAmountMinorUnits);
+        Assert.Equal(10_000, discountReference.FinalPayableAmountMinorUnits);
 
         var statutoryFacts = fiscalContext.AppliedStatutoryFiscalFacts;
         Assert.NotNull(statutoryFacts);
@@ -429,14 +432,15 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal(StatutoryValidationId, statutoryFacts.StatutoryValidationId);
         Assert.Equal(ParkingSessionId, statutoryFacts.ParkingSessionId);
         Assert.Equal("SENIOR_CITIZEN", statutoryFacts.EntitlementType);
-        Assert.Equal("VAT_EXEMPTION_AND_STATUTORY_DISCOUNT", statutoryFacts.BenefitClassification);
+        Assert.Equal("STATUTORY_DISCOUNT_ONLY", statutoryFacts.BenefitClassification);
         Assert.Equal(OriginalTariffSnapshotId, statutoryFacts.OriginalTariffSnapshotId);
         Assert.Equal(TariffSnapshotId, statutoryFacts.AppliedTariffSnapshotId);
         Assert.Equal(12_500, statutoryFacts.OriginalAmountMinorUnits);
         Assert.Equal(11_161, statutoryFacts.VatExclusiveBasisAmountMinorUnits);
-        Assert.Equal(1_339, statutoryFacts.VatAmountMinorUnits);
+        Assert.Equal(1_071, statutoryFacts.VatAmountMinorUnits);
+        Assert.Equal("VAT_INCLUSIVE_NO_EXEMPTION", statutoryFacts.VatTreatment);
         Assert.Equal(2_232, statutoryFacts.StatutoryDiscountAmountMinorUnits);
-        Assert.Equal(8_929, statutoryFacts.FinalPayableAmountMinorUnits);
+        Assert.Equal(10_000, statutoryFacts.FinalPayableAmountMinorUnits);
         Assert.Equal("ASSISTED_PAYMENT_TERMINAL", statutoryFacts.SourcePaymentChannel);
         Assert.Equal(TerminalCashTenderId, statutoryFacts.TerminalCashTenderId);
 
@@ -444,7 +448,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Null(privilege.DiscountPrivilegeTypeCodeId);
         Assert.Equal(11_161, privilege.BasisAmountMinorUnits);
         Assert.Equal(2_232, privilege.DiscountAmountMinorUnits);
-        Assert.Equal(1_339, privilege.VatPrivilegeAmountMinorUnits);
+        Assert.Equal(0, privilege.VatPrivilegeAmountMinorUnits);
         Assert.Equal("PHP", privilege.CurrencyCode);
         Assert.Null(privilege.BeneficiaryRef);
         Assert.Null(privilege.EvidenceRef);
@@ -461,7 +465,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         var repo = new InMemoryFiscalReferenceRepository();
         var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
         var service = CreateService(
-            CashPayment(amountDueMinorUnits: 8_929),
+            CashPayment(amountDueMinorUnits: 10_000),
             repo,
             posIntegration,
             new FakeStatutoryFiscalLinkageReader(
@@ -944,7 +948,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             OriginalTariffSnapshotId,
             TariffSnapshotId,
             AppliedPolicyReferenceId,
-            "NATIONAL_LAW_FALLBACK",
+            "LOCAL_ORDINANCE",
             "SENIOR_CITIZEN",
             "ASSISTED_PAYMENT_TERMINAL",
             OriginalAmountMinorUnits: 12_500,
@@ -952,7 +956,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             VatAmountMinorUnits: 1_339,
             VatTreatment: "VAT_EXCLUSIVE",
             StatutoryDiscountAmountMinorUnits: 2_232,
-            FinalPayableAmountMinorUnits: 8_929,
+            FinalPayableAmountMinorUnits: 10_000,
             Currency: "PHP",
             DecisionTimestamp: DateTimeOffset.Parse("2026-07-28T01:20:00Z"),
             AppliedAt: DateTimeOffset.Parse("2026-07-28T01:21:00Z"),

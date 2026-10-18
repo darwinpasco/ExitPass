@@ -72,8 +72,14 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal(0, line.TaxAmountMinorUnits);
         Assert.Equal(0, line.NetAmountMinorUnits);
         var tax = Assert.Single(mapped.TaxDetails);
-        Assert.Equal(2679, tax.TaxableAmountMinorUnits);
-        Assert.Equal(321, tax.TaxAmountMinorUnits);
+        Assert.Equal(0, tax.TaxableAmountMinorUnits);
+        Assert.Equal(0, tax.TaxAmountMinorUnits);
+        Assert.Equal("VAT_INCLUSIVE_NO_EXEMPTION", tax.TaxContext["basis"]);
+        var privilege = Assert.Single(mapped.DiscountPrivilegeDetails);
+        Assert.Equal(2679, privilege.DiscountAmountMinorUnits);
+        Assert.Equal(0, privilege.VatPrivilegeAmountMinorUnits);
+        Assert.Equal(0, mapped.AppliedStatutoryFiscalFacts!.VatAmountMinorUnits);
+        Assert.Equal("VAT_INCLUSIVE_NO_EXEMPTION", mapped.AppliedStatutoryFiscalFacts.VatTreatment);
         Assert.Equal(0, Assert.Single(mapped.Totals).AmountMinorUnits);
         Assert.NotNull(mapped.InvoiceCustomerInformation);
         Assert.Equal("Juan Dela Cruz", mapped.InvoiceCustomerInformation.CustomerName);

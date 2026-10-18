@@ -161,6 +161,11 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
         var validationRef = finality.StatutoryDiscountValidationId.ToString("D");
         var appliedTariffRef = finality.AppliedTariffSnapshotId.ToString("D");
         var originalTariffRef = finality.OriginalTariffSnapshotId.ToString("D");
+        var parkingVat = ParkingVatInclusiveFiscalTreatment.Calculate(
+            finality.OriginalAmountMinorUnits,
+            vatExclusiveBasis,
+            vatExclusiveBasis,
+            finality.FinalPayableAmountMinorUnits);
 
         var statutoryContext = new Dictionary<string, string>
         {
@@ -218,7 +223,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                     AppliedTariffSnapshotRef = appliedTariffRef,
                     OriginalAmountMinorUnits = finality.OriginalAmountMinorUnits,
                     VatExclusiveBasisAmountMinorUnits = vatExclusiveBasis,
-                    VatTreatment = command.VatTreatment,
+                    VatTreatment = ParkingVatInclusiveFiscalTreatment.VatTreatment,
                     DiscountAmountMinorUnits = vatExclusiveBasis,
                     FinalPayableAmountMinorUnits = 0,
                     DecisionTimestamp = finality.DecidedAt,
@@ -243,17 +248,17 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
             TaxDetails: [new CentralPmsFiscalTaxDetailContext(
                 null,
                 null,
-                vatExclusiveBasis,
-                finality.VatAmountMinorUnits,
+                parkingVat.TaxableAmountMinorUnits,
+                parkingVat.VatAmountMinorUnits,
                 currency,
                 1,
                 12m,
-                new Dictionary<string, string> { ["basis"] = command.VatTreatment })],
+                new Dictionary<string, string> { ["basis"] = ParkingVatInclusiveFiscalTreatment.VatTreatment })],
             DiscountPrivilegeDetails: [new CentralPmsFiscalDiscountPrivilegeDetailContext(
                 null,
                 vatExclusiveBasis,
                 vatExclusiveBasis,
-                finality.VatAmountMinorUnits,
+                0,
                 currency,
                 1,
                 null,
@@ -285,8 +290,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 finality.AppliedTariffSnapshotId,
                 finality.OriginalAmountMinorUnits,
                 vatExclusiveBasis,
-                finality.VatAmountMinorUnits,
-                command.VatTreatment,
+                parkingVat.VatAmountMinorUnits,
+                ParkingVatInclusiveFiscalTreatment.VatTreatment,
                 vatExclusiveBasis,
                 0,
                 currency,
