@@ -231,6 +231,8 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             null,
             BuildAppliedStatutoryFiscalFacts(context, statutory),
             SiteId: context.SiteId,
+            ChannelTerminalId: context.ChannelTerminalId,
+            TerminalIdentifier: context.TerminalIdentifier,
             InvoiceCustomerInformation: HasNoInvoiceCustomerInformation(
                 reference.InvoiceCustomerInformationSnapshot,
                 statutory?.IdControlReference)
@@ -550,7 +552,9 @@ public sealed record DigitalPaymentFiscalContext(
     string? PlateNumber = null,
     string? SiteName = null,
     DateTimeOffset? EntryTime = null,
-    string? PaymentMethod = null);
+    string? PaymentMethod = null,
+    Guid ChannelTerminalId = default,
+    string? TerminalIdentifier = null);
 
 public sealed record DigitalPaymentFiscalIssuanceResult(
     Guid FiscalIssuanceReferenceId,

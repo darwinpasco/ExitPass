@@ -154,7 +154,11 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 cancellationToken)
             .ConfigureAwait(false);
 
-        var fiscalContext = BuildFiscalContext(cashPayment, prepared, statutoryFiscalLinkage.Context);
+        var fiscalContext = BuildFiscalContext(
+            cashPayment,
+            prepared,
+            statutoryFiscalLinkage.Context,
+            posServerEndpoint.ResolveChannelTerminal(cashPayment.TerminalId));
         var recordingContext = new PosServerCreateResultRecordingContext(
             UpstreamFinalityReference: upstreamFinalityReference,
             SitePosServerId: prepared.SitePosServerId,
@@ -303,7 +307,11 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 "POS Server fiscal integration readiness is not confirmed.");
         }
 
-        var fiscalContext = BuildFiscalContext(cashPayment, reference, statutoryFiscalLinkage.Context);
+        var fiscalContext = BuildFiscalContext(
+            cashPayment,
+            reference,
+            statutoryFiscalLinkage.Context,
+            resolvedEndpoint.ResolveChannelTerminal(cashPayment.TerminalId));
         PosServerFiscalDocumentCreateRequest mappedRequest;
         try
         {
@@ -605,7 +613,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     private static CentralPmsFiscalDocumentMappingContext BuildFiscalContext(
         TerminalCashPaymentReadback cashPayment,
         FiscalIssuanceReferenceRecord reference,
-        TerminalCashStatutoryFiscalLinkageContext? statutoryContext)
+        TerminalCashStatutoryFiscalLinkageContext? statutoryContext,
+        ChannelTerminalIdentity channelTerminal)
     {
         var currency = cashPayment.Currency.Trim().ToUpperInvariant();
         var amount = statutoryContext?.FinalPayableAmountMinorUnits ?? cashPayment.AmountDueMinorUnits;
@@ -706,6 +715,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             VendorAckRef: null,
             AppliedStatutoryFiscalFacts: BuildAppliedStatutoryFiscalFacts(cashPayment, statutoryContext),
             SiteId: cashPayment.SiteId,
+            ChannelTerminalId: channelTerminal.ChannelTerminalId,
+            TerminalIdentifier: channelTerminal.TerminalIdentifier,
             InvoiceCustomerInformation: HasNoInvoiceCustomerInformation(
                 reference.InvoiceCustomerInformationSnapshot,
                 statutoryContext?.IdControlReference)

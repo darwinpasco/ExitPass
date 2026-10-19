@@ -524,6 +524,8 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
             {
                 errors.Add("site_pos_server_api_key_file_required");
             }
+
+            errors.AddRange(endpoint.ValidateChannelTerminals());
         }
 
         return errors.Distinct(StringComparer.Ordinal).ToArray();
@@ -570,6 +572,10 @@ public sealed class SitePosServerEndpointOptions
 
     public string? AnnexE1GovernedCorrectionApiKeyFile { get; set; }
 
+    public string? WebPayTerminalIdentifier { get; set; }
+
+    public List<ChannelTerminalIdentityOptions> ChannelTerminals { get; set; } = [];
+
     public string? Environment { get; set; }
 
     public bool Enabled { get; set; }
@@ -602,8 +608,91 @@ public sealed class SitePosServerEndpointOptions
         IsConfigured(FiscalDiscountPrivilegeTypeCodeId) &&
         IsConfigured(FiscalTotalTypeCodeId);
 
+    public ChannelTerminalIdentity ResolveChannelTerminal(string? terminalIdentifier)
+    {
+        var normalized = terminalIdentifier?.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            throw new InvalidOperationException("channel_terminal_identifier_required");
+        }
+
+        var matches = ChannelTerminals
+            .Where(candidate => string.Equals(
+                candidate.TerminalIdentifier?.Trim(),
+                normalized,
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (matches.Length != 1 || matches[0].ChannelTerminalId == Guid.Empty)
+        {
+            throw new InvalidOperationException(matches.Length == 0
+                ? "channel_terminal_mapping_not_found"
+                : "channel_terminal_mapping_ambiguous");
+        }
+
+        return new ChannelTerminalIdentity(
+            matches[0].ChannelTerminalId,
+            matches[0].TerminalIdentifier!.Trim());
+    }
+
+    public ChannelTerminalIdentity ResolveWebPayTerminal() =>
+        ResolveChannelTerminal(WebPayTerminalIdentifier);
+
+    internal IReadOnlyList<string> ValidateChannelTerminals()
+    {
+        var errors = new List<string>();
+        var configured = ChannelTerminals ?? [];
+        if (configured.Count == 0)
+        {
+            errors.Add("site_pos_server_channel_terminals_required");
+            return errors;
+        }
+
+        if (configured.Any(candidate =>
+                candidate.ChannelTerminalId == Guid.Empty ||
+                string.IsNullOrWhiteSpace(candidate.TerminalIdentifier)))
+        {
+            errors.Add("site_pos_server_channel_terminal_invalid");
+        }
+
+        if (configured
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.TerminalIdentifier))
+            .GroupBy(candidate => candidate.TerminalIdentifier!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Any(group => group.Count() != 1))
+        {
+            errors.Add("site_pos_server_channel_terminal_identifier_duplicate");
+        }
+
+        if (configured
+            .Where(candidate => candidate.ChannelTerminalId != Guid.Empty)
+            .GroupBy(candidate => candidate.ChannelTerminalId)
+            .Any(group => group.Count() != 1))
+        {
+            errors.Add("site_pos_server_channel_terminal_id_duplicate");
+        }
+
+        if (string.IsNullOrWhiteSpace(WebPayTerminalIdentifier) ||
+            configured.Count(candidate => string.Equals(
+                candidate.TerminalIdentifier?.Trim(),
+                WebPayTerminalIdentifier?.Trim(),
+                StringComparison.OrdinalIgnoreCase)) != 1)
+        {
+            errors.Add("site_pos_server_webpay_terminal_mapping_required");
+        }
+
+        return errors;
+    }
+
     private static bool IsConfigured(Guid? value) => value is not null && value != Guid.Empty;
 }
+
+public sealed class ChannelTerminalIdentityOptions
+{
+    public Guid ChannelTerminalId { get; set; }
+
+    public string? TerminalIdentifier { get; set; }
+}
+
+public sealed record ChannelTerminalIdentity(Guid ChannelTerminalId, string TerminalIdentifier);
 
 public static class FiscalIssuancePosServerIntegrationReadinessStatuses
 {

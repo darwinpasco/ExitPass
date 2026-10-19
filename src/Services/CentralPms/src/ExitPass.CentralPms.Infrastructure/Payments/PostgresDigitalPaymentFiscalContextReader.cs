@@ -94,6 +94,7 @@ public sealed class PostgresDigitalPaymentFiscalContextReader :
         }
 
         var endpoint = binding.Endpoint;
+        var channelTerminal = endpoint.ResolveWebPayTerminal();
 
         var amount = reader.GetDecimal(reader.GetOrdinal("amount"));
         var amountMinorUnits = checked((long)decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
@@ -151,7 +152,9 @@ public sealed class PostgresDigitalPaymentFiscalContextReader :
             ReadOptionalString(reader, "plate_number_masked"),
             ReadOptionalString(reader, "site_name"),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("entry_time")),
-            ReadOptionalString(reader, "payment_method_code"));
+            ReadOptionalString(reader, "payment_method_code"),
+            ChannelTerminalId: channelTerminal.ChannelTerminalId,
+            TerminalIdentifier: channelTerminal.TerminalIdentifier);
     }
 
     private static string? ReadOptionalString(NpgsqlDataReader reader, string column)

@@ -109,9 +109,16 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 "FISCAL_INVOICE_CUSTOMER_INFORMATION_SNAPSHOT_REQUIRED");
         }
 
+        var channelTerminal = string.Equals(
+            command.CashierAttribution.CompletionChannel,
+            StatutoryDiscountSourceChannels.WebPay,
+            StringComparison.Ordinal)
+                ? endpoint.ResolveWebPayTerminal()
+                : endpoint.ResolveChannelTerminal(command.CashierAttribution.TerminalIdentifier);
+
         var issue = await _posServer.TryIssueFiscalDocumentViaPosServerAsync(
             reference.FiscalIssuanceReferenceId,
-            BuildMapping(reference, command, upstreamReference),
+            BuildMapping(reference, command, upstreamReference, channelTerminal),
             new PosServerCreateResultRecordingContext(
                 upstreamReference,
                 reference.SitePosServerId,
@@ -152,7 +159,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
     private static CentralPmsFiscalDocumentMappingContext BuildMapping(
         FiscalIssuanceReferenceRecord reference,
         ZeroPayableStatutoryFiscalIssuanceCommand command,
-        string upstreamReference)
+        string upstreamReference,
+        ChannelTerminalIdentity channelTerminal)
     {
         var finality = command.Finality;
         var vatExclusiveBasis = command.VatExclusiveBasisAmountMinorUnits;
@@ -298,6 +306,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 finality.AppliedAt,
                 finality.SourceChannel),
             SiteId: finality.SiteId,
+            ChannelTerminalId: channelTerminal.ChannelTerminalId,
+            TerminalIdentifier: channelTerminal.TerminalIdentifier,
             CompletionBasis: FiscalCompletionBasisCodes.ZeroPayableStatutoryFinality,
             CompletionAuthorityRef: applicationRef,
             InvoiceCustomerInformation: HasNoInvoiceCustomerInformation(
@@ -446,13 +456,14 @@ public sealed record ZeroPayableStatutoryFiscalIssuanceCommand(
 public sealed record ZeroPayableFiscalCashierAttribution(
     string CompletionChannel,
     Guid? CashierUserId,
-    string CashierDisplayName)
+    string CashierDisplayName,
+    string? TerminalIdentifier = null)
 {
     public static ZeroPayableFiscalCashierAttribution WebPay() =>
         new(StatutoryDiscountSourceChannels.WebPay, null, "System");
 
-    public static ZeroPayableFiscalCashierAttribution Apt(Guid userId, string displayName) =>
-        new(StatutoryDiscountSourceChannels.AssistedPaymentTerminal, userId, displayName);
+    public static ZeroPayableFiscalCashierAttribution Apt(Guid userId, string displayName, string terminalIdentifier) =>
+        new(StatutoryDiscountSourceChannels.AssistedPaymentTerminal, userId, displayName, terminalIdentifier.Trim());
 
     public bool IsValid()
     {
@@ -461,7 +472,8 @@ public sealed record ZeroPayableFiscalCashierAttribution(
 
         return string.Equals(CompletionChannel, StatutoryDiscountSourceChannels.AssistedPaymentTerminal, StringComparison.Ordinal) &&
                CashierUserId is { } userId && userId != Guid.Empty &&
-               !string.IsNullOrWhiteSpace(CashierDisplayName);
+               !string.IsNullOrWhiteSpace(CashierDisplayName) &&
+               !string.IsNullOrWhiteSpace(TerminalIdentifier);
     }
 }
 

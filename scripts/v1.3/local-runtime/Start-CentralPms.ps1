@@ -181,11 +181,49 @@ foreach ($requiredName in @(
         'FiscalIssuance__PosServerIntegration__Endpoints__0__SiteId',
         'FiscalIssuance__PosServerIntegration__Endpoints__0__SitePosServerId',
         'FiscalIssuance__PosServerIntegration__Endpoints__0__BaseUrl',
+        'FiscalIssuance__PosServerIntegration__Endpoints__0__WebPayTerminalIdentifier',
+        'FiscalIssuance__PosServerIntegration__Endpoints__0__ChannelTerminals__0__ChannelTerminalId',
+        'FiscalIssuance__PosServerIntegration__Endpoints__0__ChannelTerminals__0__TerminalIdentifier',
+        'FiscalIssuance__PosServerIntegration__Endpoints__0__ChannelTerminals__1__ChannelTerminalId',
+        'FiscalIssuance__PosServerIntegration__Endpoints__0__ChannelTerminals__1__TerminalIdentifier',
         'CentralPms__VendorSessionProjections__SchedulerEnabled',
         'CentralPms__VendorSessionProjections__RequiredForEnvironment',
         'CentralPms__VendorSessionProjections__SchedulerScanIntervalSeconds'
     )) {
     Assert-PrivateEnvironmentValue $requiredName
+}
+$webPayTerminalIdentifier = Get-PrivateEnvironmentValue $environmentFile 'FiscalIssuance__PosServerIntegration__Endpoints__0__WebPayTerminalIdentifier'
+$siteIdText = Get-PrivateEnvironmentValue $environmentFile 'FiscalIssuance__PosServerIntegration__Endpoints__0__SiteId'
+$siteId = [guid]::Empty
+if (-not [guid]::TryParse($siteIdText, [ref]$siteId) -or $siteId -eq [guid]::Empty) {
+    throw "The private Central PMS Site ID '$siteIdText' is invalid."
+}
+$terminalMappings = foreach ($index in 0, 1) {
+    $terminalIdName = "FiscalIssuance__PosServerIntegration__Endpoints__0__ChannelTerminals__${index}__ChannelTerminalId"
+    $terminalIdentifierName = "FiscalIssuance__PosServerIntegration__Endpoints__0__ChannelTerminals__${index}__TerminalIdentifier"
+    $terminalIdText = Get-PrivateEnvironmentValue $environmentFile $terminalIdName
+    $terminalId = [guid]::Empty
+    if (-not [guid]::TryParse($terminalIdText, [ref]$terminalId) -or $terminalId -eq [guid]::Empty) {
+        throw "The private Central PMS environment setting '$terminalIdName' is not a valid channel terminal ID."
+    }
+
+    [pscustomobject]@{
+        ChannelTerminalId = $terminalId
+        TerminalIdentifier = (Get-PrivateEnvironmentValue $environmentFile $terminalIdentifierName).Trim()
+    }
+}
+if (($terminalMappings.ChannelTerminalId | Sort-Object -Unique).Count -ne $terminalMappings.Count -or
+    ($terminalMappings.TerminalIdentifier | ForEach-Object { $_.ToUpperInvariant() } | Sort-Object -Unique).Count -ne $terminalMappings.Count) {
+    throw 'The private Central PMS channel terminal mappings contain duplicate identities.'
+}
+if ($terminalMappings[0].TerminalIdentifier -cne $webPayTerminalIdentifier) {
+    throw 'The private Central PMS WebPay terminal selection does not match its configured channel terminal mapping.'
+}
+$aptTerminalMappings = @($terminalMappings | Where-Object {
+        $_.TerminalIdentifier -cne $webPayTerminalIdentifier
+    })
+if ($aptTerminalMappings.Count -ne 1) {
+    throw 'The private Central PMS channel terminal mappings do not identify exactly one APT terminal.'
 }
 if ((Get-PrivateEnvironmentValue $environmentFile 'CentralPms__VendorPms__Provider') -ne 'SITE_ADAPTER' -or
     (Get-PrivateEnvironmentValue $environmentFile 'CentralPms__VendorSessionProjections__SchedulerEnabled') -ne 'true' -or
@@ -211,6 +249,48 @@ if ($mountedVolume -ne $databaseVolume) {
 Invoke-CheckedCommand docker.exe @(
     'exec', $databaseContainer, 'pg_isready', '-U', $databaseUser, '-d', $databaseName
 ) "The persistent ExitPass database is unavailable. Verify '$databaseContainer' and retry."
+
+$aptRegistrationSql = @'
+SELECT device.device_id::text || '|' || btrim(device.terminal_identifier)
+FROM identity.devices device
+JOIN identity.service_identities service
+  ON service.service_identity_id = device.service_identity_id
+JOIN sites.device_assignments assignment
+  ON assignment.service_identity_id = service.service_identity_id
+WHERE device.device_type = 'ASSISTED_PAYMENT_TERMINAL'
+  AND device.lifecycle_status = 'ACTIVE'
+  AND device.effective_from <= now()
+  AND (device.effective_to IS NULL OR device.effective_to > now())
+  AND service.identity_type = 'DEVICE'
+  AND service.identity_status = 'ACTIVE'
+  AND service.owning_service_name = 'ExitPass.AssistedPaymentTerminal'
+  AND service.effective_from <= now()
+  AND (service.effective_to IS NULL OR service.effective_to > now())
+  AND service.revoked_at IS NULL
+  AND (service.credential_expires_at IS NULL OR service.credential_expires_at > now())
+  AND assignment.site_id = :'site_id'::uuid
+  AND assignment.assignment_type = 'PAYMENT_DEVICE'
+  AND assignment.assignment_status = 'ACTIVE'
+  AND assignment.assigned_at <= now()
+  AND assignment.unassigned_at IS NULL
+  AND btrim(device.terminal_identifier) = :'terminal_identifier';
+'@
+$aptRegistrationOutput = @($aptRegistrationSql | & docker.exe exec -i $databaseContainer psql `
+    -X -Atq -v ON_ERROR_STOP=1 -U $databaseUser -d $databaseName `
+    -v "site_id=$($siteId.ToString('D'))" `
+    -v "terminal_identifier=$($aptTerminalMappings[0].TerminalIdentifier)")
+if ($LASTEXITCODE -ne 0) {
+    throw 'Unable to validate the configured APT terminal against Device Administration.'
+}
+$aptRegistrationRows = @($aptRegistrationOutput | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+if ($aptRegistrationRows.Count -ne 1) {
+    throw 'The configured APT terminal does not resolve to exactly one active Device Administration registration for the configured Site.'
+}
+$aptRegistrationFields = $aptRegistrationRows[0].Split('|')
+if ($aptRegistrationFields.Count -ne 2 -or
+    $aptRegistrationFields[1] -cne $aptTerminalMappings[0].TerminalIdentifier) {
+    throw 'The configured APT terminal does not exactly match its canonical Device Administration identifier.'
+}
 
 $availableNetwork = (& docker.exe network ls --filter "name=^$networkName$" --format '{{.Name}}')
 if ($LASTEXITCODE -ne 0 -or $availableNetwork -ne $networkName) {

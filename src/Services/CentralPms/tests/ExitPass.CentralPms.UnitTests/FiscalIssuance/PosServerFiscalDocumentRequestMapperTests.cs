@@ -33,6 +33,27 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
         result.CentralPmsParkingSessionRef.Should().Be(context.CentralPmsParkingSessionRef);
         result.CentralPmsPaymentAttemptRef.Should().Be(context.CentralPmsPaymentAttemptRef);
         result.CentralPmsPaymentConfirmationRef.Should().Be(context.CentralPmsPaymentConfirmationRef);
+        result.ChannelTerminalId.Should().Be(context.ChannelTerminalId);
+        result.RuntimeTerminalRef.Should().Be(context.TerminalIdentifier);
+    }
+
+    [Theory]
+    [InlineData(true, false, "channel_terminal_id_required")]
+    [InlineData(false, true, "terminal_identifier_required")]
+    public void Map_WhenCanonicalTerminalIdentityIsIncomplete_RejectsBeforePosServerCall(
+        bool missingId,
+        bool missingIdentifier,
+        string expectedError)
+    {
+        var context = ValidContext() with
+        {
+            ChannelTerminalId = missingId ? null : ValidContext().ChannelTerminalId,
+            TerminalIdentifier = missingIdentifier ? null : ValidContext().TerminalIdentifier
+        };
+
+        var action = () => _sut.Map(context);
+
+        action.Should().Throw<ArgumentException>().WithMessage($"*{expectedError}*");
     }
 
     [Fact]
@@ -560,7 +581,9 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
             ReferenceContext: new Dictionary<string, string> { ["correlation"] = "correlation-ref" },
             PaymentFinalityRef: "payment-finality-ref",
             VendorAckRef: null,
-            SiteId: Guid.Parse("12121212-1212-4212-8212-121212121212"));
+            SiteId: Guid.Parse("12121212-1212-4212-8212-121212121212"),
+            ChannelTerminalId: Guid.Parse("13131313-1313-4313-8313-131313131313"),
+            TerminalIdentifier: "PITX-L3-WEBPAY-01");
 
     private static readonly Guid StatutoryDecisionCommandId = Guid.Parse("01010101-0101-4101-8101-010101010101");
     private static readonly Guid StatutoryApplicationCommandId = Guid.Parse("02020202-0202-4202-8202-020202020202");

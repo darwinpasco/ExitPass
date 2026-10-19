@@ -26,6 +26,8 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
     private static readonly Guid ValidationId = Guid.Parse("76000000-0000-4000-8000-000000000011");
     private static readonly Guid PolicyId = Guid.Parse("76000000-0000-4000-8000-000000000012");
     private static readonly Guid FiscalReferenceId = Guid.Parse("76000000-0000-4000-8000-000000000013");
+    private static readonly Guid WebPayChannelTerminalId = Guid.Parse("76000000-0000-4000-8000-000000000016");
+    private const string WebPayTerminalIdentifier = "PITX-L3-WEBPAY-01";
 
     [Theory]
     [InlineData(10_000, 8_929, 1_071)]
@@ -64,6 +66,8 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         Assert.Equal("2026-08-24T00:36:00.0000000+00:00", request.ReferenceContext["entry_time"]);
         Assert.Equal("1 hour 24 minutes", request.ReferenceContext["parking_duration"]);
         Assert.Equal("GCASH", request.ReferenceContext["payment_method"]);
+        Assert.Equal(WebPayChannelTerminalId, request.ChannelTerminalId);
+        Assert.Equal(WebPayTerminalIdentifier, request.RuntimeTerminalRef);
 
         var line = Assert.Single(request.DocumentLines);
         Assert.Equal(expectedVatableSalesMinorUnits, line.UnitAmountMinorUnits);
@@ -131,6 +135,8 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         Assert.Equal(SiteAId, request.SiteId);
         Assert.Equal(10000, request.PayableBasis.PayableAmountMinorUnits);
         Assert.Equal(10000, Assert.Single(request.Tenders).AmountMinorUnits);
+        Assert.Equal(WebPayChannelTerminalId, request.ChannelTerminalId);
+        Assert.Equal(WebPayTerminalIdentifier, request.RuntimeTerminalRef);
         Assert.Null(Assert.Single(fixture.CapturedMapping!.Tenders).TenderTypeCodeId);
         Assert.Equal("GCASH", Assert.Single(fixture.CapturedMapping.Tenders).TenderContext["payment_method"]);
         Assert.Equal(10000, Assert.Single(request.Totals).AmountMinorUnits);
@@ -416,7 +422,9 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
             "TEST 1001",
             "PITX Level 3",
             DateTimeOffset.Parse("2026-08-24T00:36:00Z"),
-            "GCASH");
+            "GCASH",
+            WebPayChannelTerminalId,
+            WebPayTerminalIdentifier);
 
     private static TerminalCashStatutoryFiscalLinkageContext Statutory() =>
         new(
