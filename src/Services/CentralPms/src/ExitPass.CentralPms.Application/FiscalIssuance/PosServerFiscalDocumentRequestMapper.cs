@@ -80,7 +80,7 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
                     .ToArray(),
                 ReferenceContext: NormalizeDictionary(context.PayableBasis.ReferenceContext)),
             SitePosServerId: context.SitePosServerId,
-            ChannelTerminalId: null,
+            ChannelTerminalId: context.ChannelTerminalId,
             FiscalDocumentTypeCodeId: context.FiscalDocumentTypeCodeId,
             FiscalDocumentStatusCodeId: context.FiscalDocumentStatusCodeId,
             BusinessDayDate: context.BusinessDayDate,
@@ -148,7 +148,8 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
                     TrimToNull(context.InvoiceCustomerInformation.BusinessStyle),
                     context.AppliedStatutoryFiscalFacts is null
                         ? null
-                        : TrimToNull(context.InvoiceCustomerInformation.StatutoryIdNumber)));
+                        : TrimToNull(context.InvoiceCustomerInformation.StatutoryIdNumber)),
+            RuntimeTerminalRef: context.TerminalIdentifier!.Trim());
     }
 
     private static IReadOnlyList<string> Validate(CentralPmsFiscalDocumentMappingContext context)
@@ -158,6 +159,16 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
         if (context.SitePosServerId is null && string.IsNullOrWhiteSpace(context.SitePosServerRef))
         {
             errors.Add("site_pos_server_context_required");
+        }
+
+        if (context.ChannelTerminalId is null || context.ChannelTerminalId == Guid.Empty)
+        {
+            errors.Add("channel_terminal_id_required");
+        }
+
+        if (string.IsNullOrWhiteSpace(context.TerminalIdentifier))
+        {
+            errors.Add("terminal_identifier_required");
         }
 
         if (context.FiscalDocumentTypeCodeId is null && string.IsNullOrWhiteSpace(context.FiscalDocumentTypeCodeKey))

@@ -247,7 +247,9 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
-        if (actor.UserId == Guid.Empty || string.IsNullOrWhiteSpace(actor.DisplayName))
+        if (actor.UserId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(actor.DisplayName) ||
+            string.IsNullOrWhiteSpace(actor.TerminalIdentifier))
         {
             throw new StatutoryDiscountDecisionRejectedException(
                 "APT_ZERO_PAYABLE_CASHIER_REQUIRED",
@@ -257,7 +259,10 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         return await GetAndEnrichAsync(
                 statutoryDiscountDecisionCommandId,
                 correlationId,
-                ZeroPayableFiscalCashierAttribution.Apt(actor.UserId, actor.DisplayName),
+                ZeroPayableFiscalCashierAttribution.Apt(
+                    actor.UserId,
+                    actor.DisplayName,
+                    actor.TerminalIdentifier),
                 cancellationToken)
             .ConfigureAwait(false);
     }

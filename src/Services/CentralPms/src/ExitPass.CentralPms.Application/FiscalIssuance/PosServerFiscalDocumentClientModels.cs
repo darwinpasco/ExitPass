@@ -92,7 +92,9 @@ public sealed record CentralPmsFiscalDocumentMappingContext(
     Guid? SiteId = null,
     string CompletionBasis = FiscalCompletionBasisCodes.PaymentFinality,
     string? CompletionAuthorityRef = null,
-    CentralPmsInvoiceCustomerInformationContext? InvoiceCustomerInformation = null);
+    CentralPmsInvoiceCustomerInformationContext? InvoiceCustomerInformation = null,
+    Guid? ChannelTerminalId = null,
+    string? TerminalIdentifier = null);
 
 public sealed record CentralPmsInvoiceCustomerInformationContext(
     string? CustomerName,
@@ -251,7 +253,8 @@ public sealed record PosServerFiscalDocumentCreateRequest(
     Guid? SiteId = null,
     string CompletionBasis = FiscalCompletionBasisCodes.PaymentFinality,
     string? CompletionAuthorityRef = null,
-    PosServerInvoiceCustomerInformationRequest? InvoiceCustomerInformation = null);
+    PosServerInvoiceCustomerInformationRequest? InvoiceCustomerInformation = null,
+    string? RuntimeTerminalRef = null);
 
 public sealed record PosServerInvoiceCustomerInformationRequest(
     string? CustomerName,

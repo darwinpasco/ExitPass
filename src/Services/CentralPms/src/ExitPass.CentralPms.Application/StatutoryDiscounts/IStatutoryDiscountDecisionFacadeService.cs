@@ -28,7 +28,8 @@ public interface IStatutoryDiscountDecisionFacadeService
 
 public sealed record AptZeroPayableCompletionActor(
     Guid UserId,
-    string DisplayName);
+    string DisplayName,
+    string TerminalIdentifier);
 
 /// <summary>
 /// Durable repository boundary for shared statutory-discount command idempotency and readback.

@@ -24,7 +24,11 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
     private static readonly Guid FiscalCorrelation = Guid.Parse("31000000-0000-4000-8000-000000000011");
     private static readonly Guid ActorId = Guid.Parse("31000000-0000-4000-8000-000000000012");
     private static readonly Guid DocumentId = Guid.Parse("31000000-0000-4000-8000-000000000013");
+    private static readonly Guid WebPayChannelTerminalId = Guid.Parse("31000000-0000-4000-8000-000000000014");
+    private static readonly Guid AptChannelTerminalId = Guid.Parse("31000000-0000-4000-8000-000000000015");
     private const string PosRef = "site-pos-server-recovery";
+    private const string WebPayTerminalIdentifier = "PITX-L3-WEBPAY-01";
+    private const string AptTerminalIdentifier = "terminal-01";
     private const string SemanticHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const long AmountMinorUnits = 4_500;
 
@@ -729,7 +733,7 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
 
     private static TerminalCashPaymentReadback CashPayment() =>
         new(
-            Guid.NewGuid(), TenderId, AttemptId, Guid.NewGuid(), SessionId, TariffId, "terminal-01",
+            Guid.NewGuid(), TenderId, AttemptId, Guid.NewGuid(), SessionId, TariffId, AptTerminalIdentifier,
             SiteId, SiteGroupId, PosId.ToString("D"), Guid.NewGuid().ToString("D"), "shift-01", "PHP",
             AmountMinorUnits, AmountMinorUnits, 0, "CONFIRMED", ConfirmationId, "CREATED",
             "terminal-cash-payment:test", "terminal-cash-payment:sha256:v1",
@@ -866,7 +870,11 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             [new CentralPmsFiscalTenderContext(Options().Endpoints.Single().FiscalTenderTypeCodeId, AmountMinorUnits, "PHP", AttemptId.ToString("D"), ConfirmationId.ToString("D"), UpstreamReference(), "CASH", new Dictionary<string, string>())],
             [], [],
             [new CentralPmsFiscalTotalContext(Options().Endpoints.Single().FiscalTotalTypeCodeId, AmountMinorUnits, "PHP", new Dictionary<string, string>())],
-            new Dictionary<string, string>(), UpstreamReference(), null));
+            new Dictionary<string, string>(), UpstreamReference(), null,
+            AppliedStatutoryFiscalFacts: null,
+            SiteId: SiteId,
+            ChannelTerminalId: AptChannelTerminalId,
+            TerminalIdentifier: AptTerminalIdentifier));
 
     private static FiscalSemanticRequestHashResult HashResult() =>
         new(
@@ -899,10 +907,28 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
                     ApiKeyFile = "test-pos-key",
                     Environment = "Test",
                     Enabled = true,
+                    WebPayTerminalIdentifier = WebPayTerminalIdentifier,
+                    ChannelTerminals =
+                    [
+                        new ChannelTerminalIdentityOptions
+                        {
+                            ChannelTerminalId = WebPayChannelTerminalId,
+                            TerminalIdentifier = WebPayTerminalIdentifier
+                        },
+                        new ChannelTerminalIdentityOptions
+                        {
+                            ChannelTerminalId = AptChannelTerminalId,
+                            TerminalIdentifier = AptTerminalIdentifier
+                        }
+                    ],
                     FiscalDocumentTypeCodeId = values[0],
                     FiscalDocumentStatusCodeId = values[1],
                     FiscalLineTypeCodeId = values[2],
                     FiscalTenderTypeCodeId = values[3],
+                    FiscalTenderTypeCodeIds = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["cash"] = values[3]
+                    },
                     FiscalTaxTypeCodeId = values[4],
                     FiscalTaxClassificationCodeId = values[5],
                     FiscalDiscountPrivilegeTypeCodeId = values[6],

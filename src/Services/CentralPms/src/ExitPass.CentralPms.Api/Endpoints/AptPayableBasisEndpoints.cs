@@ -71,20 +71,23 @@ public static class AptPayableBasisEndpoints
             return Results.Json(forbidden, statusCode: StatusCodes.Status403Forbidden);
         }
 
-        var authorityFailure = await ValidateAptAuthorityAsync(
+        var authority = await ResolveAptAuthorityAsync(
             request,
             rbacRepository,
             body.SiteId,
             body.TerminalId,
             body.CorrelationId,
             cancellationToken);
-        if (authorityFailure is not null)
+        if (authority.Error is not null)
         {
-            activity?.SetStatus(ActivityStatusCode.Error, authorityFailure.Message);
-            return Results.Json(authorityFailure, statusCode: StatusCodes.Status403Forbidden);
+            activity?.SetStatus(ActivityStatusCode.Error, authority.Error.Message);
+            return Results.Json(authority.Error, statusCode: StatusCodes.Status403Forbidden);
         }
 
-        var result = await service.ResolveAsync(body, ResolveCompletionActor(request), cancellationToken);
+        var result = await service.ResolveAsync(
+            body,
+            ResolveCompletionActor(request, authority.TerminalIdentifier),
+            cancellationToken);
         return ToHttpResult(result, request.HttpContext.Response);
     }
 
@@ -109,20 +112,23 @@ public static class AptPayableBasisEndpoints
             return Results.Json(forbidden, statusCode: StatusCodes.Status403Forbidden);
         }
 
-        var authorityFailure = await ValidateAptAuthorityAsync(
+        var authority = await ResolveAptAuthorityAsync(
             request,
             rbacRepository,
             body.SiteId,
             body.TerminalId,
             body.CorrelationId,
             cancellationToken);
-        if (authorityFailure is not null)
+        if (authority.Error is not null)
         {
-            activity?.SetStatus(ActivityStatusCode.Error, authorityFailure.Message);
-            return Results.Json(authorityFailure, statusCode: StatusCodes.Status403Forbidden);
+            activity?.SetStatus(ActivityStatusCode.Error, authority.Error.Message);
+            return Results.Json(authority.Error, statusCode: StatusCodes.Status403Forbidden);
         }
 
-        var result = await service.RevalidateAsync(body, ResolveCompletionActor(request), cancellationToken);
+        var result = await service.RevalidateAsync(
+            body,
+            ResolveCompletionActor(request, authority.TerminalIdentifier),
+            cancellationToken);
         return ToHttpResult(result, request.HttpContext.Response);
     }
 
@@ -187,6 +193,24 @@ public static class AptPayableBasisEndpoints
         string siteId,
         string terminalId,
         Guid correlationId,
+        CancellationToken cancellationToken) =>
+        (await ResolveAptAuthorityAsync(
+            request,
+            repository,
+            siteId,
+            terminalId,
+            correlationId,
+            cancellationToken)).Error;
+
+    /// <summary>
+    /// Resolves an authenticated APT request to its canonical Device Administration terminal identifier.
+    /// </summary>
+    public static async Task<AptAuthorityResolution> ResolveAptAuthorityAsync(
+        HttpRequest request,
+        ICentralPmsRbacRepository repository,
+        string siteId,
+        string terminalId,
+        Guid correlationId,
         CancellationToken cancellationToken)
     {
         var humanIdentities = request.HttpContext.User.Identities
@@ -195,16 +219,16 @@ public static class AptPayableBasisEndpoints
             .ToArray();
         if (humanIdentities.Length == 0)
         {
-            return null;
+            return new AptAuthorityResolution(null, null);
         }
 
         if (humanIdentities.Length != 1)
         {
-            return BuildError(
+            return new AptAuthorityResolution(BuildError(
                 "APT_HUMAN_SESSION_AMBIGUOUS",
                 "The authenticated APT human session is ambiguous.",
                 correlationId,
-                false);
+                false), null);
         }
 
         var humanPrincipal = new ClaimsPrincipal(humanIdentities[0]);
@@ -213,11 +237,11 @@ public static class AptPayableBasisEndpoints
             requestedSiteId == Guid.Empty ||
             !HasExactSiteScope(humanPrincipal, requestedSiteId))
         {
-            return BuildError(
+            return new AptAuthorityResolution(BuildError(
                 "FORBIDDEN_SITE",
                 "Caller is not authorized for the requested Site.",
                 correlationId,
-                false);
+                false), null);
         }
 
         if (!Guid.TryParse(
@@ -225,11 +249,11 @@ public static class AptPayableBasisEndpoints
                 out var deviceServiceIdentityId) ||
             deviceServiceIdentityId == Guid.Empty)
         {
-            return BuildError(
+            return new AptAuthorityResolution(BuildError(
                 "FORBIDDEN_TERMINAL",
                 "The trusted terminal binding is unavailable.",
                 correlationId,
-                false);
+                false), null);
         }
 
         var device = await repository.GetAptDeviceAuthorizationAsync(
@@ -243,17 +267,17 @@ public static class AptPayableBasisEndpoints
             !string.Equals(device.OwningServiceName, "ExitPass.AssistedPaymentTerminal", StringComparison.Ordinal) ||
             !string.Equals(device.TerminalIdentifier, terminalId?.Trim(), StringComparison.OrdinalIgnoreCase))
         {
-            return BuildError(
+            return new AptAuthorityResolution(BuildError(
                 "FORBIDDEN_TERMINAL",
                 "The trusted terminal is not authorized for the requested Site.",
                 correlationId,
-                false);
+                false), null);
         }
 
-        return null;
+        return new AptAuthorityResolution(null, device.TerminalIdentifier.Trim());
     }
 
-    private static AptZeroPayableCompletionActor? ResolveCompletionActor(HttpRequest request)
+    private static AptZeroPayableCompletionActor? ResolveCompletionActor(HttpRequest request, string? terminalIdentifier)
     {
         var humanIdentities = request.HttpContext.User.Identities
             .Where(identity => identity.IsAuthenticated &&
@@ -271,10 +295,17 @@ public static class AptPayableBasisEndpoints
         }
 
         var displayName = identity.FindFirst("display_name")?.Value;
-        return string.IsNullOrWhiteSpace(displayName)
+        return string.IsNullOrWhiteSpace(displayName) || string.IsNullOrWhiteSpace(terminalIdentifier)
             ? null
-            : new AptZeroPayableCompletionActor(userId, displayName.Trim());
+            : new AptZeroPayableCompletionActor(userId, displayName.Trim(), terminalIdentifier.Trim());
     }
+
+    /// <summary>
+    /// Contains the fail-closed authorization result and canonical terminal identifier for an APT request.
+    /// </summary>
+    public sealed record AptAuthorityResolution(
+        ErrorResponse? Error,
+        string? TerminalIdentifier);
 
     private static bool HasExactSiteScope(System.Security.Claims.ClaimsPrincipal principal, Guid siteId)
     {

@@ -219,7 +219,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         var cashierId = Guid.NewGuid();
         var result = await context.Sut.ResolveAsync(
             ResolveRequest(DecisionCommandId),
-            new AptZeroPayableCompletionActor(cashierId, "Mara Del Carmen"),
+            new AptZeroPayableCompletionActor(cashierId, "Mara Del Carmen", "apt-pitx-level-3-01"),
             CancellationToken.None);
 
         result.Succeeded.Should().BeTrue();
@@ -233,7 +233,8 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         result.Response.ZeroPayableStatutoryCompletion.FiscalDocumentNumber.Should().Be("SI-00000073");
         result.Response.ZeroPayableStatutoryCompletion.ExitAuthorizationId.Should().Be(ExitAuthorizationId);
         result.Response.ZeroPayableStatutoryCompletion.ExitAuthorizationStatus.Should().Be("ISSUED");
-        context.StatutoryDiscounts.CompletionActor.Should().Be(new AptZeroPayableCompletionActor(cashierId, "Mara Del Carmen"));
+        context.StatutoryDiscounts.CompletionActor.Should().Be(
+            new AptZeroPayableCompletionActor(cashierId, "Mara Del Carmen", "apt-pitx-level-3-01"));
     }
 
     [Fact]

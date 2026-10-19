@@ -19,6 +19,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
     private static readonly Guid SiteId = Guid.Parse("a1000000-0000-4000-8000-000000000008");
     private static readonly Guid SiteGroupId = Guid.Parse("a1000000-0000-4000-8000-000000000009");
     private static readonly Guid SitePosServerId = Guid.Parse("a1000000-0000-4000-8000-00000000000a");
+    private static readonly Guid WebPayChannelTerminalId = Guid.Parse("a1000000-0000-4000-8000-000000000020");
+    private static readonly Guid AptChannelTerminalId = Guid.Parse("a1000000-0000-4000-8000-000000000021");
     private static readonly Guid FiscalReferenceId = Guid.Parse("a1000000-0000-4000-8000-00000000000b");
     private static readonly Guid CentralPmsServiceIdentityId = Guid.Parse("8063c159-dae6-57af-9f1f-e0a07d519fb2");
     private static readonly DateTimeOffset AppliedAt = DateTimeOffset.Parse("2026-09-09T08:00:00Z");
@@ -92,6 +94,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal("PITX Level 3", mapped.ReferenceContext["branch_site"]);
         Assert.Equal("00:37:00", mapped.ReferenceContext["parking_duration"]);
         Assert.Equal("System", mapped.ReferenceContext["cashier_display_name"]);
+        Assert.Equal(WebPayChannelTerminalId, mapped.ChannelTerminalId);
+        Assert.Equal("PITX-L3-WEBPAY-01", mapped.TerminalIdentifier);
         Assert.False(result.FiscalPrerequisiteSatisfied);
     }
 
@@ -166,13 +170,18 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
             .IssueOrReadAsync(Command() with
             {
                 Finality = aptFinality,
-                Cashier = ZeroPayableFiscalCashierAttribution.Apt(cashierId, "Mara Del Carmen")
+                Cashier = ZeroPayableFiscalCashierAttribution.Apt(
+                    cashierId,
+                    "Mara Del Carmen",
+                    "apt-pitx-level-3-01")
             }, CancellationToken.None);
 
         Assert.NotNull(mapped);
         Assert.Equal("ASSISTED_PAYMENT_TERMINAL", mapped.ReferenceContext["completion_channel"]);
         Assert.Equal(cashierId.ToString("D"), mapped.ReferenceContext["cashier_user_id"]);
         Assert.Equal("Mara Del Carmen", mapped.ReferenceContext["cashier_display_name"]);
+        Assert.Equal(AptChannelTerminalId, mapped.ChannelTerminalId);
+        Assert.Equal("apt-pitx-level-3-01", mapped.TerminalIdentifier);
         Assert.DoesNotContain(mapped.ReferenceContext.Keys, key => key.Contains("reviewer", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -202,6 +211,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal("WEBPAY", mapped.ReferenceContext["completion_channel"]);
         Assert.False(mapped.ReferenceContext.ContainsKey("cashier_user_id"));
         Assert.Equal("System", mapped.ReferenceContext["cashier_display_name"]);
+        Assert.Equal(WebPayChannelTerminalId, mapped.ChannelTerminalId);
+        Assert.Equal("PITX-L3-WEBPAY-01", mapped.TerminalIdentifier);
         Assert.DoesNotContain(mapped.ReferenceContext.Keys, key => key.Contains("reviewer", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -430,7 +441,21 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
                     ApiKeyFile = "unused-in-unit-test",
                     Environment = "Development",
                     Enabled = true,
-                    FiscalDocumentTypeCodeId = Guid.Parse("a1000000-0000-4000-8000-000000000013")
+                    FiscalDocumentTypeCodeId = Guid.Parse("a1000000-0000-4000-8000-000000000013"),
+                    WebPayTerminalIdentifier = "PITX-L3-WEBPAY-01",
+                    ChannelTerminals =
+                    [
+                        new ChannelTerminalIdentityOptions
+                        {
+                            ChannelTerminalId = WebPayChannelTerminalId,
+                            TerminalIdentifier = "PITX-L3-WEBPAY-01"
+                        },
+                        new ChannelTerminalIdentityOptions
+                        {
+                            ChannelTerminalId = AptChannelTerminalId,
+                            TerminalIdentifier = "apt-pitx-level-3-01"
+                        }
+                    ]
                 }
             ]
         };

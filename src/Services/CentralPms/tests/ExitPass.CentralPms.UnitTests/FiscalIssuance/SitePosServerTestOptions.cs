@@ -24,6 +24,10 @@ internal static class SitePosServerTestOptions
     internal static readonly Guid FiscalTaxClassificationCodeId = Guid.Parse("10000000-0000-0000-0000-000000000402");
     internal static readonly Guid FiscalDiscountPrivilegeTypeCodeId = Guid.Parse("3a29922e-e8e6-5adb-a205-f68d09e41762");
     internal static readonly Guid FiscalTotalTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000601");
+    internal static readonly Guid WebPayChannelTerminalId = Guid.Parse("10000000-0000-0000-0000-000000000701");
+    internal static readonly Guid AptChannelTerminalId = Guid.Parse("10000000-0000-0000-0000-000000000702");
+    internal const string WebPayTerminalIdentifier = "PITX-L3-WEBPAY-01";
+    internal const string AptTerminalIdentifier = "apt-pitx-level-3-01";
 
     internal static FiscalIssuancePosServerIntegrationOptions AddEndpoint(
         this FiscalIssuancePosServerIntegrationOptions options,
@@ -57,7 +61,21 @@ internal static class SitePosServerTestOptions
                 FiscalTaxTypeCodeId = FiscalTaxTypeCodeId,
                 FiscalTaxClassificationCodeId = FiscalTaxClassificationCodeId,
                 FiscalDiscountPrivilegeTypeCodeId = FiscalDiscountPrivilegeTypeCodeId,
-                FiscalTotalTypeCodeId = FiscalTotalTypeCodeId
+                FiscalTotalTypeCodeId = FiscalTotalTypeCodeId,
+                WebPayTerminalIdentifier = WebPayTerminalIdentifier,
+                ChannelTerminals =
+                [
+                    new ChannelTerminalIdentityOptions
+                    {
+                        ChannelTerminalId = WebPayChannelTerminalId,
+                        TerminalIdentifier = WebPayTerminalIdentifier
+                    },
+                    new ChannelTerminalIdentityOptions
+                    {
+                        ChannelTerminalId = AptChannelTerminalId,
+                        TerminalIdentifier = AptTerminalIdentifier
+                    }
+                ]
             }
         ];
         return options;

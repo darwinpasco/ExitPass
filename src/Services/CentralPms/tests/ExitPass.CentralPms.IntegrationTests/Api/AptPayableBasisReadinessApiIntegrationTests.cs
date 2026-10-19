@@ -364,6 +364,32 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
     }
 
     [Fact]
+    public async Task HumanSessionAuthority_UsesCanonicalDeviceAdministrationTerminalIdentifier()
+    {
+        var siteId = Guid.NewGuid();
+        var deviceId = Guid.NewGuid();
+        var repository = DeviceRepository(new CentralPmsAptDeviceAuthorizationRecord(
+            deviceId,
+            "apt-pitx-level-3-01",
+            "DEVICE",
+            "ExitPass.AssistedPaymentTerminal",
+            Active: true,
+            SiteAssigned: true));
+        var request = HumanSessionRequest(siteId, deviceId);
+
+        var result = await AptPayableBasisEndpoints.ResolveAptAuthorityAsync(
+            request,
+            repository,
+            siteId.ToString("D"),
+            "APT-PITX-LEVEL-3-01",
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        result.Error.Should().BeNull();
+        result.TerminalIdentifier.Should().Be("apt-pitx-level-3-01");
+    }
+
+    [Fact]
     public async Task HumanSessionAuthority_WhenCallerNamesForeignSite_FailsBeforeLookup()
     {
         var authorizedSiteId = Guid.NewGuid();
@@ -423,6 +449,32 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
             "ExitPass.AssistedPaymentTerminal",
             Active: true,
             SiteAssigned: false));
+        var request = HumanSessionRequest(siteId, deviceId);
+
+        var result = await AptPayableBasisEndpoints.ValidateAptAuthorityAsync(
+            request,
+            repository,
+            siteId.ToString("D"),
+            "apt-pitx-level-3-01",
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.ErrorCode.Should().Be("FORBIDDEN_TERMINAL");
+    }
+
+    [Fact]
+    public async Task HumanSessionAuthority_WhenDeviceIsInactive_FailsClosed()
+    {
+        var siteId = Guid.NewGuid();
+        var deviceId = Guid.NewGuid();
+        var repository = DeviceRepository(new CentralPmsAptDeviceAuthorizationRecord(
+            deviceId,
+            "apt-pitx-level-3-01",
+            "DEVICE",
+            "ExitPass.AssistedPaymentTerminal",
+            Active: false,
+            SiteAssigned: true));
         var request = HumanSessionRequest(siteId, deviceId);
 
         var result = await AptPayableBasisEndpoints.ValidateAptAuthorityAsync(

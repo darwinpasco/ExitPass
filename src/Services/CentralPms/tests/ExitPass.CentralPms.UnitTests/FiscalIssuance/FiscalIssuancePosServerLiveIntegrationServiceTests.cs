@@ -93,6 +93,51 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
     }
 
     [Fact]
+    public void ResolveChannelTerminal_WhenRegistered_ReturnsStableCanonicalIdentity()
+    {
+        var endpoint = EnabledOptions().Endpoints.Single();
+
+        var webPayFirst = endpoint.ResolveWebPayTerminal();
+        var webPaySecond = endpoint.ResolveWebPayTerminal();
+        var apt = endpoint.ResolveChannelTerminal("APT-PITX-LEVEL-3-01");
+
+        webPayFirst.Should().Be(webPaySecond);
+        webPayFirst.Should().Be(new ChannelTerminalIdentity(
+            SitePosServerTestOptions.WebPayChannelTerminalId,
+            SitePosServerTestOptions.WebPayTerminalIdentifier));
+        apt.Should().Be(new ChannelTerminalIdentity(
+            SitePosServerTestOptions.AptChannelTerminalId,
+            SitePosServerTestOptions.AptTerminalIdentifier));
+    }
+
+    [Fact]
+    public void ResolveChannelTerminal_WhenTerminalIsNotRegisteredForEndpoint_FailsClosed()
+    {
+        var endpoint = EnabledOptions().Endpoints.Single();
+
+        var action = () => endpoint.ResolveChannelTerminal("terminal-from-another-site");
+
+        action.Should().Throw<InvalidOperationException>()
+            .WithMessage("channel_terminal_mapping_not_found");
+    }
+
+    [Fact]
+    public void EvaluateReadiness_WhenTerminalMappingsAreDuplicated_FailsClosed()
+    {
+        var options = EnabledOptions();
+        options.Endpoints.Single().ChannelTerminals.Add(new ChannelTerminalIdentityOptions
+        {
+            ChannelTerminalId = Guid.NewGuid(),
+            TerminalIdentifier = SitePosServerTestOptions.AptTerminalIdentifier
+        });
+
+        var readiness = options.EvaluateReadiness();
+
+        readiness.IsReady.Should().BeFalse();
+        readiness.Errors.Should().Contain("site_pos_server_channel_terminal_identifier_duplicate");
+    }
+
+    [Fact]
     public void EvaluateReadiness_WhenPaymentLiveFlowFlagIsEnabled_ReportsReady()
     {
         var readiness = new FiscalIssuancePosServerIntegrationOptions
