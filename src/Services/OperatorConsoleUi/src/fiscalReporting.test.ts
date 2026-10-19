@@ -269,6 +269,11 @@ function monthlyESalesPayload() {
     submissionDueDateBasis: "ODD_TIN",
     submissionReadiness: "TECHNICAL_UAT",
     submissionReadinessMessage: "UAT fiscal identifier - not for BIR submission.",
+    coverageStatus: "COMPLETE_MONTH",
+    coverageMessage: "Complete calendar month from 2026-09-04 through 2026-09-30.",
+    firstCoveredBusinessDate: "2026-09-04",
+    lastCoveredBusinessDate: "2026-09-30",
+    coverageAsOf: "2026-10-01T00:00:00Z",
     rows: [{
       machineIdentificationNumber: "MIN-TEST-PITX-L3-001",
       calendarMonth: 9,

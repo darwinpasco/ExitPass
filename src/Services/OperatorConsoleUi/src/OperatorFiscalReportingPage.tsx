@@ -526,7 +526,11 @@ function MonthlyESalesPanel({ month, onMonthChange, result, error, busy, onRead,
         <SummaryValue label="Reporting Month" value={`${String(report.calendarMonth).padStart(2, "0")}/${report.calendarYear}`} />
         <SummaryValue label="Taxpayer TIN" value={report.taxpayerTin || "Unavailable"} />
         <SummaryValue label="Currency" value={report.currencyCode} />
+        <SummaryValue label="Coverage" value={report.coverageStatus === "MONTH_TO_DATE" ? "Month to date" : "Complete month"} />
+        <SummaryValue label="Covered Business Dates" value={`${report.firstCoveredBusinessDate} to ${report.lastCoveredBusinessDate}`} />
+        <SummaryValue label="As Of" value={formatPhtInstant(report.coverageAsOf) + " PHT"} />
       </dl>
+      <p className="stateMessage" role="status">{report.coverageMessage}</p>
       <div className="tableViewport"><table aria-label="Monthly eSales values"><thead><tr><th>MIN</th><th>Transactions</th><th>Gross Monthly Sales</th><th>End Range</th><th>VATable Sales</th><th>VAT</th><th>VAT Exempt Sales</th><th>Zero-Rated Sales</th><th>Source Periods</th><th>Business Dates</th></tr></thead><tbody>{report.rows.map((row) => <tr key={row.machineIdentificationNumber}><td>{row.machineIdentificationNumber}</td><td>{row.transactionCount}</td><td>{report.currencyCode} {row.monthlySalesDisplay}</td><td>{row.endingSalesInvoiceReference ?? ""}</td><td>{money(row.vatableSalesAmountMinorUnits, report.currencyCode)}</td><td>{money(row.vatAmountMinorUnits, report.currencyCode)}</td><td>{money(row.vatExemptSalesAmountMinorUnits, report.currencyCode)}</td><td>{money(row.zeroRatedSalesAmountMinorUnits, report.currencyCode)}</td><td>{row.sourcePeriodCount}</td><td>{row.firstBusinessDate} to {row.lastBusinessDate}</td></tr>)}</tbody></table></div>
     </>}
   </div>;
