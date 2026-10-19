@@ -185,6 +185,11 @@ export interface MonthlyESalesReport {
     submissionDueDateBasis?: string;
     submissionReadiness: string;
     submissionReadinessMessage: string;
+    coverageStatus: "MONTH_TO_DATE" | "COMPLETE_MONTH";
+    coverageMessage: string;
+    firstCoveredBusinessDate: string;
+    lastCoveredBusinessDate: string;
+    coverageAsOf: string;
     rows: MonthlyESalesRow[];
 }
 export interface MonthlyESalesReadResult {
@@ -659,6 +664,11 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
         submissionDueDateBasis: "ODD_TIN",
         submissionReadiness: "TECHNICAL_UAT",
         submissionReadinessMessage: "UAT fiscal identifier - not for BIR submission.",
+        coverageStatus: "COMPLETE_MONTH",
+        coverageMessage: "Complete calendar month from 2026-09-10 through 2026-09-10.",
+        firstCoveredBusinessDate: "2026-09-10",
+        lastCoveredBusinessDate: "2026-09-10",
+        coverageAsOf: "2026-09-11T00:00:00Z",
         rows: [{
             machineIdentificationNumber: "MIN-TEST-PITX-L3-001",
             calendarMonth: 9,
@@ -874,6 +884,11 @@ function monthlyESalesReport(value: Record<string, unknown>): MonthlyESalesRepor
         submissionDueDateBasis: optionalString(value.submissionDueDateBasis),
         submissionReadiness: str(value.submissionReadiness),
         submissionReadinessMessage: str(value.submissionReadinessMessage),
+        coverageStatus: monthlyCoverageStatus(value.coverageStatus),
+        coverageMessage: str(value.coverageMessage),
+        firstCoveredBusinessDate: str(value.firstCoveredBusinessDate),
+        lastCoveredBusinessDate: str(value.lastCoveredBusinessDate),
+        coverageAsOf: str(value.coverageAsOf),
         rows: value.rows.map((item) => {
             const row = rec(item);
             return {
@@ -894,6 +909,11 @@ function monthlyESalesReport(value: Record<string, unknown>): MonthlyESalesRepor
             };
         }),
     };
+}
+function monthlyCoverageStatus(value: unknown): "MONTH_TO_DATE" | "COMPLETE_MONTH" {
+    const status = str(value);
+    if (status !== "MONTH_TO_DATE" && status !== "COMPLETE_MONTH") throw bad();
+    return status;
 }
 function hist(
     v: Record<string, unknown>,
