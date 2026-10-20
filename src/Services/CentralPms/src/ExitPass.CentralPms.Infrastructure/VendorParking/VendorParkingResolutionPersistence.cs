@@ -58,13 +58,27 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             request.ParkingSession.VendorSystemCode,
             cancellationToken);
 
+        var canonicalVendorSessionReference = await ResolveProjectionVendorSessionReferenceAsync(
+                connection,
+                transaction,
+                siteGroupId,
+                siteId,
+                vendorSystemId,
+                request.SourceAdapterIdentityId,
+                request.ParkingSession,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var resolvedIncomingSession = RebindVendorSessionReference(
+            request.ParkingSession,
+            canonicalVendorSessionReference);
+
         await AcquireParkingSessionIdentityLockAsync(
             connection,
             transaction,
             siteGroupId,
             siteId,
             vendorSystemId,
-            request.ParkingSession.VendorSessionRef,
+            canonicalVendorSessionReference,
             cancellationToken);
 
         var existingSession = await FindExistingSessionAsync(
@@ -73,12 +87,12 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             siteGroupId,
             siteId,
             vendorSystemId,
-            request.ParkingSession.TicketNumber,
-            request.ParkingSession.VendorSessionRef,
+            resolvedIncomingSession.TicketNumber,
+            canonicalVendorSessionReference,
             cancellationToken);
 
         var parkingSessionWasReused = existingSession is not null;
-        var parkingSession = existingSession ?? request.ParkingSession;
+        var parkingSession = existingSession ?? resolvedIncomingSession;
         var resolvedSiteGroupId = Guid.Parse(parkingSession.SiteGroupId);
         var resolvedSiteId = Guid.Parse(parkingSession.SiteId);
 
@@ -88,6 +102,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 connection,
                 transaction,
                 request,
+                parkingSession,
                 siteGroupId,
                 siteId,
                 vendorSystemId,
@@ -480,6 +495,93 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             : throw new InvalidOperationException($"Vendor system '{vendorSystemCode}' was not persisted.");
     }
 
+    private static async Task<string> ResolveProjectionVendorSessionReferenceAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid siteGroupId,
+        Guid siteId,
+        Guid vendorSystemId,
+        Guid? sourceAdapterIdentityId,
+        ParkingSession session,
+        CancellationToken cancellationToken)
+    {
+        var ticketReference = NormalizeIdentifier(session.TicketNumber);
+        var plateNumber = NormalizeIdentifier(session.PlateNumber);
+        if (ticketReference is null && plateNumber is null)
+        {
+            return session.VendorSessionRef;
+        }
+
+        const string sql = """
+            SELECT DISTINCT
+                COALESCE(
+                    NULLIF(BTRIM(projection.vendor_record_guid), ''),
+                    NULLIF(BTRIM(projection.stable_identity_key), '')) AS canonical_vendor_session_ref
+            FROM sessions.vendor_session_projections AS projection
+            WHERE projection.site_group_id = @site_group_id
+              AND projection.site_id = @site_id
+              AND projection.vendor_system_id = @vendor_system_id
+              AND (@source_adapter_identity_id IS NULL
+                   OR projection.source_adapter_identity_id = @source_adapter_identity_id)
+              AND projection.projection_status = 'ACTIVE'
+              AND projection.enter_time = @entry_time
+              AND (
+                    (@ticket_reference IS NOT NULL
+                     AND UPPER(BTRIM(projection.card_num)) = @ticket_reference)
+                 OR (@ticket_reference IS NULL
+                     AND @plate_number IS NOT NULL
+                     AND UPPER(BTRIM(projection.plate_license)) = @plate_number)
+              )
+              AND COALESCE(
+                    NULLIF(BTRIM(projection.vendor_record_guid), ''),
+                    NULLIF(BTRIM(projection.stable_identity_key), '')) IS NOT NULL
+            LIMIT 2;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = siteGroupId;
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = siteId;
+        command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = vendorSystemId;
+        command.Parameters.Add("source_adapter_identity_id", NpgsqlDbType.Uuid).Value =
+            (object?)sourceAdapterIdentityId ?? DBNull.Value;
+        command.Parameters.Add("ticket_reference", NpgsqlDbType.Text).Value = DbValue(ticketReference);
+        command.Parameters.Add("plate_number", NpgsqlDbType.Text).Value = DbValue(plateNumber);
+        command.Parameters.Add("entry_time", NpgsqlDbType.TimestampTz).Value = ToUtc(session.EntryTimestamp);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return session.VendorSessionRef;
+        }
+
+        var canonicalReference = reader.GetString(0);
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            throw new VendorParkingResolutionPersistenceException(
+                "VENDOR_PARKING_PROJECTION_IDENTITY_AMBIGUOUS",
+                "The vendor parking result matches more than one authoritative passageway projection.");
+        }
+
+        return canonicalReference;
+    }
+
+    private static ParkingSession RebindVendorSessionReference(
+        ParkingSession session,
+        string vendorSessionReference) =>
+        string.Equals(session.VendorSessionRef, vendorSessionReference, StringComparison.Ordinal)
+            ? session
+            : ParkingSession.Rehydrate(
+                session.ParkingSessionId,
+                session.SiteGroupId,
+                session.SiteId,
+                session.VendorSystemCode,
+                vendorSessionReference,
+                session.IdentifierType,
+                session.PlateNumber,
+                session.TicketNumber,
+                session.EntryTimestamp,
+                session.SessionStatus);
+
     private static async Task AcquireParkingSessionIdentityLockAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -600,6 +702,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         PersistVendorParkingResolutionRequest request,
+        ParkingSession session,
         Guid siteGroupId,
         Guid siteId,
         Guid vendorSystemId,
@@ -651,8 +754,6 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 1
             );
             """;
-
-        var session = request.ParkingSession;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         AddParkingSessionInsertParameters(command, session, siteGroupId, siteId, vendorSystemId,
@@ -1287,6 +1388,9 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value.Trim().ToUpperInvariant()));
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
+
+    private static string? NormalizeIdentifier(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
 
     private static object DbValue(string? value)
     {

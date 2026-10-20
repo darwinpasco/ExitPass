@@ -147,6 +147,33 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
     }
 
     [Fact]
+    public async Task TicketLookup_WhenIdentifierIsInternalVendorSessionReference_DoesNotTreatItAsPhysicalTicket()
+    {
+        var fixture = await Fixture.CreateAsync();
+        try
+        {
+            var vendorSessionReference = await fixture.InsertCoreSessionWithoutTicketAsync();
+            var repository = new OperatorConsoleSessionLookupReadRepository(fixture.ConnectionString);
+
+            var result = await repository.FindAsync(
+                new OperatorConsoleSessionLookupReadRequest(
+                    null,
+                    vendorSessionReference,
+                    null,
+                    fixture.SiteId,
+                    fixture.SiteGroupId,
+                    "TICKET_REFERENCE"),
+                CancellationToken.None);
+
+            result.Should().BeNull();
+        }
+        finally
+        {
+            await fixture.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task TicketLookup_WhenIdentifierMatchesDistinctCanonicalRoutes_FailsClosed()
     {
         var fixture = await Fixture.CreateAsync();
@@ -362,8 +389,9 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
             await command.ExecuteNonQueryAsync();
         }
 
-        public async Task InsertCoreSessionWithoutTicketAsync()
+        public async Task<string> InsertCoreSessionWithoutTicketAsync()
         {
+            var vendorSessionReference = $"HIKCENTRAL:ABC1041:{Guid.NewGuid():N}";
             await using var connection = new NpgsqlConnection(ConnectionString);
             await connection.OpenAsync();
             await using var command = new NpgsqlCommand(
@@ -382,8 +410,9 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
                 connection);
             AddScopeParameters(command);
             command.Parameters.AddWithValue("parking_session_id", ParkingSessionId);
-            command.Parameters.AddWithValue("vendor_session_ref", $"HIKCENTRAL:ABC1041:{Guid.NewGuid():N}");
+            command.Parameters.AddWithValue("vendor_session_ref", vendorSessionReference);
             await command.ExecuteNonQueryAsync();
+            return vendorSessionReference;
         }
 
         public async Task InsertSecondProjectionAsync()

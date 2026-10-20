@@ -201,7 +201,7 @@ public sealed class PostgresWebPayStatutoryDiscountPendingLifecycleRediscoveryRe
                 ps.parking_session_id,
                 ps.site_id,
                 ps.site_group_id,
-                COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS ticket_reference,
+                ps.ticket_number_masked AS ticket_reference,
                 ps.plate_number_masked,
                 ps.updated_at
             FROM core.parking_sessions AS ps
@@ -232,12 +232,11 @@ public sealed class PostgresWebPayStatutoryDiscountPendingLifecycleRediscoveryRe
                     ps.parking_session_id,
                     ps.site_id,
                     ps.site_group_id,
-                    COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS ticket_reference,
+                    ps.ticket_number_masked AS ticket_reference,
                     ps.plate_number_masked,
                     ps.updated_at
                 FROM core.parking_sessions AS ps
                 WHERE ps.ticket_number_masked = @ticket_reference
-                   OR ps.vendor_session_ref = @ticket_reference
                    OR ps.ticket_number_hash = @ticket_reference_hash
                 UNION ALL
                 SELECT
@@ -282,7 +281,7 @@ public sealed class PostgresWebPayStatutoryDiscountPendingLifecycleRediscoveryRe
                     ps.parking_session_id,
                     ps.site_id,
                     ps.site_group_id,
-                    COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS ticket_reference,
+                    ps.ticket_number_masked AS ticket_reference,
                     ps.plate_number_masked,
                     ps.updated_at
                 FROM core.parking_sessions AS ps
@@ -487,11 +486,7 @@ public sealed class PostgresWebPayPaymentAttemptStatusRepository : IWebPayPaymen
                 ps.site_id,
                 sg.site_group_name,
                 s.site_name,
-                CASE
-                    WHEN ps.ticket_number_masked IS NOT NULL THEN ps.ticket_number_masked
-                    WHEN ps.plate_number_masked IS NULL THEN ps.vendor_session_ref
-                    ELSE NULL
-                END AS ticket_reference,
+                ps.ticket_number_masked AS ticket_reference,
                 ps.plate_number_masked AS plate_number,
                 pa.amount,
                 pa.currency_code::text,
