@@ -119,6 +119,34 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
         Assert.Contains($"\"sitePosServerId\":\"{Pos:D}\"", handler.Bodies.Single());
     }
 
+    [Fact]
+    public async Task ZCounterResetUsesDedicatedPermissionScopeAndDelegatedAdministrator()
+    {
+        var handler = new CaptureHandler(_ => Json("{\"succeeded\":true,\"reset\":{}}", HttpStatusCode.Created));
+
+        var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.ZCounterReset) with
+            {
+                OperationKey = "z-counter-reset-demo",
+                ExpectedStateVersion = 31,
+                ResetReason = "BIR demonstration",
+                ActorReference = "fiscal-administrator"
+            });
+
+        Assert.Equal(201, result.HttpStatusCode);
+        var outbound = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, outbound.Method);
+        Assert.Equal("/v1/admin/fiscal-z-counter/reset", outbound.RequestUri!.AbsolutePath);
+        Assert.Equal("fiscal_z_counter.reset", Header(outbound, "X-PosServer-Admin-Permission"));
+        Assert.Equal("fiscal-administrator", Header(outbound, "X-Actor-Reference"));
+        var body = handler.Bodies.Single();
+        Assert.Contains("\"expectedStateVersion\":31", body);
+        Assert.Contains("\"reason\":\"BIR demonstration\"", body);
+        Assert.Contains("\"confirmReset\":true", body);
+        Assert.Contains($"\"sitePosServerId\":\"{Pos:D}\"", body);
+        Assert.Contains($"\"fiscalIdentityId\":\"{Identity:D}\"", body);
+    }
+
     [Theory]
     [InlineData(FiscalReportingGatewayAction.XDownload, null, "/v1/fiscal-reports/x-readings/X-20260915-001/exports/pdf", "application/pdf", "reading-57mm.pdf", "fiscal_x_reading.export")]
     [InlineData(FiscalReportingGatewayAction.XDownload, "pdf", "/v1/fiscal-reports/x-readings/X-20260915-001/exports/pdf", "application/pdf", "reading-57mm.pdf", "fiscal_x_reading.export")]

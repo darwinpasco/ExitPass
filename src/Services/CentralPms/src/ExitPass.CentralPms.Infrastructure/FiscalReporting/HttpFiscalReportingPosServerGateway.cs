@@ -40,7 +40,7 @@ public sealed class HttpFiscalReportingPosServerGateway(
 
     private async Task<FiscalReportingGatewayResponse> GenerateZAsync(ResolvedEndpoint endpoint, FiscalReportingGatewayRequest request, CancellationToken ct)
     {
-        using var historyRequest = Build(endpoint, HttpMethod.Get, $"/v1/fiscal-reports/z-readings/history?{Scope(endpoint)}", "fiscal_z_reading.read", request.CorrelationId);
+        using var historyRequest = Build(endpoint, HttpMethod.Get, $"/v1/fiscal-reports/z-readings/history?{Scope(endpoint)}", "fiscal_z_reading.read", request.CorrelationId, request.ActorReference);
         using var historyResponse = await httpClient.SendAsync(historyRequest, ct).ConfigureAwait(false);
         var historyBytes = await historyResponse.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
         if (!historyResponse.IsSuccessStatusCode) return new((int)historyResponse.StatusCode, "application/json; charset=utf-8", historyBytes, "fiscal_reporting_period_unavailable", Retryable: (int)historyResponse.StatusCode >= 500);
@@ -60,7 +60,7 @@ public sealed class HttpFiscalReportingPosServerGateway(
             periodId.ValueKind != JsonValueKind.String || stateVersion.ValueKind != JsonValueKind.Number)
             return Failure(409, "fiscal_reporting_open_period_unavailable", false);
 
-        using var outbound = Build(endpoint, HttpMethod.Post, "/v1/fiscal-reports/z-readings", "fiscal_z_reading.close", request.CorrelationId);
+        using var outbound = Build(endpoint, HttpMethod.Post, "/v1/fiscal-reports/z-readings", "fiscal_z_reading.close", request.CorrelationId, request.ActorReference);
         outbound.Content = JsonContent.Create(new
         {
             operationKey = request.OperationKey,
@@ -99,6 +99,17 @@ public sealed class HttpFiscalReportingPosServerGateway(
                 expectedStateVersion = RequireExpectedStateVersion(request)
             }),
             FiscalReportingGatewayAction.ZDownload => (HttpMethod.Get, $"/v1/fiscal-reports/z-readings/{Uri.EscapeDataString(RequireReference(request))}/exports/{RequireReadingExportFormat(request)}", "fiscal_z_reading.export", null),
+            FiscalReportingGatewayAction.ZCounterState => (HttpMethod.Get, $"/v1/admin/fiscal-z-counter/?{scope}", "fiscal_z_counter.read", null),
+            FiscalReportingGatewayAction.ZCounterReset => (HttpMethod.Post, "/v1/admin/fiscal-z-counter/reset", "fiscal_z_counter.reset", new
+            {
+                operationKey = request.OperationKey,
+                sitePosServerId = endpoint.SitePosServerId,
+                fiscalIdentityId = endpoint.FiscalIdentityId,
+                currencyCode = endpoint.CurrencyCode,
+                expectedStateVersion = RequireExpectedStateVersion(request),
+                reason = request.ResetReason,
+                confirmReset = true
+            }),
             FiscalReportingGatewayAction.BirSalesSummaryGenerate => (HttpMethod.Post, "/v1/fiscal-reports/bir-sales-summaries/", "bir_sales_summary.generate", new
             {
                 operationKey = request.OperationKey,
@@ -172,18 +183,18 @@ public sealed class HttpFiscalReportingPosServerGateway(
         var effectivePermission = IsAnnexE1Correction(request)
             ? null
             : permission;
-        var outbound=Build(endpoint,method,path,effectivePermission,request.CorrelationId);
+        var outbound=Build(endpoint,method,path,effectivePermission,request.CorrelationId,request.ActorReference);
         if(body is not null) outbound.Content=JsonContent.Create(body);
         return outbound;
     }
 
-    private HttpRequestMessage Build(ResolvedEndpoint endpoint, HttpMethod method, string path, string? permission, Guid correlation)
+    private HttpRequestMessage Build(ResolvedEndpoint endpoint, HttpMethod method, string path, string? permission, Guid correlation, string actorReference)
     {
         var request=new HttpRequestMessage(method,new Uri(endpoint.BaseUri,path));
         request.Headers.TryAddWithoutValidation(ApiKeyHeader,endpoint.ApiKey);
         if (permission is not null) request.Headers.TryAddWithoutValidation(PermissionHeader,permission);
         request.Headers.TryAddWithoutValidation("X-Correlation-Id",correlation.ToString("D"));
-        request.Headers.TryAddWithoutValidation("X-Actor-Reference","central-pms-fiscal-reporting");
+        request.Headers.TryAddWithoutValidation("X-Actor-Reference",actorReference);
         return request;
     }
 

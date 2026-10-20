@@ -60,6 +60,28 @@ textarea {
   object-fit: contain;
 }
 
+.product-runtime-identity {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  color: #344054;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.product-runtime-identity strong,
+.product-runtime-identity time {
+  display: block;
+}
+
+.product-runtime-identity time {
+  color: #667085;
+  font-variant-numeric: tabular-nums;
+}
+
 .intro {
   margin-bottom: 18px;
 }

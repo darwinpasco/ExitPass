@@ -27,6 +27,7 @@ public sealed record DeviceRegistrationCommand(
     Guid SiteId,
     Guid? SiteGroupId,
     string? TerminalIdentifier,
+    string? TerminalSerialNumber,
     Guid ActorUserId,
     Guid CorrelationId,
     DateTimeOffset Now);
@@ -48,6 +49,7 @@ public sealed record DeviceEnrollmentCommand(
     Guid SiteId,
     Guid? SiteGroupId,
     string? TerminalIdentifier,
+    string? TerminalSerialNumber,
     string CredentialFingerprint,
     string CredentialReference,
     string CredentialType,
@@ -72,6 +74,7 @@ public sealed record DeviceReplacementCommand(
     Guid? SiteId,
     Guid? SiteGroupId,
     string? TerminalIdentifier,
+    string? TerminalSerialNumber,
     string ReasonCode,
     string TokenHash,
     DateTimeOffset IssuedAt,

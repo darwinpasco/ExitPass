@@ -105,6 +105,11 @@ public static class FiscalReportingEndpoints
             group.MapPost("/z-readings", (Guid siteId,GenerateZReadingRequest body,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
                 Execute(siteId,false,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.ZGenerate,null,null,null,body.OperationKey,null,body.ConfirmClose,ct))
                 .WithMetadata(new ReconciliationPolicyMetadata(ZGeneratePolicy));
+            group.MapGet("/z-counter", (Guid siteId,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
+                Execute(siteId,false,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.ZCounterState,null,null,null,null,null,false,ct))
+                .WithMetadata(new ReconciliationPolicyMetadata(ZReadPolicy));
+            group.MapPost("/z-counter/reset", ResetZCounterAsync)
+                .WithMetadata(new ReconciliationPolicyMetadata(ZGeneratePolicy));
         }
         group.MapGet("/z-readings/{reportReference}/download", (Guid siteId,string reportReference,string? format,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
             DownloadReadingAsync(siteId,operatorScoped,reportReference,format,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.ZDownload,ct))
@@ -347,6 +352,37 @@ public static class FiscalReportingEndpoints
         return GatewayResult(result);
     }
 
+    private static async Task<IResult> ResetZCounterAsync(
+        Guid siteId,
+        ResetFiscalZCounterRequest body,
+        HttpRequest request,
+        IFiscalReportingPosServerGateway gateway,
+        ICentralPmsRbacRepository rbacRepository,
+        ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken)
+    {
+        var authorization = await AuthorizeCloseAsync(siteId, body.ConfirmReset, request, rbacRepository, cancellationToken,
+            "fiscal_z_counter_reset_confirmation_required",
+            "Explicit confirmation is required before resetting the Z Counter.").ConfigureAwait(false);
+        if (authorization.Denial is not null) return authorization.Denial;
+        if (!ValidReference(body.OperationKey, 200) || body.ExpectedStateVersion < 1 || !ValidReference(body.Reason, 500))
+            return Results.BadRequest(new { succeeded=false,code="fiscal_z_counter_reset_invalid",message="The manual Z Counter reset request is incomplete or invalid." });
+
+        var result = await gateway.SendAsync(new(
+            siteId,
+            FiscalReportingGatewayAction.ZCounterReset,
+            authorization.CorrelationId,
+            authorization.Actor,
+            OperationKey: body.OperationKey,
+            ExpectedStateVersion: body.ExpectedStateVersion,
+            ResetReason: body.Reason), cancellationToken).ConfigureAwait(false);
+        loggerFactory.CreateLogger("ExitPass.CentralPms.FiscalReporting").Log(
+            result.HttpStatusCode < 400 ? LogLevel.Information : LogLevel.Warning,
+            "Manual Z Counter reset completed. actor={Actor} site={Site} result={Result} correlation_id={Correlation}",
+            authorization.Actor, siteId, result.Code, authorization.CorrelationId);
+        return GatewayResult(result);
+    }
+
     private static async Task<IResult> CloseAllPeriodsAsync(
         Guid siteId,
         CloseAllFiscalBusinessDatesRequest body,
@@ -452,7 +488,9 @@ public static class FiscalReportingEndpoints
         bool confirmClose,
         HttpRequest request,
         ICentralPmsRbacRepository rbacRepository,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string confirmationCode = "z_reading_close_confirmation_required",
+        string confirmationMessage = "Explicit confirmation is required before closing a Fiscal Business Date.")
     {
         var correlation = Guid.TryParse(request.Headers["X-Correlation-Id"].ToString(), out var parsed) && parsed != Guid.Empty
             ? parsed
@@ -463,9 +501,9 @@ public static class FiscalReportingEndpoints
             return new(actor, correlation, Results.BadRequest(new
             {
                 succeeded = false,
-                code = "z_reading_close_confirmation_required",
+                code = confirmationCode,
                 correlationId = correlation,
-                message = "Explicit confirmation is required before closing a Fiscal Business Date."
+                message = confirmationMessage
             }));
         }
         if (!Guid.TryParse(actor, out var actorUserId) ||
@@ -761,6 +799,7 @@ public sealed record AttestAnnexE1KnownZeroRequest(
     Guid? SupersedesFactId=null,string? CorrectionReason=null);
 public sealed record CloseFiscalBusinessDateRequest(string? OperationKey,long ExpectedStateVersion,bool ConfirmClose);
 public sealed record CloseAllFiscalBusinessDatesRequest(string OperationKey,bool ConfirmClose);
+public sealed record ResetFiscalZCounterRequest(string? OperationKey,long ExpectedStateVersion,string? Reason,bool ConfirmReset);
 public sealed record FiscalReportingAuthorizedSiteResponse(Guid SiteId,string SiteCode,string SiteName);
 internal sealed record CloseAuthorization(string Actor,Guid CorrelationId,IResult? Denial);
 internal sealed record CloseablePeriod(Guid FiscalReportingPeriodId,DateOnly FiscalBusinessDate,long ExpectedStateVersion);
