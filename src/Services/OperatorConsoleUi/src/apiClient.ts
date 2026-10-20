@@ -1776,7 +1776,7 @@ export function createMockOperatorConsoleApiClient(
         (!input.siteId || item.siteId === input.siteId) &&
         (!input.sourceChannel || item.sourceChannel === input.sourceChannel) &&
         (!input.entitlementType || item.entitlementType === input.entitlementType) &&
-        (!input.search || `${item.requestReference} ${item.parkingSessionId} ${item.ticketReference ?? ""}`.toLowerCase().includes(input.search.toLowerCase()))
+        (!input.search || `${item.requestReference} ${item.parkingSessionId} ${item.ticketReference ?? ""} ${item.plateNumber ?? ""}`.toLowerCase().includes(input.search.toLowerCase()))
       );
       const start = (input.page - 1) * input.pageSize;
       return {

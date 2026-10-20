@@ -133,9 +133,9 @@ export function CanonicalStatutoryReviewQueuePage({
         {state.status === "failed" && <ReviewState title="Queue failed" message={state.message} />}
         {state.status === "ready" && <>
           {state.staleMessage && <p className="notice" role="status">{state.staleMessage} Loaded {formatDate(state.loadedAt)}.</p>}
-          <div className="tableScroller"><table><thead><tr><th>Ticket / Plate</th><th>Site</th><th>Entitlement</th><th>Status</th><th>Requested By</th><th>Requested At</th><th>Action</th></tr></thead>
+          <div className="tableScroller"><table><thead><tr><th>Parking session</th><th>Site</th><th>Entitlement</th><th>Status</th><th>Requested By</th><th>Requested At</th><th>Action</th></tr></thead>
             <tbody>{state.data.items.map((item) => <tr key={item.statutoryDiscountDecisionCommandId}>
-              <td><strong>{item.ticketReference ?? "Not available"}</strong><span>{item.plateNumber ?? "Not available"}</span></td><td>{item.siteName ?? siteLabel(item.siteId)}</td><td>{benefitLabel(item.entitlementType)}</td><td><span className="statusPill">{statusLabel(item.reviewStatus)}</span></td><td>{originLabel(item.sourceChannel)}</td><td>{formatDate(item.submittedAt)}</td><td><button type="button" onClick={() => onOpen(item.statutoryDiscountDecisionCommandId)}>Review</button></td>
+              <td><strong>{parkingSessionIdentity(item)}</strong><span>Session {shortReference(item.parkingSessionId)}</span></td><td>{item.siteName ?? siteLabel(item.siteId)}</td><td>{benefitLabel(item.entitlementType)}</td><td><span className="statusPill">{statusLabel(item.reviewStatus)}</span></td><td>{originLabel(item.sourceChannel)}</td><td>{formatDate(item.submittedAt)}</td><td><button type="button" onClick={() => onOpen(item.statutoryDiscountDecisionCommandId)}>Review</button></td>
             </tr>)}</tbody></table></div>
           <div className="paginationBar"><button type="button" disabled={filters.page <= 1} onClick={() => onFiltersChange({ ...filters, page: filters.page - 1 })}>Previous</button><span>Page {state.data.page}</span><button type="button" disabled={!state.data.hasMore} onClick={() => onFiltersChange({ ...filters, page: filters.page + 1 })}>Next</button></div>
         </>}
@@ -248,7 +248,7 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
     {detail && <>
       <section className="pageTitle"><div><p className="eyebrow">Central PMS statutory review</p><h2 ref={headingRef} tabIndex={-1}>{benefitLabel(detail.entitlementType)}</h2><p>Request {shortReference(detail.requestReference)}</p></div><span className="statusPill">{statusLabel(detail.reviewStatus)}</span></section>
       <section className="panel canonicalReviewSummary" aria-labelledby="review-request-facts"><h3 id="review-request-facts">Request facts</h3><dl>
-        <dt>Request reference</dt><dd>{detail.requestReference}</dd><dt>Site</dt><dd>{siteLabel(detail.siteId)}</dd><dt>Originating channel</dt><dd>{originLabel(detail.sourceChannel)}</dd><dt>Parking session / ticket</dt><dd>{detail.ticketReference ?? detail.parkingSessionId}</dd><dt>Benefit</dt><dd>{benefitLabel(detail.entitlementType)}</dd><dt>Submitted</dt><dd>{formatDate(detail.submittedAt)}</dd><dt>Workflow status</dt><dd>{statusLabel(detail.reviewStatus)}</dd>
+        <dt>Request reference</dt><dd>{detail.requestReference}</dd><dt>Site</dt><dd>{siteLabel(detail.siteId)}</dd><dt>Originating channel</dt><dd>{originLabel(detail.sourceChannel)}</dd><dt>Session identifier</dt><dd>{parkingSessionIdentity(detail)}</dd><dt>Canonical parking session</dt><dd>{detail.parkingSessionId}</dd><dt>Benefit</dt><dd>{benefitLabel(detail.entitlementType)}</dd><dt>Submitted</dt><dd>{formatDate(detail.submittedAt)}</dd><dt>Workflow status</dt><dd>{statusLabel(detail.reviewStatus)}</dd>
         {detail.reviewedAt && <><dt>Decided</dt><dd>{formatDate(detail.reviewedAt)}</dd></>}{detail.reviewerUserId && <><dt>Reviewer</dt><dd>{detail.reviewerUserId}</dd></>}{terminal && <><dt>Decision</dt><dd>{statusLabel(detail.reviewStatus)}</dd></>}{detail.reviewerReasonCode && <><dt>Reason</dt><dd>{detail.reviewerReasonCode}</dd></>}
         <dt>Session eligibility</dt><dd>{statusLabel(detail.sessionEligibilityStatus)}</dd>
         <dt>Payable basis</dt><dd>{detail.payableBasisStatus === "NOT_YET_CREATED" ? "Not yet created" : statusLabel(detail.payableBasisStatus)}</dd>
@@ -281,3 +281,8 @@ function fromLocalDateTimeInput(value: string) { if (!value) return undefined; c
 function originLabel(value: string) { return value === "ASSISTED_PAYMENT_TERMINAL" ? "APT" : value === "WEBPAY" ? "WebPay" : value; }
 function benefitLabel(value: string) { return value === "SENIOR_CITIZEN" ? "Senior Citizen" : value === "PWD" ? "Person with Disability" : value; }
 function statusLabel(value: string) { return value.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+function parkingSessionIdentity(value: { ticketReference?: string; plateNumber?: string; parkingSessionId: string }) {
+  if (value.ticketReference?.trim()) return `Ticket ${value.ticketReference.trim()}`;
+  if (value.plateNumber?.trim()) return `Plate ${value.plateNumber.trim()}`;
+  return `Parking Session ${value.parkingSessionId}`;
+}

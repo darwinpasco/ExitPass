@@ -112,6 +112,7 @@ public sealed class PostgresManagementStatutoryBenefitReviewRepository : IManage
                 r.statutory_discount_decision_command_id,
                 r.parking_session_id,
                 r.ticket_reference,
+                r.plate_number,
                 r.site_id,
                 s.site_code,
                 s.site_name,
@@ -166,7 +167,8 @@ public sealed class PostgresManagementStatutoryBenefitReviewRepository : IManage
               AND (@search IS NULL
                    OR lower(r.request_reference::text) = @search
                    OR lower(r.parking_session_id::text) = @search
-                   OR lower(COALESCE(r.ticket_reference, '')) = @search)
+                   OR lower(COALESCE(r.ticket_reference, '')) = @search
+                   OR lower(COALESCE(r.plate_number, '')) = @search)
             ORDER BY
                 CASE WHEN r.review_status = 'PENDING_REVIEW' THEN 0 ELSE 1 END,
                 r.submitted_at DESC,
@@ -213,7 +215,10 @@ public sealed class PostgresManagementStatutoryBenefitReviewRepository : IManage
                 reader.GetBoolean(reader.GetOrdinal("evidence_recorded")),
                 reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("submitted_at")),
                 GetNullableString(reader, "reviewer_display_name"),
-                GetNullableDateTimeOffset(reader, "reviewed_at")));
+                GetNullableDateTimeOffset(reader, "reviewed_at"))
+            {
+                PlateNumber = GetNullableString(reader, "plate_number")
+            });
         }
 
         return new ManagementStatutoryBenefitReviewQueue(

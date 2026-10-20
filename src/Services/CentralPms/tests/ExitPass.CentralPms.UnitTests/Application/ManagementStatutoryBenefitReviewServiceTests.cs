@@ -82,6 +82,27 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         result.Value.BeneficiaryResidencySatisfied.Should().BeNull();
     }
 
+    [Fact]
+    public async Task Detail_ForAnprOnlySession_ExposesAuthorizedPresentationPlate()
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                TicketReference = null,
+                PlateNumber = "SXF****"
+            }
+        };
+        var service = CreateService(AllowedRepository(), canonical);
+
+        var result = await service.GetAsync(Actor(), DecisionReference, CorrelationId, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        result.Value!.TicketReference.Should().BeNull();
+        result.Value.PlateNumber.Should().Be("SXF****");
+        result.Value.ParkingSessionReference.Should().Be(ParkingSessionReference);
+    }
+
     [Theory]
     [InlineData("2234", "2234")]
     [InlineData("12345", "*2345")]

@@ -975,7 +975,10 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             money,
             decision,
             metadata.Version,
-            correlationId);
+            correlationId)
+        {
+            PlateNumber = source.PlateNumber
+        };
     }
 
     private static string MaskIdControlReference(string value) =>

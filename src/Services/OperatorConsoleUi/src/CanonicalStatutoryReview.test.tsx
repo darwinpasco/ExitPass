@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { CanonicalStatutoryReviewDetailPage } from "./CanonicalStatutoryReview";
+import { CanonicalStatutoryReviewDetailPage, CanonicalStatutoryReviewQueuePage, defaultCanonicalStatutoryReviewFilters } from "./CanonicalStatutoryReview";
 import { createHttpOperatorConsoleApiClient, createMockOperatorConsoleApiClient } from "./apiClient";
 import type { OperatorConsoleHumanSession } from "./humanAuthentication";
 import type { CanonicalStatutoryReviewFilters } from "./types";
@@ -12,6 +12,26 @@ const decisionId = "47000000-0000-0000-0000-000000000008";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("canonical Central PMS statutory review", () => {
+  it("identifies ANPR-only and identifier-limited sessions without inventing tickets", async () => {
+    const client = createMockOperatorConsoleApiClient();
+    const original = await client.listCanonicalStatutoryReviews(defaultCanonicalStatutoryReviewFilters);
+    const item = original.items[0];
+    client.listCanonicalStatutoryReviews = vi.fn(async () => ({
+      ...original,
+      items: [
+        { ...item, statutoryDiscountDecisionCommandId: decisionId, ticketReference: undefined, plateNumber: "SXF****" },
+        { ...item, statutoryDiscountDecisionCommandId: "47000000-0000-0000-0000-000000000009", parkingSessionId: "55000000-0000-0000-0000-000000000009", ticketReference: undefined, plateNumber: undefined }
+      ],
+      totalCount: 2
+    }));
+
+    render(<CanonicalStatutoryReviewQueuePage client={client} filters={defaultCanonicalStatutoryReviewFilters} onFiltersChange={() => undefined} onOpen={() => undefined} />);
+
+    expect(await screen.findByText("Plate SXF****")).toBeInTheDocument();
+    expect(screen.getByText("Parking Session 55000000-0000-0000-0000-000000000009")).toBeInTheDocument();
+    expect(screen.queryByText("Not available")).not.toBeInTheDocument();
+  });
+
   it("renders the canonical pending queue, safe row fields, responsive controls, and returns with in-memory filters", async () => {
     render(<App apiClient={createMockOperatorConsoleApiClient()} session={session()} initialPath="/operator-console/statutory-discounts" />);
 
