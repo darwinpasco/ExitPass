@@ -96,6 +96,28 @@ public sealed class VendorSessionProjectionDatabaseSafetyIntegrationTests
     }
 
     [Fact]
+    public async Task CanonicalSessionProjectionLookup_UsesStableSessionIdentityWithoutSqlFailure()
+    {
+        var connectionString = CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
+        var parsed = new NpgsqlConnectionStringBuilder(connectionString);
+        parsed.Database.Should().StartWith(
+            "exitpass_central_pms_it_",
+            "the canonical integration harness restricts the test to its task-owned disposable database");
+        var repository = new PostgresVendorSessionProjectionRepository(
+            connectionString,
+            CentralPmsServiceIdentityId);
+
+        var result = await repository.FindForCanonicalSessionAsync(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
     public async Task ProjectionUpsert_UsesConfiguredCentralPmsServiceIdentity()
     {
         var connectionString = CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();

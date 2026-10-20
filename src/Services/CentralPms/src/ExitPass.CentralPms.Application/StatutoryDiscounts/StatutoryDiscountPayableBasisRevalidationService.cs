@@ -1,4 +1,7 @@
+using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.VendorParking.Routing;
+using ExitPass.CentralPms.Application.VendorSessions;
 
 namespace ExitPass.CentralPms.Application.StatutoryDiscounts;
 
@@ -26,12 +29,21 @@ public sealed class StatutoryDiscountPayableBasisRevalidationService
     : IStatutoryDiscountPayableBasisRevalidationService
 {
     private readonly IResolveVendorParkingUseCase _vendorParkingResolver;
+    private readonly IParkingSessionReadRepository _parkingSessions;
+    private readonly IVendorSessionProjectionRepository _projections;
+    private readonly ISiteVendorAdapterRouteRegistry _routes;
 
     public StatutoryDiscountPayableBasisRevalidationService(
-        IResolveVendorParkingUseCase vendorParkingResolver)
+        IResolveVendorParkingUseCase vendorParkingResolver,
+        IParkingSessionReadRepository parkingSessions,
+        IVendorSessionProjectionRepository projections,
+        ISiteVendorAdapterRouteRegistry routes)
     {
         _vendorParkingResolver = vendorParkingResolver ??
             throw new ArgumentNullException(nameof(vendorParkingResolver));
+        _parkingSessions = parkingSessions ?? throw new ArgumentNullException(nameof(parkingSessions));
+        _projections = projections ?? throw new ArgumentNullException(nameof(projections));
+        _routes = routes ?? throw new ArgumentNullException(nameof(routes));
     }
 
     public async Task<StatutoryDiscountPayableBasisRevalidationResult> RevalidateAsync(
@@ -43,19 +55,101 @@ public sealed class StatutoryDiscountPayableBasisRevalidationService
 
         if (!review.SiteId.HasValue ||
             !review.SiteGroupId.HasValue ||
-            !review.VendorSystemId.HasValue ||
-            (string.IsNullOrWhiteSpace(review.TicketReference) &&
-             string.IsNullOrWhiteSpace(review.PlateNumber)))
+            !review.VendorSystemId.HasValue)
         {
             return Failed("STATUTORY_DISCOUNT_PAYABLE_BASIS_REVALIDATION_CONTEXT_INCOMPLETE");
         }
 
-        var ticketReference = string.IsNullOrWhiteSpace(review.TicketReference)
-            ? null
-            : review.TicketReference.Trim();
-        var plateNumber = string.IsNullOrWhiteSpace(review.PlateNumber)
-            ? null
-            : review.PlateNumber.Trim();
+        var canonicalSession = await _parkingSessions
+            .GetByIdAsync(review.ParkingSessionId, cancellationToken)
+            .ConfigureAwait(false);
+        if (canonicalSession is null)
+        {
+            return Failed("STATUTORY_DISCOUNT_PAYABLE_BASIS_REVALIDATION_CANONICAL_SESSION_NOT_FOUND");
+        }
+
+        if (!Guid.TryParse(canonicalSession.SiteId, out var canonicalSiteId) ||
+            !Guid.TryParse(canonicalSession.SiteGroupId, out var canonicalSiteGroupId) ||
+            canonicalSiteId != review.SiteId.Value ||
+            canonicalSiteGroupId != review.SiteGroupId.Value)
+        {
+            return Failed("STATUTORY_DISCOUNT_PAYABLE_BASIS_REVALIDATION_IDENTITY_MISMATCH");
+        }
+
+        SiteVendorAdapterRoute route;
+        try
+        {
+            route = await _routes.ResolveAsync(
+                    canonicalSiteId,
+                    canonicalSiteGroupId,
+                    review.VendorSystemId.Value,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (SiteVendorAdapterRoutingException)
+        {
+            return Failed("STATUTORY_DISCOUNT_PAYABLE_BASIS_REVALIDATION_ROUTE_INVALID");
+        }
+
+        CanonicalVendorSessionProjectionIdentity? projection;
+        try
+        {
+            projection = await _projections.FindForCanonicalSessionAsync(
+                    review.ParkingSessionId,
+                    canonicalSiteId,
+                    canonicalSiteGroupId,
+                    review.VendorSystemId.Value,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (VendorSessionProjectionLookupException)
+        {
+            return Failed("STATUTORY_DISCOUNT_PAYABLE_BASIS_REVALIDATION_IDENTITY_AMBIGUOUS");
+        }
+
+        if (projection is null)
+        {
+            return Failed("STATUTORY_DISCOUNT_PAYABLE_BASIS_REVALIDATION_AUTHORITATIVE_IDENTITY_UNAVAILABLE");
+        }
+
+        if (route.SiteId != canonicalSiteId ||
+            route.SiteGroupId != canonicalSiteGroupId ||
+            route.VendorSystemId != review.VendorSystemId.Value ||
+            projection.SiteId != canonicalSiteId ||
+            projection.SiteGroupId != canonicalSiteGroupId ||
+            projection.VendorSystemId != review.VendorSystemId.Value ||
+            projection.SourceAdapterIdentityId != route.AdapterIdentityId ||
+            projection.ProjectionStatus != VendorSessionProjectionStatus.Active ||
+            projection.EntryTime != canonicalSession.EntryTimestamp ||
+            !SameIdentifier(projection.VendorRecordGuid, canonicalSession.VendorSessionRef))
+        {
+            return Failed("STATUTORY_DISCOUNT_PAYABLE_BASIS_REVALIDATION_IDENTITY_MISMATCH");
+        }
+
+        var ticketReference = NormalizeOperationalIdentifier(
+            projection.PhysicalTicketIdentifier,
+            canonicalSession.VendorSessionRef);
+        var plateNumber = NormalizeOperationalIdentifier(projection.PlateNumber);
+
+        if (ConflictsWithAuthoritativeIdentifier(
+                canonicalSession.TicketNumber,
+                ticketReference,
+                canonicalSession.VendorSessionRef) ||
+            ConflictsWithAuthoritativeIdentifier(canonicalSession.PlateNumber, plateNumber) ||
+            ConflictsWithAuthoritativeIdentifier(
+                review.TicketReference,
+                ticketReference,
+                canonicalSession.VendorSessionRef) ||
+            ConflictsWithAuthoritativeIdentifier(review.PlateNumber, plateNumber))
+        {
+            return Failed("STATUTORY_DISCOUNT_PAYABLE_BASIS_REVALIDATION_IDENTITY_MISMATCH");
+        }
+
+        if (ticketReference is null && plateNumber is null)
+        {
+            return Failed("STATUTORY_DISCOUNT_PAYABLE_BASIS_REVALIDATION_AUTHORITATIVE_IDENTITY_UNAVAILABLE");
+        }
+
         var resolution = await ResolveAsync(
                 review,
                 ticketReference,
@@ -63,24 +157,6 @@ public sealed class StatutoryDiscountPayableBasisRevalidationService
                 correlationId,
                 cancellationToken)
             .ConfigureAwait(false);
-
-        // Historical service-channel reviews may contain a vendor session reference in the
-        // ticket field. A deterministic ticket rejection can safely fall back to the review's
-        // plate because the canonical parking-session and site identities are checked below.
-        if (ticketReference is not null &&
-            plateNumber is not null &&
-            resolution.Outcome is ResolveVendorParkingOutcome.InvalidRequest or
-                ResolveVendorParkingOutcome.SessionNotFound &&
-            !resolution.Retryable)
-        {
-            resolution = await ResolveAsync(
-                    review,
-                    ticketReference: null,
-                    plateNumber,
-                    correlationId,
-                    cancellationToken)
-                .ConfigureAwait(false);
-        }
 
         if (resolution.Outcome != ResolveVendorParkingOutcome.Resolved ||
             resolution.ParkingSession is null ||
@@ -136,6 +212,40 @@ public sealed class StatutoryDiscountPayableBasisRevalidationService
                 CorrelationId = correlationId
             },
             cancellationToken);
+
+    private static bool ConflictsWithAuthoritativeIdentifier(
+        string? candidate,
+        string? authoritative,
+        string? vendorSessionReference = null)
+    {
+        var normalized = NormalizeOperationalIdentifier(candidate, vendorSessionReference);
+        return normalized is not null && !SameIdentifier(normalized, authoritative);
+    }
+
+    private static string? NormalizeOperationalIdentifier(
+        string? value,
+        string? vendorSessionReference = null)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.Contains('*') ||
+            normalized.StartsWith("HIKCENTRAL:", StringComparison.OrdinalIgnoreCase) ||
+            SameIdentifier(normalized, vendorSessionReference))
+        {
+            return null;
+        }
+
+        return normalized;
+    }
+
+    private static bool SameIdentifier(string? left, string? right) =>
+        !string.IsNullOrWhiteSpace(left) &&
+        !string.IsNullOrWhiteSpace(right) &&
+        string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private static StatutoryDiscountPayableBasisRevalidationResult Failed(
         string errorCode,
