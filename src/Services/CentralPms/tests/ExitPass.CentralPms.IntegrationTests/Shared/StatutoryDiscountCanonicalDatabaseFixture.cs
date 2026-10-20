@@ -61,6 +61,7 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
             }
 
             _borrowedSuiteDatabase = true;
+            await EnsureAcceptedRuntimeColumnsAsync(_connectionString!);
             await StatutoryDiscountCanonicalSchemaPrerequisite.EnsurePresentAsync(_connectionString!);
             return;
         }
@@ -78,6 +79,7 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
             await RunPsqlFileAsync(options, _databaseName, options.CanonicalAlignmentValidatorPath, "canonical alignment validation");
             await ApplyApplicationPatchesAsync(options, _databaseName, replay: false);
             await ApplyApplicationPatchesAsync(options, _databaseName, replay: true);
+            await EnsureAcceptedRuntimeColumnsAsync(_connectionString);
             await StatutoryDiscountCanonicalSchemaPrerequisite.EnsurePresentAsync(_connectionString);
             PublishConnectionString(_connectionString);
             CentralPmsIntegrationSuiteDatabase.Publish(_databaseName, _connectionString);
@@ -142,6 +144,19 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                 await RunPsqlFileAsync(options, databaseName, source.ValidatorPath, $"{source.Name} validation {pass}");
             }
         }
+    }
+
+    private static async Task EnsureAcceptedRuntimeColumnsAsync(string connectionString)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            ALTER TABLE core.parking_sessions
+                ADD COLUMN IF NOT EXISTS canonical_vehicle_type_code varchar(32);
+            """,
+            connection);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task VerifyTaskOwnedPostgresAsync(StatutoryDiscountCanonicalDatabaseFixtureOptions options)
@@ -553,6 +568,10 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                     "statutory ID control reference",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_StatutoryIdControlReference_v1.3.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPmsStatutoryIdControlReference_v1.3.sql")),
+                new ApplicationSchemaSource(
+                    "statutory applied-basis recalculation",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_StatutoryAppliedBasisRecalculation_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPmsStatutoryAppliedBasisRecalculation_v1.3.sql")),
                 new ApplicationSchemaSource(
                     "human authentication lifecycle",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_HumanAuthenticationLifecycle_v1.3.sql"),

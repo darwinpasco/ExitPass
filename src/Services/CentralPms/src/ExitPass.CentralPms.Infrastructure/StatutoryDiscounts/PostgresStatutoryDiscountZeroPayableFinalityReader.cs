@@ -62,14 +62,16 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
                 application.statutory_discount_payable_basis_application_id AS application_id,
                 application.statutory_discount_validation_id AS application_validation_id,
                 application.parking_session_id AS application_parking_session_id,
-                application.original_tariff_snapshot_id AS application_original_tariff_id,
-                application.applied_tariff_snapshot_id AS application_applied_tariff_id,
+                original_tariff.tariff_snapshot_id AS application_original_tariff_id,
+                applied_tariff.tariff_snapshot_id AS application_applied_tariff_id,
                 application.application_status::text AS application_status,
-                application.gross_amount_minor_units AS application_gross_minor,
-                application.vat_amount_minor_units AS application_vat_minor,
-                application.statutory_discount_amount_minor_units AS application_discount_minor,
-                application.final_payable_amount_minor_units AS application_final_minor,
-                application.currency_code::text AS application_currency,
+                ROUND(applied_tariff.gross_amount * 100)::bigint AS application_gross_minor,
+                COALESCE(
+                    recalculation.vat_amount_minor_units,
+                    application.vat_amount_minor_units) AS application_vat_minor,
+                ROUND(applied_tariff.statutory_discount_amount * 100)::bigint AS application_discount_minor,
+                ROUND(applied_tariff.net_amount * 100)::bigint AS application_final_minor,
+                applied_tariff.currency_code::text AS application_currency,
                 application.applied_at AS application_applied_at,
                 application.correlation_id AS application_correlation_id,
 
@@ -125,10 +127,45 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
                 applied_tariff.currency_code::text AS applied_tariff_currency,
                 applied_tariff.statutory_discount_validation_id AS applied_tariff_validation_id,
 
+                command_original_tariff.tariff_snapshot_id AS command_original_tariff_id,
+                command_original_tariff.parking_session_id AS command_original_tariff_parking_session_id,
+                command_original_tariff.snapshot_status::text AS command_original_tariff_status,
+                ROUND(command_original_tariff.gross_amount * 100)::bigint AS command_original_tariff_gross_minor,
+                ROUND(command_original_tariff.statutory_discount_amount * 100)::bigint AS command_original_tariff_discount_minor,
+                ROUND(command_original_tariff.net_amount * 100)::bigint AS command_original_tariff_net_minor,
+                command_original_tariff.currency_code::text AS command_original_tariff_currency,
+                command_original_tariff.statutory_discount_validation_id AS command_original_tariff_validation_id,
+
+                command_applied_tariff.tariff_snapshot_id AS command_applied_tariff_id,
+                command_applied_tariff.parking_session_id AS command_applied_tariff_parking_session_id,
+                command_applied_tariff.snapshot_status::text AS command_applied_tariff_status,
+                ROUND(command_applied_tariff.gross_amount * 100)::bigint AS command_applied_tariff_gross_minor,
+                ROUND(command_applied_tariff.statutory_discount_amount * 100)::bigint AS command_applied_tariff_discount_minor,
+                ROUND(command_applied_tariff.net_amount * 100)::bigint AS command_applied_tariff_net_minor,
+                command_applied_tariff.currency_code::text AS command_applied_tariff_currency,
+                command_applied_tariff.statutory_discount_validation_id AS command_applied_tariff_validation_id,
+
+                EXISTS (
+                    WITH RECURSIVE tariff_lineage AS (
+                        SELECT tariff_snapshot_id, superseded_by_tariff_snapshot_id, 0 AS depth
+                        FROM core.tariff_snapshots
+                        WHERE tariff_snapshot_id = command.original_tariff_snapshot_id
+                        UNION ALL
+                        SELECT successor.tariff_snapshot_id, successor.superseded_by_tariff_snapshot_id, lineage.depth + 1
+                        FROM tariff_lineage AS lineage
+                        JOIN core.tariff_snapshots AS successor
+                          ON successor.tariff_snapshot_id = lineage.superseded_by_tariff_snapshot_id
+                        WHERE lineage.depth < 32
+                    )
+                    SELECT 1
+                    FROM tariff_lineage
+                    WHERE tariff_snapshot_id = applied_tariff.tariff_snapshot_id
+                ) AS has_tariff_lineage_to_current,
+
                 EXISTS (
                     SELECT 1
                     FROM core.payment_attempts AS payment
-                    WHERE payment.tariff_snapshot_id = command.applied_tariff_snapshot_id
+                    WHERE payment.parking_session_id = decision.parking_session_id
                 ) AS has_conflicting_payment_attempt
             FROM discounts.statutory_discount_decision_commands AS decision
             LEFT JOIN discounts.statutory_discount_payable_basis_application_commands AS command
@@ -146,10 +183,29 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
               ON parking.parking_session_id = decision.parking_session_id
             LEFT JOIN sites.sites AS parking_site
               ON parking_site.site_id = parking.site_id
+            LEFT JOIN LATERAL (
+                SELECT current_applied.*
+                FROM core.tariff_snapshots AS current_applied
+                WHERE current_applied.parking_session_id = decision.parking_session_id
+                  AND current_applied.statutory_discount_validation_id =
+                      command.statutory_discount_validation_id
+                  AND current_applied.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
+                  AND current_applied.superseded_by_tariff_snapshot_id IS NULL
+                  AND current_applied.statutory_discount_amount > 0
+                ORDER BY current_applied.calculated_at DESC, current_applied.updated_at DESC
+                LIMIT 1
+            ) AS applied_tariff ON TRUE
             LEFT JOIN core.tariff_snapshots AS original_tariff
-              ON original_tariff.tariff_snapshot_id = command.original_tariff_snapshot_id
-            LEFT JOIN core.tariff_snapshots AS applied_tariff
-              ON applied_tariff.tariff_snapshot_id = command.applied_tariff_snapshot_id
+              ON original_tariff.superseded_by_tariff_snapshot_id = applied_tariff.tariff_snapshot_id
+             AND original_tariff.parking_session_id = applied_tariff.parking_session_id
+            LEFT JOIN discounts.statutory_discount_payable_basis_recalculations AS recalculation
+              ON recalculation.statutory_discount_payable_basis_application_id =
+                 application.statutory_discount_payable_basis_application_id
+             AND recalculation.applied_tariff_snapshot_id = applied_tariff.tariff_snapshot_id
+            LEFT JOIN core.tariff_snapshots AS command_original_tariff
+              ON command_original_tariff.tariff_snapshot_id = command.original_tariff_snapshot_id
+            LEFT JOIN core.tariff_snapshots AS command_applied_tariff
+              ON command_applied_tariff.tariff_snapshot_id = command.applied_tariff_snapshot_id
             WHERE decision.statutory_discount_decision_command_id = @decision_command_id;
             """;
 
@@ -247,7 +303,10 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
                 NullableTimestamp(reader, "parking_entry_time")),
             ReadTariff(reader, "original_tariff"),
             ReadTariff(reader, "applied_tariff"),
-            reader.GetBoolean(reader.GetOrdinal("has_conflicting_payment_attempt")));
+            reader.GetBoolean(reader.GetOrdinal("has_conflicting_payment_attempt")),
+            ReadTariff(reader, "command_original_tariff"),
+            ReadTariff(reader, "command_applied_tariff"),
+            reader.GetBoolean(reader.GetOrdinal("has_tariff_lineage_to_current")));
 
         if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {

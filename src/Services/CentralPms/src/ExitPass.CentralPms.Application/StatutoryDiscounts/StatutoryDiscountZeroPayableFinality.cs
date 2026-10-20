@@ -142,7 +142,10 @@ public sealed record StatutoryDiscountZeroPayableFinalityCandidate(
     StatutoryDiscountZeroPayableParkingAnchor ParkingSession,
     StatutoryDiscountZeroPayableTariffAnchor OriginalTariff,
     StatutoryDiscountZeroPayableTariffAnchor AppliedTariff,
-    bool HasConflictingPaymentAttempt);
+    bool HasConflictingPaymentAttempt,
+    StatutoryDiscountZeroPayableTariffAnchor? ApplicationCommandOriginalTariff = null,
+    StatutoryDiscountZeroPayableTariffAnchor? ApplicationCommandAppliedTariff = null,
+    bool HasTariffLineageToCurrent = true);
 
 public sealed record StatutoryDiscountZeroPayableFinalityResolution(
     StatutoryDiscountZeroPayableFinality? Finality,
@@ -291,6 +294,8 @@ public static class StatutoryDiscountZeroPayableFinalityResolver
         var parkingSession = candidate.ParkingSession;
         var originalTariff = candidate.OriginalTariff;
         var appliedTariff = candidate.AppliedTariff;
+        var commandOriginalTariff = candidate.ApplicationCommandOriginalTariff ?? originalTariff;
+        var commandAppliedTariff = candidate.ApplicationCommandAppliedTariff ?? appliedTariff;
 
         if (command.DecisionCommandId != decision.DecisionCommandId ||
             policy.DecisionCommandId != decision.DecisionCommandId)
@@ -303,7 +308,9 @@ public static class StatutoryDiscountZeroPayableFinalityResolver
             validation.ParkingSessionId != decision.ParkingSessionId ||
             parkingSession.ParkingSessionId != decision.ParkingSessionId ||
             originalTariff.ParkingSessionId != decision.ParkingSessionId ||
-            appliedTariff.ParkingSessionId != decision.ParkingSessionId)
+            appliedTariff.ParkingSessionId != decision.ParkingSessionId ||
+            commandOriginalTariff.ParkingSessionId != decision.ParkingSessionId ||
+            commandAppliedTariff.ParkingSessionId != decision.ParkingSessionId)
         {
             return "ZERO_PAYABLE_STATUTORY_PARKING_SESSION_LINKAGE_MISMATCH";
         }
@@ -332,12 +339,16 @@ public static class StatutoryDiscountZeroPayableFinalityResolver
         }
 
         if (!command.OriginalTariffSnapshotId.HasValue ||
-            command.OriginalTariffSnapshotId != application.OriginalTariffSnapshotId ||
-            application.OriginalTariffSnapshotId != originalTariff.TariffSnapshotId ||
+            command.OriginalTariffSnapshotId != commandOriginalTariff.TariffSnapshotId ||
             !command.AppliedTariffSnapshotId.HasValue ||
-            command.AppliedTariffSnapshotId != application.AppliedTariffSnapshotId ||
+            command.AppliedTariffSnapshotId != commandAppliedTariff.TariffSnapshotId ||
+            application.OriginalTariffSnapshotId != originalTariff.TariffSnapshotId ||
             application.AppliedTariffSnapshotId != appliedTariff.TariffSnapshotId ||
-            validation.TariffSnapshotId != appliedTariff.TariffSnapshotId ||
+            validation.TariffSnapshotId != commandAppliedTariff.TariffSnapshotId ||
+            !candidate.HasTariffLineageToCurrent ||
+            !EqualsCanonical(commandOriginalTariff.SnapshotStatus, "SUPERSEDED") ||
+            (!EqualsCanonical(commandAppliedTariff.SnapshotStatus, "SUPERSEDED") &&
+             commandAppliedTariff.TariffSnapshotId != appliedTariff.TariffSnapshotId) ||
             !EqualsCanonical(originalTariff.SnapshotStatus, "SUPERSEDED") ||
             !EqualsCanonical(appliedTariff.SnapshotStatus, "ACTIVE"))
         {
@@ -400,30 +411,24 @@ public static class StatutoryDiscountZeroPayableFinalityResolver
     {
         var decision = candidate.Decision;
         var command = candidate.ApplicationCommand;
-        var application = candidate.Application;
         var validation = candidate.Validation;
-        var originalTariff = candidate.OriginalTariff;
-        var appliedTariff = candidate.AppliedTariff;
+        var originalTariff = candidate.ApplicationCommandOriginalTariff ?? candidate.OriginalTariff;
+        var appliedTariff = candidate.ApplicationCommandAppliedTariff ?? candidate.AppliedTariff;
 
         return decision.GrossAmountMinorUnits.HasValue &&
-               decision.GrossAmountMinorUnits == application.GrossAmountMinorUnits &&
                decision.GrossAmountMinorUnits == validation.GrossAmountMinorUnits &&
                decision.GrossAmountMinorUnits == originalTariff.NetAmountMinorUnits &&
                decision.GrossAmountMinorUnits == appliedTariff.GrossAmountMinorUnits &&
                decision.VatAmountMinorUnits.HasValue &&
-               decision.VatAmountMinorUnits == application.VatAmountMinorUnits &&
                decision.VatAmountMinorUnits == command.ApprovedVatAmountMinorUnits &&
                decision.StatutoryDiscountAmountMinorUnits.HasValue &&
-               decision.StatutoryDiscountAmountMinorUnits == application.StatutoryDiscountAmountMinorUnits &&
                decision.StatutoryDiscountAmountMinorUnits == command.ApprovedDiscountAmountMinorUnits &&
                decision.StatutoryDiscountAmountMinorUnits == validation.StatutoryDiscountAmountMinorUnits &&
                decision.StatutoryDiscountAmountMinorUnits == appliedTariff.StatutoryDiscountAmountMinorUnits &&
                decision.FinalPayableAmountMinorUnits.HasValue &&
-               decision.FinalPayableAmountMinorUnits == application.FinalPayableAmountMinorUnits &&
                decision.FinalPayableAmountMinorUnits == command.ApprovedFinalPayableAmountMinorUnits &&
                decision.FinalPayableAmountMinorUnits == validation.FinalPayableAmountMinorUnits &&
                decision.FinalPayableAmountMinorUnits == appliedTariff.NetAmountMinorUnits &&
-               EqualsCanonical(decision.Currency, application.Currency) &&
                EqualsCanonical(decision.Currency, command.Currency) &&
                EqualsCanonical(decision.Currency, validation.Currency) &&
                EqualsCanonical(decision.Currency, originalTariff.Currency) &&
@@ -432,24 +437,17 @@ public static class StatutoryDiscountZeroPayableFinalityResolver
 
     private static bool HasMatchingAmounts(StatutoryDiscountZeroPayableFinalityCandidate candidate)
     {
-        var command = candidate.ApplicationCommand;
         var application = candidate.Application;
-        var validation = candidate.Validation;
         var originalTariff = candidate.OriginalTariff;
         var appliedTariff = candidate.AppliedTariff;
 
-        return application.GrossAmountMinorUnits == validation.GrossAmountMinorUnits &&
-               application.GrossAmountMinorUnits == originalTariff.NetAmountMinorUnits &&
+        return application.GrossAmountMinorUnits == originalTariff.NetAmountMinorUnits &&
                application.GrossAmountMinorUnits == appliedTariff.GrossAmountMinorUnits &&
                application.VatAmountMinorUnits.HasValue &&
-               application.VatAmountMinorUnits == command.ApprovedVatAmountMinorUnits &&
-               application.StatutoryDiscountAmountMinorUnits == command.ApprovedDiscountAmountMinorUnits &&
-               application.StatutoryDiscountAmountMinorUnits == validation.StatutoryDiscountAmountMinorUnits &&
                application.StatutoryDiscountAmountMinorUnits == appliedTariff.StatutoryDiscountAmountMinorUnits &&
+               application.FinalPayableAmountMinorUnits == appliedTariff.NetAmountMinorUnits &&
                application.StatutoryDiscountAmountMinorUnits + application.VatAmountMinorUnits ==
                    application.GrossAmountMinorUnits &&
-               EqualsCanonical(application.Currency, command.Currency) &&
-               EqualsCanonical(application.Currency, validation.Currency) &&
                EqualsCanonical(application.Currency, originalTariff.Currency) &&
                EqualsCanonical(application.Currency, appliedTariff.Currency);
     }

@@ -3,9 +3,11 @@ using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.Sessions;
 using ExitPass.CentralPms.Domain.Tariffs;
+using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.VendorParking;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using Npgsql;
 using NpgsqlTypes;
 using Xunit;
@@ -234,10 +236,145 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
     }
 
     [Fact]
-    public async Task PersistLiveResolution_WhenAppliedStatutoryBaseQuoteChanges_FailsClosed()
+    public async Task PersistLiveResolution_WhenAppliedStatutoryGrossIncreases_RecalculatesOneZeroPayableRevision()
     {
         var persistence = CreatePersistence();
         var fixture = CreateFixture("LIVE-STATUTORY-CHANGED", DateTimeOffset.UtcNow.AddMinutes(10), plateOnly: true);
+        var initial = await persistence.PersistAsync(
+            Request(
+                fixture,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                tariffVersionReference: "1",
+                amount: 500m),
+            CancellationToken.None);
+        var originalAppliedTariffSnapshotId = await InsertAppliedStatutoryPayableBasisAsync(
+            initial.ParkingSession.ParkingSessionId,
+            initial.TariffSnapshot.TariffSnapshotId,
+            Guid.NewGuid());
+
+        var refreshed = await persistence.PersistAsync(
+            Request(
+                fixture,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                tariffVersionReference: "1",
+                amount: 830m,
+                referencesAlreadyExist: true),
+            CancellationToken.None);
+
+        refreshed.ParkingSessionWasReused.Should().BeTrue();
+        refreshed.TariffSnapshotWasReused.Should().BeFalse();
+        refreshed.TariffSnapshot.TariffSnapshotId.Should().NotBe(originalAppliedTariffSnapshotId);
+        refreshed.TariffSnapshot.GrossAmount.Should().Be(830m);
+        refreshed.TariffSnapshot.StatutoryDiscountAmount.Should().Be(741.07m);
+        refreshed.TariffSnapshot.NetPayable.Should().Be(0m);
+        refreshed.EffectivePayableBasis.Should().NotBeNull();
+        refreshed.EffectivePayableBasis!.AppliedTariffSnapshotId.Should().Be(refreshed.TariffSnapshot.TariffSnapshotId);
+        refreshed.EffectivePayableBasis.StatutoryDiscountAmountMinorUnits.Should().Be(74107);
+        refreshed.EffectivePayableBasis.FinalPayableAmountMinorUnits.Should().Be(0);
+
+        var paymentBasisRepository = new TariffSnapshotReadRepository(
+            new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:MainDatabase"] =
+                        CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString()
+                })
+                .Build());
+        var channelReadback = await paymentBasisRepository.GetEffectiveAppliedTariffSnapshotAsync(
+            initial.ParkingSession.ParkingSessionId,
+            CancellationToken.None);
+        channelReadback.Should().NotBeNull();
+        channelReadback!.AppliedTariffSnapshotId.Should().Be(refreshed.TariffSnapshot.TariffSnapshotId);
+        channelReadback.StatutoryDiscountAmountMinorUnits.Should().Be(74107);
+        channelReadback.FinalPayableAmountMinorUnits.Should().Be(0);
+
+        var replay = await persistence.PersistAsync(
+            Request(
+                fixture,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                tariffVersionReference: "1",
+                amount: 830m,
+                referencesAlreadyExist: true),
+            CancellationToken.None);
+
+        replay.TariffSnapshotWasReused.Should().BeTrue();
+        replay.TariffSnapshot.TariffSnapshotId.Should().Be(refreshed.TariffSnapshot.TariffSnapshotId);
+        (await ReadAppliedStatutoryRevisionStateAsync(initial.ParkingSession.ParkingSessionId)).Should().BeEquivalentTo(
+            new AppliedStatutoryRevisionState(
+                TotalTariffSnapshots: 4,
+                ActiveTariffSnapshots: 1,
+                StatutoryAdjustedSnapshots: 2,
+                PayableBasisApplications: 1,
+                DecisionCommands: 1,
+                PaymentAttempts: 0,
+                FiscalReferences: 0,
+                ExitAuthorizations: 0,
+                OriginalApplicationGrossMinorUnits: 50000,
+                CurrentGrossMinorUnits: 83000,
+                CurrentVatMinorUnits: 8893,
+                CurrentStatutoryDiscountMinorUnits: 74107,
+                CurrentPayableMinorUnits: 0,
+                RecalculationHistoryCount: 1));
+        await AssertRecalculationEvidenceIsImmutableAsync(initial.ParkingSession.ParkingSessionId);
+    }
+
+    [Fact]
+    public async Task PersistLiveResolution_WhenAppliedStatutoryTariffVersionChanges_RecalculatesAndPreservesDecision()
+    {
+        var persistence = CreatePersistence();
+        var fixture = CreateFixture("LIVE-STATUTORY-VERSION", DateTimeOffset.UtcNow.AddMinutes(10), plateOnly: true);
+        var initial = await persistence.PersistAsync(
+            Request(
+                fixture,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                tariffVersionReference: "1",
+                amount: 500m),
+            CancellationToken.None);
+        var originalAppliedTariffSnapshotId = await InsertAppliedStatutoryPayableBasisAsync(
+            initial.ParkingSession.ParkingSessionId,
+            initial.TariffSnapshot.TariffSnapshotId,
+            Guid.NewGuid());
+
+        var refreshed = await persistence.PersistAsync(
+            Request(
+                fixture,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                tariffVersionReference: "2",
+                amount: 500m,
+                referencesAlreadyExist: true),
+            CancellationToken.None);
+
+        refreshed.TariffSnapshotWasReused.Should().BeFalse();
+        refreshed.TariffSnapshot.TariffSnapshotId.Should().NotBe(originalAppliedTariffSnapshotId);
+        refreshed.TariffSnapshot.TariffVersionReference.Should().Be("2|STATUTORY_DISCOUNT_APPLIED");
+        refreshed.TariffSnapshot.NetPayable.Should().Be(0m);
+        (await ReadAppliedStatutoryRevisionStateAsync(initial.ParkingSession.ParkingSessionId)).Should().Match<AppliedStatutoryRevisionState>(
+            state => state.StatutoryAdjustedSnapshots == 2 &&
+                     state.PayableBasisApplications == 1 &&
+                     state.DecisionCommands == 1 &&
+                     state.CurrentPayableMinorUnits == 0);
+    }
+
+    [Fact]
+    public async Task PersistLiveResolution_WhenConcurrentChannelsObserveChangedStatutoryFee_CreatesOneRevision()
+    {
+        var persistence = CreatePersistence();
+        var fixture = CreateFixture("LIVE-STATUTORY-CONCURRENT", DateTimeOffset.UtcNow.AddMinutes(10), plateOnly: true);
         var initial = await persistence.PersistAsync(
             Request(
                 fixture,
@@ -253,7 +390,76 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
             initial.TariffSnapshot.TariffSnapshotId,
             Guid.NewGuid());
 
-        var action = () => persistence.PersistAsync(
+        var webPayResolution = persistence.PersistAsync(
+            Request(
+                fixture,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                tariffVersionReference: "1",
+                amount: 530m,
+                referencesAlreadyExist: true),
+            CancellationToken.None);
+        var aptResolution = persistence.PersistAsync(
+            Request(
+                fixture,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                tariffVersionReference: "1",
+                amount: 530m,
+                referencesAlreadyExist: true),
+            CancellationToken.None);
+
+        var results = await Task.WhenAll(webPayResolution, aptResolution);
+
+        results.Select(result => result.ParkingSession.ParkingSessionId)
+            .Should().OnlyContain(sessionId => sessionId == initial.ParkingSession.ParkingSessionId);
+        results.Select(result => result.TariffSnapshot.TariffSnapshotId).Distinct().Should().ContainSingle();
+        results.Should().ContainSingle(result => !result.TariffSnapshotWasReused);
+        results.Should().ContainSingle(result => result.TariffSnapshotWasReused);
+        foreach (var result in results)
+        {
+            result.TariffSnapshot.GrossAmount.Should().Be(530m);
+            result.TariffSnapshot.StatutoryDiscountAmount.Should().Be(473.21m);
+            result.TariffSnapshot.NetPayable.Should().Be(0m);
+            result.EffectivePayableBasis.Should().NotBeNull();
+            result.EffectivePayableBasis!.FinalPayableAmountMinorUnits.Should().Be(0);
+        }
+
+        var state = await ReadAppliedStatutoryRevisionStateAsync(initial.ParkingSession.ParkingSessionId);
+        state.TotalTariffSnapshots.Should().Be(4);
+        state.ActiveTariffSnapshots.Should().Be(1);
+        state.StatutoryAdjustedSnapshots.Should().Be(2);
+        state.PayableBasisApplications.Should().Be(1);
+        state.DecisionCommands.Should().Be(1);
+        state.RecalculationHistoryCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task PersistLiveResolution_WhenAppliedStatutoryBasisIsPaymentBound_RejectsReplacement()
+    {
+        var persistence = CreatePersistence();
+        var fixture = CreateFixture("LIVE-STATUTORY-PAYMENT-BOUND", DateTimeOffset.UtcNow.AddMinutes(10), plateOnly: true);
+        var initial = await persistence.PersistAsync(
+            Request(
+                fixture,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                tariffVersionReference: "1",
+                amount: 500m),
+            CancellationToken.None);
+        var appliedTariffSnapshotId = await InsertAppliedStatutoryPayableBasisAsync(
+            initial.ParkingSession.ParkingSessionId,
+            initial.TariffSnapshot.TariffSnapshotId,
+            Guid.NewGuid());
+        await InsertPaymentAttemptAsync(initial.ParkingSession.ParkingSessionId, appliedTariffSnapshotId);
+
+        Func<Task> action = () => persistence.PersistAsync(
             Request(
                 fixture,
                 Guid.NewGuid(),
@@ -268,21 +474,14 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
         var exception = await action.Should().ThrowAsync<VendorParkingResolutionPersistenceException>();
         exception.Which.ErrorCode.Should().Be("EFFECTIVE_PAYABLE_BASIS_INVALID");
 
-        var changedVersionAction = () => persistence.PersistAsync(
-            Request(
-                fixture,
-                Guid.NewGuid(),
-                Guid.NewGuid(),
-                DateTimeOffset.UtcNow.AddMinutes(10),
-                VendorParkingTariffOrigin.LiveVendor,
-                tariffVersionReference: "2",
-                amount: 500m,
-                referencesAlreadyExist: true),
-            CancellationToken.None);
-
-        var changedVersionException = await changedVersionAction.Should()
-            .ThrowAsync<VendorParkingResolutionPersistenceException>();
-        changedVersionException.Which.ErrorCode.Should().Be("EFFECTIVE_PAYABLE_BASIS_INVALID");
+        var state = await ReadAppliedStatutoryRevisionStateAsync(initial.ParkingSession.ParkingSessionId);
+        state.TotalTariffSnapshots.Should().Be(2);
+        state.ActiveTariffSnapshots.Should().Be(1);
+        state.StatutoryAdjustedSnapshots.Should().Be(1);
+        state.PaymentAttempts.Should().Be(1);
+        state.CurrentGrossMinorUnits.Should().Be(50000);
+        state.CurrentPayableMinorUnits.Should().Be(0);
+        state.RecalculationHistoryCount.Should().Be(0);
     }
 
     [Fact]
@@ -671,6 +870,39 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
                 50000, 44643, 5357, 44643, 0, 'PHP',
                 FALSE, TRUE, 'APPROVED_FULL_PARKING_BENEFIT',
                 @correlation_id, NOW(), NOW(), NOW(), NOW(), NOW(), NOW());
+
+            INSERT INTO discounts.statutory_discount_payable_basis_application_commands (
+                statutory_discount_payable_basis_application_command_id,
+                request_reference, statutory_discount_decision_command_id,
+                parking_session_id, site_id, entitlement_type, business_identity,
+                idempotency_scope, idempotency_key, semantic_request_hash,
+                semantic_hash_source_version, command_status, result_classification,
+                retryable, recovery_classification,
+                statutory_discount_validation_id,
+                statutory_discount_payable_basis_application_id,
+                original_tariff_snapshot_id, target_tariff_snapshot_id,
+                applied_tariff_snapshot_id, applied_policy_reference_id,
+                policy_resolution_basis, approved_discount_amount_minor_units,
+                approved_vat_exclusive_amount_minor_units,
+                approved_vat_amount_minor_units,
+                approved_final_payable_amount_minor_units, currency_code,
+                source_channel, original_correlation_id, created_at,
+                processing_started_at, applied_at, completed_at, updated_at)
+            SELECT
+                gen_random_uuid(), gen_random_uuid(), @decision_command_id,
+                @parking_session_id, parking.site_id, 'SENIOR_CITIZEN',
+                'vendor-parking-statutory-application-' || @decision_command_id::text,
+                'vendor-parking-statutory-application', @decision_command_id::text,
+                'sha256:' || repeat('1', 64),
+                'statutory-discount-payable-basis-application:sha256:v1',
+                'APPLIED', 'APPLIED', FALSE, 'NONE',
+                @validation_id, @application_id,
+                @original_tariff_snapshot_id, NULL,
+                @applied_tariff_snapshot_id, NULL,
+                'LOCAL_ORDINANCE_APPLIED', 44643, 44643, 5357, 0, 'PHP',
+                'OPERATOR_CONSOLE', @correlation_id, NOW(), NOW(), NOW(), NOW(), NOW()
+            FROM core.parking_sessions AS parking
+            WHERE parking.parking_session_id = @parking_session_id;
             """,
             connection);
         command.Parameters.AddWithValue("validation_id", validationId);
@@ -699,6 +931,127 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
             connection);
         command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
         return (long)(await command.ExecuteScalarAsync() ?? 0L);
+    }
+
+    private static async Task InsertPaymentAttemptAsync(Guid parkingSessionId, Guid tariffSnapshotId)
+    {
+        var paymentAttemptId = Guid.NewGuid();
+        await using var connection = new NpgsqlConnection(
+            CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO core.payment_attempts (
+                payment_attempt_id, parking_session_id, tariff_snapshot_id,
+                idempotency_key, currency_code, amount, attempt_status,
+                requested_at, expires_at, correlation_id, created_at,
+                created_by_service_identity_id, updated_at,
+                updated_by_service_identity_id, row_version)
+            VALUES (
+                @payment_attempt_id, @parking_session_id, @tariff_snapshot_id,
+                @idempotency_key, 'PHP', 0,
+                'REQUESTED'::core.payment_attempt_status_enum,
+                NOW(), NOW() + INTERVAL '15 minutes', @correlation_id, NOW(),
+                @service_identity_id, NOW(), @service_identity_id, 1);
+            """,
+            connection);
+        command.Parameters.Add("payment_attempt_id", NpgsqlDbType.Uuid).Value = paymentAttemptId;
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = tariffSnapshotId;
+        command.Parameters.AddWithValue("idempotency_key", $"statutory-recalculation-payment-{paymentAttemptId:N}");
+        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = Guid.NewGuid();
+        command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value =
+            Guid.Parse("12000000-0000-0000-0000-000000000001");
+        (await command.ExecuteNonQueryAsync()).Should().Be(1);
+    }
+
+    private static async Task<AppliedStatutoryRevisionState> ReadAppliedStatutoryRevisionStateAsync(
+        Guid parkingSessionId)
+    {
+        await using var connection = new NpgsqlConnection(CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT
+                (SELECT COUNT(*)::int FROM core.tariff_snapshots WHERE parking_session_id = @parking_session_id),
+                (SELECT COUNT(*)::int FROM core.tariff_snapshots
+                  WHERE parking_session_id = @parking_session_id
+                    AND snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum),
+                (SELECT COUNT(*)::int FROM core.tariff_snapshots
+                  WHERE parking_session_id = @parking_session_id
+                    AND statutory_discount_validation_id IS NOT NULL),
+                (SELECT COUNT(*)::int FROM discounts.statutory_discount_payable_basis_applications
+                  WHERE parking_session_id = @parking_session_id),
+                (SELECT COUNT(*)::int FROM discounts.statutory_discount_decision_commands
+                  WHERE parking_session_id = @parking_session_id),
+                (SELECT COUNT(*)::int FROM core.payment_attempts WHERE parking_session_id = @parking_session_id),
+                (SELECT COUNT(*)::int FROM core.fiscal_issuance_references WHERE parking_session_id = @parking_session_id),
+                (SELECT COUNT(*)::int FROM core.exit_authorizations WHERE parking_session_id = @parking_session_id),
+                application.gross_amount_minor_units,
+                COALESCE(recalculation.gross_amount_minor_units, application.gross_amount_minor_units),
+                COALESCE(recalculation.vat_amount_minor_units, application.vat_amount_minor_units),
+                COALESCE(
+                    recalculation.statutory_discount_amount_minor_units,
+                    application.statutory_discount_amount_minor_units),
+                COALESCE(
+                    recalculation.final_payable_amount_minor_units,
+                    application.final_payable_amount_minor_units),
+                (SELECT COUNT(*)::int
+                 FROM discounts.statutory_discount_payable_basis_recalculations
+                 WHERE parking_session_id = @parking_session_id)
+            FROM discounts.statutory_discount_payable_basis_applications AS application
+            LEFT JOIN LATERAL (
+                SELECT recalc.*
+                FROM discounts.statutory_discount_payable_basis_recalculations AS recalc
+                JOIN core.tariff_snapshots AS applied
+                  ON applied.tariff_snapshot_id = recalc.applied_tariff_snapshot_id
+                 AND applied.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
+                WHERE recalc.statutory_discount_payable_basis_application_id =
+                      application.statutory_discount_payable_basis_application_id
+                ORDER BY recalc.created_at DESC,
+                         recalc.statutory_discount_payable_basis_recalculation_id DESC
+                LIMIT 1
+            ) AS recalculation ON TRUE
+            WHERE application.parking_session_id = @parking_session_id
+              AND application.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum;
+            """,
+            connection);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+        await using var reader = await command.ExecuteReaderAsync();
+        (await reader.ReadAsync()).Should().BeTrue();
+        return new AppliedStatutoryRevisionState(
+            reader.GetInt32(0),
+            reader.GetInt32(1),
+            reader.GetInt32(2),
+            reader.GetInt32(3),
+            reader.GetInt32(4),
+            reader.GetInt32(5),
+            reader.GetInt32(6),
+            reader.GetInt32(7),
+            reader.GetInt64(8),
+            reader.GetInt64(9),
+            reader.GetInt64(10),
+            reader.GetInt64(11),
+            reader.GetInt64(12),
+            reader.GetInt32(13));
+    }
+
+    private static async Task AssertRecalculationEvidenceIsImmutableAsync(Guid parkingSessionId)
+    {
+        await using var connection = new NpgsqlConnection(CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            UPDATE discounts.statutory_discount_payable_basis_recalculations
+            SET correlation_id = gen_random_uuid()
+            WHERE parking_session_id = @parking_session_id;
+            """,
+            connection);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+
+        Func<Task> action = () => command.ExecuteNonQueryAsync();
+        var exception = await action.Should().ThrowAsync<PostgresException>();
+        exception.Which.SqlState.Should().Be(PostgresErrorCodes.CheckViolation);
     }
 
     private static TariffSnapshot Tariff(
@@ -800,4 +1153,20 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
         public string VendorSystemCode { get; init; } = $"VENDOR-{Guid.NewGuid():N}";
         public PersistVendorParkingResolutionRequest Request { get; init; } = null!;
     }
+
+    private sealed record AppliedStatutoryRevisionState(
+        int TotalTariffSnapshots,
+        int ActiveTariffSnapshots,
+        int StatutoryAdjustedSnapshots,
+        int PayableBasisApplications,
+        int DecisionCommands,
+        int PaymentAttempts,
+        int FiscalReferences,
+        int ExitAuthorizations,
+        long OriginalApplicationGrossMinorUnits,
+        long CurrentGrossMinorUnits,
+        long CurrentVatMinorUnits,
+        long CurrentStatutoryDiscountMinorUnits,
+        long CurrentPayableMinorUnits,
+        int RecalculationHistoryCount);
 }

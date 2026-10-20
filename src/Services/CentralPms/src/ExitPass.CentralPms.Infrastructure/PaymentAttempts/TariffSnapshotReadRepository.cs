@@ -202,8 +202,8 @@ public sealed class TariffSnapshotReadRepository : ITariffSnapshotReadRepository
                     cmd.applied_policy_reference_id,
                     cmd.policy_resolution_basis::text AS command_policy_resolution_basis,
                     cmd.entitlement_type::text AS entitlement_type,
-                    cmd.statutory_discount_amount_minor_units,
-                    cmd.net_payable_amount_minor_units,
+                    ROUND(ts.statutory_discount_amount * 100)::bigint AS statutory_discount_amount_minor_units,
+                    ROUND(ts.net_amount * 100)::bigint AS net_payable_amount_minor_units,
                     COALESCE(cmd.decided_at, cmd.applied_at, cmd.created_at) AS decision_timestamp,
                     ts.calculated_at,
                     ts.updated_at,
@@ -216,7 +216,7 @@ public sealed class TariffSnapshotReadRepository : ITariffSnapshotReadRepository
                   ON sdv.statutory_discount_validation_id = ts.statutory_discount_validation_id
                  AND sdv.parking_session_id = ts.parking_session_id
                 LEFT JOIN discounts.statutory_discount_payable_basis_applications AS pba
-                  ON pba.applied_tariff_snapshot_id = ts.tariff_snapshot_id
+                  ON pba.parking_session_id = ts.parking_session_id
                  AND pba.statutory_discount_validation_id = ts.statutory_discount_validation_id
                  AND pba.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
                 LEFT JOIN discounts.statutory_discount_decision_commands AS cmd

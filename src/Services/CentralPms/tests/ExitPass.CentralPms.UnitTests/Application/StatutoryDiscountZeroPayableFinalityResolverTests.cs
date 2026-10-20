@@ -17,6 +17,8 @@ public sealed class StatutoryDiscountZeroPayableFinalityResolverTests
     private static readonly Guid ApplicationId = Guid.Parse("8a000000-0000-0000-0000-000000000008");
     private static readonly Guid OriginalTariffId = Guid.Parse("8a000000-0000-0000-0000-000000000009");
     private static readonly Guid AppliedTariffId = Guid.Parse("8a000000-0000-0000-0000-00000000000a");
+    private static readonly Guid RecalculatedOriginalTariffId = Guid.Parse("8a000000-0000-0000-0000-00000000000d");
+    private static readonly Guid RecalculatedAppliedTariffId = Guid.Parse("8a000000-0000-0000-0000-00000000000e");
     private static readonly Guid CorrelationId = Guid.Parse("8a000000-0000-0000-0000-00000000000b");
     private static readonly DateTimeOffset DecidedAt = DateTimeOffset.Parse("2026-09-08T01:00:00Z");
     private static readonly DateTimeOffset AppliedAt = DateTimeOffset.Parse("2026-09-08T01:01:00Z");
@@ -61,6 +63,33 @@ public sealed class StatutoryDiscountZeroPayableFinalityResolverTests
 
         replay.Should().BeEquivalentTo(first);
         candidate.HasConflictingPaymentAttempt.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Resolve_WhenApprovedFullFeeBasisWasRecalculated_ReturnsCurrentFinalityAndPreservesApprovalFacts()
+    {
+        var candidate = RecalculatedCandidate();
+
+        var result = StatutoryDiscountZeroPayableFinalityResolver.Resolve(candidate);
+
+        result.IsAvailable.Should().BeTrue();
+        result.RejectionCode.Should().BeNull();
+        result.Finality!.OriginalTariffSnapshotId.Should().Be(RecalculatedOriginalTariffId);
+        result.Finality.AppliedTariffSnapshotId.Should().Be(RecalculatedAppliedTariffId);
+        result.Finality.OriginalAmountMinorUnits.Should().Be(8300);
+        result.Finality.StatutoryWaiverAmountMinorUnits.Should().Be(8300);
+        result.Finality.VatAmountMinorUnits.Should().Be(889);
+        result.Finality.FinalPayableAmountMinorUnits.Should().Be(0);
+        candidate.Decision.GrossAmountMinorUnits.Should().Be(3000);
+        candidate.ApplicationCommand.ApprovedDiscountAmountMinorUnits.Should().Be(2679);
+    }
+
+    [Fact]
+    public void Resolve_WhenRecalculatedTariffIsNotInApprovedLineage_Rejects()
+    {
+        var candidate = RecalculatedCandidate() with { HasTariffLineageToCurrent = false };
+
+        AssertRejected(candidate, "ZERO_PAYABLE_STATUTORY_TARIFF_LINKAGE_MISMATCH");
     }
 
     [Fact]
@@ -472,4 +501,35 @@ public sealed class StatutoryDiscountZeroPayableFinalityResolverTests
                 "PHP",
                 ValidationId),
             HasConflictingPaymentAttempt: false);
+
+    private static StatutoryDiscountZeroPayableFinalityCandidate RecalculatedCandidate()
+    {
+        var original = Candidate();
+        return original with
+        {
+            Application = original.Application with
+            {
+                OriginalTariffSnapshotId = RecalculatedOriginalTariffId,
+                AppliedTariffSnapshotId = RecalculatedAppliedTariffId,
+                GrossAmountMinorUnits = 8300,
+                VatAmountMinorUnits = 889,
+                StatutoryDiscountAmountMinorUnits = 7411
+            },
+            OriginalTariff = original.OriginalTariff with
+            {
+                TariffSnapshotId = RecalculatedOriginalTariffId,
+                GrossAmountMinorUnits = 8300,
+                NetAmountMinorUnits = 8300
+            },
+            AppliedTariff = original.AppliedTariff with
+            {
+                TariffSnapshotId = RecalculatedAppliedTariffId,
+                GrossAmountMinorUnits = 8300,
+                StatutoryDiscountAmountMinorUnits = 7411
+            },
+            ApplicationCommandOriginalTariff = original.OriginalTariff,
+            ApplicationCommandAppliedTariff = original.AppliedTariff with { SnapshotStatus = "SUPERSEDED" },
+            HasTariffLineageToCurrent = true
+        };
+    }
 }
