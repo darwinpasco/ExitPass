@@ -54,7 +54,10 @@ public sealed record ManagementStatutoryBenefitReviewQueueItem(
     bool EvidenceRecorded,
     DateTimeOffset SubmittedAt,
     string? ReviewerDisplayName,
-    DateTimeOffset? DecidedAt);
+    DateTimeOffset? DecidedAt)
+{
+    public string? PlateNumber { get; init; }
+}
 
 public sealed record ManagementStatutoryBenefitReviewDetail(
     string ContractVersion,
@@ -85,7 +88,10 @@ public sealed record ManagementStatutoryBenefitReviewDetail(
     ManagementStatutoryBenefitMoney? Money,
     ManagementStatutoryBenefitDecision? Decision,
     long Version,
-    Guid CorrelationId);
+    Guid CorrelationId)
+{
+    public string? PlateNumber { get; init; }
+}
 
 public sealed record ManagementStatutoryBenefitMoney(
     long OriginalAmountMinorUnits,

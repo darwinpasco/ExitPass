@@ -357,7 +357,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByText("STAT-OP-SESSION-0001")).toBeInTheDocument();
+    expect(await screen.findByText("Ticket STAT-OP-SESSION-0001")).toBeInTheDocument();
     expect(screen.getByText("ABC 1234")).toBeInTheDocument();
     expect(screen.getByText("RA 9994 / RA 10754 national fallback")).toBeInTheDocument();
   });
@@ -3494,7 +3494,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     render(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/statutory-discounts" />);
 
-    expect(await screen.findByText("STAT-OP-SESSION-0001")).toBeInTheDocument();
+    expect(await screen.findByText("Ticket STAT-OP-SESSION-0001")).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /pay/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /apply coupon/i })).not.toBeInTheDocument();

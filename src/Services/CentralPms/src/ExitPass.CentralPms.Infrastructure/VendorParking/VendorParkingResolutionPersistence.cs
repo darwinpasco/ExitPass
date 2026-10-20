@@ -15,6 +15,7 @@ namespace ExitPass.CentralPms.Infrastructure.VendorParking;
 /// </summary>
 public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutionPersistence
 {
+    private const string AppliedStatutoryTariffVersionSuffix = "|STATUTORY_DISCOUNT_APPLIED";
     private static readonly Guid CentralPmsServiceIdentityId =
         Guid.Parse("12000000-0000-0000-0000-000000000001");
 
@@ -122,7 +123,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         if (request.TariffOrigin == VendorParkingTariffOrigin.LiveVendor &&
             existingTariff is not null &&
             (IsContinuityTariff(existingTariff) ||
-             !HasSameAuthoritativeQuote(existingTariff, request.TariffSnapshot)))
+             !HasSameAuthoritativeQuoteForRefresh(existingTariff, request.TariffSnapshot)))
         {
             existingTariff = null;
         }
@@ -1377,6 +1378,29 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         existing.BaseFeeAmount == incoming.BaseFeeAmount &&
         string.Equals(existing.TariffVersionReference, incoming.TariffVersionReference, StringComparison.Ordinal) &&
         string.Equals(existing.PolicyVersionReference, incoming.PolicyVersionReference, StringComparison.Ordinal);
+
+    private static bool HasAppliedStatutoryPayableBasis(TariffSnapshot tariffSnapshot) =>
+        tariffSnapshot.StatutoryDiscountAmount > 0m;
+
+    private static bool HasSameAuthoritativeQuoteForRefresh(TariffSnapshot existing, TariffSnapshot incoming) =>
+        HasAppliedStatutoryPayableBasis(existing)
+            ? HasSameAuthoritativeBaseQuote(existing, incoming)
+            : HasSameAuthoritativeQuote(existing, incoming);
+
+    private static bool HasSameAuthoritativeBaseQuote(TariffSnapshot applied, TariffSnapshot incoming) =>
+        applied.GrossAmount == incoming.GrossAmount &&
+        string.Equals(applied.CurrencyCode, incoming.CurrencyCode, StringComparison.OrdinalIgnoreCase) &&
+        applied.BaseFeeAmount == incoming.BaseFeeAmount &&
+        string.Equals(
+            RemoveAppliedStatutoryTariffVersionSuffix(applied.TariffVersionReference),
+            incoming.TariffVersionReference,
+            StringComparison.Ordinal) &&
+        string.Equals(applied.PolicyVersionReference, incoming.PolicyVersionReference, StringComparison.Ordinal);
+
+    private static string? RemoveAppliedStatutoryTariffVersionSuffix(string? value) =>
+        value?.EndsWith(AppliedStatutoryTariffVersionSuffix, StringComparison.Ordinal) == true
+            ? value[..^AppliedStatutoryTariffVersionSuffix.Length]
+            : value;
 
     private static string? HashIdentifier(string? value)
     {
