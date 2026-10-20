@@ -4,6 +4,7 @@ import { QrScanner } from "./QrScanner";
 import { PhoneCameraCapture } from "./PhoneCameraCapture";
 import { StatutoryEvidenceCapture } from "./StatutoryEvidenceCapture";
 import { AutomaticMaskedIdInput } from "./AutomaticMaskedIdInput";
+import { ProductRuntimeIdentity } from "./ProductRuntimeIdentity";
 import { redirectToProviderCheckout } from "./providerCheckout";
 import { uploadEvidenceForNewStatutoryRequest, validateStatutoryEvidenceFile } from "./statutoryEvidence";
 import { formatCustomerSupportReference } from "./customerSafeReference";
@@ -1293,6 +1294,7 @@ export function App() {
     <main className="app-shell">
       <header className="brand-header">
         <img className="exitpass-logo" src="/assets/logo/exitpass-logo.svg" alt="ExitPass" />
+        <ProductRuntimeIdentity />
         <div className="operator-brand">
           <span>Operated with</span>
           <img src="/assets/logo/proparking-logo.png" alt="Pro Parking" />
@@ -2178,6 +2180,7 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
     <main className="app-shell">
       <header className="brand-header">
         <img className="exitpass-logo" src="/assets/logo/exitpass-logo.svg" alt="ExitPass" />
+        <ProductRuntimeIdentity />
         <div className="operator-brand">
           <span>Operated with</span>
           <img src="/assets/logo/proparking-logo.png" alt="Pro Parking" />

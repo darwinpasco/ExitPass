@@ -12,6 +12,8 @@ public enum FiscalReportingGatewayAction
     ZClosePeriod,
     ZGenerate,
     ZDownload,
+    ZCounterState,
+    ZCounterReset,
     BirSalesSummaryGenerate,
     BirSalesSummaryRead,
     BirSalesSummaryDownloadJson,
@@ -64,7 +66,8 @@ public sealed record FiscalReportingGatewayRequest(
     Guid? SupersedesFactId = null,
     string? CorrectionReason = null,
     Guid? SupersedesWorkbookId = null,
-    string? CorrectionApprovalReference = null);
+    string? CorrectionApprovalReference = null,
+    string? ResetReason = null);
 
 public sealed record FiscalReportingGatewayResponse(
     int HttpStatusCode,

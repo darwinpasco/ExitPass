@@ -6,7 +6,8 @@ public sealed record RegisterDeviceRequest(
     string? Description,
     Guid SiteId,
     Guid? SiteGroupId,
-    string? TerminalIdentifier);
+    string? TerminalIdentifier,
+    string? TerminalSerialNumber = null);
 
 public sealed record DeviceAdministrationSiteScopeDto(
     Guid SiteId,
@@ -24,7 +25,8 @@ public sealed record ReplaceDeviceRequest(
     Guid? SiteId,
     Guid? SiteGroupId,
     string? TerminalIdentifier,
-    string ReasonCode);
+    string ReasonCode,
+    string? TerminalSerialNumber = null);
 
 public sealed record EnrollDeviceRequest(
     string ProvisioningCredential,
@@ -32,7 +34,8 @@ public sealed record EnrollDeviceRequest(
     string DeviceType,
     Guid SiteId,
     Guid? SiteGroupId,
-    string? TerminalIdentifier);
+    string? TerminalIdentifier,
+    string? TerminalSerialNumber = null);
 
 public sealed record DeviceSummaryDto(
     Guid DeviceId,
@@ -41,6 +44,7 @@ public sealed record DeviceSummaryDto(
     string DeviceType,
     string? Description,
     string? TerminalIdentifier,
+    string? TerminalSerialNumber,
     Guid ServiceIdentityId,
     Guid SiteId,
     string SiteCode,
@@ -108,6 +112,7 @@ public sealed record DeviceProvisioningCredentialDto(
     Guid SiteId,
     Guid SiteGroupId,
     string? TerminalIdentifier,
+    string? TerminalSerialNumber,
     string ProvisioningCredential,
     DateTimeOffset ExpiresAt,
     string Purpose,

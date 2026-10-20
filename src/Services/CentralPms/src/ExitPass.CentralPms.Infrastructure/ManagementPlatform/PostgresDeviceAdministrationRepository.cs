@@ -172,10 +172,10 @@ public sealed class PostgresDeviceAdministrationRepository : IDeviceAdministrati
 
             INSERT INTO identity.devices (
                 device_id,device_reference,service_identity_id,device_name,device_type,
-                device_description,terminal_identifier,lifecycle_status,credential_version,
+                device_description,terminal_identifier,terminal_serial_number,lifecycle_status,credential_version,
                 effective_from,created_at,created_by_user_id,updated_at,updated_by_user_id)
             VALUES (@device_id,@device_reference,@service_identity_id,@device_name,
-                    @device_type::identity.device_type_enum,@description,@terminal_identifier,
+                    @device_type::identity.device_type_enum,@description,@terminal_identifier,@terminal_serial_number,
                     'REGISTERED',0,@now,@now,@actor_user_id,@now,@actor_user_id);
 
             INSERT INTO sites.device_assignments (
@@ -190,7 +190,8 @@ public sealed class PostgresDeviceAdministrationRepository : IDeviceAdministrati
             ("device_name", command.DeviceName), ("device_type", command.DeviceType),
             ("owning_service_name", OwningServiceName(command.DeviceType)),
             ("device_id", command.DeviceId), ("description", command.Description),
-            ("terminal_identifier", command.TerminalIdentifier), ("now", command.Now),
+            ("terminal_identifier", command.TerminalIdentifier),
+            ("terminal_serial_number", command.TerminalSerialNumber), ("now", command.Now),
             ("actor_user_id", command.ActorUserId), ("site_id", command.SiteId),
             ("assignment_type", assignmentType));
 
@@ -334,7 +335,8 @@ public sealed class PostgresDeviceAdministrationRepository : IDeviceAdministrati
                        command.SiteId != device.SiteId ||
                        command.SiteGroupId != provisioning.SiteGroupId ||
                        command.SiteGroupId != device.SiteGroupId ||
-                       (device.TerminalIdentifier is not null && command.TerminalIdentifier != device.TerminalIdentifier);
+                       (device.TerminalIdentifier is not null && command.TerminalIdentifier != device.TerminalIdentifier) ||
+                       (device.TerminalSerialNumber is not null && command.TerminalSerialNumber != device.TerminalSerialNumber);
         if (mismatch)
         {
             await ExecuteAsync(connection, transaction, """
@@ -553,8 +555,16 @@ public sealed class PostgresDeviceAdministrationRepository : IDeviceAdministrati
         var name = command.DeviceName ?? old.DeviceName;
         var description = command.Description ?? old.Description;
         var terminal = command.TerminalIdentifier ?? old.TerminalIdentifier;
+        var serial = old.DeviceType == DeviceTypes.AssistedPaymentTerminal
+            ? command.TerminalSerialNumber
+            : command.TerminalSerialNumber ?? old.TerminalSerialNumber;
         if (old.DeviceType == DeviceTypes.AssistedPaymentTerminal && string.IsNullOrWhiteSpace(terminal))
             throw new DeviceAdministrationException("APT_TERMINAL_IDENTIFIER_REQUIRED");
+        if (old.DeviceType == DeviceTypes.AssistedPaymentTerminal && string.IsNullOrWhiteSpace(serial))
+            throw new DeviceAdministrationException("APT_TERMINAL_SERIAL_NUMBER_REQUIRED");
+        if (old.DeviceType == DeviceTypes.AssistedPaymentTerminal &&
+            string.Equals(old.TerminalSerialNumber, serial, StringComparison.OrdinalIgnoreCase))
+            throw new DeviceAdministrationException("APT_REPLACEMENT_SERIAL_NUMBER_MUST_CHANGE");
 
         await InvalidateRuntimeAsync(connection, transaction, old, "DEVICE_REPLACED", command.IssuedAt, true, cancellationToken, command.ActorUserId);
         await ExecuteAsync(connection, transaction, """
@@ -572,11 +582,11 @@ public sealed class PostgresDeviceAdministrationRepository : IDeviceAdministrati
 
             INSERT INTO identity.devices (
                 device_id,device_reference,service_identity_id,device_name,device_type,
-                device_description,terminal_identifier,lifecycle_status,credential_version,
+                device_description,terminal_identifier,terminal_serial_number,lifecycle_status,credential_version,
                 last_provisioning_status,predecessor_device_id,effective_from,created_at,
                 created_by_user_id,updated_at,updated_by_user_id)
             VALUES (@replacement_device_id,@replacement_reference,@replacement_service_identity_id,
-                    @device_name,@device_type::identity.device_type_enum,@description,@terminal_identifier,
+                    @device_name,@device_type::identity.device_type_enum,@description,@terminal_identifier,@terminal_serial_number,
                     'PROVISIONING_PENDING',0,'ISSUED',@device_id,@now,@now,@actor_user_id,@now,@actor_user_id);
 
             INSERT INTO sites.device_assignments (
@@ -601,7 +611,7 @@ public sealed class PostgresDeviceAdministrationRepository : IDeviceAdministrati
             ("replacement_reference", command.ReplacementReference), ("device_name", name),
             ("device_type", old.DeviceType), ("owning_service_name", OwningServiceName(old.DeviceType)),
             ("description", description),
-            ("terminal_identifier", terminal), ("site_id", siteId),
+            ("terminal_identifier", terminal), ("terminal_serial_number", serial), ("site_id", siteId),
             ("site_group_id", site.SiteGroupId), ("assignment_type", AssignmentType(old.DeviceType)),
             ("token_hash", command.TokenHash), ("expires_at", command.ExpiresAt),
             ("correlation_id", command.CorrelationId));
@@ -645,6 +655,7 @@ public sealed class PostgresDeviceAdministrationRepository : IDeviceAdministrati
         await transaction.CommitAsync(cancellationToken);
         return new(replaced, replacement, new(command.ReplacementDeviceId, command.ReplacementReference,
             replacement.DeviceType, replacement.SiteId, replacement.SiteGroupId, replacement.TerminalIdentifier,
+            replacement.TerminalSerialNumber,
             rawToken, command.ExpiresAt, "REPLACEMENT",
             "Shown once. Store it only on the intended replacement device; it cannot be recovered.",
             command.CorrelationId));
@@ -706,7 +717,7 @@ public sealed class PostgresDeviceAdministrationRepository : IDeviceAdministrati
     {
         await using var command = new NpgsqlCommand("""
             SELECT device.device_id,device.device_reference,device.device_name,device.device_type::text,
-                   device.device_description,device.terminal_identifier,device.service_identity_id,
+                   device.device_description,device.terminal_identifier,device.terminal_serial_number,device.service_identity_id,
                    device.lifecycle_status::text,device.credential_version,assignment.device_assignment_id,
                    assignment.site_id,site.site_group_id
             FROM identity.devices device
@@ -726,8 +737,8 @@ public sealed class PostgresDeviceAdministrationRepository : IDeviceAdministrati
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) throw new DeviceAdministrationException("DEVICE_NOT_FOUND");
         return new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
-            NullableString(reader, 4), NullableString(reader, 5), reader.GetGuid(6), reader.GetString(7),
-            reader.GetInt64(8), reader.GetGuid(9), reader.GetGuid(10), reader.GetGuid(11));
+            NullableString(reader, 4), NullableString(reader, 5), NullableString(reader, 6), reader.GetGuid(7), reader.GetString(8),
+            reader.GetInt64(9), reader.GetGuid(10), reader.GetGuid(11), reader.GetGuid(12));
     }
 
     private static async Task<ProvisioningState?> LoadProvisioningAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string tokenHash, CancellationToken cancellationToken)
@@ -969,18 +980,18 @@ public sealed class PostgresDeviceAdministrationRepository : IDeviceAdministrati
         {
             results.Add(new(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
-                NullableString(reader, 4), NullableString(reader, 5), reader.GetGuid(6), reader.GetGuid(7),
-                reader.GetString(8), reader.GetString(9), reader.GetGuid(10), reader.GetString(11),
-                reader.GetString(12), reader.GetString(13), NullableString(reader, 14), reader.GetInt64(15),
-                reader.GetString(16), reader.GetFieldValue<DateTimeOffset>(17),
-                reader.GetFieldValue<DateTimeOffset>(18), reader.GetInt64(19)));
+                NullableString(reader, 4), NullableString(reader, 5), NullableString(reader, 6), reader.GetGuid(7), reader.GetGuid(8),
+                reader.GetString(9), reader.GetString(10), reader.GetGuid(11), reader.GetString(12),
+                reader.GetString(13), reader.GetString(14), NullableString(reader, 15), reader.GetInt64(16),
+                reader.GetString(17), reader.GetFieldValue<DateTimeOffset>(18),
+                reader.GetFieldValue<DateTimeOffset>(19), reader.GetInt64(20)));
         }
         return results;
     }
 
     private const string SummarySql = """
         SELECT device.device_id,device.device_reference,device.device_name,device.device_type::text,
-               device.device_description,device.terminal_identifier,device.service_identity_id,
+               device.device_description,device.terminal_identifier,device.terminal_serial_number,device.service_identity_id,
                assignment.site_id,site.site_code,site.site_name,site.site_group_id,
                site_group.site_group_code,site_group.site_group_name,device.lifecycle_status::text,
                device.last_provisioning_status::text,device.credential_version,
@@ -1008,7 +1019,7 @@ public sealed class PostgresDeviceAdministrationRepository : IDeviceAdministrati
 
     private sealed record SiteRecord(Guid SiteGroupId);
     private sealed record DeviceState(Guid DeviceId, string DeviceReference, string DeviceName, string DeviceType,
-        string? Description, string? TerminalIdentifier, Guid ServiceIdentityId, string LifecycleStatus,
+        string? Description, string? TerminalIdentifier, string? TerminalSerialNumber, Guid ServiceIdentityId, string LifecycleStatus,
         long CredentialVersion, Guid AssignmentId, Guid SiteId, Guid SiteGroupId);
     private sealed record ProvisioningState(Guid Id, Guid DeviceId, string Status, Guid SiteId,
         Guid? SiteGroupId, long CredentialVersion, DateTimeOffset ExpiresAt);

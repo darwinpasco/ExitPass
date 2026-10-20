@@ -67,13 +67,29 @@ public sealed class DeviceAdministrationServiceTests
     {
         var service = Sut(Substitute.For<IDeviceAdministrationRepository>());
         var action = () => service.EnrollAsync(
-            new(new string('p', 64), "DEV-1", DeviceTypes.AssistedPaymentTerminal, Site, SiteGroup, "APT-01"),
+            new(new string('p', 64), "DEV-1", DeviceTypes.AssistedPaymentTerminal, Site, SiteGroup, "APT-01", "APT-HARDWARE-001"),
             null,
             Correlation,
             CancellationToken.None);
 
         await action.Should().ThrowAsync<DeviceAdministrationException>()
             .Where(exception => exception.ErrorCode == "APT_CLIENT_CERTIFICATE_REQUIRED");
+    }
+
+    [Fact]
+    public async Task Register_Apt_RequiresTerminalSerialNumberBeforePersistence()
+    {
+        var repository = Substitute.For<IDeviceAdministrationRepository>();
+        var service = Sut(repository);
+        var action = () => service.RegisterAsync(
+            new("PITX APT", DeviceTypes.AssistedPaymentTerminal, null, Site, SiteGroup, "APT-01"),
+            Actor,
+            Correlation,
+            CancellationToken.None);
+
+        await action.Should().ThrowAsync<DeviceAdministrationException>()
+            .Where(exception => exception.ErrorCode == "APT_TERMINAL_SERIAL_NUMBER_REQUIRED");
+        await repository.DidNotReceive().RegisterAsync(Arg.Any<DeviceRegistrationCommand>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -96,7 +112,7 @@ public sealed class DeviceAdministrationServiceTests
         new(repository, new FixedTimeProvider(Now));
 
     private static DeviceSummaryDto Summary(string type) => new(
-        Guid.NewGuid(), "DEV-1", "PITX Device", type, null, "TERM-1", Guid.NewGuid(),
+        Guid.NewGuid(), "DEV-1", "PITX Device", type, null, "TERM-1", "APT-HARDWARE-001", Guid.NewGuid(),
         Site, "PITX", "PITX", SiteGroup, "PITX-GROUP", "PITX Group", "REGISTERED", null,
         0, "NOT_ISSUED", Now, Now, 1);
 

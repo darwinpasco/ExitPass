@@ -30,7 +30,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
 
         var action = async () => await administration.RegisterAsync(
             new("Unauthorized APT", DeviceTypes.AssistedPaymentTerminal, null,
-                siteId, siteGroupId, "APT-UNAUTHORIZED"),
+                siteId, siteGroupId, "APT-UNAUTHORIZED", "APT-HARDWARE-UNAUTHORIZED"),
             ordinaryUserId, Guid.NewGuid(), CancellationToken.None);
 
         (await action.Should().ThrowAsync<DeviceAdministrationException>())
@@ -49,7 +49,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
 
         var registered = await administration.RegisterAsync(
             new("PITX APT governed proof", DeviceTypes.AssistedPaymentTerminal,
-                "Disposable lifecycle proof", siteId, siteGroupId, "APT-PROOF-01"),
+                "Disposable lifecycle proof", siteId, siteGroupId, "APT-PROOF-01", "APT-HARDWARE-PROOF-01"),
             administratorId, Guid.NewGuid(), CancellationToken.None);
         registered.LifecycleStatus.Should().Be("REGISTERED");
         registered.DeviceType.Should().Be(DeviceTypes.AssistedPaymentTerminal);
@@ -60,7 +60,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
 
         var wrongContext = async () => await administration.EnrollAsync(
             new(firstProvisioning.ProvisioningCredential, registered.DeviceReference,
-                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "WRONG-TERMINAL"),
+                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "WRONG-TERMINAL", "APT-HARDWARE-PROOF-01"),
             new string('1', 64), Guid.NewGuid(), CancellationToken.None);
         (await wrongContext.Should().ThrowAsync<DeviceAdministrationException>())
             .Which.ErrorCode.Should().Be("ENROLLMENT_CONTEXT_MISMATCH");
@@ -69,7 +69,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
             registered.DeviceId, administratorId, Guid.NewGuid(), CancellationToken.None);
         var wrongReference = async () => await administration.EnrollAsync(
             new(wrongReferenceProvisioning.ProvisioningCredential, $"{registered.DeviceReference}-OTHER",
-                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "APT-PROOF-01"),
+                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "APT-PROOF-01", "APT-HARDWARE-PROOF-01"),
             new string('2', 64), Guid.NewGuid(), CancellationToken.None);
         (await wrongReference.Should().ThrowAsync<DeviceAdministrationException>())
             .Which.ErrorCode.Should().Be("ENROLLMENT_CONTEXT_MISMATCH");
@@ -87,7 +87,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
             registered.DeviceId, administratorId, Guid.NewGuid(), CancellationToken.None);
         var wrongScope = async () => await administration.EnrollAsync(
             new(wrongScopeProvisioning.ProvisioningCredential, registered.DeviceReference,
-                DeviceTypes.AssistedPaymentTerminal, Guid.NewGuid(), siteGroupId, "APT-PROOF-01"),
+                DeviceTypes.AssistedPaymentTerminal, Guid.NewGuid(), siteGroupId, "APT-PROOF-01", "APT-HARDWARE-PROOF-01"),
             new string('3', 64), Guid.NewGuid(), CancellationToken.None);
         (await wrongScope.Should().ThrowAsync<DeviceAdministrationException>())
             .Which.ErrorCode.Should().Be("ENROLLMENT_CONTEXT_MISMATCH");
@@ -97,7 +97,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
         var fingerprintV1 = new string('a', 64);
         var enrolled = await administration.EnrollAsync(
             new(provisioning.ProvisioningCredential, registered.DeviceReference,
-                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "APT-PROOF-01"),
+                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "APT-PROOF-01", "APT-HARDWARE-PROOF-01"),
             fingerprintV1, Guid.NewGuid(), CancellationToken.None);
         enrolled.CredentialVersion.Should().Be(1);
         enrolled.RuntimeCredential.Should().BeNull();
@@ -117,7 +117,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
 
         var replay = async () => await administration.EnrollAsync(
             new(provisioning.ProvisioningCredential, registered.DeviceReference,
-                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "APT-PROOF-01"),
+                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "APT-PROOF-01", "APT-HARDWARE-PROOF-01"),
             fingerprintV1, Guid.NewGuid(), CancellationToken.None);
         (await replay.Should().ThrowAsync<DeviceAdministrationException>())
             .Which.ErrorCode.Should().Be("PROVISIONING_CREDENTIAL_ALREADY_USED");
@@ -143,7 +143,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
         var fingerprintV2 = new string('b', 64);
         var rotated = await administration.EnrollAsync(
             new(rotation.ProvisioningCredential, registered.DeviceReference,
-                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "APT-PROOF-01"),
+                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "APT-PROOF-01", "APT-HARDWARE-PROOF-01"),
             fingerprintV2, Guid.NewGuid(), CancellationToken.None);
         rotated.CredentialVersion.Should().Be(2);
         var referenceV2 = $"device-mtls-sha256:{fingerprintV2}";
@@ -153,7 +153,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
             .Should().BeNull();
 
         var replacement = await administration.ReplaceAsync(registered.DeviceId,
-            new("PITX APT governed replacement", null, null, null, "APT-PROOF-02", "HARDWARE_REPLACEMENT"),
+            new("PITX APT governed replacement", null, null, null, "APT-PROOF-02", "HARDWARE_REPLACEMENT", "APT-HARDWARE-PROOF-02"),
             administratorId, Guid.NewGuid(), CancellationToken.None);
         replacement.ReplacedDevice.LifecycleStatus.Should().Be("REPLACED");
         replacement.ReplacementDevice.SiteId.Should().Be(siteId);
@@ -164,7 +164,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
         var replacementEnrollment = await administration.EnrollAsync(
             new(replacement.Provisioning.ProvisioningCredential,
                 replacement.ReplacementDevice.DeviceReference, DeviceTypes.AssistedPaymentTerminal,
-                siteId, siteGroupId, "APT-PROOF-02"), fingerprintV3, Guid.NewGuid(), CancellationToken.None);
+                siteId, siteGroupId, "APT-PROOF-02", "APT-HARDWARE-PROOF-02"), fingerprintV3, Guid.NewGuid(), CancellationToken.None);
         replacementEnrollment.CredentialVersion.Should().Be(1);
         var referenceV3 = $"device-mtls-sha256:{fingerprintV3}";
         (await runtimeTrust.GetGovernedDeviceAuthenticationAsync(referenceV3, CancellationToken.None))
@@ -480,7 +480,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
             new PostgresDeviceAdministrationRepository(connectionString), TimeProvider.System);
         var registered = await administration.RegisterAsync(
             new("Cancelled APT proof", DeviceTypes.AssistedPaymentTerminal, null,
-                siteId, siteGroupId, "APT-CANCELLED-01"),
+                siteId, siteGroupId, "APT-CANCELLED-01", "APT-HARDWARE-CANCELLED-01"),
             administratorId, Guid.NewGuid(), CancellationToken.None);
         var provisioning = await administration.ProvisionAsync(
             registered.DeviceId, administratorId, Guid.NewGuid(), CancellationToken.None);
@@ -493,7 +493,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
 
         var replay = async () => await administration.EnrollAsync(
             new(provisioning.ProvisioningCredential, registered.DeviceReference,
-                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "APT-CANCELLED-01"),
+                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "APT-CANCELLED-01", "APT-HARDWARE-CANCELLED-01"),
             new string('e', 64), Guid.NewGuid(), CancellationToken.None);
         (await replay.Should().ThrowAsync<DeviceAdministrationException>())
             .Which.ErrorCode.Should().Be("PROVISIONING_CREDENTIAL_ALREADY_USED");
@@ -516,7 +516,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
             new PostgresDeviceAdministrationRepository(connectionString), clock);
         var registered = await administration.RegisterAsync(
             new("Expired APT proof", DeviceTypes.AssistedPaymentTerminal, null,
-                siteId, siteGroupId, "APT-EXPIRED-01"),
+                siteId, siteGroupId, "APT-EXPIRED-01", "APT-HARDWARE-EXPIRED-01"),
             administratorId, Guid.NewGuid(), CancellationToken.None);
         var provisioning = await administration.ProvisionAsync(
             registered.DeviceId, administratorId, Guid.NewGuid(), CancellationToken.None);
@@ -524,7 +524,7 @@ public sealed class DeviceAdministrationLifecycleIntegrationTests
 
         var expired = async () => await administration.EnrollAsync(
             new(provisioning.ProvisioningCredential, registered.DeviceReference,
-                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "APT-EXPIRED-01"),
+                DeviceTypes.AssistedPaymentTerminal, siteId, siteGroupId, "APT-EXPIRED-01", "APT-HARDWARE-EXPIRED-01"),
             new string('d', 64), Guid.NewGuid(), CancellationToken.None);
         (await expired.Should().ThrowAsync<DeviceAdministrationException>())
             .Which.ErrorCode.Should().Be("PROVISIONING_CREDENTIAL_EXPIRED");

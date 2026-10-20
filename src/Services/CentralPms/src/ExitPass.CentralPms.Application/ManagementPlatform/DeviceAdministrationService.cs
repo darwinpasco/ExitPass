@@ -44,9 +44,14 @@ public sealed class DeviceAdministrationService : IDeviceAdministrationService
         var type = NormalizeType(request.DeviceType);
         var name = RequireText(request.DeviceName, 128, "DEVICE_NAME_REQUIRED");
         var terminal = OptionalText(request.TerminalIdentifier, 128, "TERMINAL_IDENTIFIER_INVALID");
+        var serial = OptionalText(request.TerminalSerialNumber, 128, "TERMINAL_SERIAL_NUMBER_INVALID");
         if (type == DeviceTypes.AssistedPaymentTerminal && terminal is null)
         {
             throw new DeviceAdministrationException("APT_TERMINAL_IDENTIFIER_REQUIRED");
+        }
+        if (type == DeviceTypes.AssistedPaymentTerminal && serial is null)
+        {
+            throw new DeviceAdministrationException("APT_TERMINAL_SERIAL_NUMBER_REQUIRED");
         }
 
         var deviceId = Guid.NewGuid();
@@ -61,6 +66,7 @@ public sealed class DeviceAdministrationService : IDeviceAdministrationService
             RequireId(request.SiteId, "DEVICE_SITE_REQUIRED"),
             request.SiteGroupId,
             terminal,
+            serial,
             RequireId(actorUserId, "DEVICE_ADMINISTRATOR_REQUIRED"),
             RequireId(correlationId, "CORRELATION_REQUIRED"),
             _timeProvider.GetUtcNow());
@@ -120,6 +126,7 @@ public sealed class DeviceAdministrationService : IDeviceAdministrationService
                 request.SiteId,
                 request.SiteGroupId,
                 OptionalText(request.TerminalIdentifier, 128, "TERMINAL_IDENTIFIER_INVALID"),
+                OptionalText(request.TerminalSerialNumber, 128, "TERMINAL_SERIAL_NUMBER_INVALID"),
                 RequireReason(request.ReasonCode),
                 Hash(material),
                 now,
@@ -162,6 +169,15 @@ public sealed class DeviceAdministrationService : IDeviceAdministrationService
             credentialType = "MTLS_CERTIFICATE_REFERENCE";
         }
 
+        var terminalSerialNumber = OptionalText(
+            request.TerminalSerialNumber,
+            128,
+            "TERMINAL_SERIAL_NUMBER_INVALID");
+        if (type == DeviceTypes.AssistedPaymentTerminal && terminalSerialNumber is null)
+        {
+            throw new DeviceAdministrationException("APT_TERMINAL_SERIAL_NUMBER_REQUIRED");
+        }
+
         return _repository.EnrollAsync(
             new DeviceEnrollmentCommand(
                 Hash(token),
@@ -170,6 +186,7 @@ public sealed class DeviceAdministrationService : IDeviceAdministrationService
                 RequireId(request.SiteId, "DEVICE_SITE_REQUIRED"),
                 request.SiteGroupId,
                 OptionalText(request.TerminalIdentifier, 128, "TERMINAL_IDENTIFIER_INVALID"),
+                terminalSerialNumber,
                 fingerprint,
                 credentialReference,
                 credentialType,
@@ -205,7 +222,7 @@ public sealed class DeviceAdministrationService : IDeviceAdministrationService
 
     private static DeviceProvisioningCredentialDto ToProvisioning(DeviceSummaryDto device, string token, DeviceProvisioningCommand command) =>
         new(device.DeviceId, device.DeviceReference, device.DeviceType, device.SiteId, device.SiteGroupId,
-            device.TerminalIdentifier, token, command.ExpiresAt, command.Purpose,
+            device.TerminalIdentifier, device.TerminalSerialNumber, token, command.ExpiresAt, command.Purpose,
             "Shown once. Store it only on the intended device; it cannot be recovered.", command.CorrelationId);
 
     private static string CreateToken() =>

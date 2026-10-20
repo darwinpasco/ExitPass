@@ -42,4 +42,22 @@ describe("Management Platform fiscal reporting",()=>{
   await userEvent.click(screen.getByRole("tab",{name:"Z Reading"}));
   expect(screen.queryByRole("button",{name:"Generate Z Reading"})).not.toBeInTheDocument();
  });
+
+ it("requires a reason and explicit confirmation before resetting the Z Counter",async()=>{
+  const client=createFiscalReportingFixtureClient(); client.resetZCounter=vi.fn(client.resetZCounter);
+  render(<FiscalReportingPage client={client} sites={[site]} scopes={[]} permissions={permissions}/>);
+  await userEvent.click(screen.getByRole("tab",{name:"Z Reading"}));
+  expect(await screen.findByText("Current Z Counter")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button",{name:"Reset Z Counter"}));
+  const confirm=screen.getByRole("button",{name:"Confirm Reset Z Counter"});
+  expect(confirm).toBeDisabled();
+  expect(client.resetZCounter).not.toHaveBeenCalled();
+  await userEvent.type(screen.getByRole("textbox",{name:"Z Counter reset reason"}),"BIR demonstration");
+  await userEvent.click(confirm);
+  await waitFor(()=>expect(client.resetZCounter).toHaveBeenCalledWith(
+    site.siteId,
+    14,
+    "BIR demonstration"
+  ));
+ });
 });
