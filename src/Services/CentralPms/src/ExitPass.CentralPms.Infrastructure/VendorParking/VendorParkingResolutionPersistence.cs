@@ -106,7 +106,8 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
 
         if (request.TariffOrigin == VendorParkingTariffOrigin.LiveVendor &&
             existingTariff is not null &&
-            IsContinuityTariff(existingTariff))
+            (IsContinuityTariff(existingTariff) ||
+             !HasSameAuthoritativeQuote(existingTariff, request.TariffSnapshot)))
         {
             existingTariff = null;
         }
@@ -154,6 +155,8 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 var latestCanBeReused = latestExistingTariff is not null &&
                     existingTariff is null &&
                     latestExistingTariff.ExpiresAt > DateTimeOffset.UtcNow &&
+                    (request.TariffOrigin != VendorParkingTariffOrigin.LiveVendor ||
+                     HasSameAuthoritativeQuote(latestExistingTariff, request.TariffSnapshot)) &&
                     !await WasConsumedOnlyByFailedPaymentAttemptAsync(
                         connection,
                         transaction,
@@ -1262,6 +1265,17 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         tariffSnapshot.TariffVersionReference?.StartsWith(
             ContinuityTariffCalculator.TariffVersionPrefix,
             StringComparison.Ordinal) == true;
+
+    private static bool HasSameAuthoritativeQuote(TariffSnapshot existing, TariffSnapshot incoming) =>
+        existing.SourceType == incoming.SourceType &&
+        existing.GrossAmount == incoming.GrossAmount &&
+        existing.StatutoryDiscountAmount == incoming.StatutoryDiscountAmount &&
+        existing.CouponDiscountAmount == incoming.CouponDiscountAmount &&
+        existing.NetPayable == incoming.NetPayable &&
+        string.Equals(existing.CurrencyCode, incoming.CurrencyCode, StringComparison.OrdinalIgnoreCase) &&
+        existing.BaseFeeAmount == incoming.BaseFeeAmount &&
+        string.Equals(existing.TariffVersionReference, incoming.TariffVersionReference, StringComparison.Ordinal) &&
+        string.Equals(existing.PolicyVersionReference, incoming.PolicyVersionReference, StringComparison.Ordinal);
 
     private static string? HashIdentifier(string? value)
     {
