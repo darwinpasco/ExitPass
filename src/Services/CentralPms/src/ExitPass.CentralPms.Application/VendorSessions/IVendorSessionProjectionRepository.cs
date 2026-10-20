@@ -25,7 +25,33 @@ public interface IVendorSessionProjectionRepository
     Task<VendorSessionProjectionReadResult?> FindLatestAsync(
         VendorSessionProjectionLookupQuery query,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Finds the active projection bound to one canonical parking session through its stable
+    /// vendor-session identity. This lookup never searches across sessions by plate or ticket.
+    /// </summary>
+    Task<CanonicalVendorSessionProjectionIdentity?> FindForCanonicalSessionAsync(
+        Guid parkingSessionId,
+        Guid siteId,
+        Guid siteGroupId,
+        Guid vendorSystemId,
+        CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Authoritative operational identity projected for one canonical parking session.
+/// </summary>
+public sealed record CanonicalVendorSessionProjectionIdentity(
+    Guid VendorSessionProjectionId,
+    Guid VendorSystemId,
+    Guid SiteId,
+    Guid SiteGroupId,
+    Guid SourceAdapterIdentityId,
+    string VendorRecordGuid,
+    string? PhysicalTicketIdentifier,
+    string? PlateNumber,
+    DateTimeOffset EntryTime,
+    VendorSessionProjectionStatus ProjectionStatus);
 
 /// <summary>
 /// Projection row plus the authoritative timestamp of its target's last completed successful cycle.

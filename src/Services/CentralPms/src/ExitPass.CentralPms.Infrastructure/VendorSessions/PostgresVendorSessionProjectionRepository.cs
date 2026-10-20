@@ -361,6 +361,85 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
         return result;
     }
 
+    /// <inheritdoc />
+    public async Task<CanonicalVendorSessionProjectionIdentity?> FindForCanonicalSessionAsync(
+        Guid parkingSessionId,
+        Guid siteId,
+        Guid siteGroupId,
+        Guid vendorSystemId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                projection.vendor_session_projection_id,
+                projection.vendor_system_id,
+                projection.site_id,
+                projection.site_group_id,
+                projection.source_adapter_identity_id,
+                projection.vendor_record_guid,
+                projection.card_num,
+                projection.plate_license,
+                projection.enter_time,
+                projection.projection_status
+            FROM core.parking_sessions AS parking_session
+            JOIN sessions.vendor_session_projections AS projection
+              ON projection.vendor_system_id = parking_session.vendor_system_id
+             AND projection.site_id = parking_session.site_id
+             AND projection.site_group_id = parking_session.site_group_id
+             AND projection.vendor_record_guid = parking_session.vendor_session_ref
+            JOIN sessions.vendor_session_projection_sync_targets AS target
+              ON target.site_id = projection.site_id
+             AND target.site_group_id = projection.site_group_id
+             AND target.vendor_system_id = projection.vendor_system_id
+             AND target.parking_lot_index_code = projection.parking_lot_index_code
+            WHERE parking_session.parking_session_id = @parking_session_id
+              AND parking_session.site_id = @site_id
+              AND parking_session.site_group_id = @site_group_id
+              AND parking_session.vendor_system_id = @vendor_system_id
+              AND projection.projection_status = 'ACTIVE'
+              AND projection.source_adapter_identity_id IS NOT NULL
+              AND projection.vendor_record_guid IS NOT NULL
+              AND projection.enter_time IS NOT NULL
+              AND target.enabled_flag
+            ORDER BY projection.last_refreshed_at DESC,
+                     projection.updated_at DESC,
+                     projection.vendor_session_projection_id
+            LIMIT 2;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = siteId;
+        command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = siteGroupId;
+        command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = vendorSystemId;
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var result = new CanonicalVendorSessionProjectionIdentity(
+            reader.GetGuid(reader.GetOrdinal("vendor_session_projection_id")),
+            reader.GetGuid(reader.GetOrdinal("vendor_system_id")),
+            reader.GetGuid(reader.GetOrdinal("site_id")),
+            reader.GetGuid(reader.GetOrdinal("site_group_id")),
+            reader.GetGuid(reader.GetOrdinal("source_adapter_identity_id")),
+            reader.GetString(reader.GetOrdinal("vendor_record_guid")),
+            GetNullableString(reader, "card_num"),
+            GetNullableString(reader, "plate_license"),
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("enter_time")),
+            FromDatabaseStatus(reader.GetString(reader.GetOrdinal("projection_status"))));
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            throw new VendorSessionProjectionLookupException("PROJECTION_CANONICAL_SESSION_AMBIGUOUS");
+        }
+
+        return result;
+    }
+
     private void AddProjectionParameters(NpgsqlCommand command, VendorSessionProjection projection)
     {
         command.Parameters.Add("vendor_session_projection_id", NpgsqlDbType.Uuid).Value = projection.VendorSessionProjectionId;
