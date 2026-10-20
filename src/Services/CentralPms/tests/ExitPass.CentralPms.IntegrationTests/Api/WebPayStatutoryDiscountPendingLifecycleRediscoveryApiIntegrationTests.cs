@@ -257,6 +257,43 @@ public sealed class WebPayStatutoryDiscountPendingLifecycleRediscoveryApiIntegra
     }
 
     [Fact]
+    public async Task Rediscover_WhenTicketLookupUsesInternalVendorReference_DoesNotTreatItAsPhysicalTicket()
+    {
+        var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            nameof(Rediscover_WhenTicketLookupUsesInternalVendorReference_DoesNotTreatItAsPhysicalTicket),
+            StatutoryDiscountSourceChannels.WebPay);
+        var vendorSessionReference = $"HIKCENTRAL:{Guid.NewGuid():N}";
+
+        try
+        {
+            await ConvertToPlateOnlySessionAsync(seeded, vendorSessionReference);
+            using var factory = CreateRealFactoryWithRbac();
+            using var client = factory.CreateClient();
+            AddWebPayHeaders(client);
+
+            using var response = await client.PostAsJsonAsync(
+                Route,
+                new WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest(
+                    WebPayStatutoryDiscountPendingLifecycleRediscoveryValues.LookupModeTicketReference,
+                    ParkingSessionId: null,
+                    seeded.Context.SiteId,
+                    seeded.Context.SiteGroupId,
+                    vendorSessionReference,
+                    PlateNumber: null,
+                    VendorSystemId: null,
+                    "SENIOR_CITIZEN"));
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await response.Content.ReadFromJsonAsync<WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse>();
+            body!.Classification.Should().Be(WebPayStatutoryDiscountPendingLifecycleRediscoveryValues.NotFound);
+        }
+        finally
+        {
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
+        }
+    }
+
+    [Fact]
     public async Task Rediscover_WhenNoActiveLifecycle_ReturnsNoActiveLifecycleWithoutWrites()
     {
         var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
@@ -686,6 +723,34 @@ public sealed class WebPayStatutoryDiscountPendingLifecycleRediscoveryApiIntegra
             connection);
         command.Parameters.Add("decision_command_id", NpgsqlDbType.Uuid).Value = seeded.Decision.StatutoryDiscountDecisionCommandId;
         command.Parameters.Add("submitted_by_user_id", NpgsqlDbType.Uuid).Value = seeded.Context.RequestedByUserId;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task ConvertToPlateOnlySessionAsync(
+        SeededServiceChannelReview seeded,
+        string vendorSessionReference)
+    {
+        await using var connection = new NpgsqlConnection(StatutoryDiscountReviewIntegrationTestSupport.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            UPDATE core.parking_sessions
+            SET
+                vendor_session_ref = @vendor_session_reference,
+                ticket_number_hash = NULL,
+                ticket_number_masked = NULL,
+                updated_at = NOW(),
+                row_version = row_version + 1
+            WHERE parking_session_id = @parking_session_id;
+
+            UPDATE operator_console.statutory_discount_service_channel_reviews
+            SET ticket_reference = NULL, updated_at = NOW()
+            WHERE statutory_discount_decision_command_id = @decision_command_id;
+            """,
+            connection);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = seeded.Context.ParkingSessionId;
+        command.Parameters.Add("decision_command_id", NpgsqlDbType.Uuid).Value = seeded.Decision.StatutoryDiscountDecisionCommandId;
+        command.Parameters.AddWithValue("vendor_session_reference", vendorSessionReference);
         await command.ExecuteNonQueryAsync();
     }
 

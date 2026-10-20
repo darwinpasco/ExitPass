@@ -6,6 +6,8 @@ using ExitPass.CentralPms.Domain.Tariffs;
 using ExitPass.CentralPms.Infrastructure.VendorParking;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
+using Npgsql;
+using NpgsqlTypes;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Persistence;
@@ -167,10 +169,185 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
         replay.TariffSnapshot.TariffSnapshotId.Should().Be(first.TariffSnapshot.TariffSnapshotId);
     }
 
+    [Fact]
+    public async Task PersistLiveResolution_WhenPlateOnlyProjectionMatchesEntry_ReusesCanonicalProjectedSession()
+    {
+        var persistence = CreatePersistence();
+        var entryTime = DateTimeOffset.Parse("2026-10-20T19:19:57+08:00");
+        var fixture = CreateFixture("PLATE-PROJECTION", DateTimeOffset.UtcNow.AddMinutes(10), plateOnly: true, entryTime: entryTime);
+        var projectedReference = $"record-{Guid.NewGuid():N}";
+        fixture = fixture with { VendorSessionReference = projectedReference };
+
+        var canonical = await persistence.PersistAsync(
+            Request(fixture, Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(10), VendorParkingTariffOrigin.LiveVendor),
+            CancellationToken.None);
+        await InsertProjectionAsync(fixture, projectedReference, entryTime);
+
+        var calculated = fixture with
+        {
+            VendorSessionReference = $"HIKCENTRAL:{fixture.PlateNumber}:{entryTime:yyyyMMddHHmmss}"
+        };
+        var replay = await persistence.PersistAsync(
+            Request(
+                calculated,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                referencesAlreadyExist: true),
+            CancellationToken.None);
+
+        replay.ParkingSessionWasReused.Should().BeTrue();
+        replay.ParkingSession.ParkingSessionId.Should().Be(canonical.ParkingSession.ParkingSessionId);
+        replay.ParkingSession.VendorSessionRef.Should().Be(projectedReference);
+    }
+
+    [Fact]
+    public async Task PersistLiveResolution_WhenTicketedProjectionMatchesEntry_ReusesCanonicalProjectedSession()
+    {
+        var persistence = CreatePersistence();
+        var entryTime = DateTimeOffset.Parse("2026-10-20T20:19:57+08:00");
+        var fixture = CreateFixture("TICKET-PROJECTION", DateTimeOffset.UtcNow.AddMinutes(10), entryTime: entryTime);
+        var projectedReference = $"record-{Guid.NewGuid():N}";
+        fixture = fixture with { VendorSessionReference = projectedReference };
+
+        var canonical = await persistence.PersistAsync(
+            Request(fixture, Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(10), VendorParkingTariffOrigin.LiveVendor),
+            CancellationToken.None);
+        await InsertProjectionAsync(fixture, projectedReference, entryTime);
+
+        var calculated = fixture with
+        {
+            VendorSessionReference = $"HIKCENTRAL:{fixture.TicketReference}:{entryTime:yyyyMMddHHmmss}"
+        };
+        var replay = await persistence.PersistAsync(
+            Request(
+                calculated,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                referencesAlreadyExist: true),
+            CancellationToken.None);
+
+        replay.ParkingSessionWasReused.Should().BeTrue();
+        replay.ParkingSession.ParkingSessionId.Should().Be(canonical.ParkingSession.ParkingSessionId);
+    }
+
+    [Fact]
+    public async Task PersistLiveResolution_WhenProjectionIdentityIsAmbiguous_RejectsInsteadOfMatchingByPlate()
+    {
+        var persistence = CreatePersistence();
+        var entryTime = DateTimeOffset.Parse("2026-10-20T21:19:57+08:00");
+        var fixture = CreateFixture("AMBIGUOUS-PROJECTION", DateTimeOffset.UtcNow.AddMinutes(10), plateOnly: true, entryTime: entryTime);
+
+        await persistence.PersistAsync(
+            Request(fixture, Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(10), VendorParkingTariffOrigin.LiveVendor),
+            CancellationToken.None);
+        await InsertProjectionAsync(fixture, $"record-{Guid.NewGuid():N}", entryTime);
+        await InsertProjectionAsync(fixture, $"record-{Guid.NewGuid():N}", entryTime);
+
+        var action = () => persistence.PersistAsync(
+            Request(
+                fixture with { VendorSessionReference = $"HIKCENTRAL:{fixture.PlateNumber}:{entryTime:yyyyMMddHHmmss}" },
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                referencesAlreadyExist: true),
+            CancellationToken.None);
+
+        var exception = await action.Should().ThrowAsync<VendorParkingResolutionPersistenceException>();
+        exception.Which.ErrorCode.Should().Be("VENDOR_PARKING_PROJECTION_IDENTITY_AMBIGUOUS");
+    }
+
+    [Fact]
+    public async Task PersistLiveResolution_WhenPlateMatchesDifferentEntry_DoesNotReuseHistoricalSession()
+    {
+        var persistence = CreatePersistence();
+        var currentEntry = DateTimeOffset.Parse("2026-10-20T22:19:57+08:00");
+        var fixture = CreateFixture(
+            "HISTORICAL-PLATE",
+            DateTimeOffset.UtcNow.AddMinutes(10),
+            plateOnly: true,
+            entryTime: currentEntry);
+        var historicalReference = $"record-{Guid.NewGuid():N}";
+        var historical = fixture with
+        {
+            EntryTime = currentEntry.AddDays(-1),
+            VendorSessionReference = historicalReference
+        };
+
+        var historicalResult = await persistence.PersistAsync(
+            Request(historical, Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(10), VendorParkingTariffOrigin.LiveVendor),
+            CancellationToken.None);
+        await InsertProjectionAsync(historical, historicalReference, historical.EntryTime);
+
+        var syntheticReference = $"HIKCENTRAL:{fixture.PlateNumber}:{currentEntry:yyyyMMddHHmmss}";
+        var current = await persistence.PersistAsync(
+            Request(
+                fixture with { VendorSessionReference = syntheticReference },
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                referencesAlreadyExist: true),
+            CancellationToken.None);
+
+        current.ParkingSessionWasReused.Should().BeFalse();
+        current.ParkingSession.ParkingSessionId.Should().NotBe(historicalResult.ParkingSession.ParkingSessionId);
+        current.ParkingSession.VendorSessionRef.Should().Be(syntheticReference);
+    }
+
+    [Fact]
+    public async Task PersistLiveResolution_WhenPlateAndEntryMatchDifferentSite_DoesNotReuseForeignSession()
+    {
+        var persistence = CreatePersistence();
+        var entryTime = DateTimeOffset.Parse("2026-10-20T23:19:57+08:00");
+        var local = CreateFixture(
+            "LOCAL-SITE",
+            DateTimeOffset.UtcNow.AddMinutes(10),
+            plateOnly: true,
+            entryTime: entryTime);
+        var foreignReference = $"record-{Guid.NewGuid():N}";
+        var foreign = CreateFixture(
+            "FOREIGN-SITE",
+            DateTimeOffset.UtcNow.AddMinutes(10),
+            plateOnly: true,
+            entryTime: entryTime) with
+        {
+            PlateNumber = local.PlateNumber,
+            VendorSessionReference = foreignReference
+        };
+
+        var foreignResult = await persistence.PersistAsync(
+            Request(foreign, Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(10), VendorParkingTariffOrigin.LiveVendor),
+            CancellationToken.None);
+        await InsertProjectionAsync(foreign, foreignReference, entryTime);
+
+        var syntheticReference = $"HIKCENTRAL:{local.PlateNumber}:{entryTime:yyyyMMddHHmmss}";
+        var localResult = await persistence.PersistAsync(
+            Request(
+                local with { VendorSessionReference = syntheticReference },
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor),
+            CancellationToken.None);
+
+        localResult.ParkingSessionWasReused.Should().BeFalse();
+        localResult.ParkingSession.ParkingSessionId.Should().NotBe(foreignResult.ParkingSession.ParkingSessionId);
+        localResult.ParkingSession.VendorSessionRef.Should().Be(syntheticReference);
+    }
+
     private static VendorParkingResolutionPersistence CreatePersistence() =>
         new(CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString());
 
-    private static Fixture CreateFixture(string suffix, DateTimeOffset expiresAt)
+    private static Fixture CreateFixture(
+        string suffix,
+        DateTimeOffset expiresAt,
+        bool plateOnly = false,
+        DateTimeOffset? entryTime = null)
     {
         var siteGroupId = Guid.NewGuid();
         var siteId = Guid.NewGuid();
@@ -178,10 +355,11 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
         var fixture = new Fixture(
             siteGroupId,
             siteId,
-            $"CONT-{suffix}-{Guid.NewGuid():N}",
+            plateOnly ? null : $"CONT-{suffix}-{Guid.NewGuid():N}",
             $"PLATE-{Guid.NewGuid():N}"[..16],
             $"VENDOR-{suffix}-{Guid.NewGuid():N}",
-            $"EXITPASS-CONTINUITY:SYNTHETIC-{suffix}-V1");
+            $"EXITPASS-CONTINUITY:SYNTHETIC-{suffix}-V1",
+            entryTime ?? DateTimeOffset.UtcNow.AddHours(-2));
 
         return fixture with
         {
@@ -201,7 +379,8 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
         DateTimeOffset expiresAt,
         VendorParkingTariffOrigin tariffOrigin,
         string? tariffVersionReference = null,
-        decimal amount = 100m) =>
+        decimal amount = 100m,
+        bool referencesAlreadyExist = false) =>
         new()
         {
             ParkingSession = Session(fixture, parkingSessionId),
@@ -213,7 +392,7 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
                 tariffVersionReference,
                 amount),
             TariffOrigin = tariffOrigin,
-            ReferencesAlreadyExist = false,
+            ReferencesAlreadyExist = referencesAlreadyExist,
             CorrelationId = Guid.NewGuid()
         };
 
@@ -224,11 +403,48 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
             fixture.SiteId.ToString("D"),
             fixture.VendorSystemCode,
             fixture.VendorSessionReference,
-            "TICKET",
+            fixture.TicketReference is null ? "PLATE" : "TICKET",
             fixture.PlateNumber,
             fixture.TicketReference,
-            DateTimeOffset.UtcNow.AddHours(-2),
+            fixture.EntryTime,
             ParkingSessionStatus.PaymentRequired);
+
+    private static async Task InsertProjectionAsync(
+        Fixture fixture,
+        string vendorRecordGuid,
+        DateTimeOffset entryTime)
+    {
+        await using var connection = new NpgsqlConnection(CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO sessions.vendor_session_projections (
+                vendor_session_projection_id, vendor_system_id, site_id, site_group_id,
+                parking_lot_index_code, vendor_record_guid, card_num, plate_license,
+                enter_time, source_api, source_payload_hash, source_event_at,
+                stable_identity_type, stable_identity_key, first_seen_at, last_seen_at,
+                last_refreshed_at, projection_status, correlation_id, created_by_service_identity_id)
+            SELECT
+                gen_random_uuid(), vendor.vendor_system_id, @site_id, @site_group_id,
+                '1', @vendor_record_guid, @card_num, @plate_number,
+                @entry_time, 'integration-test', repeat('a', 64), @entry_time,
+                'VENDOR_RECORD_GUID', @stable_identity_key, now(), now(),
+                now(), 'ACTIVE', gen_random_uuid(), '12000000-0000-0000-0000-000000000001'
+            FROM integration.vendor_systems AS vendor
+            WHERE vendor.vendor_code = @vendor_system_code
+              AND vendor.environment_code = 'TEST';
+            """,
+            connection);
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = fixture.SiteId;
+        command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = fixture.SiteGroupId;
+        command.Parameters.AddWithValue("vendor_record_guid", vendorRecordGuid);
+        command.Parameters.Add("card_num", NpgsqlDbType.Text).Value = (object?)fixture.TicketReference ?? DBNull.Value;
+        command.Parameters.AddWithValue("plate_number", fixture.PlateNumber);
+        command.Parameters.Add("entry_time", NpgsqlDbType.TimestampTz).Value = entryTime.ToUniversalTime();
+        command.Parameters.AddWithValue("stable_identity_key", $"stable-{Guid.NewGuid():N}");
+        command.Parameters.AddWithValue("vendor_system_code", fixture.VendorSystemCode);
+        (await command.ExecuteNonQueryAsync()).Should().Be(1);
+    }
 
     private static TariffSnapshot Tariff(
         Fixture fixture,
@@ -287,10 +503,11 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
     private sealed record Fixture(
         Guid SiteGroupId,
         Guid SiteId,
-        string TicketReference,
+        string? TicketReference,
         string PlateNumber,
         string VendorSessionReference,
-        string ContinuityTariffVersion)
+        string ContinuityTariffVersion,
+        DateTimeOffset EntryTime)
     {
         public string VendorSystemCode { get; init; } = $"VENDOR-{Guid.NewGuid():N}";
         public PersistVendorParkingResolutionRequest Request { get; init; } = null!;

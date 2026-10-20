@@ -159,8 +159,7 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
               AND (
                     (@lookup_mode = 'PARKING_SESSION_ID' AND ps.parking_session_id = @parking_session_id)
                  OR (@lookup_mode = 'TICKET_REFERENCE' AND (
-                        ps.vendor_session_ref = @ticket_reference
-                     OR ps.ticket_number_masked = @ticket_reference
+                        ps.ticket_number_masked = @ticket_reference
                      OR ps.ticket_number_hash = @ticket_reference_hash
                     ))
                  OR (@lookup_mode = 'PLATE_LICENSE' AND (
