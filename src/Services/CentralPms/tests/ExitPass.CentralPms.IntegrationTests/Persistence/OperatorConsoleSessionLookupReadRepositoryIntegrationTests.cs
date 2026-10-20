@@ -123,6 +123,30 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
     }
 
     [Fact]
+    public async Task PlateLookup_WhenCoreSessionHasNoTicket_DoesNotExposeVendorSessionReferenceAsTicket()
+    {
+        var fixture = await Fixture.CreateAsync();
+        try
+        {
+            await fixture.InsertCoreSessionWithoutTicketAsync();
+            var repository = new OperatorConsoleSessionLookupReadRepository(fixture.ConnectionString);
+
+            var result = await repository.FindAsync(
+                fixture.PlateRequest(fixture.SiteId, fixture.SiteGroupId, "ABC1041"),
+                CancellationToken.None);
+
+            result.Should().NotBeNull();
+            result!.ParkingSessionId.Should().Be(fixture.ParkingSessionId);
+            result.SessionSource.Should().Be("CORE_PARKING_SESSION");
+            result.TicketReference.Should().BeNull();
+        }
+        finally
+        {
+            await fixture.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task TicketLookup_WhenIdentifierMatchesDistinctCanonicalRoutes_FailsClosed()
     {
         var fixture = await Fixture.CreateAsync();
@@ -335,6 +359,30 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
             AddScopeParameters(command);
             command.Parameters.AddWithValue("parking_session_id", ParkingSessionId);
             command.Parameters.AddWithValue("ticket", Ticket);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        public async Task InsertCoreSessionWithoutTicketAsync()
+        {
+            await using var connection = new NpgsqlConnection(ConnectionString);
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand(
+                """
+                INSERT INTO core.parking_sessions (
+                    parking_session_id, site_group_id, site_id, vendor_system_id,
+                    vendor_session_ref, plate_number_masked, ticket_number_masked,
+                    entry_at, vendor_session_status, session_status, correlation_id,
+                    created_by_service_identity_id, source_adapter_identity_id)
+                VALUES (
+                    @parking_session_id, @site_group_id, @site_id, @vendor_system_id,
+                    @vendor_session_ref, 'ABC1041', NULL,
+                    now() - interval '1 hour', 'ACTIVE', 'ACTIVE', gen_random_uuid(),
+                    @service_identity_id, @service_identity_id);
+                """,
+                connection);
+            AddScopeParameters(command);
+            command.Parameters.AddWithValue("parking_session_id", ParkingSessionId);
+            command.Parameters.AddWithValue("vendor_session_ref", $"HIKCENTRAL:ABC1041:{Guid.NewGuid():N}");
             await command.ExecuteNonQueryAsync();
         }
 

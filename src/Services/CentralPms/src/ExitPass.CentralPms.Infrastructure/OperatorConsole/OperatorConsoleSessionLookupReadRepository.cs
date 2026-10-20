@@ -69,7 +69,7 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                 ps.site_id,
                 ps.site_group_id,
                 site.site_name,
-                COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS ticket_reference,
+                ps.ticket_number_masked AS ticket_reference,
                 ps.plate_number_masked,
                 COALESCE(ps.entry_at, ps.created_at) AS entry_time,
                 ps.session_status::text AS session_status,

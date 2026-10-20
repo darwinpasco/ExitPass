@@ -39,7 +39,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             SELECT
                 sdv.statutory_discount_validation_id,
                 sdv.parking_session_id,
-                COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS ticket_reference,
+                ps.ticket_number_masked AS ticket_reference,
                 ps.plate_number_masked,
                 ps.site_id,
                 s.site_name,
@@ -155,7 +155,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             SELECT
                 sdv.statutory_discount_validation_id,
                 sdv.parking_session_id,
-                COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS ticket_reference,
+                ps.ticket_number_masked AS ticket_reference,
                 ps.plate_number_masked,
                 ps.site_id,
                 s.site_name,
@@ -358,7 +358,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             SELECT
                 sdv.statutory_discount_validation_id,
                 sdv.parking_session_id,
-                COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS ticket_reference,
+                ps.ticket_number_masked AS ticket_reference,
                 ps.plate_number_masked,
                 ps.site_id,
                 ps.site_group_id,
