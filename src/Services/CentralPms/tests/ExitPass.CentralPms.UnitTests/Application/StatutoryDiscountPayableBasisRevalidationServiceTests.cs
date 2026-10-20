@@ -19,6 +19,7 @@ public sealed class StatutoryDiscountPayableBasisRevalidationServiceTests
     private static readonly Guid VendorSystemId = Guid.Parse("10000000-0000-0000-0000-000000000007");
     private static readonly Guid TariffSnapshotId = Guid.Parse("10000000-0000-0000-0000-000000000008");
     private static readonly Guid CorrelationId = Guid.Parse("10000000-0000-0000-0000-000000000009");
+    private static readonly Guid RefreshedTariffSnapshotId = Guid.Parse("10000000-0000-0000-0000-000000000011");
 
     [Fact]
     public async Task RevalidateAsync_WhenVendorResolutionMatchesCanonicalReview_ReturnsFreshSnapshot()
@@ -75,6 +76,88 @@ public sealed class StatutoryDiscountPayableBasisRevalidationServiceTests
         result.Retryable.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task RevalidateAsync_WhenStoredTicketIsRejected_FallsBackToPlateAndReturnsRefreshedSnapshot()
+    {
+        var resolver = Substitute.For<IResolveVendorParkingUseCase>();
+        resolver.ExecuteAsync(Arg.Any<ResolveVendorParkingCommand>(), Arg.Any<CancellationToken>())
+            .Returns(
+                Failed(ResolveVendorParkingOutcome.InvalidRequest, retryable: false),
+                Resolved(
+                    ParkingSessionId,
+                    SiteId,
+                    SiteGroupId,
+                    DateTimeOffset.UtcNow.AddMinutes(10),
+                    RefreshedTariffSnapshotId));
+        var sut = new StatutoryDiscountPayableBasisRevalidationService(resolver);
+
+        var result = await sut.RevalidateAsync(Review(), CorrelationId, CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.TariffSnapshotId.Should().Be(RefreshedTariffSnapshotId);
+        await resolver.Received(1).ExecuteAsync(
+            Arg.Is<ResolveVendorParkingCommand>(command =>
+                command.TicketReference == "TICKET-001" &&
+                command.PlateNumber == null),
+            Arg.Any<CancellationToken>());
+        await resolver.Received(1).ExecuteAsync(
+            Arg.Is<ResolveVendorParkingCommand>(command =>
+                command.TicketReference == null &&
+                command.PlateNumber == "ABC1234"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RevalidateAsync_WhenTicketFailureIsRetryable_DoesNotFallBackToPlate()
+    {
+        var resolver = Substitute.For<IResolveVendorParkingUseCase>();
+        resolver.ExecuteAsync(Arg.Any<ResolveVendorParkingCommand>(), Arg.Any<CancellationToken>())
+            .Returns(Failed(ResolveVendorParkingOutcome.RetryableUnavailable, retryable: true));
+        var sut = new StatutoryDiscountPayableBasisRevalidationService(resolver);
+
+        var result = await sut.RevalidateAsync(Review(), CorrelationId, CancellationToken.None);
+
+        result.Succeeded.Should().BeFalse();
+        result.Retryable.Should().BeTrue();
+        await resolver.Received(1).ExecuteAsync(
+            Arg.Any<ResolveVendorParkingCommand>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RevalidateAsync_WhenTicketFailureIsNotIdentifierSpecific_DoesNotFallBackToPlate()
+    {
+        var resolver = Substitute.For<IResolveVendorParkingUseCase>();
+        resolver.ExecuteAsync(Arg.Any<ResolveVendorParkingCommand>(), Arg.Any<CancellationToken>())
+            .Returns(Failed(ResolveVendorParkingOutcome.AmbiguousMatch, retryable: false));
+        var sut = new StatutoryDiscountPayableBasisRevalidationService(resolver);
+
+        var result = await sut.RevalidateAsync(Review(), CorrelationId, CancellationToken.None);
+
+        result.Succeeded.Should().BeFalse();
+        result.ErrorCode.Should().Be("STATUTORY_DISCOUNT_PAYABLE_BASIS_REVALIDATION_FAILED");
+        await resolver.Received(1).ExecuteAsync(
+            Arg.Any<ResolveVendorParkingCommand>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RevalidateAsync_WhenPlateFallbackResolvesDifferentSession_FailsClosed()
+    {
+        var resolver = Substitute.For<IResolveVendorParkingUseCase>();
+        resolver.ExecuteAsync(Arg.Any<ResolveVendorParkingCommand>(), Arg.Any<CancellationToken>())
+            .Returns(
+                Failed(ResolveVendorParkingOutcome.InvalidRequest, retryable: false),
+                Resolved(Guid.NewGuid(), SiteId, SiteGroupId, DateTimeOffset.UtcNow.AddMinutes(10)));
+        var sut = new StatutoryDiscountPayableBasisRevalidationService(resolver);
+
+        var result = await sut.RevalidateAsync(Review(), CorrelationId, CancellationToken.None);
+
+        result.Succeeded.Should().BeFalse();
+        result.ErrorCode.Should().Be("STATUTORY_DISCOUNT_PAYABLE_BASIS_REVALIDATION_IDENTITY_MISMATCH");
+        result.Retryable.Should().BeFalse();
+    }
+
     private static StatutoryDiscountServiceChannelReviewDetail Review() =>
         new(
             DecisionId,
@@ -124,7 +207,8 @@ public sealed class StatutoryDiscountPayableBasisRevalidationServiceTests
         Guid parkingSessionId,
         Guid siteId,
         Guid siteGroupId,
-        DateTimeOffset expiresAt)
+        DateTimeOffset expiresAt,
+        Guid? tariffSnapshotId = null)
     {
         var calculatedAt = expiresAt.AddMinutes(-10);
         var session = ParkingSession.Rehydrate(
@@ -139,7 +223,7 @@ public sealed class StatutoryDiscountPayableBasisRevalidationServiceTests
             calculatedAt.AddHours(-1),
             ParkingSessionStatus.PaymentRequired);
         var snapshot = TariffSnapshot.Rehydrate(
-            TariffSnapshotId,
+            tariffSnapshotId ?? TariffSnapshotId,
             parkingSessionId,
             TariffSnapshotSourceType.Base,
             grossAmount: 100m,
@@ -166,4 +250,14 @@ public sealed class StatutoryDiscountPayableBasisRevalidationServiceTests
             paymentStatus: "UNPAID",
             effectivePayableBasis: null);
     }
+
+    private static ResolveVendorParkingResult Failed(
+        ResolveVendorParkingOutcome outcome,
+        bool retryable) =>
+        ResolveVendorParkingResult.Failed(
+            outcome,
+            "VENDOR_LOOKUP_VALIDATION_ERROR",
+            retryable,
+            CorrelationId,
+            VendorSystemId.ToString("D"));
 }

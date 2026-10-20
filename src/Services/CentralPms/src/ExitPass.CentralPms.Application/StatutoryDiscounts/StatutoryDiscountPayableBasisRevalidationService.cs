@@ -52,19 +52,35 @@ public sealed class StatutoryDiscountPayableBasisRevalidationService
 
         var ticketReference = string.IsNullOrWhiteSpace(review.TicketReference)
             ? null
-            : review.TicketReference;
-        var resolution = await _vendorParkingResolver.ExecuteAsync(
-                new ResolveVendorParkingCommand
-                {
-                    SiteId = review.SiteId.Value.ToString("D"),
-                    SiteGroupId = review.SiteGroupId.Value.ToString("D"),
-                    VendorSystemId = review.VendorSystemId.Value.ToString("D"),
-                    TicketReference = ticketReference,
-                    PlateNumber = ticketReference is null ? review.PlateNumber : null,
-                    CorrelationId = correlationId
-                },
+            : review.TicketReference.Trim();
+        var plateNumber = string.IsNullOrWhiteSpace(review.PlateNumber)
+            ? null
+            : review.PlateNumber.Trim();
+        var resolution = await ResolveAsync(
+                review,
+                ticketReference,
+                ticketReference is null ? plateNumber : null,
+                correlationId,
                 cancellationToken)
             .ConfigureAwait(false);
+
+        // Historical service-channel reviews may contain a vendor session reference in the
+        // ticket field. A deterministic ticket rejection can safely fall back to the review's
+        // plate because the canonical parking-session and site identities are checked below.
+        if (ticketReference is not null &&
+            plateNumber is not null &&
+            resolution.Outcome is ResolveVendorParkingOutcome.InvalidRequest or
+                ResolveVendorParkingOutcome.SessionNotFound &&
+            !resolution.Retryable)
+        {
+            resolution = await ResolveAsync(
+                    review,
+                    ticketReference: null,
+                    plateNumber,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         if (resolution.Outcome != ResolveVendorParkingOutcome.Resolved ||
             resolution.ParkingSession is null ||
@@ -102,6 +118,24 @@ public sealed class StatutoryDiscountPayableBasisRevalidationService
             ErrorCode: null,
             Retryable: false);
     }
+
+    private Task<ResolveVendorParkingResult> ResolveAsync(
+        StatutoryDiscountServiceChannelReviewDetail review,
+        string? ticketReference,
+        string? plateNumber,
+        Guid correlationId,
+        CancellationToken cancellationToken) =>
+        _vendorParkingResolver.ExecuteAsync(
+            new ResolveVendorParkingCommand
+            {
+                SiteId = review.SiteId!.Value.ToString("D"),
+                SiteGroupId = review.SiteGroupId!.Value.ToString("D"),
+                VendorSystemId = review.VendorSystemId!.Value.ToString("D"),
+                TicketReference = ticketReference,
+                PlateNumber = plateNumber,
+                CorrelationId = correlationId
+            },
+            cancellationToken);
 
     private static StatutoryDiscountPayableBasisRevalidationResult Failed(
         string errorCode,
