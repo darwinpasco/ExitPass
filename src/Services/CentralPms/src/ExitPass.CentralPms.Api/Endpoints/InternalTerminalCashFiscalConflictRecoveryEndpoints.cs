@@ -30,6 +30,13 @@ public static class InternalTerminalCashFiscalConfigurationRecoveryEndpoints
             .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status404NotFound)
             .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status409Conflict);
 
+        group.MapPost("/{terminalCashTenderId:guid}/business-date-assignment", RecoverBusinessDateFailureAsync)
+            .WithName("RecoverTerminalCashFiscalBusinessDateFailure")
+            .Produces<TerminalCashFiscalConflictRecoveryResult>(StatusCodes.Status200OK)
+            .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status400BadRequest)
+            .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status404NotFound)
+            .Produces<InternalTerminalCashFiscalRecoveryError>(StatusCodes.Status409Conflict);
+
         group.MapPost("/{terminalCashTenderId:guid}/service-failure", RecoverServiceFailureAsync)
             .WithName("RecoverTerminalCashFiscalServiceFailure")
             .Produces<TerminalCashFiscalConflictRecoveryResult>(StatusCodes.Status200OK)
@@ -64,6 +71,19 @@ public static class InternalTerminalCashFiscalConfigurationRecoveryEndpoints
             body,
             request,
             service.RecoverServiceFailureAsync,
+            cancellationToken);
+
+    private static Task<IResult> RecoverBusinessDateFailureAsync(
+        Guid terminalCashTenderId,
+        InternalTerminalCashFiscalRecoveryRequest? body,
+        HttpRequest request,
+        ITerminalCashFiscalIssuanceService service,
+        CancellationToken cancellationToken) =>
+        RecoverAsync(
+            terminalCashTenderId,
+            body,
+            request,
+            service.RecoverBusinessDateFailureAsync,
             cancellationToken);
 
     private static async Task<IResult> RecoverAsync(

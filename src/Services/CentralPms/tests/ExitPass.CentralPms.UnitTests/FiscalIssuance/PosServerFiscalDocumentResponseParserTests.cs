@@ -169,6 +169,64 @@ public sealed class PosServerFiscalDocumentResponseParserTests : IDisposable
         result.ResultClassification.Should().Be(FiscalIssuanceResultClassification.NewlyCreated);
     }
 
+    [Fact]
+    public async Task HttpClient_WhenBusinessDateResolved_PostsImmutableFiscalEventAndParsesAuthoritySnapshot()
+    {
+        HttpRequestMessage? observedRequest = null;
+        string? observedBody = null;
+        var client = new HttpClient(new StubHandler(request =>
+        {
+            observedRequest = request;
+            observedBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "succeeded": true,
+                      "code": "fiscal_business_date_resolved",
+                      "message": "resolved",
+                      "businessDayDate": "2026-10-21",
+                      "periodStartAt": "2026-10-20T23:00:00+00:00",
+                      "periodEndAt": "2026-10-21T23:00:00+00:00",
+                      "reportingTimezoneName": "Asia/Manila",
+                      "businessDayCutoffLocalTime": "07:00:00",
+                      "idempotencyRecordExists": false
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        }))
+        {
+            BaseAddress = new Uri("https://pos-server.local")
+        };
+        var sut = CreateClient(client);
+        var confirmationTime = DateTimeOffset.Parse("2026-10-20T23:43:18Z");
+        var upstreamFinality =
+            "terminal-cash-payment-confirmation:938f78bd-ad6b-4f6f-882d-ca98affbaa5a:sales_invoice";
+
+        var result = await sut.ResolveFiscalBusinessDateAsync(
+            new PosServerFiscalBusinessDateResolutionRequest(
+                SitePosServerId,
+                SitePosServerRef,
+                Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                confirmationTime,
+                upstreamFinality),
+            CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.BusinessDayDate.Should().Be(new DateOnly(2026, 10, 21));
+        result.ReportingTimezoneName.Should().Be("Asia/Manila");
+        result.BusinessDayCutoffLocalTime.Should().Be(new TimeOnly(7, 0));
+        result.IdempotencyRecordExists.Should().BeFalse();
+        observedRequest!.Method.Should().Be(HttpMethod.Post);
+        observedRequest.RequestUri!.PathAndQuery.Should().Be("/v1/fiscal-documents/business-date-resolution");
+        observedRequest.Headers.GetValues("X-PosServer-Admin-Permission").Should().ContainSingle("fiscal_document.create");
+        observedBody.Should().Contain("\"fiscalEventAt\":\"2026-10-20T23:43:18+00:00\"");
+        observedBody.Should().Contain($"\"upstreamFinalityReference\":\"{upstreamFinality}\"");
+    }
+
     [Theory]
     [InlineData("newly_voided", PosServerFiscalDocumentVoidOutcome.NewlyVoided)]
     [InlineData("idempotent_replay", PosServerFiscalDocumentVoidOutcome.IdempotentReplay)]

@@ -103,6 +103,8 @@ public sealed class TerminalCashServiceFailureRecoveryLivePosIntegrationTests
             var guard = new PostgresTerminalCashFiscalConflictRecoveryGuardRepository(connectionString);
             var recoveryLock = new PostgresTerminalCashFiscalConflictRecoveryLock(connectionString);
             var acknowledgment = new RecordingVendorAcknowledgmentWorkflow();
+            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            var liveHttpClient = new HttpPosServerFiscalDocumentClient(httpClient, Options.Create(options));
             var initialService = CreateService(
                 terminalPayments,
                 referenceRepository,
@@ -115,7 +117,8 @@ public sealed class TerminalCashServiceFailureRecoveryLivePosIntegrationTests
                 audit,
                 guard,
                 recoveryLock,
-                acknowledgment);
+                acknowledgment,
+                liveHttpClient);
 
             var failed = await initialService.IssueOrReadAsync(
                 new TerminalCashFiscalIssuanceCommand(
@@ -133,9 +136,8 @@ public sealed class TerminalCashServiceFailureRecoveryLivePosIntegrationTests
             Assert.Equal(FiscalIssuanceErrorPosture.RetryAfterServiceRecovery, failedReference!.LatestErrorPosture);
             Assert.False(string.IsNullOrWhiteSpace(failedReference.SemanticRequestHashValue));
 
-            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
             var liveClient = new RecordingPosClient(
-                new HttpPosServerFiscalDocumentClient(httpClient, Options.Create(options)));
+                liveHttpClient);
             var liveIntegration = new FiscalIssuancePosServerLiveIntegrationService(
                 options,
                 mapper,
@@ -154,7 +156,8 @@ public sealed class TerminalCashServiceFailureRecoveryLivePosIntegrationTests
                 audit,
                 guard,
                 recoveryLock,
-                acknowledgment);
+                acknowledgment,
+                liveClient);
             var recoveryCommand = new TerminalCashFiscalConflictRecoveryCommand(
                 tenderId,
                 failed.FiscalIssuanceReferenceId,
@@ -245,7 +248,8 @@ public sealed class TerminalCashServiceFailureRecoveryLivePosIntegrationTests
         IFiscalExceptionControlledRetryExecutionAuditRepository audit,
         ITerminalCashFiscalConflictRecoveryGuardRepository guard,
         ITerminalCashFiscalConflictRecoveryLock recoveryLock,
-        IVendorPaymentAcknowledgmentWorkflow acknowledgment) =>
+        IVendorPaymentAcknowledgmentWorkflow acknowledgment,
+        IPosServerFiscalDocumentClient posServerClient) =>
         new(
             terminalPayments,
             references,
@@ -258,6 +262,7 @@ public sealed class TerminalCashServiceFailureRecoveryLivePosIntegrationTests
             options,
             mapper,
             hashCalculator,
+            posServerClient,
             audit,
             guard,
             recoveryLock,
@@ -480,6 +485,11 @@ public sealed class TerminalCashServiceFailureRecoveryLivePosIntegrationTests
     private sealed class RecordingPosClient(IPosServerFiscalDocumentClient inner) : IPosServerFiscalDocumentClient
     {
         public PosServerFiscalDocumentCreateResult? LastCreateResult { get; private set; }
+
+        public Task<PosServerFiscalBusinessDateResolutionResult> ResolveFiscalBusinessDateAsync(
+            PosServerFiscalBusinessDateResolutionRequest request,
+            CancellationToken cancellationToken) =>
+            inner.ResolveFiscalBusinessDateAsync(request, cancellationToken);
 
         public async Task<PosServerFiscalDocumentCreateResult> CreateFiscalDocumentAsync(
             PosServerFiscalDocumentCreateRequest request,
