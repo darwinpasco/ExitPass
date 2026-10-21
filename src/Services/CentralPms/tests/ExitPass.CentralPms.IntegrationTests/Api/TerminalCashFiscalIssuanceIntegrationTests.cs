@@ -34,6 +34,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     private static readonly Guid SitePosServerId = Guid.Parse("21000000-0000-4000-8000-000000000015");
     private const string SitePosServerRef = "DEV-POS-SERVER-ATC-001";
     private static readonly Guid CashierUserId = Guid.Parse("21000000-0000-4000-8000-000000000008");
+    private static readonly Guid FiscalDocumentTypeCodeId = Guid.Parse("21000000-0000-4000-8000-000000000017");
+    private static readonly Guid ChannelTerminalId = Guid.Parse("21000000-0000-4000-8000-000000000018");
     private static readonly Guid StatutoryDecisionCommandId = Guid.Parse("21000000-0000-4000-8000-000000000030");
     private static readonly Guid StatutoryApplicationCommandId = Guid.Parse("21000000-0000-4000-8000-000000000031");
     private static readonly Guid StatutoryValidationId = Guid.Parse("21000000-0000-4000-8000-000000000032");
@@ -84,6 +86,38 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal("0", posIntegration.LastFiscalContext.ReferenceContext["change_amount_minor_units"]);
         Assert.Equal(1, exitAuthorization.CallCount);
         Assert.Equal(1, acknowledgment.CallCount);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_UsesPosAuthoritativeBusinessDateForOriginalConfirmationTime()
+    {
+        var confirmationTime = DateTimeOffset.Parse("2026-10-20T23:43:18Z");
+        var cashPayment = CashPayment(confirmedAt: confirmationTime);
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var posClient = new FakeBusinessDatePosClient(
+            new PosServerFiscalBusinessDateResolutionResult(
+                true,
+                200,
+                "fiscal_business_date_resolved",
+                "resolved",
+                new DateOnly(2026, 10, 21),
+                DateTimeOffset.Parse("2026-10-20T23:00:00Z"),
+                DateTimeOffset.Parse("2026-10-21T23:00:00Z"),
+                "Asia/Manila",
+                new TimeOnly(7, 0),
+                false,
+                null,
+                null));
+        var service = CreateService(cashPayment, repo, posIntegration, posServerClient: posClient);
+
+        await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.Equal(new DateOnly(2026, 10, 21), posIntegration.LastFiscalContext?.BusinessDayDate);
+        Assert.Equal(confirmationTime, posClient.LastRequest?.FiscalEventAt);
+        Assert.Equal(
+            $"terminal-cash-payment-confirmation:{PaymentConfirmationId:D}:sales_invoice",
+            posClient.LastRequest?.UpstreamFinalityReference);
     }
 
     [Fact]
@@ -307,6 +341,15 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
                     SiteId = CashPayment().SiteId,
                     SitePosServerId = SitePosServerId,
                     SitePosServerRef = SitePosServerRef,
+                    FiscalDocumentTypeCodeId = FiscalDocumentTypeCodeId,
+                    ChannelTerminals =
+                    [
+                        new ChannelTerminalIdentityOptions
+                        {
+                            ChannelTerminalId = ChannelTerminalId,
+                            TerminalIdentifier = "terminal-001"
+                        }
+                    ],
                     Environment = "IntegrationTest",
                     Enabled = true
                 }
@@ -372,6 +415,15 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
                 SiteId = CashPayment().SiteId,
                 SitePosServerId = SitePosServerId,
                 SitePosServerRef = SitePosServerRef,
+                FiscalDocumentTypeCodeId = FiscalDocumentTypeCodeId,
+                ChannelTerminals =
+                [
+                    new ChannelTerminalIdentityOptions
+                    {
+                        ChannelTerminalId = ChannelTerminalId,
+                        TerminalIdentifier = "terminal-001"
+                    }
+                ],
                 Environment = "IntegrationTest",
                 Enabled = true
             }));
@@ -799,7 +851,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         IIssueExitAuthorizationUseCase? exitAuthorization = null,
         IVendorPaymentAcknowledgmentWorkflow? acknowledgment = null,
         ISitePosServerBindingResolver? bindingResolver = null,
-        IContinuityTariffProvenanceReader? continuityTariffProvenance = null)
+        IContinuityTariffProvenanceReader? continuityTariffProvenance = null,
+        IPosServerFiscalDocumentClient? posServerClient = null)
     {
         repo ??= new InMemoryFiscalReferenceRepository();
         posServerOptions ??= new FiscalIssuancePosServerIntegrationOptions
@@ -814,6 +867,15 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
                         SiteId = cashPayment.SiteId,
                         SitePosServerId = SitePosServerId,
                         SitePosServerRef = SitePosServerRef,
+                        FiscalDocumentTypeCodeId = FiscalDocumentTypeCodeId,
+                        ChannelTerminals =
+                        [
+                            new ChannelTerminalIdentityOptions
+                            {
+                                ChannelTerminalId = ChannelTerminalId,
+                                TerminalIdentifier = "terminal-001"
+                            }
+                        ],
                         Environment = "IntegrationTest",
                         Enabled = true
                     }
@@ -832,6 +894,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             posServerOptions,
             new PosServerFiscalDocumentRequestMapper(),
             new FiscalSemanticRequestHashCalculator(),
+            posServerClient ?? new FakeBusinessDatePosClient(cashPayment),
             new FakeRecoveryAuditRepository(),
             new FakeRecoveryGuardRepository(),
             new FakeRecoveryLock(),
@@ -899,7 +962,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         long amountDueMinorUnits = 10_000,
         long? amountTenderedMinorUnits = null,
         long? changeDueMinorUnits = null,
-        string? posServerId = null) =>
+        string? posServerId = null,
+        DateTimeOffset? confirmedAt = null) =>
         new(
             TerminalCashPaymentCommandId: Guid.Parse("21000000-0000-4000-8000-000000000010"),
             TerminalCashTenderId: TerminalCashTenderId,
@@ -923,7 +987,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             IdempotencyScope: "terminal-cash-payment:test",
             SemanticHashSourceVersion: "terminal-cash-payment:sha256:v1",
             CreatedAt: DateTimeOffset.UtcNow.AddMinutes(-2),
-            ConfirmedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            ConfirmedAt: confirmedAt ?? DateTimeOffset.UtcNow.AddMinutes(-1),
             LastUpdatedAt: DateTimeOffset.UtcNow,
             CorrelationId: Guid.Parse("21000000-0000-4000-8000-000000000014"),
             FiscalStatus: "NOT_STARTED_IN_THIS_SLICE")
@@ -935,6 +999,73 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             EntryTime = EntryTime,
             CashierDisplayName = "Juan Dela Cruz"
         };
+
+    private sealed class FakeBusinessDatePosClient : IPosServerFiscalDocumentClient
+    {
+        private readonly PosServerFiscalBusinessDateResolutionResult? _configured;
+        private readonly TerminalCashPaymentReadback? _cashPayment;
+
+        public FakeBusinessDatePosClient(TerminalCashPaymentReadback? cashPayment)
+        {
+            _cashPayment = cashPayment;
+        }
+
+        public FakeBusinessDatePosClient(PosServerFiscalBusinessDateResolutionResult configured)
+        {
+            _configured = configured;
+        }
+
+        public PosServerFiscalBusinessDateResolutionRequest? LastRequest { get; private set; }
+
+        public Task<PosServerFiscalBusinessDateResolutionResult> ResolveFiscalBusinessDateAsync(
+            PosServerFiscalBusinessDateResolutionRequest request,
+            CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            if (_configured is not null)
+            {
+                return Task.FromResult(_configured);
+            }
+
+            var eventAt = _cashPayment?.ConfirmedAt ?? request.FiscalEventAt;
+            var date = DateOnly.FromDateTime(eventAt.UtcDateTime);
+            var start = new DateTimeOffset(date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+            return Task.FromResult(new PosServerFiscalBusinessDateResolutionResult(
+                true,
+                200,
+                "fiscal_business_date_resolved",
+                "resolved",
+                date,
+                start,
+                start.AddDays(1),
+                "UTC",
+                TimeOnly.MinValue,
+                false,
+                null,
+                null));
+        }
+
+        public Task<PosServerFiscalDocumentCreateResult> CreateFiscalDocumentAsync(
+            PosServerFiscalDocumentCreateRequest request,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<PosServerFiscalDocumentReadResult> GetFiscalDocumentAsync(
+            Guid fiscalDocumentId,
+            PosServerRoutingContext routingContext,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<PosServerFiscalDocumentPresentationReadResult> GetFiscalDocumentPresentationAsync(
+            Guid fiscalDocumentId,
+            Guid? correlationId,
+            PosServerRoutingContext routingContext,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<PosServerFiscalDocumentVoidResult> VoidFiscalDocumentAsync(
+            Guid fiscalDocumentId,
+            PosServerFiscalDocumentVoidRequest request,
+            PosServerRoutingContext routingContext,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
 
     private static TerminalCashStatutoryFiscalLinkageContext StatutoryContext() =>
         new(
@@ -980,7 +1111,14 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
         Assert.NotNull(method);
         return Assert.IsType<CentralPmsFiscalDocumentMappingContext>(
-            method.Invoke(null, [cashPayment, reference, null]));
+            method.Invoke(null,
+            [
+                cashPayment,
+                reference,
+                null,
+                new ChannelTerminalIdentity(ChannelTerminalId, cashPayment.TerminalId),
+                DateOnly.FromDateTime(cashPayment.ConfirmedAt.UtcDateTime)
+            ]));
     }
 
     private static string Serialize(object value) =>
@@ -1204,6 +1342,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
 
         public List<TerminalCashFiscalConflictRecoveryCommand> ServiceRecoveryCommands { get; } = [];
 
+        public List<TerminalCashFiscalConflictRecoveryCommand> BusinessDateRecoveryCommands { get; } = [];
+
         public Task<TerminalCashFiscalIssuanceResult> IssueOrReadAsync(
             TerminalCashFiscalIssuanceCommand command,
             CancellationToken cancellationToken)
@@ -1237,6 +1377,15 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             CancellationToken cancellationToken)
         {
             ServiceRecoveryCommands.Add(command);
+            return Task.FromResult(_recoveryResult ?? throw new NotSupportedException(
+                "Recovery result was not configured for this endpoint test."));
+        }
+
+        public Task<TerminalCashFiscalConflictRecoveryResult> RecoverBusinessDateFailureAsync(
+            TerminalCashFiscalConflictRecoveryCommand command,
+            CancellationToken cancellationToken)
+        {
+            BusinessDateRecoveryCommands.Add(command);
             return Task.FromResult(_recoveryResult ?? throw new NotSupportedException(
                 "Recovery result was not configured for this endpoint test."));
         }

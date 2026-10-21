@@ -45,6 +45,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     private readonly FiscalIssuancePosServerIntegrationOptions _posServerOptions;
     private readonly IPosServerFiscalDocumentRequestMapper _requestMapper;
     private readonly IFiscalSemanticRequestHashCalculator _semanticRequestHashCalculator;
+    private readonly IPosServerFiscalDocumentClient _posServerClient;
     private readonly IFiscalExceptionControlledRetryExecutionAuditRepository _recoveryAuditRepository;
     private readonly ITerminalCashFiscalConflictRecoveryGuardRepository _recoveryGuardRepository;
     private readonly ITerminalCashFiscalConflictRecoveryLock _recoveryLock;
@@ -62,6 +63,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         FiscalIssuancePosServerIntegrationOptions posServerOptions,
         IPosServerFiscalDocumentRequestMapper requestMapper,
         IFiscalSemanticRequestHashCalculator semanticRequestHashCalculator,
+        IPosServerFiscalDocumentClient posServerClient,
         IFiscalExceptionControlledRetryExecutionAuditRepository recoveryAuditRepository,
         ITerminalCashFiscalConflictRecoveryGuardRepository recoveryGuardRepository,
         ITerminalCashFiscalConflictRecoveryLock recoveryLock,
@@ -80,6 +82,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         _posServerOptions = posServerOptions;
         _requestMapper = requestMapper;
         _semanticRequestHashCalculator = semanticRequestHashCalculator;
+        _posServerClient = posServerClient;
         _recoveryAuditRepository = recoveryAuditRepository;
         _recoveryGuardRepository = recoveryGuardRepository;
         _recoveryLock = recoveryLock;
@@ -148,6 +151,12 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         EnsureStatutoryFiscalLinkageCanBeFiscalized(statutoryFiscalLinkage);
         EnsureParkingFiscalContextAvailable(cashPayment);
         var posServerEndpoint = ResolvePosServerEndpoint(cashPayment);
+        var businessDateResolution = await ResolvePosBusinessDateAsync(
+                cashPayment,
+                posServerEndpoint,
+                upstreamFinalityReference,
+                cancellationToken)
+            .ConfigureAwait(false);
 
         var prepared = await _orchestrationService.PreparePendingAsync(
                 BuildPrepareCommand(cashPayment, posServerEndpoint, upstreamFinalityReference, command.CorrelationId),
@@ -158,7 +167,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             cashPayment,
             prepared,
             statutoryFiscalLinkage.Context,
-            posServerEndpoint.ResolveChannelTerminal(cashPayment.TerminalId));
+            posServerEndpoint.ResolveChannelTerminal(cashPayment.TerminalId),
+            businessDateResolution.BusinessDayDate!.Value);
         var recordingContext = new PosServerCreateResultRecordingContext(
             UpstreamFinalityReference: upstreamFinalityReference,
             SitePosServerId: prepared.SitePosServerId,
@@ -205,6 +215,12 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         TerminalCashFiscalConflictRecoveryCommand command,
         CancellationToken cancellationToken) =>
         await RecoverFailureAsync(command, TerminalCashRecoveryClass.ServiceFailure, cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<TerminalCashFiscalConflictRecoveryResult> RecoverBusinessDateFailureAsync(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        CancellationToken cancellationToken) =>
+        await RecoverFailureAsync(command, TerminalCashRecoveryClass.BusinessDateCorrection, cancellationToken)
             .ConfigureAwait(false);
 
     private async Task<TerminalCashFiscalConflictRecoveryResult> RecoverFailureAsync(
@@ -257,7 +273,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                     FiscalExceptionControlledRetryExecutionStatus.ReplayMatched,
                     "terminal_cash_fiscal_recovery_already_completed",
                     posServerResult: null,
-                    cancellationToken)
+                    cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
             return new TerminalCashFiscalConflictRecoveryResult(
                 replayAuditId,
@@ -281,7 +297,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 command.ExpectedPaymentConfirmationId,
                 cancellationToken)
             .ConfigureAwait(false);
-        EnsureDurableRecoveryFacts(command, cashPayment, durableFacts);
+        EnsureDurableRecoveryFacts(command, cashPayment, durableFacts, recoveryClass);
 
         var statutoryFiscalLinkage = await _statutoryFiscalLinkageReader
             .ReadByAppliedTariffSnapshotAsync(cashPayment, cancellationToken)
@@ -307,11 +323,27 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 "POS Server fiscal integration readiness is not confirmed.");
         }
 
+        var legacyUtcBusinessDate = DateOnly.FromDateTime(cashPayment.ConfirmedAt.UtcDateTime);
+        PosServerFiscalBusinessDateResolutionResult? businessDateResolution = null;
+        var correctedBusinessDate = legacyUtcBusinessDate;
+        if (recoveryClass == TerminalCashRecoveryClass.BusinessDateCorrection)
+        {
+            businessDateResolution = await ResolvePosBusinessDateAsync(
+                    cashPayment,
+                    resolvedEndpoint,
+                    reference.UpstreamFinalityReference,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            EnsureBusinessDateRecoveryPreflight(cashPayment, reference, businessDateResolution, legacyUtcBusinessDate);
+            correctedBusinessDate = businessDateResolution.BusinessDayDate!.Value;
+        }
+
         var fiscalContext = BuildFiscalContext(
             cashPayment,
             reference,
             statutoryFiscalLinkage.Context,
-            resolvedEndpoint.ResolveChannelTerminal(cashPayment.TerminalId));
+            resolvedEndpoint.ResolveChannelTerminal(cashPayment.TerminalId),
+            correctedBusinessDate);
         PosServerFiscalDocumentCreateRequest mappedRequest;
         try
         {
@@ -328,7 +360,31 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         }
 
         var recalculatedHash = _semanticRequestHashCalculator.Calculate(mappedRequest);
-        EnsureSemanticRequestUnchanged(command, reference, mappedRequest, recalculatedHash);
+        if (recoveryClass == TerminalCashRecoveryClass.BusinessDateCorrection)
+        {
+            var originalContext = fiscalContext with { BusinessDayDate = legacyUtcBusinessDate };
+            var originalRequest = _requestMapper.Map(
+                FiscalIssuancePosServerLiveIntegrationService.ApplyConfiguredFiscalProfile(
+                    _posServerOptions,
+                    originalContext));
+            var originalHash = _semanticRequestHashCalculator.Calculate(originalRequest);
+            var correctedProjectedToLegacyHash = _semanticRequestHashCalculator.Calculate(
+                mappedRequest with { BusinessDayDate = legacyUtcBusinessDate });
+            EnsureBusinessDateSemanticCorrection(
+                command,
+                reference,
+                originalRequest,
+                originalHash,
+                mappedRequest,
+                recalculatedHash,
+                correctedProjectedToLegacyHash,
+                legacyUtcBusinessDate,
+                correctedBusinessDate);
+        }
+        else
+        {
+            EnsureSemanticRequestUnchanged(command, reference, mappedRequest, recalculatedHash);
+        }
 
         _logger.LogInformation(
             "Terminal cash fiscal recovery passed guarded dry-run checks. recovery_class={RecoveryClass} fiscal_issuance_reference_id={FiscalIssuanceReferenceId} terminal_cash_tender_id={TerminalCashTenderId} correlation_id={CorrelationId}",
@@ -342,11 +398,17 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 reference,
                 recoveryClass,
                 FiscalExceptionControlledRetryExecutionStatus.DryRunReady,
-                recoveryClass == TerminalCashRecoveryClass.ServiceFailure
-                    ? "terminal_cash_service_failure_recovery_authorized"
-                    : "terminal_cash_configuration_failure_recovery_authorized",
+                recoveryClass switch
+                {
+                    TerminalCashRecoveryClass.ServiceFailure => "terminal_cash_service_failure_recovery_authorized",
+                    TerminalCashRecoveryClass.BusinessDateCorrection => "terminal_cash_business_date_recovery_authorized",
+                    _ => "terminal_cash_configuration_failure_recovery_authorized"
+                },
                 posServerResult: null,
-                cancellationToken)
+                cancellationToken: cancellationToken,
+                semanticRequestHash: recoveryClass == TerminalCashRecoveryClass.BusinessDateCorrection
+                    ? recalculatedHash
+                    : null)
             .ConfigureAwait(false);
 
         var recordingContext = new PosServerCreateResultRecordingContext(
@@ -356,12 +418,19 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             CorrelationId: command.RecoveryCorrelationId,
             PosServerResponseTimestamp: DateTimeOffset.UtcNow,
             ServiceIdentityId: command.ActorServiceIdentityId);
-        var liveResult = await _posServerIntegration.TryIssueFiscalDocumentViaPosServerAsync(
-                reference.FiscalIssuanceReferenceId,
-                fiscalContext,
-                recordingContext,
-                cancellationToken)
-            .ConfigureAwait(false);
+        var liveResult = recoveryClass == TerminalCashRecoveryClass.BusinessDateCorrection
+            ? await ExecuteCorrectedBusinessDateRecoveryAsync(
+                    reference,
+                    mappedRequest,
+                    recordingContext,
+                    cancellationToken)
+                .ConfigureAwait(false)
+            : await _posServerIntegration.TryIssueFiscalDocumentViaPosServerAsync(
+                    reference.FiscalIssuanceReferenceId,
+                    fiscalContext,
+                    recordingContext,
+                    cancellationToken)
+                .ConfigureAwait(false);
         var recoveredReference = liveResult.FiscalIssuanceReference ?? reference;
         var executionStatus = liveResult.PosServerResult switch
         {
@@ -380,7 +449,10 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 executionStatus,
                 liveResult.PosServerResult?.Code ?? liveResult.Code,
                 liveResult.PosServerResult,
-                cancellationToken)
+                cancellationToken: cancellationToken,
+                semanticRequestHash: recoveryClass == TerminalCashRecoveryClass.BusinessDateCorrection
+                    ? recalculatedHash
+                    : null)
             .ConfigureAwait(false);
 
         _logger.LogInformation(
@@ -597,6 +669,137 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         return resolution.Endpoint;
     }
 
+    private async Task<PosServerFiscalBusinessDateResolutionResult> ResolvePosBusinessDateAsync(
+        TerminalCashPaymentReadback cashPayment,
+        SitePosServerEndpointOptions endpoint,
+        string upstreamFinalityReference,
+        CancellationToken cancellationToken)
+    {
+        if (endpoint.FiscalDocumentTypeCodeId is null || endpoint.FiscalDocumentTypeCodeId == Guid.Empty)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_DOCUMENT_TYPE_MISSING",
+                "The Site POS Server fiscal document type is unavailable for business-date resolution.");
+        }
+
+        PosServerFiscalBusinessDateResolutionResult result;
+        try
+        {
+            result = await _posServerClient.ResolveFiscalBusinessDateAsync(
+                    new PosServerFiscalBusinessDateResolutionRequest(
+                        endpoint.SitePosServerId,
+                        endpoint.SitePosServerRef!,
+                        endpoint.FiscalDocumentTypeCodeId.Value,
+                        cashPayment.ConfirmedAt,
+                        upstreamFinalityReference),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_BUSINESS_DATE_UNAVAILABLE",
+                "POS Server fiscal business-date resolution timed out.");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or TimeoutException)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_BUSINESS_DATE_UNAVAILABLE",
+                "POS Server fiscal business-date resolution is temporarily unavailable.");
+        }
+
+        if (!result.Succeeded ||
+            result.BusinessDayDate is null ||
+            result.PeriodStartAt is null ||
+            result.PeriodEndAt is null ||
+            string.IsNullOrWhiteSpace(result.ReportingTimezoneName) ||
+            result.BusinessDayCutoffLocalTime is null ||
+            cashPayment.ConfirmedAt < result.PeriodStartAt.Value ||
+            cashPayment.ConfirmedAt >= result.PeriodEndAt.Value)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_BUSINESS_DATE_UNAVAILABLE",
+                "POS Server did not return a valid fiscal business date for the immutable payment timestamp.");
+        }
+
+        return result;
+    }
+
+    private async Task<FiscalIssuancePosServerLiveIntegrationResult> ExecuteCorrectedBusinessDateRecoveryAsync(
+        FiscalIssuanceReferenceRecord reference,
+        PosServerFiscalDocumentCreateRequest request,
+        PosServerCreateResultRecordingContext recordingContext,
+        CancellationToken cancellationToken)
+    {
+        await _orchestrationService.MarkRequestedAsync(
+                reference.FiscalIssuanceReferenceId,
+                new FiscalIssuanceTransitionContext(
+                    recordingContext.CorrelationId,
+                    recordingContext.ServiceIdentityId),
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        PosServerFiscalDocumentCreateResult posResult;
+        try
+        {
+            posResult = await _posServerClient.CreateFiscalDocumentAsync(request, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            posResult = CorrectedRecoveryTransportFailure(504, "pos_server_timeout");
+        }
+        catch (HttpRequestException)
+        {
+            posResult = CorrectedRecoveryTransportFailure(503, "pos_server_unavailable");
+        }
+
+        var updated = posResult.Outcome == PosServerFiscalDocumentOutcome.Accepted && posResult.Succeeded
+            ? await _orchestrationService.ApplyPosServerCreateResultAsync(
+                    reference.FiscalIssuanceReferenceId,
+                    posResult,
+                    recordingContext,
+                    cancellationToken)
+                .ConfigureAwait(false)
+            : await _orchestrationService.ApplyPosServerFailureResultAsync(
+                    reference.FiscalIssuanceReferenceId,
+                    posResult,
+                    recordingContext,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+        return FiscalIssuancePosServerLiveIntegrationResult.Applied(request, posResult, updated);
+    }
+
+    private static PosServerFiscalDocumentCreateResult CorrectedRecoveryTransportFailure(
+        int statusCode,
+        string code) =>
+        new(
+            Outcome: PosServerFiscalDocumentOutcome.FailedService,
+            Succeeded: false,
+            HttpStatusCode: statusCode,
+            Code: code,
+            Message: code,
+            FiscalDocumentId: null,
+            ResultClassification: null,
+            FiscalIssuanceEvidenceStatus: null,
+            FiscalNumberAssignmentState: FiscalNumberAssignmentState.NotAssigned,
+            FiscalIdentityId: null,
+            FiscalDocumentStatusCodeId: null,
+            FiscalSequencePolicyId: null,
+            FiscalSequenceValue: null,
+            FiscalDocumentNumber: null,
+            FiscalSeries: null,
+            FiscalNumberPrefixText: null,
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: null,
+            FiscalNumberAssignedByRef: null,
+            ErrorPosture: FiscalIssuanceErrorPosture.RetryAfterServiceRecovery);
+
     private static string MapBindingErrorCode(string code) => code switch
     {
         SitePosServerBindingResolutionCodes.Missing => "SITE_POS_SERVER_BINDING_MISSING",
@@ -614,7 +817,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         TerminalCashPaymentReadback cashPayment,
         FiscalIssuanceReferenceRecord reference,
         TerminalCashStatutoryFiscalLinkageContext? statutoryContext,
-        ChannelTerminalIdentity channelTerminal)
+        ChannelTerminalIdentity channelTerminal,
+        DateOnly businessDayDate)
     {
         var currency = cashPayment.Currency.Trim().ToUpperInvariant();
         var amount = statutoryContext?.FinalPayableAmountMinorUnits ?? cashPayment.AmountDueMinorUnits;
@@ -648,7 +852,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             FiscalDocumentTypeCodeId: reference.FiscalDocumentTypeCodeId,
             FiscalDocumentTypeCodeKey: reference.FiscalDocumentTypeCodeKey,
             FiscalDocumentStatusCodeId: null,
-            BusinessDayDate: DateOnly.FromDateTime(cashPayment.ConfirmedAt.UtcDateTime),
+            BusinessDayDate: businessDayDate,
             CentralPmsParkingSessionRef: cashPayment.ParkingSessionId.ToString("D"),
             CentralPmsPaymentAttemptRef: paymentAttemptRef,
             CentralPmsPaymentConfirmationRef: paymentConfirmationRef,
@@ -1135,6 +1339,21 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         FiscalIssuanceReferenceRecord reference,
         TerminalCashRecoveryClass recoveryClass)
     {
+        if (recoveryClass == TerminalCashRecoveryClass.BusinessDateCorrection)
+        {
+            if (reference.FiscalIssuanceState != FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration ||
+                !string.Equals(reference.LatestErrorCode, "fiscal_reporting_period_closed", StringComparison.Ordinal) ||
+                !string.Equals(command.ReasonCode, "fiscal_reporting_period_closed", StringComparison.Ordinal) ||
+                reference.LatestExceptionReason != FiscalIssuanceExceptionReason.FiscalReportingPeriodClosed)
+            {
+                throw Rejected(
+                    "TERMINAL_CASH_FISCAL_BUSINESS_DATE_RECOVERY_NOT_ELIGIBLE",
+                    "Only the proven legacy UTC-calendar fiscal business-date failure is eligible for this recovery.");
+            }
+
+            return;
+        }
+
         if (recoveryClass == TerminalCashRecoveryClass.ServiceFailure)
         {
             if (reference.FiscalIssuanceState != FiscalIssuanceIntegrationState.FiscalIssuanceFailedService ||
@@ -1189,7 +1408,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     private static void EnsureDurableRecoveryFacts(
         TerminalCashFiscalConflictRecoveryCommand command,
         TerminalCashPaymentReadback cashPayment,
-        TerminalCashFiscalConflictRecoveryFacts? facts)
+        TerminalCashFiscalConflictRecoveryFacts? facts,
+        TerminalCashRecoveryClass recoveryClass)
     {
         var currency = command.ExpectedCurrency.Trim().ToUpperInvariant();
         if (facts is null ||
@@ -1216,6 +1436,75 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             throw Rejected(
                 "TERMINAL_CASH_FISCAL_RECOVERY_EXIT_ALREADY_AUTHORIZED",
                 "An ExitAuthorization already exists; fiscal recovery requires reconciliation instead of another POST.");
+        }
+
+        if (recoveryClass == TerminalCashRecoveryClass.BusinessDateCorrection &&
+            (facts.TerminalCashCommandCount != 1 ||
+             facts.TerminalCashTenderId != command.TerminalCashTenderId ||
+             facts.CashCustodySessionId != cashPayment.CashCustodySessionId ||
+             facts.CashCustodySessionId is null ||
+             facts.CashCustodySessionId == Guid.Empty))
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_RECOVERY_CASH_EVIDENCE_MISSING",
+                "The original cash tender and custody evidence is unavailable or ambiguous.");
+        }
+    }
+
+    private static void EnsureBusinessDateRecoveryPreflight(
+        TerminalCashPaymentReadback cashPayment,
+        FiscalIssuanceReferenceRecord reference,
+        PosServerFiscalBusinessDateResolutionResult resolution,
+        DateOnly legacyUtcBusinessDate)
+    {
+        if (resolution.BusinessDayDate is null ||
+            resolution.BusinessDayDate.Value == legacyUtcBusinessDate ||
+            resolution.IdempotencyRecordExists is not false ||
+            resolution.LinkedFiscalDocumentId is not null ||
+            !string.IsNullOrWhiteSpace(resolution.ExistingSemanticRequestHash) ||
+            reference.PosServerFiscalDocumentId is not null ||
+            cashPayment.ExitAuthorizationIssued)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_BUSINESS_DATE_RECOVERY_PREFLIGHT_FAILED",
+                "POS Server business-date or idempotency preflight did not prove a safe corrected recovery.");
+        }
+    }
+
+    private static void EnsureBusinessDateSemanticCorrection(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        FiscalIssuanceReferenceRecord reference,
+        PosServerFiscalDocumentCreateRequest originalRequest,
+        FiscalSemanticRequestHashResult originalHash,
+        PosServerFiscalDocumentCreateRequest correctedRequest,
+        FiscalSemanticRequestHashResult correctedHash,
+        FiscalSemanticRequestHashResult correctedProjectedToLegacyHash,
+        DateOnly legacyUtcBusinessDate,
+        DateOnly correctedBusinessDate)
+    {
+        if (originalHash.Status != FiscalSemanticRequestHashSourceStatus.Available ||
+            correctedHash.Status != FiscalSemanticRequestHashSourceStatus.Available ||
+            string.IsNullOrWhiteSpace(originalHash.HashValue) ||
+            string.IsNullOrWhiteSpace(correctedHash.HashValue) ||
+            !string.Equals(reference.SemanticRequestHashValue, command.ExpectedFiscalSemanticRequestHash, StringComparison.Ordinal) ||
+            !string.Equals(reference.SemanticRequestHashValue, originalHash.HashValue, StringComparison.Ordinal) ||
+            !string.Equals(reference.SemanticRequestHashAlgorithm, originalHash.HashAlgorithm, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(reference.SemanticRequestHashSourceVersion, originalHash.HashSourceVersion, StringComparison.Ordinal) ||
+            !string.Equals(originalHash.HashAlgorithm, correctedHash.HashAlgorithm, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(originalHash.HashSourceVersion, correctedHash.HashSourceVersion, StringComparison.Ordinal) ||
+            string.Equals(originalHash.HashValue, correctedHash.HashValue, StringComparison.Ordinal) ||
+            correctedProjectedToLegacyHash.Status != FiscalSemanticRequestHashSourceStatus.Available ||
+            !string.Equals(originalHash.HashValue, correctedProjectedToLegacyHash.HashValue, StringComparison.Ordinal) ||
+            originalRequest.BusinessDayDate != legacyUtcBusinessDate ||
+            correctedRequest.BusinessDayDate != correctedBusinessDate ||
+            !string.Equals(originalRequest.UpstreamFinalityRef, correctedRequest.UpstreamFinalityRef, StringComparison.Ordinal) ||
+            !string.Equals(correctedRequest.UpstreamFinalityRef, command.ExpectedUpstreamFinalityReference, StringComparison.Ordinal) ||
+            originalRequest.SitePosServerId != correctedRequest.SitePosServerId ||
+            originalRequest.FiscalDocumentTypeCodeId != correctedRequest.FiscalDocumentTypeCodeId)
+        {
+            throw Rejected(
+                "TERMINAL_CASH_FISCAL_BUSINESS_DATE_SEMANTIC_MISMATCH",
+                "The corrected fiscal request does not preserve the original obligation except for its POS-authoritative business date.");
         }
     }
 
@@ -1250,7 +1539,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         FiscalExceptionControlledRetryExecutionStatus status,
         string? resultCode,
         PosServerFiscalDocumentCreateResult? posServerResult,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        FiscalSemanticRequestHashResult? semanticRequestHash = null)
     {
         var failed = status is FiscalExceptionControlledRetryExecutionStatus.Conflict or
             FiscalExceptionControlledRetryExecutionStatus.Blocked or
@@ -1264,9 +1554,9 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 RetryCommandPreparationAttemptId: null,
                 RetrySchedulePreparationAttemptId: null,
                 ReadbackClassificationBasis: null,
-                SemanticRequestHashValue: reference.SemanticRequestHashValue,
-                SemanticRequestHashAlgorithm: reference.SemanticRequestHashAlgorithm,
-                SemanticRequestHashSourceVersion: reference.SemanticRequestHashSourceVersion,
+                SemanticRequestHashValue: semanticRequestHash?.HashValue ?? reference.SemanticRequestHashValue,
+                SemanticRequestHashAlgorithm: semanticRequestHash?.HashAlgorithm ?? reference.SemanticRequestHashAlgorithm,
+                SemanticRequestHashSourceVersion: semanticRequestHash?.HashSourceVersion ?? reference.SemanticRequestHashSourceVersion,
                 UpstreamFinalityReference: reference.UpstreamFinalityReference,
                 ExecutionStatus: status,
                 BlockReasonCode: failed ? safeResultCode : null,
@@ -1300,9 +1590,12 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     {
         var summary = string.Join(
             ';',
-            recoveryClass == TerminalCashRecoveryClass.ServiceFailure
-                ? "terminal_cash_service_failure_recovery"
-                : "terminal_cash_configuration_failure_recovery",
+            recoveryClass switch
+            {
+                TerminalCashRecoveryClass.ServiceFailure => "terminal_cash_service_failure_recovery",
+                TerminalCashRecoveryClass.BusinessDateCorrection => "terminal_cash_business_date_recovery",
+                _ => "terminal_cash_configuration_failure_recovery"
+            },
             $"reason={command.ReasonCode.Trim()}",
             $"approval={command.ApprovalReference.Trim()}",
             $"result={safeResultCode}",
@@ -1382,6 +1675,7 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
     private enum TerminalCashRecoveryClass
     {
         ConfigurationFailure,
-        ServiceFailure
+        ServiceFailure,
+        BusinessDateCorrection
     }
 }

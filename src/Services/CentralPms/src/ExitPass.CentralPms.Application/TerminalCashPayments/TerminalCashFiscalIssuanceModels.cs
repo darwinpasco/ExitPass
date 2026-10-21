@@ -37,6 +37,14 @@ public interface ITerminalCashFiscalIssuanceService
     Task<TerminalCashFiscalConflictRecoveryResult> RecoverServiceFailureAsync(
         TerminalCashFiscalConflictRecoveryCommand command,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Recovers the narrowly identified legacy UTC-calendar fiscal business-date failure.
+    /// The original request evidence remains immutable and POS Server resolves the corrected date.
+    /// </summary>
+    Task<TerminalCashFiscalConflictRecoveryResult> RecoverBusinessDateFailureAsync(
+        TerminalCashFiscalConflictRecoveryCommand command,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -96,7 +104,10 @@ public sealed record TerminalCashFiscalConflictRecoveryFacts(
     long PaymentAttemptAmountMinorUnits,
     string PaymentConfirmationCurrency,
     long PaymentConfirmationAmountMinorUnits,
-    int ExitAuthorizationCount);
+    int ExitAuthorizationCount,
+    int TerminalCashCommandCount = 0,
+    Guid? TerminalCashTenderId = null,
+    Guid? CashCustodySessionId = null);
 
 public interface ITerminalCashFiscalConflictRecoveryGuardRepository
 {

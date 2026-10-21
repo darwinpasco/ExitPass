@@ -11,6 +11,23 @@ public static class FiscalCompletionBasisCodes
 
 public interface IPosServerFiscalDocumentClient
 {
+    Task<PosServerFiscalBusinessDateResolutionResult> ResolveFiscalBusinessDateAsync(
+        PosServerFiscalBusinessDateResolutionRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new PosServerFiscalBusinessDateResolutionResult(
+            false,
+            503,
+            "fiscal_business_date_resolution_unavailable",
+            "POS Server fiscal business-date resolution is unavailable.",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null));
+
     Task<PosServerFiscalDocumentCreateResult> CreateFiscalDocumentAsync(
         PosServerFiscalDocumentCreateRequest request,
         CancellationToken cancellationToken);
@@ -48,6 +65,27 @@ public interface IPosServerFiscalDocumentClient
         PosServerRoutingContext routingContext,
         CancellationToken cancellationToken);
 }
+
+public sealed record PosServerFiscalBusinessDateResolutionRequest(
+    Guid SitePosServerId,
+    string SitePosServerRef,
+    Guid FiscalDocumentTypeCodeId,
+    DateTimeOffset FiscalEventAt,
+    string UpstreamFinalityReference);
+
+public sealed record PosServerFiscalBusinessDateResolutionResult(
+    bool Succeeded,
+    int HttpStatusCode,
+    string Code,
+    string Message,
+    DateOnly? BusinessDayDate,
+    DateTimeOffset? PeriodStartAt,
+    DateTimeOffset? PeriodEndAt,
+    string? ReportingTimezoneName,
+    TimeOnly? BusinessDayCutoffLocalTime,
+    bool? IdempotencyRecordExists,
+    Guid? LinkedFiscalDocumentId,
+    string? ExistingSemanticRequestHash);
 
 public sealed record PosServerRoutingContext(
     Guid SitePosServerId,

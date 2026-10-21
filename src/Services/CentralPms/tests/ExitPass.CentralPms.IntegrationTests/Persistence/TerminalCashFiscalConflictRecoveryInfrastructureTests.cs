@@ -1,7 +1,12 @@
+using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.TerminalCashPayments;
+using ExitPass.CentralPms.Infrastructure.Common;
+using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.Infrastructure.TerminalCashPayments;
 using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
+using Npgsql;
 using Xunit;
 using static ExitPass.CentralPms.IntegrationTests.Shared.PaymentRoutineTestHelper;
 
@@ -17,6 +22,7 @@ public sealed class TerminalCashFiscalConflictRecoveryInfrastructureTests
     public async Task GuardReader_ReturnsCanonicalConfirmedPaymentFactsAndNoExitAuthorization()
     {
         var context = PaymentTestContext.Create(nameof(GuardReader_ReturnsCanonicalConfirmedPaymentFactsAndNoExitAuthorization));
+        await EnsureTerminalCashPatchAppliedAsync(ConnectionString);
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed fiscal conflict recovery guard test.");
 
         try
@@ -66,6 +72,64 @@ public sealed class TerminalCashFiscalConflictRecoveryInfrastructureTests
     }
 
     [Fact]
+    public async Task GuardReader_ReturnsExactTerminalCashTenderAndCustodyEvidence()
+    {
+        var context = PaymentTestContext.Create(nameof(GuardReader_ReturnsExactTerminalCashTenderAndCustodyEvidence));
+        await EnsureTerminalCashPatchAppliedAsync(ConnectionString);
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed business-date recovery guard test.");
+        var tenderId = Guid.NewGuid();
+        var custodySessionId = Guid.NewGuid();
+
+        try
+        {
+            var service = new TerminalCashPaymentService(
+                new TerminalCashPaymentRepository(ConnectionString),
+                new SystemClock());
+            var payment = await service.CreateOrReadAsync(
+                new TerminalCashPaymentCommand(
+                    tenderId,
+                    custodySessionId,
+                    context.ParkingSessionId,
+                    context.TariffSnapshotId,
+                    context.RequestedByUserId.ToString("D"),
+                    $"cashier-session-{Guid.NewGuid():N}",
+                    "shift-business-date-recovery",
+                    "apt-pitx-level-3-01",
+                    context.SiteId,
+                    context.SiteGroupId,
+                    "3a138565-1b88-55f8-c83d-5380db6edccc",
+                    "PHP",
+                    10_000,
+                    10_000,
+                    0,
+                    DateTimeOffset.UtcNow,
+                    [new TerminalCashDenominationEntry("PHP100", 10_000, 1)],
+                    $"cash-received-{Guid.NewGuid():N}",
+                    $"terminal-cash-payment-{tenderId:N}",
+                    context.CorrelationId),
+                CancellationToken.None);
+
+            var repository = new PostgresTerminalCashFiscalConflictRecoveryGuardRepository(ConnectionString);
+            var facts = await repository.ReadAsync(
+                payment.PaymentAttemptId,
+                payment.PaymentConfirmationId,
+                CancellationToken.None);
+
+            facts.Should().NotBeNull();
+            facts!.TerminalCashCommandCount.Should().Be(1);
+            facts.TerminalCashTenderId.Should().Be(tenderId);
+            facts.CashCustodySessionId.Should().Be(custodySessionId);
+            facts.PaymentAttemptStatus.Should().Be("CONFIRMED");
+            facts.PaymentConfirmationStatus.Should().Be("RECORDED");
+            facts.ExitAuthorizationCount.Should().Be(0);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
     public async Task AdvisoryLock_AllowsOneConcurrentRecoveryLeaseAndReleasesCleanly()
     {
         var referenceId = Guid.NewGuid();
@@ -81,5 +145,40 @@ public sealed class TerminalCashFiscalConflictRecoveryInfrastructureTests
         await firstLease!.DisposeAsync();
         await using var releasedLease = await second.TryAcquireAsync(referenceId, CancellationToken.None);
         releasedLease.Should().NotBeNull();
+    }
+
+    private static async Task EnsureTerminalCashPatchAppliedAsync(string connectionString)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        string? patchPath = null;
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(
+                directory.FullName,
+                "infra",
+                "db",
+                "patches",
+                "ExitPass_TerminalCashPaymentCommandReadback_v1.3.sql");
+            if (File.Exists(candidate))
+            {
+                patchPath = candidate;
+                break;
+            }
+
+            directory = directory.Parent;
+        }
+
+        if (patchPath is null)
+        {
+            throw new FileNotFoundException("Could not locate the terminal cash persistence patch.");
+        }
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(await File.ReadAllTextAsync(patchPath), connection)
+        {
+            CommandTimeout = 30
+        };
+        await command.ExecuteNonQueryAsync();
     }
 }

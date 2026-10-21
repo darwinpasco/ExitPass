@@ -26,10 +26,12 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
     private static readonly Guid DocumentId = Guid.Parse("31000000-0000-4000-8000-000000000013");
     private static readonly Guid WebPayChannelTerminalId = Guid.Parse("31000000-0000-4000-8000-000000000014");
     private static readonly Guid AptChannelTerminalId = Guid.Parse("31000000-0000-4000-8000-000000000015");
+    private static readonly Guid CashCustodySessionId = Guid.Parse("31000000-0000-4000-8000-000000000016");
     private const string PosRef = "site-pos-server-recovery";
     private const string WebPayTerminalIdentifier = "PITX-L3-WEBPAY-01";
     private const string AptTerminalIdentifier = "terminal-01";
     private const string SemanticHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private const string CorrectedSemanticHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private const long AmountMinorUnits = 4_500;
 
     [Fact]
@@ -73,6 +75,51 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
                 value.UpstreamFinalityReference == UpstreamReference() &&
                 value.SafeSummary.Contains("approval=authorized-test-approval", StringComparison.Ordinal)),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RecoverBusinessDate_WhenOriginalUtcDateWasClosed_UsesPosDateAndPreservesOriginalHash()
+    {
+        var fixture = CreateFixture(
+            BusinessDateFailureReference(),
+            businessDateCorrection: true);
+
+        var result = await fixture.Service.RecoverBusinessDateFailureAsync(BusinessDateCommand(), default);
+
+        Assert.True(result.RecoveryExecuted);
+        Assert.Equal(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded, result.FiscalIssuance.FiscalIssuanceState);
+        await fixture.PosClient.Received(1).CreateFiscalDocumentAsync(
+            Arg.Is<PosServerFiscalDocumentCreateRequest>(request =>
+                request.BusinessDayDate == new DateOnly(2026, 10, 21) &&
+                request.UpstreamFinalityRef == UpstreamReference()),
+            Arg.Any<CancellationToken>());
+        await fixture.PosIntegration.DidNotReceiveWithAnyArgs()
+            .TryIssueFiscalDocumentViaPosServerAsync(default, default!, default!, default);
+        await fixture.AuditRepository.Received().RecordAsync(
+            Arg.Is<FiscalExceptionControlledRetryExecutionAttemptWrite>(attempt =>
+                attempt.SemanticRequestHashValue == CorrectedSemanticHash &&
+                attempt.UpstreamFinalityReference == UpstreamReference()),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RecoverBusinessDate_WhenPosAlreadyHasIdempotencyEvidence_FailsClosed()
+    {
+        var resolution = BusinessDateResolution() with
+        {
+            IdempotencyRecordExists = true,
+            ExistingSemanticRequestHash = SemanticHash
+        };
+        var fixture = CreateFixture(
+            BusinessDateFailureReference(),
+            businessDateCorrection: true,
+            businessDateResolution: resolution);
+
+        var rejection = await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(
+            () => fixture.Service.RecoverBusinessDateFailureAsync(BusinessDateCommand(), default));
+
+        Assert.Equal("TERMINAL_CASH_FISCAL_BUSINESS_DATE_RECOVERY_PREFLIGHT_FAILED", rejection.ErrorCode);
+        await fixture.PosClient.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
     }
 
     [Fact]
@@ -618,12 +665,14 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
         FiscalIssuanceReferenceRecord? posResultReference = null,
         PosServerFiscalDocumentCreateResult? posResult = null,
         SitePosServerBindingResolution? bindingResolution = null,
-        TerminalCashFiscalConflictRecoveryFacts? guardFacts = null)
+        TerminalCashFiscalConflictRecoveryFacts? guardFacts = null,
+        bool businessDateCorrection = false,
+        PosServerFiscalBusinessDateResolutionResult? businessDateResolution = null)
     {
         reference ??= Reference();
         posResult ??= SuccessfulPosResult();
         posResultReference ??= RecordedReference(posResult.ResultClassification ?? FiscalIssuanceResultClassification.NewlyCreated);
-        var cashPayment = CashPayment();
+        var cashPayment = businessDateCorrection ? BusinessDateCashPayment() : CashPayment();
 
         var terminalPayments = Substitute.For<ITerminalCashPaymentService>();
         terminalPayments.GetByTerminalCashTenderIdAsync(TenderId, Arg.Any<CancellationToken>())
@@ -667,7 +716,10 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             });
         var hashCalculator = Substitute.For<IFiscalSemanticRequestHashCalculator>();
         hashCalculator.Calculate(Arg.Any<PosServerFiscalDocumentCreateRequest>())
-            .Returns(HashResult());
+            .Returns(call => businessDateCorrection &&
+                call.Arg<PosServerFiscalDocumentCreateRequest>().BusinessDayDate == new DateOnly(2026, 10, 21)
+                    ? HashResult(CorrectedSemanticHash)
+                    : HashResult());
         var auditRepository = Substitute.For<IFiscalExceptionControlledRetryExecutionAuditRepository>();
         auditRepository.RecordAsync(
                 Arg.Any<FiscalExceptionControlledRetryExecutionAttemptWrite>(),
@@ -681,10 +733,37 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             .Returns(lockAvailable ? new NoopLease() : null);
 
         var vendorAcknowledgment = Substitute.For<IVendorPaymentAcknowledgmentWorkflow>();
+        var posClient = Substitute.For<IPosServerFiscalDocumentClient>();
+        posClient.ResolveFiscalBusinessDateAsync(
+                Arg.Any<PosServerFiscalBusinessDateResolutionRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(businessDateResolution ?? BusinessDateResolution());
+        posClient.CreateFiscalDocumentAsync(
+                Arg.Any<PosServerFiscalDocumentCreateRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(posResult);
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        orchestration.MarkRequestedAsync(
+                ReferenceId,
+                Arg.Any<FiscalIssuanceTransitionContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(reference);
+        orchestration.ApplyPosServerCreateResultAsync(
+                ReferenceId,
+                Arg.Any<PosServerFiscalDocumentCreateResult>(),
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(posResultReference);
+        orchestration.ApplyPosServerFailureResultAsync(
+                ReferenceId,
+                Arg.Any<PosServerFiscalDocumentCreateResult>(),
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(reference);
         var service = new TerminalCashFiscalIssuanceService(
             terminalPayments,
             references,
-            Substitute.For<IFiscalIssuanceOrchestrationService>(),
+            orchestration,
             posIntegration,
             statutory,
             binding,
@@ -693,13 +772,14 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             options,
             new PosServerFiscalDocumentRequestMapper(),
             hashCalculator,
+            posClient,
             auditRepository,
             guard,
             recoveryLock,
             vendorAcknowledgment);
         return new Fixture(
             service, posIntegration, auditRepository, exitAuthorization, hashCalculator,
-            vendorAcknowledgment, terminalPayments);
+            vendorAcknowledgment, terminalPayments, posClient);
     }
 
     private static TerminalCashFiscalConflictRecoveryCommand Command() =>
@@ -731,9 +811,16 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             SafeJustification = "The governed POS persistence service is now ready."
         };
 
+    private static TerminalCashFiscalConflictRecoveryCommand BusinessDateCommand() =>
+        Command() with
+        {
+            ReasonCode = "fiscal_reporting_period_closed",
+            SafeJustification = "The original UTC calendar date was rejected and POS resolved the fiscal event date."
+        };
+
     private static TerminalCashPaymentReadback CashPayment() =>
         new(
-            Guid.NewGuid(), TenderId, AttemptId, Guid.NewGuid(), SessionId, TariffId, AptTerminalIdentifier,
+            Guid.NewGuid(), TenderId, AttemptId, CashCustodySessionId, SessionId, TariffId, AptTerminalIdentifier,
             SiteId, SiteGroupId, PosId.ToString("D"), Guid.NewGuid().ToString("D"), "shift-01", "PHP",
             AmountMinorUnits, AmountMinorUnits, 0, "CONFIRMED", ConfirmationId, "CREATED",
             "terminal-cash-payment:test", "terminal-cash-payment:sha256:v1",
@@ -749,6 +836,12 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
         {
             CashReceivedAt = DateTimeOffset.Parse("2026-09-28T06:31:29Z"),
             CashierDisplayName = "Juan Dela Cruz"
+        };
+
+    private static TerminalCashPaymentReadback BusinessDateCashPayment() =>
+        CashPayment() with
+        {
+            ConfirmedAt = DateTimeOffset.Parse("2026-10-20T23:43:18Z")
         };
 
     private static FiscalIssuanceReferenceRecord Reference() =>
@@ -807,10 +900,37 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             LatestErrorPosture = FiscalIssuanceErrorPosture.RetryAfterServiceRecovery
         };
 
+    private static FiscalIssuanceReferenceRecord BusinessDateFailureReference() =>
+        Reference() with
+        {
+            FiscalIssuanceState = FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration,
+            LatestExceptionReason = FiscalIssuanceExceptionReason.FiscalReportingPeriodClosed,
+            LatestErrorCode = "fiscal_reporting_period_closed",
+            LatestErrorPosture = FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection
+        };
+
     private static TerminalCashFiscalConflictRecoveryFacts RecoveryFacts(int exitAuthorizationCount = 0) =>
         new(
             AttemptId, ConfirmationId, SessionId, TariffId, "CONFIRMED", "RECORDED",
-            "PHP", AmountMinorUnits, "PHP", AmountMinorUnits, exitAuthorizationCount);
+            "PHP", AmountMinorUnits, "PHP", AmountMinorUnits, exitAuthorizationCount,
+            TerminalCashCommandCount: 1,
+            TerminalCashTenderId: TenderId,
+            CashCustodySessionId: CashCustodySessionId);
+
+    private static PosServerFiscalBusinessDateResolutionResult BusinessDateResolution() =>
+        new(
+            true,
+            200,
+            "fiscal_business_date_resolved",
+            "resolved",
+            new DateOnly(2026, 10, 21),
+            DateTimeOffset.Parse("2026-10-20T23:00:00Z"),
+            DateTimeOffset.Parse("2026-10-21T23:00:00Z"),
+            "Asia/Manila",
+            new TimeOnly(7, 0),
+            false,
+            null,
+            null);
 
     private static FiscalIssuanceReferenceRecord RecordedReference(FiscalIssuanceResultClassification classification) =>
         Reference() with
@@ -876,10 +996,10 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
             ChannelTerminalId: AptChannelTerminalId,
             TerminalIdentifier: AptTerminalIdentifier));
 
-    private static FiscalSemanticRequestHashResult HashResult() =>
+    private static FiscalSemanticRequestHashResult HashResult(string hash = SemanticHash) =>
         new(
             FiscalSemanticRequestHashSourceStatus.Available,
-            SemanticHash,
+            hash,
             FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
             FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
             12,
@@ -963,7 +1083,8 @@ public sealed class TerminalCashFiscalConflictRecoveryTests
         IIssueExitAuthorizationUseCase ExitAuthorization,
         IFiscalSemanticRequestHashCalculator HashCalculator,
         IVendorPaymentAcknowledgmentWorkflow VendorAcknowledgment,
-        ITerminalCashPaymentService TerminalPayments);
+        ITerminalCashPaymentService TerminalPayments,
+        IPosServerFiscalDocumentClient PosClient);
 
     private sealed class NoopLease : IAsyncDisposable
     {

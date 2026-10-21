@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using Microsoft.Extensions.Options;
@@ -8,6 +9,7 @@ namespace ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 public sealed class HttpPosServerFiscalDocumentClient : IPosServerFiscalDocumentClient
 {
     private const string FiscalDocumentsPath = "/v1/fiscal-documents/";
+    private const string FiscalBusinessDateResolutionPath = "/v1/fiscal-documents/business-date-resolution";
     private const string ApiKeyHeader = "X-PosServer-Admin-Key";
     private const string PermissionHeader = "X-PosServer-Admin-Permission";
     private const string CorrelationHeader = "X-Correlation-Id";
@@ -25,6 +27,70 @@ public sealed class HttpPosServerFiscalDocumentClient : IPosServerFiscalDocument
     {
         _httpClient = httpClient;
         _endpointResolver = new SitePosServerEndpointResolver(options);
+    }
+
+    public async Task<PosServerFiscalBusinessDateResolutionResult> ResolveFiscalBusinessDateAsync(
+        PosServerFiscalBusinessDateResolutionRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        PosServerRoutingContext routingContext;
+        try
+        {
+            routingContext = PosServerRoutingContext.Create(request.SitePosServerId, request.SitePosServerRef);
+        }
+        catch (ArgumentException)
+        {
+            return BusinessDateFailure(503, "site_pos_server_routing_context_required");
+        }
+
+        var endpoint = _endpointResolver.Resolve(routingContext);
+        if (!endpoint.IsSuccess)
+        {
+            return BusinessDateFailure(503, endpoint.Code);
+        }
+
+        using var httpRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            BuildUri(endpoint.BaseUri!, FiscalBusinessDateResolutionPath))
+        {
+            Content = JsonContent.Create(new
+            {
+                request.SitePosServerId,
+                request.FiscalDocumentTypeCodeId,
+                request.FiscalEventAt,
+                request.UpstreamFinalityReference
+            })
+        };
+        ApplyAuthentication(httpRequest, endpoint.ApiKey!, CreatePermission, correlationId: null);
+        using var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<BusinessDateEnvelope>(body, JsonOptions);
+            if (parsed is null)
+            {
+                return BusinessDateFailure((int)response.StatusCode, "fiscal_business_date_response_invalid");
+            }
+
+            return new PosServerFiscalBusinessDateResolutionResult(
+                parsed.Succeeded && response.IsSuccessStatusCode,
+                (int)response.StatusCode,
+                parsed.Code ?? "fiscal_business_date_response_invalid",
+                parsed.Message ?? "POS Server fiscal business-date resolution failed.",
+                parsed.BusinessDayDate,
+                parsed.PeriodStartAt,
+                parsed.PeriodEndAt,
+                parsed.ReportingTimezoneName,
+                parsed.BusinessDayCutoffLocalTime,
+                parsed.IdempotencyRecordExists,
+                parsed.LinkedFiscalDocumentId,
+                parsed.ExistingSemanticRequestHash);
+        }
+        catch (JsonException)
+        {
+            return BusinessDateFailure((int)response.StatusCode, "fiscal_business_date_response_invalid");
+        }
     }
 
     public async Task<PosServerFiscalDocumentCreateResult> CreateFiscalDocumentAsync(
@@ -234,6 +300,36 @@ public sealed class HttpPosServerFiscalDocumentClient : IPosServerFiscalDocument
             FiscalNumberAssignedAt: null,
             FiscalNumberAssignedByRef: null,
             ErrorPosture: FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection);
+
+    private static PosServerFiscalBusinessDateResolutionResult BusinessDateFailure(int statusCode, string code) =>
+        new(
+            false,
+            statusCode,
+            code,
+            "POS Server fiscal business-date resolution is unavailable.",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+
+    private sealed record BusinessDateEnvelope(
+        bool Succeeded,
+        string? Code,
+        string? Message,
+        DateOnly? BusinessDayDate,
+        DateTimeOffset? PeriodStartAt,
+        DateTimeOffset? PeriodEndAt,
+        string? ReportingTimezoneName,
+        TimeOnly? BusinessDayCutoffLocalTime,
+        bool? IdempotencyRecordExists,
+        Guid? LinkedFiscalDocumentId,
+        string? ExistingSemanticRequestHash);
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private static PosServerFiscalDocumentReadResult ReadConfigurationFailure(string code) =>
         new(

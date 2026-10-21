@@ -37,7 +37,27 @@ public sealed class PostgresTerminalCashFiscalConflictRecoveryGuardRepository(st
                     FROM core.exit_authorizations ea
                     WHERE ea.parking_session_id = pa.parking_session_id
                        OR ea.payment_attempt_id = pa.payment_attempt_id
-                ) AS exit_authorization_count
+                ) AS exit_authorization_count,
+                (
+                    SELECT count(*)::int
+                    FROM core.terminal_cash_payment_commands tcp
+                    WHERE tcp.payment_attempt_id = pa.payment_attempt_id
+                      AND tcp.payment_confirmation_id = pc.payment_confirmation_id
+                ) AS terminal_cash_command_count,
+                (
+                    SELECT tcp.terminal_cash_tender_id
+                    FROM core.terminal_cash_payment_commands tcp
+                    WHERE tcp.payment_attempt_id = pa.payment_attempt_id
+                      AND tcp.payment_confirmation_id = pc.payment_confirmation_id
+                    LIMIT 1
+                ) AS terminal_cash_tender_id,
+                (
+                    SELECT tcp.cash_custody_session_id
+                    FROM core.terminal_cash_payment_commands tcp
+                    WHERE tcp.payment_attempt_id = pa.payment_attempt_id
+                      AND tcp.payment_confirmation_id = pc.payment_confirmation_id
+                    LIMIT 1
+                ) AS cash_custody_session_id
             FROM core.payment_attempts pa
             INNER JOIN core.payment_confirmations pc
                 ON pc.payment_attempt_id = pa.payment_attempt_id
@@ -69,7 +89,10 @@ public sealed class PostgresTerminalCashFiscalConflictRecoveryGuardRepository(st
             reader.GetInt64(7),
             reader.GetString(8).Trim(),
             reader.GetInt64(9),
-            reader.GetInt32(10));
+            reader.GetInt32(10),
+            reader.GetInt32(11),
+            reader.IsDBNull(12) ? null : reader.GetGuid(12),
+            reader.IsDBNull(13) ? null : reader.GetGuid(13));
     }
 }
 
