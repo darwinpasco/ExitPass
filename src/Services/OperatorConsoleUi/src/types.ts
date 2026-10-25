@@ -212,6 +212,10 @@ export interface CanonicalStatutoryReviewDecisionInput {
   reasonCode?: string;
   reviewerAttestation: boolean;
   idempotencyKey: string;
+  beneficiaryFullName?: string;
+  statutoryIdType?: string;
+  statutoryIdNumber?: string;
+  beneficiaryTin?: string;
 }
 
 interface CanonicalStatutoryReviewDecisionResultBase {

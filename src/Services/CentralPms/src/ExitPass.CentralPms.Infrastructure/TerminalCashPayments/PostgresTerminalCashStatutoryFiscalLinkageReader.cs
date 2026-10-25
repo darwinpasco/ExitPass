@@ -15,15 +15,19 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
     IStatutoryFiscalLinkageReader
 {
     private readonly string _connectionString;
+    private readonly IStatutoryBeneficiaryIdentityRepository? _beneficiaryIdentities;
 
     /// <summary>
     /// Creates the reader using the Central PMS main database connection string.
     /// </summary>
-    public PostgresTerminalCashStatutoryFiscalLinkageReader(string connectionString)
+    public PostgresTerminalCashStatutoryFiscalLinkageReader(
+        string connectionString,
+        IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null)
     {
         _connectionString = !string.IsNullOrWhiteSpace(connectionString)
             ? connectionString
             : throw new ArgumentException("Connection string is required.", nameof(connectionString));
+        _beneficiaryIdentities = beneficiaryIdentities;
     }
 
     /// <inheritdoc />
@@ -55,7 +59,19 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
         try
         {
             var rows = await ReadRowsAsync(subject.TariffSnapshotId, cancellationToken).ConfigureAwait(false);
-            return Evaluate(subject, rows);
+            var result = Evaluate(subject, rows);
+            if (result.Status is not TerminalCashStatutoryFiscalLinkageStatus.CompleteApprovedContext ||
+                result.Context is not { PercentageComponentSeparatelyProven: true, StatutoryDiscountRateBasisPoints: 500 or 2000 } context)
+                return result;
+
+            var identity = _beneficiaryIdentities is null
+                ? null
+                : await _beneficiaryIdentities.GetAsync(context.StatutoryDiscountDecisionCommandId, cancellationToken).ConfigureAwait(false);
+            if (identity is not { IsFinal: true } || identity.SiteId != subject.SiteId ||
+                !string.Equals(identity.EntitlementType, context.EntitlementType, StringComparison.OrdinalIgnoreCase))
+                return TerminalCashStatutoryFiscalLinkageResult.TerminallyInconsistent("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED");
+
+            return TerminalCashStatutoryFiscalLinkageResult.Complete(context with { BeneficiaryIdentity = identity });
         }
         catch (NpgsqlException)
         {
@@ -116,6 +132,11 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
                 app.application_status::text AS immutable_application_status,
                 app.applied_tariff_snapshot_id AS immutable_applied_tariff_snapshot_id,
                 validation.statutory_discount_validation_id AS approved_validation_id
+                ,policy.statutory_discount_policy_version_id AS governing_policy_version_id
+                ,policy.policy_code AS governing_policy_code
+                ,policy.ordinance_number AS governing_ordinance_reference
+                ,policy.benefit_type::text AS governing_benefit_type
+                ,policy.discount_percentage_basis_points
             FROM core.tariff_snapshots AS ts
             LEFT JOIN discounts.statutory_discount_payable_basis_application_commands AS appcmd
               ON appcmd.applied_tariff_snapshot_id = ts.tariff_snapshot_id
@@ -129,6 +150,11 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
             LEFT JOIN discounts.statutory_discount_validations AS validation
               ON validation.statutory_discount_validation_id =
                  COALESCE(appcmd.statutory_discount_validation_id, decision.statutory_discount_validation_id, ts.statutory_discount_validation_id)
+            LEFT JOIN discounts.statutory_discount_policy_versions AS policy
+              ON policy.statutory_discount_policy_version_id = COALESCE(
+                    appcmd.applied_policy_reference_id,
+                    review.statutory_discount_policy_version_id,
+                    validation.statutory_discount_policy_version_id)
             WHERE ts.tariff_snapshot_id = @tariff_snapshot_id
             ORDER BY appcmd.updated_at DESC NULLS LAST,
                      appcmd.statutory_discount_payable_basis_application_command_id DESC NULLS LAST;
@@ -193,6 +219,9 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
             return TerminalCashStatutoryFiscalLinkageResult.TerminallyInconsistent("STATUTORY_FISCAL_DECISION_NOT_APPROVED");
         }
 
+        if (row.PolicyResolutionBasis is not ("LOCAL_ORDINANCE" or "LOCAL_ORDINANCE_APPLIED"))
+            return TerminalCashStatutoryFiscalLinkageResult.TerminallyInconsistent("LOCAL_PARKING_ORDINANCE_REQUIRED");
+
         if (!string.Equals(row.ApplicationCommandStatus, StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied, StringComparison.Ordinal) ||
             !IsSuccessfulApplicationResult(row.ApplicationResultClassification) ||
             !string.Equals(row.ImmutableApplicationStatus, StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied, StringComparison.Ordinal))
@@ -245,6 +274,11 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
                 "STATUTORY_FISCAL_AMOUNT_OR_CURRENCY_MISMATCH");
         }
 
+        var percentageProven = row.StatutoryDiscountRateBasisPoints is 500 or 2000 &&
+            string.Equals(row.PolicyBenefitType, "PERCENTAGE_DISCOUNT", StringComparison.Ordinal);
+        var percentageAmount = percentageProven ? row.ApprovedDiscountAmountMinorUnits : 0;
+        var nonPercentageAmount = row.ApprovedDiscountAmountMinorUnits - percentageAmount;
+
         return TerminalCashStatutoryFiscalLinkageResult.Complete(
             new TerminalCashStatutoryFiscalLinkageContext(
                 row.StatutoryDiscountDecisionCommandId!.Value,
@@ -269,7 +303,15 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
                 currency,
                 row.DecidedAt,
                 row.ApplicationAppliedAt,
-                row.IdControlReference));
+                row.IdControlReference,
+                row.PolicyCode,
+                row.PolicyVersionId,
+                row.OrdinanceReference ?? row.PolicyCode,
+                row.PolicyBenefitType,
+                row.StatutoryDiscountRateBasisPoints,
+                percentageAmount,
+                nonPercentageAmount,
+                percentageProven));
     }
 
     private static StatutoryFiscalLinkageRow ReadRow(NpgsqlDataReader reader)
@@ -316,7 +358,12 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
             GetNullableString(reader, "id_control_reference"),
             GetNullableString(reader, "immutable_application_status"),
             GetNullableGuid(reader, "immutable_applied_tariff_snapshot_id"),
-            GetNullableGuid(reader, "approved_validation_id"));
+            GetNullableGuid(reader, "approved_validation_id"),
+            GetNullableGuid(reader, "governing_policy_version_id"),
+            GetNullableString(reader, "governing_policy_code"),
+            GetNullableString(reader, "governing_ordinance_reference"),
+            GetNullableString(reader, "governing_benefit_type"),
+            GetNullableInt32(reader, "discount_percentage_basis_points"));
     }
 
     private static Guid? GetNullableGuid(NpgsqlDataReader reader, string name)
@@ -335,6 +382,12 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
     {
         var ordinal = reader.GetOrdinal(name);
         return reader.IsDBNull(ordinal) ? null : reader.GetInt64(ordinal);
+    }
+
+    private static int? GetNullableInt32(NpgsqlDataReader reader, string name)
+    {
+        var ordinal = reader.GetOrdinal(name);
+        return reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
     }
 
     private static bool? GetNullableBoolean(NpgsqlDataReader reader, string name)
@@ -397,5 +450,10 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
         string? IdControlReference,
         string? ImmutableApplicationStatus,
         Guid? ImmutableAppliedTariffSnapshotId,
-        Guid? ApprovedValidationId);
+        Guid? ApprovedValidationId,
+        Guid? PolicyVersionId,
+        string? PolicyCode,
+        string? OrdinanceReference,
+        string? PolicyBenefitType,
+        int? StatutoryDiscountRateBasisPoints);
 }

@@ -454,6 +454,7 @@ describe("Operator Console fiscal reporting", () => {
     expect(screen.queryByLabelText("Monthly eSales values")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Download JSON" })).not.toBeInTheDocument();
   });
+
 });
 
 function createPitxFiscalReportingClient() {

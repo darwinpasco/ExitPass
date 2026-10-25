@@ -424,7 +424,28 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
             facts.Currency.Trim().ToUpperInvariant(),
             facts.AppliedAt,
             facts.SourcePaymentChannel.Trim().ToUpperInvariant(),
-            facts.TerminalCashTenderId);
+            facts.TerminalCashTenderId,
+            facts.StatutoryDiscountRateBasisPoints,
+            facts.PercentageDiscountAmountMinorUnits,
+            facts.NonPercentageBenefitAmountMinorUnits,
+            facts.PercentageComponentSeparatelyProven,
+            facts.BeneficiaryIdentity is null
+                ? null
+                : new PosServerStatutoryBeneficiaryIdentityRequest(
+                    facts.BeneficiaryIdentity.BeneficiaryFullName,
+                    facts.BeneficiaryIdentity.StatutoryIdType,
+                    facts.BeneficiaryIdentity.StatutoryIdNumber,
+                    TrimToNull(facts.BeneficiaryIdentity.BeneficiaryTin),
+                    facts.BeneficiaryIdentity.CapturedByActorRef,
+                    facts.BeneficiaryIdentity.CapturedByChannel,
+                    facts.BeneficiaryIdentity.CapturedAt,
+                    facts.BeneficiaryIdentity.LastUpdatedByActorRef,
+                    facts.BeneficiaryIdentity.LastUpdatedByChannel,
+                    facts.BeneficiaryIdentity.LastUpdatedAt,
+                    facts.BeneficiaryIdentity.ReviewedByActorRef,
+                    facts.BeneficiaryIdentity.ReviewedAt,
+                    facts.BeneficiaryIdentity.ApprovalDecisionReference,
+                    facts.BeneficiaryIdentity.CorrelationReference));
     }
 
     private static bool ContainsSensitiveTerm(string? value) =>

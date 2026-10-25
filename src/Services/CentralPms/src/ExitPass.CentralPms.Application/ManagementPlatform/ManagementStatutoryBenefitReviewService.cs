@@ -28,6 +28,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
     private readonly ICentralPmsRbacRepository _audit;
     private readonly ILogger<ManagementStatutoryBenefitReviewService> _logger;
     private readonly TimeProvider _timeProvider;
+    private readonly IStatutoryBeneficiaryIdentityRepository? _beneficiaryIdentities;
 
     public ManagementStatutoryBenefitReviewService(
         IManagementStatutoryBenefitReviewRepository repository,
@@ -40,7 +41,8 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         IOptions<StatutoryEvidenceUploadOptions> evidenceOptions,
         ICentralPmsRbacRepository audit,
         ILogger<ManagementStatutoryBenefitReviewService> logger,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null)
     {
         _repository = repository;
         _canonicalReviews = canonicalReviews;
@@ -53,6 +55,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         _audit = audit;
         _logger = logger;
         _timeProvider = timeProvider;
+        _beneficiaryIdentities = beneficiaryIdentities;
     }
 
     public async Task<ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitReviewQueue>> ListAsync(
@@ -138,7 +141,13 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                 correlationId);
         }
 
-        var value = ToDetail(canonical, metadata, correlationId);
+        var beneficiaryIdentity = string.Equals(
+                canonical.ReviewStatus,
+                StatutoryDiscountServiceChannelReviewStatuses.PendingReview,
+                StringComparison.Ordinal) && _beneficiaryIdentities is not null
+            ? await _beneficiaryIdentities.GetAsync(decisionCommandReference, cancellationToken).ConfigureAwait(false)
+            : null;
+        var value = ToDetail(canonical, metadata, correlationId, beneficiaryIdentity);
         await AuditAsync("STATUTORY_BENEFIT_REVIEW_DETAIL", "SUCCESS", "DETAIL_RETURNED", actor, metadata.SiteReference, correlationId, cancellationToken);
         return ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitReviewDetail>.Succeeded(value, correlationId);
     }
@@ -454,6 +463,39 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             return NotFound<ManagementStatutoryBenefitDecisionResult>(command.CorrelationId);
         }
 
+        if (HasAnyBeneficiaryIdentity(command))
+        {
+            if (_beneficiaryIdentities is null)
+            {
+                return Invalid<ManagementStatutoryBenefitDecisionResult>(
+                    "STATUTORY_BENEFICIARY_PROTECTION_UNAVAILABLE",
+                    command.CorrelationId);
+            }
+
+            var saved = await _beneficiaryIdentities.SaveBeforeDecisionAsync(
+                command.DecisionCommandReference,
+                actor.UserId,
+                StatutoryBeneficiaryIdentityCaptureChannels.ManagementPlatform,
+                new(
+                    command.BeneficiaryFullName ?? string.Empty,
+                    command.StatutoryIdType ?? string.Empty,
+                    command.StatutoryIdNumber ?? string.Empty,
+                    command.BeneficiaryTin),
+                command.CorrelationId,
+                cancellationToken).ConfigureAwait(false);
+            if (saved.Outcome is not StatutoryBeneficiaryIdentityWriteOutcome.Saved)
+                return Invalid<ManagementStatutoryBenefitDecisionResult>(saved.Classification, command.CorrelationId);
+        }
+
+        if (decision == "APPROVE" && IsPercentageSalesBookCandidate(review))
+        {
+            var identity = _beneficiaryIdentities is null
+                ? null
+                : await _beneficiaryIdentities.GetAsync(command.DecisionCommandReference, cancellationToken).ConfigureAwait(false);
+            if (identity is null)
+                return Invalid<ManagementStatutoryBenefitDecisionResult>("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED", command.CorrelationId);
+        }
+
         if (!TryResolveReviewedDocument(command, review, decision, out var reviewedDocument, out var metadataError))
         {
             return Invalid<ManagementStatutoryBenefitDecisionResult>(metadataError!, command.CorrelationId);
@@ -520,6 +562,22 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                     result.ErrorCode ?? "STATUTORY_BENEFIT_DECISION_REJECTED",
                     "Central PMS did not accept the statutory-benefit decision.",
                     command.CorrelationId);
+        }
+
+        if (decision == "APPROVE" && _beneficiaryIdentities is not null)
+        {
+            var identity = await _beneficiaryIdentities.GetAsync(command.DecisionCommandReference, cancellationToken).ConfigureAwait(false);
+            if (identity is not null && !identity.IsFinal)
+            {
+                var finalized = await _beneficiaryIdentities.FinalizeApprovedAsync(
+                    command.DecisionCommandReference,
+                    actor.UserId,
+                    $"MANAGEMENT_PLATFORM:{command.DecisionCommandReference:D}",
+                    command.CorrelationId,
+                    cancellationToken).ConfigureAwait(false);
+                if (finalized.Outcome is not StatutoryBeneficiaryIdentityWriteOutcome.Saved)
+                    return Invalid<ManagementStatutoryBenefitDecisionResult>(finalized.Classification, command.CorrelationId);
+            }
         }
 
         StatutoryDiscountDecisionResult? application = null;
@@ -657,6 +715,15 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             application.ApplicationCommandStatus,
             StatutoryDiscountApplicationStageStatuses.NotRequested,
             StringComparison.Ordinal);
+
+    private static bool HasAnyBeneficiaryIdentity(ManagementStatutoryBenefitDecisionCommand command) =>
+        !string.IsNullOrWhiteSpace(command.BeneficiaryFullName) ||
+        !string.IsNullOrWhiteSpace(command.StatutoryIdType) ||
+        !string.IsNullOrWhiteSpace(command.StatutoryIdNumber) ||
+        !string.IsNullOrWhiteSpace(command.BeneficiaryTin);
+
+    private static bool IsPercentageSalesBookCandidate(StatutoryDiscountServiceChannelReviewDetail review) =>
+        string.Equals(review.GoverningPolicy?.BenefitType, "PERCENTAGE_DISCOUNT", StringComparison.Ordinal);
 
     private async Task<StatutoryDiscountServiceChannelReviewDetail> ContinueApprovedApplicationIfRequiredAsync(
         StatutoryDiscountServiceChannelReviewDetail canonical,
@@ -932,7 +999,8 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
     private static ManagementStatutoryBenefitReviewDetail ToDetail(
         StatutoryDiscountServiceChannelReviewDetail source,
         ManagementStatutoryBenefitReviewMetadata metadata,
-        Guid correlationId)
+        Guid correlationId,
+        StatutoryBeneficiaryIdentityRecord? beneficiaryIdentity)
     {
         var authoritativeIdControlReference = NormalizeOptional(metadata.IdControlReference);
         var maskedIdReference = authoritativeIdControlReference is null
@@ -975,7 +1043,12 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             money,
             decision,
             metadata.Version,
-            correlationId)
+            correlationId,
+            IsPercentageSalesBookCandidate(source),
+            beneficiaryIdentity?.BeneficiaryFullName,
+            beneficiaryIdentity?.StatutoryIdType,
+            beneficiaryIdentity?.StatutoryIdNumber,
+            beneficiaryIdentity?.BeneficiaryTin)
         {
             PlateNumber = source.PlateNumber
         };

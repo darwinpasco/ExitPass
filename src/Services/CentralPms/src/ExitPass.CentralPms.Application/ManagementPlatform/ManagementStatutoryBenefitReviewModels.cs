@@ -88,7 +88,12 @@ public sealed record ManagementStatutoryBenefitReviewDetail(
     ManagementStatutoryBenefitMoney? Money,
     ManagementStatutoryBenefitDecision? Decision,
     long Version,
-    Guid CorrelationId)
+    Guid CorrelationId,
+    bool RequiresStatutorySalesBookIdentity = false,
+    string? BeneficiaryFullName = null,
+    string? StatutoryIdType = null,
+    string? StatutoryIdNumber = null,
+    string? BeneficiaryTin = null)
 {
     public string? PlateNumber { get; init; }
 }
@@ -148,7 +153,11 @@ public sealed record ManagementStatutoryBenefitDecisionCommand(
     string? IdControlReference,
     bool ReviewerAttestation,
     bool? BeneficiaryResidencySatisfied,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string? BeneficiaryFullName = null,
+    string? StatutoryIdType = null,
+    string? StatutoryIdNumber = null,
+    string? BeneficiaryTin = null);
 
 public sealed record ManagementStatutoryBenefitDecisionResult(
     string ContractVersion,

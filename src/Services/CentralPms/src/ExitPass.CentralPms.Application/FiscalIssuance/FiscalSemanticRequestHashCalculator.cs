@@ -339,6 +339,13 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
         WriteString(writer, "site_id", facts.SiteId);
         WriteString(writer, "source_payment_channel", facts.SourcePaymentChannel);
         writer.WriteNumber("statutory_discount_amount_minor_units", facts.StatutoryDiscountAmountMinorUnits);
+        if (facts.StatutoryDiscountRateBasisPoints.HasValue)
+            writer.WriteNumber("statutory_discount_rate_basis_points", facts.StatutoryDiscountRateBasisPoints.Value);
+        else
+            writer.WriteNull("statutory_discount_rate_basis_points");
+        writer.WriteNumber("percentage_discount_amount_minor_units", facts.PercentageDiscountAmountMinorUnits);
+        writer.WriteNumber("non_percentage_benefit_amount_minor_units", facts.NonPercentageBenefitAmountMinorUnits);
+        writer.WriteBoolean("percentage_component_separately_proven", facts.PercentageComponentSeparatelyProven);
         WriteString(writer, "statutory_discount_decision_command_id", facts.StatutoryDiscountDecisionCommandId);
         WriteString(writer, "statutory_payable_basis_application_command_id", facts.StatutoryPayableBasisApplicationCommandId);
         WriteString(writer, "statutory_request_reference", facts.StatutoryRequestReference);
@@ -347,6 +354,30 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
         writer.WriteNumber("vat_amount_minor_units", facts.VatAmountMinorUnits);
         writer.WriteNumber("vat_exclusive_basis_amount_minor_units", facts.VatExclusiveBasisAmountMinorUnits);
         WriteString(writer, "vat_treatment", facts.VatTreatment);
+        writer.WritePropertyName("beneficiary_identity");
+        if (facts.BeneficiaryIdentity is null)
+        {
+            writer.WriteNullValue();
+        }
+        else
+        {
+            writer.WriteStartObject();
+            WriteString(writer, "beneficiary_full_name", facts.BeneficiaryIdentity.BeneficiaryFullName);
+            WriteString(writer, "statutory_id_type", facts.BeneficiaryIdentity.StatutoryIdType);
+            WriteString(writer, "statutory_id_number", facts.BeneficiaryIdentity.StatutoryIdNumber);
+            WriteString(writer, "beneficiary_tin", facts.BeneficiaryIdentity.BeneficiaryTin);
+            WriteString(writer, "captured_by_actor_ref", facts.BeneficiaryIdentity.CapturedByActorRef);
+            WriteString(writer, "captured_by_channel", facts.BeneficiaryIdentity.CapturedByChannel);
+            WriteStatutoryTimestamp(writer, "captured_at", facts.BeneficiaryIdentity.CapturedAt);
+            WriteString(writer, "last_updated_by_actor_ref", facts.BeneficiaryIdentity.LastUpdatedByActorRef);
+            WriteString(writer, "last_updated_by_channel", facts.BeneficiaryIdentity.LastUpdatedByChannel);
+            WriteStatutoryTimestamp(writer, "last_updated_at", facts.BeneficiaryIdentity.LastUpdatedAt);
+            WriteString(writer, "reviewed_by_actor_ref", facts.BeneficiaryIdentity.ReviewedByActorRef);
+            WriteStatutoryTimestamp(writer, "reviewed_at", facts.BeneficiaryIdentity.ReviewedAt);
+            WriteString(writer, "approval_decision_reference", facts.BeneficiaryIdentity.ApprovalDecisionReference);
+            WriteString(writer, "correlation_reference", facts.BeneficiaryIdentity.CorrelationReference);
+            writer.WriteEndObject();
+        }
         writer.WriteEndObject();
     }
 

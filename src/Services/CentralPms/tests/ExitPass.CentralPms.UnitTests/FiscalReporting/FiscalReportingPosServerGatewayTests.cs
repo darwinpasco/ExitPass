@@ -505,6 +505,72 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
         Assert.Equal(Encoding.UTF8.GetBytes($"audit-{format}"), result.Body);
     }
 
+    [Theory]
+    [InlineData("e2")]
+    [InlineData("e3")]
+    public async Task StatutorySalesBookReadUsesServerResolvedFiscalAndTerminalScope(string annex)
+    {
+        var terminal = Guid.Parse("40000000-0000-4000-8000-000000000081");
+        var handler = new CaptureHandler(_ => Json("{\"succeeded\":true,\"report\":{}}"));
+
+        await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.StatutorySalesBookRead) with
+            {
+                AnnexType = annex,
+                ChannelTerminalId = terminal,
+                CalendarYear = 2026,
+                CalendarMonth = 10
+            });
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal($"/v1/fiscal-reports/annex-e/{annex}/", request.RequestUri!.AbsolutePath);
+        Assert.Contains($"sitePosServerId={Pos:D}", request.RequestUri.Query);
+        Assert.Contains($"fiscalIdentityId={Identity:D}", request.RequestUri.Query);
+        Assert.Contains($"channelTerminalId={terminal:D}", request.RequestUri.Query);
+        Assert.Contains("currencyCode=PHP", request.RequestUri.Query);
+        Assert.Contains("calendarYear=2026", request.RequestUri.Query);
+        Assert.Contains("calendarMonth=10", request.RequestUri.Query);
+        Assert.Equal("fiscal_statutory_sales_book.read", Header(request, "X-PosServer-Admin-Permission"));
+        Assert.Equal("pos-secret", Header(request, "X-PosServer-Admin-Key"));
+    }
+
+    [Theory]
+    [InlineData("e2", "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
+    [InlineData("e2", "pdf", "application/pdf")]
+    [InlineData("e3", "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
+    [InlineData("e3", "pdf", "application/pdf")]
+    public async Task StatutorySalesBookExportsPassThroughAuthoritativeBytesAndMetadata(string annex, string format, string contentType)
+    {
+        var terminal = Guid.Parse("40000000-0000-4000-8000-000000000081");
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(Encoding.UTF8.GetBytes($"{annex}-{format}-bytes"))
+        };
+        response.Content.Headers.ContentType = new(contentType);
+        response.Content.Headers.ContentDisposition = new("attachment") { FileName = $"ANNEX-{annex.ToUpperInvariant()}_202610.{format}" };
+        response.Headers.Add("X-Content-SHA256", "statutory-sales-book-hash");
+        var handler = new CaptureHandler(_ => response);
+
+        var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.StatutorySalesBookDownload) with
+            {
+                AnnexType = annex,
+                ChannelTerminalId = terminal,
+                CalendarYear = 2026,
+                CalendarMonth = 10,
+                ExportFormat = format
+            });
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal($"/v1/fiscal-reports/annex-e/{annex}/download", request.RequestUri!.AbsolutePath);
+        Assert.Contains($"channelTerminalId={terminal:D}", request.RequestUri.Query);
+        Assert.Contains("format=" + format, request.RequestUri.Query);
+        Assert.Equal("fiscal_statutory_sales_book.export", Header(request, "X-PosServer-Admin-Permission"));
+        Assert.Equal($"ANNEX-{annex.ToUpperInvariant()}_202610.{format}", result.FileName);
+        Assert.Equal("statutory-sales-book-hash", result.ContentSha256);
+        Assert.Equal(Encoding.UTF8.GetBytes($"{annex}-{format}-bytes"), result.Body);
+    }
+
     [Fact]
     public async Task UnavailablePosFailsCleanlyAndIsRetryable()
     {

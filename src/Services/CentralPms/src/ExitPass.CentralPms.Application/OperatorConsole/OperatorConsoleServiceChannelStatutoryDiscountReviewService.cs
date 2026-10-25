@@ -19,19 +19,22 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
     private readonly IStatutoryDiscountServiceChannelReviewRepository _reviewRepository;
     private readonly IStatutoryDiscountStagedCommandService _stagedCommandService;
     private readonly IStatutoryDiscountParkingEligibilityRepository _parkingEligibilityRepository;
+    private readonly IStatutoryBeneficiaryIdentityRepository? _beneficiaryIdentities;
 
     public OperatorConsoleServiceChannelStatutoryDiscountReviewService(
         IOperatorConsoleAccessEvaluationService accessEvaluationService,
         IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
         IStatutoryDiscountServiceChannelReviewRepository reviewRepository,
         IStatutoryDiscountStagedCommandService stagedCommandService,
-        IStatutoryDiscountParkingEligibilityRepository parkingEligibilityRepository)
+        IStatutoryDiscountParkingEligibilityRepository parkingEligibilityRepository,
+        IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null)
     {
         _accessEvaluationService = accessEvaluationService ?? throw new ArgumentNullException(nameof(accessEvaluationService));
         _accessEvaluationWriter = accessEvaluationWriter ?? throw new ArgumentNullException(nameof(accessEvaluationWriter));
         _reviewRepository = reviewRepository ?? throw new ArgumentNullException(nameof(reviewRepository));
         _stagedCommandService = stagedCommandService ?? throw new ArgumentNullException(nameof(stagedCommandService));
         _parkingEligibilityRepository = parkingEligibilityRepository ?? throw new ArgumentNullException(nameof(parkingEligibilityRepository));
+        _beneficiaryIdentities = beneficiaryIdentities;
     }
 
     public async Task<StatutoryDiscountServiceChannelReviewQueueResult> ListAsync(
@@ -130,6 +133,35 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
         if (!SiteAllowed(detail, access))
         {
             return NotAccepted(command, access, requestedDecision, "OPERATOR_CONSOLE_SITE_SCOPE_DENIED", detail);
+        }
+
+        if (HasAnyBeneficiaryIdentity(command))
+        {
+            if (_beneficiaryIdentities is null)
+                return NotAccepted(command, access, requestedDecision, "STATUTORY_BENEFICIARY_PROTECTION_UNAVAILABLE", detail);
+
+            var saved = await _beneficiaryIdentities.SaveBeforeDecisionAsync(
+                command.StatutoryDiscountDecisionCommandId,
+                command.UserId,
+                StatutoryBeneficiaryIdentityCaptureChannels.OperatorConsole,
+                new(
+                    command.BeneficiaryFullName ?? string.Empty,
+                    command.StatutoryIdType ?? string.Empty,
+                    command.StatutoryIdNumber ?? string.Empty,
+                    command.BeneficiaryTin),
+                command.CorrelationId,
+                cancellationToken).ConfigureAwait(false);
+            if (saved.Outcome is not StatutoryBeneficiaryIdentityWriteOutcome.Saved)
+                return NotAccepted(command, access, requestedDecision, saved.Classification, detail);
+        }
+
+        if (requestedDecision == "APPROVE" && IsPercentageSalesBookCandidate(detail))
+        {
+            var identity = _beneficiaryIdentities is null
+                ? null
+                : await _beneficiaryIdentities.GetAsync(command.StatutoryDiscountDecisionCommandId, cancellationToken).ConfigureAwait(false);
+            if (identity is null)
+                return NotAccepted(command, access, requestedDecision, "STATUTORY_BENEFICIARY_IDENTITY_REQUIRED", detail);
         }
 
         var canonical = await _stagedCommandService.GetDecisionAsync(command.StatutoryDiscountDecisionCommandId, cancellationToken)
@@ -255,6 +287,22 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
             return Conflict(command, access, requestedDecision, completed, review);
         }
 
+        if (requestedDecision == "APPROVE" && _beneficiaryIdentities is not null)
+        {
+            var identity = await _beneficiaryIdentities.GetAsync(command.StatutoryDiscountDecisionCommandId, cancellationToken).ConfigureAwait(false);
+            if (identity is not null && !identity.IsFinal)
+            {
+                var finalized = await _beneficiaryIdentities.FinalizeApprovedAsync(
+                    command.StatutoryDiscountDecisionCommandId,
+                    command.UserId,
+                    $"OPERATOR_CONSOLE:{command.StatutoryDiscountDecisionCommandId:D}",
+                    command.CorrelationId,
+                    cancellationToken).ConfigureAwait(false);
+                if (finalized.Outcome is not StatutoryBeneficiaryIdentityWriteOutcome.Saved)
+                    return NotAccepted(command, access, requestedDecision, finalized.Classification, review);
+            }
+        }
+
         return new StatutoryDiscountServiceChannelReviewDecisionResult(
             access.EvaluationId,
             true,
@@ -280,6 +328,15 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
             ErrorCode: null,
             command.CorrelationId);
     }
+
+    private static bool HasAnyBeneficiaryIdentity(StatutoryDiscountServiceChannelReviewDecisionCommand command) =>
+        !string.IsNullOrWhiteSpace(command.BeneficiaryFullName) ||
+        !string.IsNullOrWhiteSpace(command.StatutoryIdType) ||
+        !string.IsNullOrWhiteSpace(command.StatutoryIdNumber) ||
+        !string.IsNullOrWhiteSpace(command.BeneficiaryTin);
+
+    private static bool IsPercentageSalesBookCandidate(StatutoryDiscountServiceChannelReviewDetail detail) =>
+        string.Equals(detail.GoverningPolicy?.BenefitType, "PERCENTAGE_DISCOUNT", StringComparison.Ordinal);
 
     /// <summary>
     /// Executes the same canonical service-channel decision for a caller that has already

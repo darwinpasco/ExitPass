@@ -68,10 +68,10 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
     }
 
     /// <summary>
-    /// Verifies Senior Citizen fallback resolves to RA 9994 and does not grant free parking.
+    /// Verifies parking does not fall back to RA 9994 when no local ordinance applies.
     /// </summary>
     [Fact]
-    public async Task ResolvePolicy_WhenNoLocalSeniorPolicy_ReturnsRa9994Fallback()
+    public async Task ResolvePolicy_WhenNoLocalSeniorPolicy_ReturnsNoApplicableParkingPrivilege()
     {
         if (!await CanOpenDatabaseAsync())
         {
@@ -92,24 +92,22 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
         body.Should().NotBeNull();
         body!.AccessAllowed.Should().BeTrue();
         body.AccessPersisted.Should().BeTrue();
-        body.PolicyResolved.Should().BeTrue();
-        body.PolicyResolutionBasis.Should().Be("NATIONAL_LAW_FALLBACK");
-        body.NationalLawReference.Should().Be("RA 9994");
-        body.BenefitType.Should().Be("STATUTORY_DISCOUNT_VAT_EXEMPT");
-        body.FreeDurationMinutes.Should().BeNull();
-        body.InitialRateExempt.Should().BeFalse();
-        body.FullFeeExempt.Should().BeFalse();
-        body.PolicySnapshot.Should().NotBeNull();
+        body.PolicyResolved.Should().BeFalse();
+        body.StatutoryDiscountPolicyId.Should().BeNull();
+        body.PolicyResolutionBasis.Should().BeNull();
+        body.NationalLawReference.Should().BeNull();
+        body.IneligibilityReason.Should().Be("LOCAL_PARKING_ORDINANCE_NOT_APPLICABLE");
+        body.ErrorCode.Should().Be("LOCAL_PARKING_ORDINANCE_NOT_APPLICABLE");
 
         var afterBoundaryCount = await CountNonReadOnlyBoundaryRowsAsync();
         afterBoundaryCount.Should().Be(beforeBoundaryCount);
     }
 
     /// <summary>
-    /// Verifies PWD fallback resolves to RA 10754 and does not grant free parking.
+    /// Verifies parking does not fall back to RA 10754 when no local ordinance applies.
     /// </summary>
     [Fact]
-    public async Task ResolvePolicy_WhenNoLocalPwdPolicy_ReturnsRa10754Fallback()
+    public async Task ResolvePolicy_WhenNoLocalPwdPolicy_ReturnsNoApplicableParkingPrivilege()
     {
         if (!await CanOpenDatabaseAsync())
         {
@@ -128,17 +126,16 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
         var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountPolicyResolutionResponse>();
         body.Should().NotBeNull();
         body!.AccessAllowed.Should().BeTrue();
-        body.PolicyResolved.Should().BeTrue();
-        body.PolicyResolutionBasis.Should().Be("NATIONAL_LAW_FALLBACK");
-        body.NationalLawReference.Should().Be("RA 10754");
-        body.BenefitType.Should().Be("STATUTORY_DISCOUNT_VAT_EXEMPT");
-        body.FreeDurationMinutes.Should().BeNull();
-        body.InitialRateExempt.Should().BeFalse();
-        body.FullFeeExempt.Should().BeFalse();
+        body.PolicyResolved.Should().BeFalse();
+        body.StatutoryDiscountPolicyId.Should().BeNull();
+        body.PolicyResolutionBasis.Should().BeNull();
+        body.NationalLawReference.Should().BeNull();
+        body.IneligibilityReason.Should().Be("LOCAL_PARKING_ORDINANCE_NOT_APPLICABLE");
+        body.ErrorCode.Should().Be("LOCAL_PARKING_ORDINANCE_NOT_APPLICABLE");
     }
 
     /// <summary>
-    /// Verifies verified local policy resolves before national fallback.
+    /// Verifies a verified local parking ordinance resolves as the sole parking authority.
     /// </summary>
     [Fact]
     public async Task ResolvePolicy_WhenVerifiedLocalPolicyExists_ReturnsLocalPolicy()
@@ -273,10 +270,10 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
     }
 
     /// <summary>
-    /// Verifies site group mismatch is stopped by access evaluation before policy resolution.
+    /// Verifies a foreign Site is stopped by direct Site scope before policy resolution.
     /// </summary>
     [Fact]
-    public async Task ResolvePolicy_WhenSiteGroupMismatch_AccessDeniedBeforePolicyResolution()
+    public async Task ResolvePolicy_WhenSiteScopeMismatch_AccessDeniedBeforePolicyResolution()
     {
         if (!await CanOpenDatabaseAsync())
         {
@@ -291,7 +288,7 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
 
         using var response = await client.PostAsJsonAsync(
             Endpoint,
-            Request("SENIOR_CITIZEN", siteGroupId: Guid.Parse("6e000000-0000-0000-0000-000000000099")));
+            Request("SENIOR_CITIZEN", siteId: Guid.Parse("6e000000-0000-0000-0000-000000000099")));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountPolicyResolutionResponse>();
@@ -341,6 +338,65 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
                SET lgu_code = @lgu_code,
                    updated_at = now()
              WHERE site_id = @site_id;
+
+            INSERT INTO identity.user_roles (
+                user_role_id,
+                user_id,
+                role_id,
+                assignment_status,
+                assignment_reason_code,
+                assigned_by_service_identity_id,
+                effective_from,
+                created_by_service_identity_id,
+                updated_by_service_identity_id)
+            SELECT
+                '6e000000-0000-0000-0000-000000000060',
+                @user_id,
+                role_id,
+                'ACTIVE',
+                'POLICY_RESOLUTION_DIRECT_SITE_TEST',
+                '77000000-0000-0000-0000-000000000003',
+                now() - interval '1 minute',
+                '77000000-0000-0000-0000-000000000003',
+                '77000000-0000-0000-0000-000000000003'
+            FROM identity.roles
+            WHERE role_code = 'SITE_OPERATOR'
+            ON CONFLICT (user_role_id) DO UPDATE
+            SET assignment_status = 'ACTIVE',
+                revoked_at = NULL,
+                effective_to = NULL,
+                updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+                updated_at = now();
+
+            INSERT INTO identity.user_role_scope_grants (
+                user_role_scope_grant_id,
+                user_role_id,
+                scope_type,
+                site_id,
+                grant_status,
+                grant_reason_code,
+                effective_from,
+                granted_by_service_identity_id,
+                created_by_service_identity_id,
+                updated_by_service_identity_id)
+            VALUES (
+                '6e000000-0000-0000-0000-000000000061',
+                '6e000000-0000-0000-0000-000000000060',
+                'SITE',
+                @site_id,
+                'ACTIVE',
+                'POLICY_RESOLUTION_DIRECT_SITE_TEST',
+                now() - interval '1 minute',
+                '77000000-0000-0000-0000-000000000003',
+                '77000000-0000-0000-0000-000000000003',
+                '77000000-0000-0000-0000-000000000003')
+            ON CONFLICT (user_role_scope_grant_id) DO UPDATE
+            SET site_id = EXCLUDED.site_id,
+                grant_status = 'ACTIVE',
+                revoked_at = NULL,
+                effective_to = NULL,
+                updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+                updated_at = now();
 
             INSERT INTO discounts.discount_policy_references (
                 discount_policy_reference_id,
@@ -421,6 +477,7 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("lgu_code", NpgsqlDbType.Varchar).Value = PolicyLguCode;
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = FixtureSiteId;
+        command.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = FixtureUserId;
         await command.ExecuteNonQueryAsync();
     }
 

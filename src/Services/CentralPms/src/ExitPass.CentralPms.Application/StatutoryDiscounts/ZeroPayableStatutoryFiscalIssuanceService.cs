@@ -369,6 +369,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
             !command.Cashier.IsValid() ||
             string.IsNullOrWhiteSpace(command.VatTreatment) ||
             string.IsNullOrWhiteSpace(command.PolicyResolutionBasis) ||
+            NormalizePolicyResolutionBasis(command.PolicyResolutionBasis) != "LOCAL_ORDINANCE" ||
             command.StatutoryRequestReference == Guid.Empty ||
             authority.PaymentAttemptId is not null || authority.PaymentConfirmationId is not null)
         {
@@ -379,10 +380,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
     private static string NormalizePolicyResolutionBasis(string value) =>
         value.Trim().ToUpperInvariant() switch
         {
-            "NATIONAL_LAW" or "LOCAL_ORDINANCE" or "MIXED" or "INTERNAL_POLICY_REFERENCE" =>
-                value.Trim().ToUpperInvariant(),
+            "LOCAL_ORDINANCE" => "LOCAL_ORDINANCE",
             "LOCAL_ORDINANCE_APPLIED" => "LOCAL_ORDINANCE",
-            "NATIONAL_LAW_FALLBACK" => "NATIONAL_LAW",
             _ => "INTERNAL_POLICY_REFERENCE"
         };
 

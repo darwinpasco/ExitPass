@@ -569,6 +569,10 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_StatutoryIdControlReference_v1.3.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPmsStatutoryIdControlReference_v1.3.sql")),
                 new ApplicationSchemaSource(
+                    "statutory beneficiary identity",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_StatutoryBeneficiaryIdentity_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPms_StatutoryBeneficiaryIdentity_v1.3.sql")),
+                new ApplicationSchemaSource(
                     "statutory applied-basis recalculation",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_StatutoryAppliedBasisRecalculation_v1.3.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPmsStatutoryAppliedBasisRecalculation_v1.3.sql")),

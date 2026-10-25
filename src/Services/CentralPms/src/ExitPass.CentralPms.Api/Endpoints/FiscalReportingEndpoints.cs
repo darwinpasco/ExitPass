@@ -174,6 +174,20 @@ public static class FiscalReportingEndpoints
             return await Execute(siteId,operatorScoped,request,gateway,references,rbac,logs,action.Value,
                 null,null,null,null,null,false,ct,calendarYear:calendarYear,calendarMonth:calendarMonth,download:true).ConfigureAwait(false);
         }).WithMetadata(new ReconciliationPolicyMetadata(BirReadPolicy));
+        if (!operatorScoped)
+        {
+            group.MapGet("/annex-e/{annex}/statutory-sales-book", (Guid siteId,string annex,Guid channelTerminalId,int calendarYear,int calendarMonth,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
+                Execute(siteId,false,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.StatutorySalesBookRead,null,null,null,null,null,false,ct,
+                    calendarYear:calendarYear,calendarMonth:calendarMonth,channelTerminalId:channelTerminalId,annexType:annex))
+                .WithMetadata(new ReconciliationPolicyMetadata(BirReadPolicy));
+            group.MapGet("/annex-e/{annex}/statutory-sales-book/download", async (Guid siteId,string annex,Guid channelTerminalId,int calendarYear,int calendarMonth,string format,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
+            {
+                var normalized=format.Trim().ToLowerInvariant();
+                if(normalized is not ("xlsx" or "pdf"))return Results.BadRequest(new{succeeded=false,code="statutory_sales_book_export_format_unsupported",message="The requested export format is unsupported."});
+                return await Execute(siteId,false,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.StatutorySalesBookDownload,null,null,null,null,null,false,ct,
+                    calendarYear:calendarYear,calendarMonth:calendarMonth,download:true,exportFormat:normalized,channelTerminalId:channelTerminalId,annexType:annex).ConfigureAwait(false);
+            }).WithMetadata(new ReconciliationPolicyMetadata(BirReadPolicy));
+        }
     }
 
     private static async Task<IResult> GenerateBirSalesSummaryAsync(
@@ -604,7 +618,8 @@ public static class FiscalReportingEndpoints
         string? factType=null,string? factStatus=null,long? amountMinorUnits=null,long? sourceDocumentCount=null,
         string? firstSourceReference=null,string? lastSourceReference=null,string? sourceEventReference=null,
         string? approvalReference=null,Guid? supersedesFactId=null,string? correctionReason=null,
-        Guid? supersedesWorkbookId=null,string? correctionApprovalReference=null)
+        Guid? supersedesWorkbookId=null,string? correctionApprovalReference=null,
+        Guid? channelTerminalId=null,string? annexType=null)
     {
         var correlation=Guid.TryParse(request.Headers["X-Correlation-Id"].ToString(),out var parsed)&&parsed!=Guid.Empty?parsed:Guid.NewGuid();
         var actor=request.HttpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)??"unavailable";
@@ -631,6 +646,14 @@ public static class FiscalReportingEndpoints
             exportFormat=exportFormat?.Trim().ToLowerInvariant();
             if(exportFormat is not ("pdf" or "csv" or "json"))
                 return Results.BadRequest(new{succeeded=false,code="audit_trail_export_format_unsupported",correlationId=correlation,message="The requested Audit Trail export format is unsupported."});
+        }
+        if(action is FiscalReportingGatewayAction.StatutorySalesBookRead or FiscalReportingGatewayAction.StatutorySalesBookDownload)
+        {
+            request.HttpContext.Response.Headers.CacheControl="private, no-store";
+            request.HttpContext.Response.Headers.XContentTypeOptions="nosniff";
+            annexType=annexType?.Trim().ToLowerInvariant();
+            if(annexType is not ("e2" or "e3") || channelTerminalId is null || channelTerminalId==Guid.Empty)
+                return Results.BadRequest(new{succeeded=false,code="statutory_sales_book_scope_invalid",correlationId=correlation,message="A supported Annex type and POS terminal are required."});
         }
         if(action==FiscalReportingGatewayAction.ZGenerate&&!confirmClose)
         {
@@ -662,7 +685,8 @@ public static class FiscalReportingEndpoints
             FirstSourceReference:firstSourceReference,LastSourceReference:lastSourceReference,
             SourceEventReference:sourceEventReference,ApprovalReference:approvalReference,SupersedesFactId:supersedesFactId,
             CorrectionReason:correctionReason,SupersedesWorkbookId:supersedesWorkbookId,
-            CorrectionApprovalReference:correctionApprovalReference),ct).ConfigureAwait(false);
+            CorrectionApprovalReference:correctionApprovalReference,
+            ChannelTerminalId:channelTerminalId,AnnexType:annexType),ct).ConfigureAwait(false);
         logger.Log(result.HttpStatusCode<400?LogLevel.Information:LogLevel.Warning,
             "Fiscal reporting operation completed. actor={Actor} site={Site} action={Action} result={Result} report={Report} correlation_id={Correlation}",
             actor,siteId,action,result.Code,reportReference,correlation);

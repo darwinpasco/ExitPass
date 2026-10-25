@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
@@ -1062,7 +1063,10 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             BenefitClassification: ResolveBenefitClassification(statutoryContext),
             PolicyReference: new CentralPmsAppliedStatutoryPolicyReferenceContext(
                 ResolutionBasis: NormalizePolicyResolutionBasis(statutoryContext.PolicyResolutionBasis),
-                AppliedPolicyReferenceId: statutoryContext.AppliedPolicyReferenceId),
+                AppliedPolicyReferenceId: statutoryContext.AppliedPolicyReferenceId,
+                PolicyCode: statutoryContext.PolicyCode,
+                PolicyVersionId: statutoryContext.PolicyVersionId,
+                OrdinanceReference: statutoryContext.OrdinanceReference),
             OriginalTariffSnapshotId: statutoryContext.OriginalTariffSnapshotId,
             AppliedTariffSnapshotId: statutoryContext.AppliedTariffSnapshotId,
             OriginalAmountMinorUnits: statutoryContext.OriginalAmountMinorUnits,
@@ -1078,7 +1082,12 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             Currency: statutoryContext.Currency,
             AppliedAt: statutoryContext.AppliedAt ?? DateTimeOffset.UtcNow,
             SourcePaymentChannel: "ASSISTED_PAYMENT_TERMINAL",
-            TerminalCashTenderId: cashPayment.TerminalCashTenderId);
+            TerminalCashTenderId: cashPayment.TerminalCashTenderId,
+            StatutoryDiscountRateBasisPoints: statutoryContext.StatutoryDiscountRateBasisPoints,
+            PercentageDiscountAmountMinorUnits: statutoryContext.PercentageDiscountAmountMinorUnits,
+            NonPercentageBenefitAmountMinorUnits: statutoryContext.NonPercentageBenefitAmountMinorUnits,
+            PercentageComponentSeparatelyProven: statutoryContext.PercentageComponentSeparatelyProven,
+            BeneficiaryIdentity: MapBeneficiary(statutoryContext.BeneficiaryIdentity));
     }
 
     private static string ResolveBenefitClassification(TerminalCashStatutoryFiscalLinkageContext statutoryContext)
@@ -1103,11 +1112,28 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         var normalized = value.Trim().ToUpperInvariant();
         return normalized switch
         {
-            "NATIONAL_LAW" or "LOCAL_ORDINANCE" or "MIXED" or "INTERNAL_POLICY_REFERENCE" => normalized,
-            "NATIONAL_LAW_FALLBACK" => "NATIONAL_LAW",
+            "LOCAL_ORDINANCE" or "INTERNAL_POLICY_REFERENCE" => normalized,
+            "LOCAL_ORDINANCE_APPLIED" => "LOCAL_ORDINANCE",
             _ => "INTERNAL_POLICY_REFERENCE"
         };
     }
+
+    private static CentralPmsStatutoryBeneficiaryIdentityContext? MapBeneficiary(
+        StatutoryBeneficiaryIdentityRecord? identity) => identity is not { IsFinal: true } ? null : new(
+            identity.BeneficiaryFullName,
+            identity.StatutoryIdType,
+            identity.StatutoryIdNumber,
+            identity.BeneficiaryTin,
+            identity.CapturedByActorRef.ToString("D"),
+            identity.CapturedByChannel,
+            identity.CapturedAt,
+            identity.LastUpdatedByActorRef.ToString("D"),
+            identity.LastUpdatedByChannel,
+            identity.LastUpdatedAt,
+            identity.ReviewedByActorRef!.Value.ToString("D"),
+            identity.ReviewedAt!.Value,
+            identity.ApprovalDecisionReference!,
+            identity.CorrelationReference.ToString("D"));
 
     private static Dictionary<string, string> BuildPayableBasisReferenceContext(
         TerminalCashPaymentReadback cashPayment,

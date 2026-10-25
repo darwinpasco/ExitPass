@@ -1115,7 +1115,11 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                         DecisionNotes: null,
                         request.ReviewerAttestation,
                         request.IdempotencyKey,
-                        identity.CorrelationId),
+                        identity.CorrelationId,
+                        request.BeneficiaryFullName,
+                        request.StatutoryIdType,
+                        request.StatutoryIdNumber,
+                        request.BeneficiaryTin),
                     ToReviewAccessContext(identity, httpRequest, request.IdempotencyKey),
                     httpRequest.HttpContext.RequestAborted)
                 .ConfigureAwait(false);
