@@ -7,11 +7,12 @@ namespace ExitPass.CentralPms.UnitTests.Application;
 public sealed class ApprovedIdentityRoleCatalogTests
 {
     [Fact]
-    public void Catalog_ContainsExactlyTheNineApprovedAssignableRoles()
+    public void Catalog_ContainsApprovedAssignableRolesIncludingNarrowAptMovementRoles()
     {
         ApprovedIdentityRoleCatalog.AssignableCodes.Should().BeEquivalentTo([
             "SYSTEM_ADMINISTRATOR", "OPERATIONS_SUPERVISOR", "STATUTORY_DISCOUNT_PROCESSOR", "SITE_OPERATOR", "PARKING_ATTENDANT",
-            "APT_CASHIER_OPERATOR", "FINANCE_RECONCILIATION_ANALYST",
+            "APT_CASHIER_OPERATOR", "APT_CASH_CUSTODY_MOVEMENT_OPERATOR", "APT_CASH_CUSTODY_SUPERVISOR",
+            "APT_SITE_CUSTODIAN", "APT_CASH_COLLECTOR", "FINANCE_RECONCILIATION_ANALYST",
             "COMPLIANCE_POLICY_ADMINISTRATOR", "EXECUTIVE_MANAGEMENT"
         ]);
         ApprovedIdentityRoleCatalog.IsAssignable("PLATFORM_ADMINISTRATOR").Should().BeFalse();
@@ -50,6 +51,11 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [InlineData("APT_CASHIER_OPERATOR", "MANAGEMENT_PLATFORM", false)]
     [InlineData("APT_CASHIER_OPERATOR", "OPERATOR_CONSOLE", false)]
     [InlineData("APT_CASHIER_OPERATOR", "NATIVE_PARKING_APP", false)]
+    [InlineData("APT_CASH_CUSTODY_MOVEMENT_OPERATOR", "APT", true)]
+    [InlineData("APT_CASH_CUSTODY_SUPERVISOR", "APT", true)]
+    [InlineData("APT_SITE_CUSTODIAN", "APT", true)]
+    [InlineData("APT_CASH_COLLECTOR", "APT", true)]
+    [InlineData("APT_CASH_COLLECTOR", "MANAGEMENT_PLATFORM", false)]
     [InlineData("FINANCE_RECONCILIATION_ANALYST", "MANAGEMENT_PLATFORM", true)]
     [InlineData("FINANCE_RECONCILIATION_ANALYST", "OPERATOR_CONSOLE", false)]
     [InlineData("COMPLIANCE_POLICY_ADMINISTRATOR", "MANAGEMENT_PLATFORM", true)]
@@ -142,7 +148,7 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [Fact]
     public void Policies_ExposeTheCanonicalMetadataForH2()
     {
-        ApprovedIdentityRoleCatalog.Policies.Should().HaveCount(11);
+        ApprovedIdentityRoleCatalog.Policies.Should().HaveCount(15);
         ApprovedIdentityRoleCatalog.TryGetPolicy(
             ApprovedIdentityRoleCatalog.AnnexE1GovernedCorrector,
             out var annexE1Corrector).Should().BeTrue();
