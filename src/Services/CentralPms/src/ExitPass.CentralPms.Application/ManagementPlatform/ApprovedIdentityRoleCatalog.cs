@@ -1,5 +1,7 @@
 namespace ExitPass.CentralPms.Application.ManagementPlatform;
 
+using ExitPass.CentralPms.Application.Security;
+
 public sealed record ApprovedIdentityRolePolicy(
     string Code,
     string DisplayName,
@@ -44,7 +46,7 @@ public static class ApprovedIdentityRoleCatalog
         new Dictionary<string, ApprovedIdentityRolePolicy>(CodeComparer)
         {
             [SystemAdministrator] = Policy(SystemAdministrator, "System Administrator", [ManagementPlatformAudience], [GlobalScope], GlobalScope),
-            [OperationsSupervisor] = Policy(OperationsSupervisor, "Operations Supervisor", [OperatorConsoleAudience, ManagementPlatformAudience], [SiteScope], SiteScope),
+            [OperationsSupervisor] = Policy(OperationsSupervisor, "Operations Supervisor", [OperatorConsoleAudience, ManagementPlatformAudience, AptAudience], [SiteScope], SiteScope),
             [FiscalZReadingCloser] = Policy(FiscalZReadingCloser, "Fiscal Z Reading Closer", [OperatorConsoleAudience], [SiteScope], SiteScope),
             [AnnexE1GovernedCorrector] = Policy(AnnexE1GovernedCorrector, "Annex E-1 Governed Corrector", [ManagementPlatformAudience], [SiteScope], SiteScope),
             [StatutoryDiscountProcessor] = Policy(StatutoryDiscountProcessor, "Statutory Discount Processor", [ManagementPlatformAudience], [GlobalScope], GlobalScope),
@@ -83,6 +85,25 @@ public static class ApprovedIdentityRoleCatalog
     private static readonly HashSet<string> OperatorConsoleStatutorySupervisorPermissions = new(CodeComparer)
     {
         "statutory-discounts.evidence.review.view"
+    };
+
+    private static readonly HashSet<string> AptOnlyPermissions = new(CodeComparer)
+    {
+        AptHumanPermissionCatalog.Access,
+        AptHumanPermissionCatalog.CashierOperate,
+        AptHumanPermissionCatalog.CashierShiftOperate,
+        AptHumanPermissionCatalog.CashCustodyOperate,
+        AptHumanPermissionCatalog.TerminalCashReceive,
+        AptHumanPermissionCatalog.PayableBasisRead,
+        AptHumanPermissionCatalog.CashCustodyMovementInitiate,
+        AptHumanPermissionCatalog.CashCustodyMovementAcknowledge,
+        AptHumanPermissionCatalog.CashCustodyMovementCorrect,
+        AptHumanPermissionCatalog.CashCustodyMovementRead
+    };
+
+    private static readonly HashSet<string> OperatorConsoleOnlyPermissions = new(CodeComparer)
+    {
+        "fiscal-reporting.z.generate"
     };
 
     public static IReadOnlyList<ApprovedIdentityRolePolicy> Policies { get; } =
@@ -134,12 +155,18 @@ public static class ApprovedIdentityRoleCatalog
         policy!.AllowedAssignmentScopes.Contains(scopeType, CodeComparer);
 
     /// <summary>
-    /// Returns false for statutory supervisor permissions outside their explicitly approved application audience.
-    /// Evidence review is the single narrow permission shared with Operator Console for Site-scoped supervisor review.
-    /// Other permissions are outside this narrow surface-boundary rule and are left to their policy mapping.
+    /// Returns false when a permission is not valid for the requested human application audience.
+    /// This prevents a supplemental role from leaking authority into another eligible role's session.
     /// </summary>
     public static bool IsPermissionEligibleForApplication(string? permissionCode, string? audience) =>
         permissionCode is not null &&
+        audience is not null &&
+        (!string.Equals(audience, AptAudience, StringComparison.Ordinal) ||
+         AptOnlyPermissions.Contains(permissionCode)) &&
+        (!AptOnlyPermissions.Contains(permissionCode) ||
+         string.Equals(audience, AptAudience, StringComparison.Ordinal)) &&
+        (!OperatorConsoleOnlyPermissions.Contains(permissionCode) ||
+         string.Equals(audience, OperatorConsoleAudience, StringComparison.Ordinal)) &&
         (!ManagementPlatformOnlyStatutorySupervisorPermissions.Contains(permissionCode) ||
          string.Equals(audience, ManagementPlatformAudience, StringComparison.Ordinal) ||
          (string.Equals(audience, OperatorConsoleAudience, StringComparison.Ordinal) &&

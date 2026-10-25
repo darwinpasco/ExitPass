@@ -66,6 +66,7 @@ public static class CentralPmsRbacPolicyCatalog
             ],
             ["VendorSessionProjectionHealthViewer"] =
             [
+                "projection-health.view",
                 "ops.vendor-session-projection-health.view",
                 "operator-console.vendor-projection-health.view",
                 "reconciliation.view",
