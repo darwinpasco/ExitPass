@@ -211,6 +211,19 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
                 decision.StatutoryDiscountDecisionCommandId);
         }
 
+        if (!decision.LocalOrdinanceApplied ||
+            !IsLocalOrdinanceBasis(decision.PolicyResolutionBasis) ||
+            string.IsNullOrWhiteSpace(detail.OrdinanceReference))
+        {
+            return NotAcceptedResult(
+                command,
+                authorization,
+                "STATUTORY_DISCOUNT_LOCAL_ORDINANCE_REQUIRED",
+                "STATUTORY_DISCOUNT_LOCAL_ORDINANCE_REQUIRED",
+                detail,
+                decision.StatutoryDiscountDecisionCommandId);
+        }
+
         var stageKey = DeriveLegacyApplicationStageIdempotencyKey(
             command.IdempotencyKey,
             decision.StatutoryDiscountDecisionCommandId);
@@ -332,6 +345,9 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
             token => ApplyAndRecordCanonicalApplicationUnderLockAsync(command, detail, decision, application, stageKey, token),
             cancellationToken).ConfigureAwait(false);
     }
+
+    private static bool IsLocalOrdinanceBasis(string? value) =>
+        value?.Trim().ToUpperInvariant() is "LOCAL_ORDINANCE" or "LOCAL_ORDINANCE_APPLIED";
 
     private async Task<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceResult>
         ApplyAndRecordLegacyApplicationAfterWriterAsync(

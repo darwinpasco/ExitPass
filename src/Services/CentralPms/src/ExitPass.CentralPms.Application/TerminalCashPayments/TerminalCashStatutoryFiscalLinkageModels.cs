@@ -1,3 +1,5 @@
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
+
 namespace ExitPass.CentralPms.Application.TerminalCashPayments;
 
 public interface ITerminalCashStatutoryFiscalLinkageReader
@@ -94,4 +96,13 @@ public sealed record TerminalCashStatutoryFiscalLinkageContext(
     string Currency,
     DateTimeOffset? DecisionTimestamp,
     DateTimeOffset? AppliedAt,
-    string? IdControlReference);
+    string? IdControlReference,
+    string? PolicyCode = null,
+    Guid? PolicyVersionId = null,
+    string? OrdinanceReference = null,
+    string? PolicyBenefitType = null,
+    int? StatutoryDiscountRateBasisPoints = null,
+    long PercentageDiscountAmountMinorUnits = 0,
+    long NonPercentageBenefitAmountMinorUnits = 0,
+    bool PercentageComponentSeparatelyProven = false,
+    StatutoryBeneficiaryIdentityRecord? BeneficiaryIdentity = null);

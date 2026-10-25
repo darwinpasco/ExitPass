@@ -83,7 +83,11 @@ public sealed record OperatorConsoleCanonicalStatutoryReviewDecisionRequest(
     string Decision,
     string? DecisionReasonCode,
     bool ReviewerAttestation,
-    string IdempotencyKey)
+    string IdempotencyKey,
+    string? BeneficiaryFullName = null,
+    string? StatutoryIdType = null,
+    string? StatutoryIdNumber = null,
+    string? BeneficiaryTin = null)
 {
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalFields { get; init; }

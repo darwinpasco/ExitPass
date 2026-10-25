@@ -163,7 +163,28 @@ public sealed record CentralPmsAppliedStatutoryFiscalFactsContext(
     string Currency,
     DateTimeOffset AppliedAt,
     string SourcePaymentChannel,
-    Guid? TerminalCashTenderId = null);
+    Guid? TerminalCashTenderId = null,
+    int? StatutoryDiscountRateBasisPoints = null,
+    long PercentageDiscountAmountMinorUnits = 0,
+    long NonPercentageBenefitAmountMinorUnits = 0,
+    bool PercentageComponentSeparatelyProven = false,
+    CentralPmsStatutoryBeneficiaryIdentityContext? BeneficiaryIdentity = null);
+
+public sealed record CentralPmsStatutoryBeneficiaryIdentityContext(
+    string BeneficiaryFullName,
+    string StatutoryIdType,
+    string StatutoryIdNumber,
+    string? BeneficiaryTin,
+    string CapturedByActorRef,
+    string CapturedByChannel,
+    DateTimeOffset CapturedAt,
+    string LastUpdatedByActorRef,
+    string LastUpdatedByChannel,
+    DateTimeOffset LastUpdatedAt,
+    string ReviewedByActorRef,
+    DateTimeOffset ReviewedAt,
+    string ApprovalDecisionReference,
+    string CorrelationReference);
 
 public sealed record CentralPmsAppliedStatutoryPolicyReferenceContext(
     string ResolutionBasis,
@@ -323,7 +344,28 @@ public sealed record PosServerAppliedStatutoryFiscalFactsRequest(
     string Currency,
     DateTimeOffset AppliedAt,
     string SourcePaymentChannel,
-    Guid? TerminalCashTenderId = null);
+    Guid? TerminalCashTenderId = null,
+    int? StatutoryDiscountRateBasisPoints = null,
+    long PercentageDiscountAmountMinorUnits = 0,
+    long NonPercentageBenefitAmountMinorUnits = 0,
+    bool PercentageComponentSeparatelyProven = false,
+    PosServerStatutoryBeneficiaryIdentityRequest? BeneficiaryIdentity = null);
+
+public sealed record PosServerStatutoryBeneficiaryIdentityRequest(
+    string BeneficiaryFullName,
+    string StatutoryIdType,
+    string StatutoryIdNumber,
+    string? BeneficiaryTin,
+    string CapturedByActorRef,
+    string CapturedByChannel,
+    DateTimeOffset CapturedAt,
+    string LastUpdatedByActorRef,
+    string LastUpdatedByChannel,
+    DateTimeOffset LastUpdatedAt,
+    string ReviewedByActorRef,
+    DateTimeOffset ReviewedAt,
+    string ApprovalDecisionReference,
+    string CorrelationReference);
 
 public sealed record PosServerAppliedStatutoryPolicyReferenceRequest(
     string ResolutionBasis,

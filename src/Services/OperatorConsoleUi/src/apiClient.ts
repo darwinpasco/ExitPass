@@ -1051,7 +1051,11 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
             decision: input.decision,
             decisionReasonCode: input.decision === "REJECT" ? input.reasonCode ?? null : null,
             reviewerAttestation: input.reviewerAttestation,
-            idempotencyKey: input.idempotencyKey
+            idempotencyKey: input.idempotencyKey,
+            ...(input.beneficiaryFullName ? { beneficiaryFullName: input.beneficiaryFullName } : {}),
+            ...(input.statutoryIdType ? { statutoryIdType: input.statutoryIdType } : {}),
+            ...(input.statutoryIdNumber ? { statutoryIdNumber: input.statutoryIdNumber } : {}),
+            ...(input.beneficiaryTin ? { beneficiaryTin: input.beneficiaryTin } : {})
           })
         }
       );

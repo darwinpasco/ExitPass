@@ -39,7 +39,7 @@ public static class OperatorConsoleStatutoryDiscountPolicyResolutionEndpoints
             .WithMetadata(new ReconciliationPolicyMetadata(PolicyResolvePolicy))
             .WithMetadata(OperatorConsoleOperatingContextRequirementMetadata.NotRequired)
             .WithSummary("Resolve Operator Console statutory discount policy")
-            .WithDescription("Resolves the verified local statutory discount policy for the site jurisdiction or mandatory RA 9994 / RA 10754 national fallback after evaluating and persisting Operator Console access. This endpoint is read-only except for access evaluation persistence and does not create drafts, apply discounts, mutate payable basis, or create payment, gate, provider, coupon, or reconciliation records.");
+            .WithDescription("Resolves the verified local parking-privilege policy for the Site jurisdiction after evaluating and persisting Operator Console access. Parking does not fall back to a national statutory discount. This endpoint is read-only except for access evaluation persistence and does not create drafts, apply discounts, mutate payable basis, or create payment, gate, provider, coupon, or reconciliation records.");
 
         return app;
     }

@@ -17,9 +17,6 @@ namespace ExitPass.CentralPms.Infrastructure.OperatorConsole;
 public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionReadRepository
     : IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository
 {
-    private const string SeniorFallbackPolicyCode = "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK";
-    private const string PwdFallbackPolicyCode = "PH_RA10754_PWD_NATIONAL_FALLBACK";
-
     private readonly string _connectionString;
 
     /// <summary>
@@ -95,13 +92,12 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionReadReposito
                 site.JurisdictionId);
         }
 
-        var fallback = capabilities.HasDedicatedRegistry
-            ? await ReadDedicatedNationalFallbackPolicyAsync(connection, site, request.EntitlementType, request.EffectiveDate, cancellationToken)
-            : await ReadCompatibilityNationalFallbackPolicyAsync(connection, site, request.EntitlementType, request.EffectiveDate, cancellationToken);
-
-        return fallback is null
-            ? NotResolved("NATIONAL_FALLBACK_POLICY_NOT_CONFIGURED", "NATIONAL_FALLBACK_POLICY_NOT_CONFIGURED", site.SiteId, site.SiteGroupId, site.JurisdictionId)
-            : Resolved(fallback);
+        return NotResolved(
+            "LOCAL_PARKING_ORDINANCE_NOT_APPLICABLE",
+            "LOCAL_PARKING_ORDINANCE_NOT_APPLICABLE",
+            site.SiteId,
+            site.SiteGroupId,
+            site.JurisdictionId);
     }
 
     private static OperatorConsoleStatutoryDiscountPolicyResolutionReadResult Resolved(
@@ -441,139 +437,6 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionReadReposito
         command.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = entitlementType;
         command.Parameters.Add("effective_date", NpgsqlDbType.Date).Value = effectiveDate;
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
-    }
-
-    private static async Task<OperatorConsoleResolvedStatutoryDiscountPolicy?> ReadDedicatedNationalFallbackPolicyAsync(
-        NpgsqlConnection connection,
-        SiteRow site,
-        string entitlementType,
-        DateOnly effectiveDate,
-        CancellationToken cancellationToken)
-    {
-        var nationalLawReference = entitlementType == "SENIOR_CITIZEN"
-            ? "RA 9994"
-            : "RA 10754";
-
-        const string sql = """
-            SELECT
-                p.statutory_discount_policy_registry_id,
-                p.policy_code,
-                p.policy_name,
-                p.entitlement_type::text,
-                p.policy_resolution_basis::text,
-                p.policy_level::text,
-                p.policy_type::text,
-                COALESCE(p.legal_basis_reference, p.national_law_reference) AS legal_basis_reference,
-                p.ordinance_reference,
-                p.national_law_reference,
-                p.verification_status::text AS verification_status,
-                p.beneficiary_residency_scope::text,
-                p.benefit_type::text,
-                p.free_duration_minutes,
-                p.initial_rate_exempt,
-                p.full_fee_exempt,
-                p.overnight_excluded,
-                p.valet_excluded,
-                p.standalone_parking_excluded,
-                p.driver_or_passenger_required,
-                'NOT_APPLICABLE' AS free_period_application,
-                'APPLY_NATIONAL_STATUTORY_DISCOUNT' AS succeeding_hours_discount_rule,
-                p.discount_base_scope::text,
-                'STATUTORY_FIRST' AS stacking_policy,
-                COALESCE(p.legal_basis_reference, p.national_law_reference, p.policy_code) AS legal_basis_priority,
-                p.requires_operator_validation,
-                (p.requires_evidence AND p.required_evidence_type IS NOT NULL) AS requires_evidence,
-                p.effective_from,
-                p.effective_to,
-                p.source_reference
-            FROM discounts.statutory_discount_policy_registry AS p
-            WHERE p.entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
-              AND p.policy_status = 'ACTIVE'::discounts.discount_policy_status_enum
-              AND p.policy_level = 'NATIONAL_LAW'::discounts.discount_policy_level_enum
-              AND p.policy_resolution_basis = 'NATIONAL_LAW_FALLBACK'::discounts.policy_resolution_basis_enum
-              AND p.national_law_reference = @national_law_reference
-              AND p.effective_from <= @effective_date
-              AND (p.effective_to IS NULL OR p.effective_to >= @effective_date)
-            ORDER BY
-                CASE p.verification_status
-                    WHEN 'ACTIVE_APPROVED'::discounts.policy_verification_status_enum THEN 0
-                    WHEN 'VERIFIED_OFFICIAL'::discounts.policy_verification_status_enum THEN 1
-                    WHEN 'APPROVED_FOR_PILOT'::discounts.policy_verification_status_enum THEN 2
-                    WHEN 'VERIFIED_SECONDARY'::discounts.policy_verification_status_enum THEN 3
-                    ELSE 4
-                END,
-                p.effective_from DESC,
-                p.policy_code
-            LIMIT 1;
-            """;
-
-        await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = entitlementType;
-        command.Parameters.Add("national_law_reference", NpgsqlDbType.Varchar).Value = nationalLawReference;
-        command.Parameters.Add("effective_date", NpgsqlDbType.Date).Value = effectiveDate;
-
-        return await ReadPolicyAsync(command, site, cancellationToken);
-    }
-
-    private static async Task<OperatorConsoleResolvedStatutoryDiscountPolicy?> ReadCompatibilityNationalFallbackPolicyAsync(
-        NpgsqlConnection connection,
-        SiteRow site,
-        string entitlementType,
-        DateOnly effectiveDate,
-        CancellationToken cancellationToken)
-    {
-        var policyCode = entitlementType == "SENIOR_CITIZEN"
-            ? SeniorFallbackPolicyCode
-            : PwdFallbackPolicyCode;
-
-        const string sql = """
-            SELECT
-                p.discount_policy_reference_id,
-                p.policy_code,
-                p.policy_name,
-                p.entitlement_type::text,
-                'NATIONAL_LAW_FALLBACK' AS policy_resolution_basis,
-                p.policy_level::text,
-                p.policy_type::text,
-                p.national_law_reference AS legal_basis_reference,
-                p.local_ordinance_reference,
-                p.national_law_reference,
-                p.policy_status::text AS verification_status,
-                'LOCKED_SCHEMA_POLICY_REFERENCE' AS beneficiary_residency_scope,
-                'STATUTORY_DISCOUNT_VAT_EXEMPT' AS benefit_type,
-                NULL::integer AS free_duration_minutes,
-                false AS initial_rate_exempt_flag,
-                false AS full_fee_exempt_flag,
-                false AS overnight_excluded_flag,
-                false AS valet_excluded_flag,
-                false AS standalone_parking_excluded_flag,
-                false AS driver_or_passenger_required_flag,
-                'NOT_APPLICABLE' AS free_period_application,
-                'APPLY_NATIONAL_STATUTORY_DISCOUNT' AS succeeding_hours_discount_rule,
-                'VAT_EXCLUSIVE' AS discount_base_scope,
-                'STATUTORY_FIRST' AS stacking_policy,
-                COALESCE(p.national_law_reference, p.policy_code) AS legal_basis_priority,
-                p.requires_operator_validation,
-                p.requires_evidence_capture,
-                p.effective_from,
-                p.effective_to,
-                p.policy_version AS source_reference
-            FROM discounts.discount_policy_references AS p
-            WHERE p.policy_code = @policy_code
-              AND p.entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
-              AND p.policy_status = 'ACTIVE'::discounts.discount_policy_status_enum
-              AND p.policy_level = 'NATIONAL_LAW'::discounts.discount_policy_level_enum
-              AND p.effective_from <= @effective_date
-              AND (p.effective_to IS NULL OR p.effective_to >= @effective_date)
-            LIMIT 1;
-            """;
-
-        await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.Add("policy_code", NpgsqlDbType.Text).Value = policyCode;
-        command.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = entitlementType;
-        command.Parameters.Add("effective_date", NpgsqlDbType.Date).Value = effectiveDate;
-
-        return await ReadPolicyAsync(command, site, cancellationToken);
     }
 
     private static async Task<OperatorConsoleResolvedStatutoryDiscountPolicy?> ReadPolicyAsync(

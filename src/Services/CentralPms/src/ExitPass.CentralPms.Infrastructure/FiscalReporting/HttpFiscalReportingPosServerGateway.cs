@@ -172,6 +172,12 @@ public sealed class HttpFiscalReportingPosServerGateway(
             FiscalReportingGatewayAction.MonthlyESalesDownloadPdf => (HttpMethod.Get,
                 $"/v1/fiscal-reports/monthly-esales/download?{scope}&calendarYear={RequireCalendarPart(request.CalendarYear, 2000, 9999, "year")}&calendarMonth={RequireCalendarPart(request.CalendarMonth, 1, 12, "month")}&format=pdf",
                 "monthly_esales.export", null),
+            FiscalReportingGatewayAction.StatutorySalesBookRead => (HttpMethod.Get,
+                $"/v1/fiscal-reports/annex-e/{RequireAnnexType(request)}/?{scope}&channelTerminalId={RequireGuid(request.ChannelTerminalId, "terminal"):D}&calendarYear={RequireCalendarPart(request.CalendarYear, 2000, 9999, "year")}&calendarMonth={RequireCalendarPart(request.CalendarMonth, 1, 12, "month")}",
+                "fiscal_statutory_sales_book.read", null),
+            FiscalReportingGatewayAction.StatutorySalesBookDownload => (HttpMethod.Get,
+                $"/v1/fiscal-reports/annex-e/{RequireAnnexType(request)}/download?{scope}&channelTerminalId={RequireGuid(request.ChannelTerminalId, "terminal"):D}&calendarYear={RequireCalendarPart(request.CalendarYear, 2000, 9999, "year")}&calendarMonth={RequireCalendarPart(request.CalendarMonth, 1, 12, "month")}&format={RequireStatutorySalesBookFormat(request)}",
+                "fiscal_statutory_sales_book.export", null),
             FiscalReportingGatewayAction.AuditTrailRead => (HttpMethod.Get,
                 $"/v1/fiscal-reports/audit-trail/?sitePosServerId={endpoint.SitePosServerId:D}{AuditTrailQuery(request)}",
                 "fiscal_audit_trail.read", null),
@@ -256,6 +262,16 @@ public sealed class HttpFiscalReportingPosServerGateway(
     {
         var format = request.ExportFormat?.Trim().ToLowerInvariant();
         return format is "pdf" or "csv" or "json" ? format : throw new ArgumentException("The Audit Trail export format is unsupported.");
+    }
+    private static string RequireAnnexType(FiscalReportingGatewayRequest request)
+    {
+        var value = request.AnnexType?.Trim().ToLowerInvariant();
+        return value is "e2" or "e3" ? value : throw new ArgumentException("The statutory sales-book type is unsupported.");
+    }
+    private static string RequireStatutorySalesBookFormat(FiscalReportingGatewayRequest request)
+    {
+        var value = request.ExportFormat?.Trim().ToLowerInvariant();
+        return value is "xlsx" or "pdf" ? value : throw new ArgumentException("The statutory sales-book format is unsupported.");
     }
     private static string RequireReference(FiscalReportingGatewayRequest r)=>!string.IsNullOrWhiteSpace(r.ReportReference)?r.ReportReference.Trim():throw new ArgumentException("Report reference is required.");
     private static string RequireReadingExportFormat(FiscalReportingGatewayRequest r)

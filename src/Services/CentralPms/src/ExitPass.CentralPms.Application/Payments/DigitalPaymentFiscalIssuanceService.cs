@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.PaymentAttempts;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 
@@ -434,7 +435,10 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             ResolveBenefitClassification(statutory),
             new CentralPmsAppliedStatutoryPolicyReferenceContext(
                 NormalizePolicyResolutionBasis(statutory.PolicyResolutionBasis),
-                AppliedPolicyReferenceId: statutory.AppliedPolicyReferenceId),
+                AppliedPolicyReferenceId: statutory.AppliedPolicyReferenceId,
+                PolicyCode: statutory.PolicyCode,
+                PolicyVersionId: statutory.PolicyVersionId,
+                OrdinanceReference: statutory.OrdinanceReference),
             statutory.OriginalTariffSnapshotId,
             statutory.AppliedTariffSnapshotId,
             statutory.OriginalAmountMinorUnits,
@@ -449,7 +453,13 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
             statutory.FinalPayableAmountMinorUnits,
             statutory.Currency,
             statutory.AppliedAt ?? context.ConfirmedAt,
-            "WEBPAY");
+            "WEBPAY",
+            TerminalCashTenderId: null,
+            statutory.StatutoryDiscountRateBasisPoints,
+            statutory.PercentageDiscountAmountMinorUnits,
+            statutory.NonPercentageBenefitAmountMinorUnits,
+            statutory.PercentageComponentSeparatelyProven,
+            MapBeneficiary(statutory.BeneficiaryIdentity));
     }
 
     private static string ResolveBenefitClassification(TerminalCashStatutoryFiscalLinkageContext statutory) =>
@@ -464,11 +474,28 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
         var normalized = value?.Trim().ToUpperInvariant();
         return normalized switch
         {
-            "NATIONAL_LAW" or "LOCAL_ORDINANCE" or "MIXED" or "INTERNAL_POLICY_REFERENCE" => normalized,
-            "NATIONAL_LAW_FALLBACK" => "NATIONAL_LAW",
+            "LOCAL_ORDINANCE" or "INTERNAL_POLICY_REFERENCE" => normalized,
+            "LOCAL_ORDINANCE_APPLIED" => "LOCAL_ORDINANCE",
             _ => "INTERNAL_POLICY_REFERENCE"
         };
     }
+
+    private static CentralPmsStatutoryBeneficiaryIdentityContext? MapBeneficiary(
+        StatutoryBeneficiaryIdentityRecord? identity) => identity is not { IsFinal: true } ? null : new(
+            identity.BeneficiaryFullName,
+            identity.StatutoryIdType,
+            identity.StatutoryIdNumber,
+            identity.BeneficiaryTin,
+            identity.CapturedByActorRef.ToString("D"),
+            identity.CapturedByChannel,
+            identity.CapturedAt,
+            identity.LastUpdatedByActorRef.ToString("D"),
+            identity.LastUpdatedByChannel,
+            identity.LastUpdatedAt,
+            identity.ReviewedByActorRef!.Value.ToString("D"),
+            identity.ReviewedAt!.Value,
+            identity.ApprovalDecisionReference!,
+            identity.CorrelationReference.ToString("D"));
 
     private static void AddStatutoryReferences(
         IDictionary<string, string> target,

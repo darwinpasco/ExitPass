@@ -5,7 +5,7 @@ import { App } from "./App";
 import { CanonicalStatutoryReviewDetailPage, CanonicalStatutoryReviewQueuePage, defaultCanonicalStatutoryReviewFilters } from "./CanonicalStatutoryReview";
 import { createHttpOperatorConsoleApiClient, createMockOperatorConsoleApiClient } from "./apiClient";
 import type { OperatorConsoleHumanSession } from "./humanAuthentication";
-import type { CanonicalStatutoryReviewFilters } from "./types";
+import type { CanonicalStatutoryReviewDetail, CanonicalStatutoryReviewFilters } from "./types";
 
 const decisionId = "47000000-0000-0000-0000-000000000008";
 
@@ -170,7 +170,7 @@ describe("canonical Central PMS statutory review", () => {
 
   it("presents approved eligibility without fabricating a payable-basis application or monetary result", async () => {
     const client = createMockOperatorConsoleApiClient();
-    client.getCanonicalStatutoryReview = vi.fn(async () => ({
+    client.getCanonicalStatutoryReview = vi.fn(async (): Promise<CanonicalStatutoryReviewDetail> => ({
       ...detailResponse(null),
       commandStatus: "COMPLETED",
       decisionResultStatus: "APPROVED",
@@ -217,6 +217,60 @@ describe("canonical Central PMS statutory review", () => {
     expect(screen.getByText(/Statutory benefit:/)).toHaveTextContent("Statutory benefit: \u20B120.00");
     expect(screen.getByText(/Final payable:/)).toHaveTextContent("Final payable: \u20B180.00");
   });
+
+  it("captures authoritative PWD beneficiary identity only for a governed percentage-discount review", async () => {
+    const user = userEvent.setup();
+    const client = createMockOperatorConsoleApiClient();
+    client.getCanonicalStatutoryReview = vi.fn(async (): Promise<CanonicalStatutoryReviewDetail> => ({
+      ...detailResponse("PHP"),
+      currency: "PHP",
+      governingPolicy: {
+        statutoryDiscountPolicyVersionId: "57000000-0000-0000-0000-000000000001",
+        jurisdictionId: "57000000-0000-0000-0000-000000000002",
+        jurisdictionCode: "PARANAQUE",
+        jurisdictionDisplayName: "Paranaque City",
+        policyCode: "PARANAQUE-SYNTHETIC-PWD-20",
+        policyVersion: "1",
+        sourceVerificationStatus: "VERIFIED",
+        transactionPublicationStatus: "PUBLISHED",
+        detailedRuleVerificationStatus: "VERIFIED",
+        parkingServiceApplicability: "APPLICABLE",
+        benefitType: "PERCENTAGE_DISCOUNT",
+        beneficiaryResidencyScope: "CITY",
+        officialSourceAvailable: true,
+        ordinanceTextAvailable: true,
+        ordinanceNumberAvailable: true,
+        requiredEvidenceTypes: []
+      }
+    }));
+    client.submitCanonicalStatutoryReviewDecision = vi.fn(async () => ({
+      decisionAccepted: true as const,
+      decisionPersisted: true,
+      currentValidationStatus: "APPROVED" as const,
+      decision: "APPROVE" as const,
+      alreadyDecided: false,
+      decisionChanged: true,
+      correlationId: "99000000-0000-0000-0000-000000000001"
+    }));
+    render(<CanonicalStatutoryReviewDetailPage client={client} decisionId={decisionId} onBack={() => undefined} />);
+
+    expect(await screen.findByText("BIR statutory beneficiary identity")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Full Name"), "Maria Santos");
+    await user.selectOptions(screen.getByLabelText("ID Type"), "PWD_ID");
+    await user.type(screen.getByLabelText("PWD ID Number"), "PWD-2026-001");
+    await user.type(screen.getByLabelText("TIN (optional)"), "123-456-789-000");
+    await user.click(screen.getByRole("checkbox", { name: /reviewed the required evidence/i }));
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await user.click(screen.getByRole("button", { name: "Confirm decision" }));
+
+    await waitFor(() => expect(client.submitCanonicalStatutoryReviewDecision).toHaveBeenCalledWith(expect.objectContaining({
+      decision: "APPROVE",
+      beneficiaryFullName: "Maria Santos",
+      statutoryIdType: "PWD_ID",
+      statutoryIdNumber: "PWD-2026-001",
+      beneficiaryTin: "123-456-789-000"
+    })));
+  });
 });
 
 function session(): OperatorConsoleHumanSession {
@@ -259,7 +313,7 @@ function detailResponse(currency: string | null) {
     entitlementType: "PWD",
     commandStatus: "AWAITING_REVIEW",
     decisionResultStatus: "NOT_DECIDED",
-    reviewStatus: "PENDING_REVIEW",
+    reviewStatus: "PENDING_REVIEW" as const,
     sessionEligibilityStatus: "PENDING_REVIEW" as const,
     payableBasisStatus: "CREATED" as const,
     evidenceRequired: true,

@@ -14,7 +14,11 @@ public sealed record OperatorConsoleStatutoryDiscountDecisionRequest(
     string? DecisionNotes,
     bool ReviewerAttestation,
     string IdempotencyKey,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string? BeneficiaryFullName = null,
+    string? StatutoryIdType = null,
+    string? StatutoryIdNumber = null,
+    string? BeneficiaryTin = null);
 
 /// <summary>
 /// Response body for an access-gated Operator Console statutory discount validation decision.

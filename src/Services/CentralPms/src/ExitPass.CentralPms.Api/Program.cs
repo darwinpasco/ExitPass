@@ -473,6 +473,13 @@ static void ConfigureApplicationServices(
     WebApplicationBuilder builder,
     string mainDatabaseConnectionString)
 {
+    builder.Services.AddOptions<StatutoryBeneficiaryProtectionOptions>()
+        .Bind(builder.Configuration.GetSection("StatutoryBeneficiaryProtection"));
+    builder.Services.AddSingleton<IStatutoryBeneficiaryIdentityProtector, AesGcmStatutoryBeneficiaryIdentityProtector>();
+    builder.Services.AddScoped<IStatutoryBeneficiaryIdentityRepository>(serviceProvider =>
+        new PostgresStatutoryBeneficiaryIdentityRepository(
+            mainDatabaseConnectionString,
+            serviceProvider.GetRequiredService<IStatutoryBeneficiaryIdentityProtector>()));
     var projectionServiceIdentityId = builder.Configuration.GetValue<Guid?>(
             $"{CentralPmsVendorPmsAdapterOptions.SectionName}:CentralPmsServiceIdentityId")
         ?? new HumanAuthenticationOptions().CentralPmsServiceIdentityId;
@@ -1027,10 +1034,14 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<ITerminalCashPayableBasisEligibilityReader>(_ =>
         new TerminalCashPayableBasisEligibilityReader(mainDatabaseConnectionString));
     builder.Services.AddScoped<IAptPayableBasisReadinessService, AptPayableBasisReadinessService>();
-    builder.Services.AddScoped<ITerminalCashStatutoryFiscalLinkageReader>(_ =>
-        new PostgresTerminalCashStatutoryFiscalLinkageReader(mainDatabaseConnectionString));
-    builder.Services.AddScoped<IStatutoryFiscalLinkageReader>(_ =>
-        new PostgresTerminalCashStatutoryFiscalLinkageReader(mainDatabaseConnectionString));
+    builder.Services.AddScoped<ITerminalCashStatutoryFiscalLinkageReader>(serviceProvider =>
+        new PostgresTerminalCashStatutoryFiscalLinkageReader(
+            mainDatabaseConnectionString,
+            serviceProvider.GetRequiredService<IStatutoryBeneficiaryIdentityRepository>()));
+    builder.Services.AddScoped<IStatutoryFiscalLinkageReader>(serviceProvider =>
+        new PostgresTerminalCashStatutoryFiscalLinkageReader(
+            mainDatabaseConnectionString,
+            serviceProvider.GetRequiredService<IStatutoryBeneficiaryIdentityRepository>()));
     builder.Services.AddScoped<ITerminalCashFiscalConflictRecoveryGuardRepository>(_ =>
         new PostgresTerminalCashFiscalConflictRecoveryGuardRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<ITerminalCashFiscalConflictRecoveryLock>(_ =>

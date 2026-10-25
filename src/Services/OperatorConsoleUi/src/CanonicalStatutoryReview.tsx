@@ -153,6 +153,10 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
+  const [beneficiaryFullName, setBeneficiaryFullName] = useState("");
+  const [statutoryIdType, setStatutoryIdType] = useState("");
+  const [statutoryIdNumber, setStatutoryIdNumber] = useState("");
+  const [beneficiaryTin, setBeneficiaryTin] = useState("");
   const headingRef = useRef<HTMLHeadingElement>(null);
   const requestSequence = useRef(0);
   const approveButtonRef = useRef<HTMLButtonElement>(null);
@@ -180,6 +184,7 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
 
   const detail = state.status === "ready" ? state.data : undefined;
   const terminal = detail ? detail.reviewStatus !== "PENDING_REVIEW" : true;
+  const requiresStatutorySalesBookIdentity = detail?.governingPolicy?.benefitType === "PERCENTAGE_DISCOUNT";
   const canApprove = client.canApproveStatutoryDiscount?.() ?? false;
   const canReject = client.canRejectStatutoryDiscount?.() ?? false;
 
@@ -216,6 +221,7 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
     if (!detail || !confirming || submitting) return;
     if (!attested) { setError("Confirm that you reviewed the required evidence and request facts."); return; }
     if (confirming === "REJECT" && !reason) { setError("A rejection reason is required."); return; }
+    if (confirming === "APPROVE" && requiresStatutorySalesBookIdentity && (!beneficiaryFullName.trim() || !statutoryIdType || !statutoryIdNumber.trim())) { setError("Full name, governed ID type, and statutory ID number are required before approval."); return; }
     setSubmitting(true); setError(undefined); setMessage(undefined);
     try {
       const result = await client.submitCanonicalStatutoryReviewDecision({
@@ -223,7 +229,11 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
         decision: confirming,
         reasonCode: confirming === "REJECT" ? reason : undefined,
         reviewerAttestation: attested,
-        idempotencyKey: `operator-console-review-${detail.statutoryDiscountDecisionCommandId}-${confirming.toLowerCase()}`
+        idempotencyKey: `operator-console-review-${detail.statutoryDiscountDecisionCommandId}-${confirming.toLowerCase()}`,
+        beneficiaryFullName: requiresStatutorySalesBookIdentity ? beneficiaryFullName.trim() || undefined : undefined,
+        statutoryIdType: requiresStatutorySalesBookIdentity ? statutoryIdType || undefined : undefined,
+        statutoryIdNumber: requiresStatutorySalesBookIdentity ? statutoryIdNumber.trim() || undefined : undefined,
+        beneficiaryTin: requiresStatutorySalesBookIdentity ? beneficiaryTin.trim() || undefined : undefined
       });
       if (!result.decisionAccepted) setError(result.errorCode ?? "Central PMS did not accept the decision.");
       else setMessage(result.alreadyDecided ? "This request was already decided. The authoritative state has been refreshed." : `Decision recorded: ${result.currentValidationStatus}.`);
@@ -260,6 +270,13 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
       <section className="panel" aria-labelledby="canonical-decision"><div className="panelHeader"><h3 id="canonical-decision">Decision</h3><span className="statusPill">{terminal ? "Final" : "Pending"}</span></div>
         {message && <p className="successMessage" role="status">{message}</p>}{error && <p className="errorMessage" role="alert">{error}</p>}
         {terminal ? <p>The Central PMS decision is final and cannot be changed in Operator Console.</p> : <>
+          {requiresStatutorySalesBookIdentity && <fieldset className="canonicalReviewFilters"><legend>BIR statutory beneficiary identity</legend>
+            <p className="fieldHint">Restricted values are used only for the approved fiscal snapshot and Annex E-2/E-3 exports.</p>
+            <label>Full Name<input autoComplete="off" value={beneficiaryFullName} onChange={(event)=>setBeneficiaryFullName(event.target.value)} /></label>
+            <label>ID Type<select value={statutoryIdType} onChange={(event)=>setStatutoryIdType(event.target.value)}><option value="">Select ID type</option>{detail.entitlementType === "SENIOR_CITIZEN" ? <><option value="OSCA_ID">OSCA ID</option><option value="SENIOR_CITIZEN_ID">Senior Citizen ID</option></> : <option value="PWD_ID">PWD ID</option>}</select></label>
+            <label>{detail.entitlementType === "SENIOR_CITIZEN" ? "OSCA / Senior Citizen ID Number" : "PWD ID Number"}<input autoComplete="off" value={statutoryIdNumber} onChange={(event)=>setStatutoryIdNumber(event.target.value)} /></label>
+            <label>TIN (optional)<input autoComplete="off" value={beneficiaryTin} onChange={(event)=>setBeneficiaryTin(event.target.value)} /></label>
+          </fieldset>}
           <label className="attestationField"><input type="checkbox" aria-describedby="canonical-attestation-help" checked={attested} onChange={(event) => setAttested(event.target.checked)} />I reviewed the required evidence and authoritative request facts.</label>
           <p id="canonical-attestation-help" className="fieldHint">Required before Central PMS can record a decision.</p>
           {canReject && <label className="reasonField">Rejection reason<select aria-describedby="canonical-rejection-help" value={reason} onChange={(event) => setReason(event.target.value)}><option value="">Select a reason</option><option value="EVIDENCE_INCOMPLETE">Evidence incomplete</option><option value="EVIDENCE_INVALID">Evidence invalid</option><option value="ENTITLEMENT_NOT_ESTABLISHED">Entitlement not established</option><option value="REQUEST_FACTS_MISMATCH">Request facts mismatch</option></select></label>}

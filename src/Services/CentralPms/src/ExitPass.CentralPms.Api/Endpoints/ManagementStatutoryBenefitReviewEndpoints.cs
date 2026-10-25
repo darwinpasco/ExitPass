@@ -116,7 +116,11 @@ public static class ManagementStatutoryBenefitReviewEndpoints
                 body.IdControlReference,
                 body.ReviewerAttestation,
                 body.BeneficiaryResidencySatisfied,
-                correlationId), cancellationToken));
+                correlationId,
+                body.BeneficiaryFullName,
+                body.StatutoryIdType,
+                body.StatutoryIdNumber,
+                body.BeneficiaryTin), cancellationToken));
         }
         catch (Exception exception)
         {
@@ -300,6 +304,10 @@ public sealed record ManagementStatutoryBenefitDecisionRequest(
     DateOnly? BirthDate,
     string? IdControlReference,
     bool ReviewerAttestation,
-    bool? BeneficiaryResidencySatisfied);
+    bool? BeneficiaryResidencySatisfied,
+    string? BeneficiaryFullName = null,
+    string? StatutoryIdType = null,
+    string? StatutoryIdNumber = null,
+    string? BeneficiaryTin = null);
 
 public sealed record ManagementStatutoryBenefitEvidencePreviewRequest(Guid EvidenceItemReference);

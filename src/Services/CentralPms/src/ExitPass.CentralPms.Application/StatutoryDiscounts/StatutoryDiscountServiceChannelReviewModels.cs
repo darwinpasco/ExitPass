@@ -236,7 +236,11 @@ public sealed record StatutoryDiscountServiceChannelReviewDecisionCommand(
     string? DecisionNotes,
     bool ReviewerAttestation,
     string IdempotencyKey,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string? BeneficiaryFullName = null,
+    string? StatutoryIdType = null,
+    string? StatutoryIdNumber = null,
+    string? BeneficiaryTin = null);
 
 /// <summary>
 /// Operator Console result for service-channel review completion.

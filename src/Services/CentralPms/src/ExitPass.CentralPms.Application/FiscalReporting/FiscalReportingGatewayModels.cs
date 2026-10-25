@@ -29,6 +29,8 @@ public enum FiscalReportingGatewayAction
     MonthlyESalesDownloadJson,
     MonthlyESalesDownloadCsv,
     MonthlyESalesDownloadPdf,
+    StatutorySalesBookRead,
+    StatutorySalesBookDownload,
     AuditTrailRead,
     AuditTrailDownload
 }
@@ -67,7 +69,9 @@ public sealed record FiscalReportingGatewayRequest(
     string? CorrectionReason = null,
     Guid? SupersedesWorkbookId = null,
     string? CorrectionApprovalReference = null,
-    string? ResetReason = null);
+    string? ResetReason = null,
+    Guid? ChannelTerminalId = null,
+    string? AnnexType = null);
 
 public sealed record FiscalReportingGatewayResponse(
     int HttpStatusCode,
