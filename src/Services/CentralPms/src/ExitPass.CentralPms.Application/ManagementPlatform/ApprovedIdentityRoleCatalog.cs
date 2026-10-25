@@ -21,6 +21,10 @@ public static class ApprovedIdentityRoleCatalog
     public const string SiteOperator = "SITE_OPERATOR";
     public const string ParkingAttendant = "PARKING_ATTENDANT";
     public const string AptCashierOperator = "APT_CASHIER_OPERATOR";
+    public const string AptCashCustodyMovementOperator = "APT_CASH_CUSTODY_MOVEMENT_OPERATOR";
+    public const string AptCashCustodySupervisor = "APT_CASH_CUSTODY_SUPERVISOR";
+    public const string AptSiteCustodian = "APT_SITE_CUSTODIAN";
+    public const string AptCashCollector = "APT_CASH_COLLECTOR";
     public const string FinanceReconciliationAnalyst = "FINANCE_RECONCILIATION_ANALYST";
     public const string CompliancePolicyAdministrator = "COMPLIANCE_POLICY_ADMINISTRATOR";
     public const string ExecutiveManagement = "EXECUTIVE_MANAGEMENT";
@@ -47,6 +51,10 @@ public static class ApprovedIdentityRoleCatalog
             [SiteOperator] = Policy(SiteOperator, "Site Operator", [OperatorConsoleAudience], [SiteScope], SiteScope),
             [ParkingAttendant] = Policy(ParkingAttendant, "Parking Attendant", [NativeParkingAppAudience], [SiteScope], SiteScope),
             [AptCashierOperator] = Policy(AptCashierOperator, "APT / Cashier Operator", [AptAudience], [SiteScope], SiteScope),
+            [AptCashCustodyMovementOperator] = Policy(AptCashCustodyMovementOperator, "APT Cash Custody Movement Operator", [AptAudience], [SiteScope], SiteScope),
+            [AptCashCustodySupervisor] = Policy(AptCashCustodySupervisor, "APT Cash Custody Supervisor", [AptAudience], [SiteScope], SiteScope),
+            [AptSiteCustodian] = Policy(AptSiteCustodian, "APT Site Custodian", [AptAudience], [SiteScope], SiteScope),
+            [AptCashCollector] = Policy(AptCashCollector, "APT Cash Collector", [AptAudience], [SiteScope], SiteScope),
             [FinanceReconciliationAnalyst] = Policy(FinanceReconciliationAnalyst, "Finance / Reconciliation Analyst", [ManagementPlatformAudience], [SiteScope, SiteGroupScope, GlobalScope]),
             [CompliancePolicyAdministrator] = Policy(CompliancePolicyAdministrator, "Compliance / Policy Administrator", [ManagementPlatformAudience], [SiteScope, SiteGroupScope, GlobalScope], GlobalScope),
             [ExecutiveManagement] = Policy(ExecutiveManagement, "Executive / Management", [ManagementPlatformAudience], [GlobalScope], GlobalScope)
@@ -88,6 +96,10 @@ public static class ApprovedIdentityRoleCatalog
         SiteOperator,
         ParkingAttendant,
         AptCashierOperator,
+        AptCashCustodyMovementOperator,
+        AptCashCustodySupervisor,
+        AptSiteCustodian,
+        AptCashCollector,
         FinanceReconciliationAnalyst,
         CompliancePolicyAdministrator,
         ExecutiveManagement
