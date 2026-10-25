@@ -291,7 +291,12 @@ public sealed class HumanAuthenticationServiceTests
         fixture.Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
                 Arg.Any<CancellationToken>())
             .Returns(_ => new EffectiveHumanAuthorization(
-                ["statutory-discounts.decision.approve"], [fixture.SiteId], [], false,
+                [
+                    "statutory-discounts.decision.approve",
+                    "fiscal-reporting.z.generate",
+                    "apt.access",
+                    "cash-custody-movements.acknowledge"
+                ], [fixture.SiteId], [], false,
                 fixture.EffectiveRoleCodes,
                 [new EffectiveHumanAuthorizedSite(
                     fixture.SiteId,
@@ -303,6 +308,9 @@ public sealed class HumanAuthenticationServiceTests
 
         result.Response.Authenticated.Should().BeTrue();
         result.Response.Session!.Permissions.Should().Contain("statutory-discounts.decision.approve");
+        result.Response.Session.Permissions.Should().NotContain("fiscal-reporting.z.generate");
+        result.Response.Session.Permissions.Should().NotContain("apt.access");
+        result.Response.Session.Permissions.Should().NotContain("cash-custody-movements.acknowledge");
         result.Response.Session.SiteReferences.Should().Equal(fixture.SiteId);
         result.Response.Session.AuthorizedSites.Should().ContainSingle().Which.Should().Be(
             new ExitPass.CentralPms.Contracts.HumanAuthentication.HumanAuthorizedSiteDto(
@@ -311,6 +319,129 @@ public sealed class HumanAuthenticationServiceTests
                 Guid.Parse("a6dbadf6-68b5-5bed-a7e0-a75faee70841"),
                 "PITX"));
         result.Response.Session.HasGlobalScope.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Operations_supervisor_only_apt_session_exposes_receiver_authority_without_cashier_authority()
+    {
+        var fixture = new Fixture
+        {
+            EffectiveRoleCodes = [ApprovedIdentityRoleCatalog.OperationsSupervisor]
+        };
+        fixture.Login = fixture.CreateLogin(privileged: true, fixture.Authenticator);
+        fixture.Repository.IsActiveDeviceServiceAtSiteAsync(
+            fixture.DeviceId,
+            fixture.SiteId,
+            Arg.Any<DateTimeOffset>(),
+            Arg.Any<CancellationToken>()).Returns(true);
+        fixture.Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+                Arg.Any<CancellationToken>())
+            .Returns(_ => new EffectiveHumanAuthorization(
+                [
+                    "apt.access",
+                    "cash-custody-movements.acknowledge",
+                    "cash-custody-movements.correct",
+                    "cash-custody-movements.read",
+                    "fiscal-reporting.z.generate",
+                    "shift.manage"
+                ],
+                [fixture.SiteId], [], false, fixture.EffectiveRoleCodes));
+
+        var result = await fixture.LoginAsync(
+            HumanSessionAudiences.Apt,
+            deviceId: fixture.DeviceId,
+            siteId: fixture.SiteId);
+
+        result.Response.Authenticated.Should().BeTrue();
+        result.Response.Session!.Permissions.Should().BeEquivalentTo(
+            "apt.access",
+            "cash-custody-movements.acknowledge",
+            "cash-custody-movements.correct",
+            "cash-custody-movements.read");
+        result.Response.Session.Permissions.Should().NotContain("fiscal-reporting.z.generate");
+        result.Response.Session.Permissions.Should().NotContain("cash-custody-movements.initiate");
+        result.Response.Session.Permissions.Should().NotContain("terminal-cash.receive");
+        result.Response.Session.DeviceServiceIdentityReference.Should().Be(fixture.DeviceId);
+        result.Response.Session.SiteReferences.Should().Equal(fixture.SiteId);
+    }
+
+    [Fact]
+    public async Task Operations_supervisor_only_operator_session_includes_z_close_and_excludes_apt_authority()
+    {
+        var fixture = new Fixture
+        {
+            EffectiveRoleCodes = [ApprovedIdentityRoleCatalog.OperationsSupervisor]
+        };
+        fixture.Login = fixture.CreateLogin(privileged: true);
+        fixture.Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+                Arg.Any<CancellationToken>())
+            .Returns(_ => new EffectiveHumanAuthorization(
+                [
+                    "shift.manage",
+                    "fiscal-reporting.z.generate",
+                    "apt.access",
+                    "cash-custody-movements.acknowledge"
+                ],
+                [fixture.SiteId], [], false, fixture.EffectiveRoleCodes));
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.OperatorConsole);
+
+        result.Response.Authenticated.Should().BeTrue();
+        result.Response.Session!.Permissions.Should().BeEquivalentTo(
+            "shift.manage",
+            "fiscal-reporting.z.generate");
+    }
+
+    [Fact]
+    public async Task Supplemental_apt_and_fiscal_roles_do_not_leak_permissions_into_management_session()
+    {
+        var fixture = new Fixture(totpSucceeds: true)
+        {
+            EffectiveRoleCodes =
+            [
+                ApprovedIdentityRoleCatalog.OperationsSupervisor,
+                ApprovedIdentityRoleCatalog.FiscalZReadingCloser,
+                ApprovedIdentityRoleCatalog.AptCashCustodySupervisor
+            ]
+        };
+        fixture.Login = fixture.CreateLogin(privileged: true, fixture.Authenticator);
+        fixture.Repository.TryRecordTotpSuccessAsync(Arg.Any<Guid>(), Arg.Any<long>(), Arg.Any<long>(),
+            Arg.Any<DateTimeOffset>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(true);
+        fixture.Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+                Arg.Any<CancellationToken>())
+            .Returns(_ => new EffectiveHumanAuthorization(
+                ["shift.manage", "fiscal-reporting.z.generate", "apt.access", "cash-custody-movements.acknowledge"],
+                [fixture.SiteId], [], false, fixture.EffectiveRoleCodes));
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.ManagementPlatform, "123456");
+
+        result.Response.Authenticated.Should().BeTrue();
+        result.Response.Session!.Permissions.Should().Equal("shift.manage");
+    }
+
+    [Fact]
+    public async Task Supplemental_apt_role_does_not_leak_permissions_into_operator_console_session()
+    {
+        var fixture = new Fixture
+        {
+            EffectiveRoleCodes =
+            [
+                ApprovedIdentityRoleCatalog.OperationsSupervisor,
+                ApprovedIdentityRoleCatalog.FiscalZReadingCloser,
+                ApprovedIdentityRoleCatalog.AptCashCustodySupervisor
+            ]
+        };
+        fixture.Login = fixture.CreateLogin(privileged: true);
+        fixture.Repository.GetEffectiveAuthorizationAsync(Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+                Arg.Any<CancellationToken>())
+            .Returns(_ => new EffectiveHumanAuthorization(
+                ["shift.manage", "fiscal-reporting.z.generate", "apt.access", "cash-custody-movements.acknowledge"],
+                [fixture.SiteId], [], false, fixture.EffectiveRoleCodes));
+
+        var result = await fixture.LoginAsync(HumanSessionAudiences.OperatorConsole);
+
+        result.Response.Authenticated.Should().BeTrue();
+        result.Response.Session!.Permissions.Should().BeEquivalentTo("shift.manage", "fiscal-reporting.z.generate");
     }
 
     [Fact]

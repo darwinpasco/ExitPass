@@ -138,7 +138,8 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
         result.Value.Should().ContainSingle();
         result.Value![0].ApplicationAccess.Should().BeEquivalentTo(
             ApprovedIdentityRoleCatalog.ManagementPlatformAudience,
-            ApprovedIdentityRoleCatalog.OperatorConsoleAudience);
+            ApprovedIdentityRoleCatalog.OperatorConsoleAudience,
+            ApprovedIdentityRoleCatalog.AptAudience);
         result.Value[0].ScopePolicy.Should().BeEquivalentTo(new IdentityRoleScopePolicy(
             [ApprovedIdentityRoleCatalog.SiteScope], true, ApprovedIdentityRoleCatalog.SiteScope));
         await repository.Received(1).ListRolesAsync(Actor,

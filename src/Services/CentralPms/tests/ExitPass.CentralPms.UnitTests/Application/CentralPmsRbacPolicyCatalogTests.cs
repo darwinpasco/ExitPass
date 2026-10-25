@@ -22,6 +22,7 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("VendorPaymentAcknowledgmentViewer", "reconciliation.view")]
     [InlineData("FiscalIssuanceStatusRead", "fiscal-issuance.status.read")]
     [InlineData("FiscalVoidActionAuditReview", "fiscal-issuance.void.audit.read")]
+    [InlineData("VendorSessionProjectionHealthViewer", "projection-health.view")]
     [InlineData("ManagementPlatformIdentityRbacInventoryRead", "management-platform.identity-rbac.inventory.read")]
     [InlineData("ManagementPlatformPaymentReconciliationSummaryRead", "reconciliation.view")]
     [InlineData("ManagementPlatformFiscalExceptionSummaryRead", "sales-invoice-report.view")]

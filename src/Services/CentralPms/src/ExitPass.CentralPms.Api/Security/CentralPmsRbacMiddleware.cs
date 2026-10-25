@@ -53,7 +53,8 @@ public sealed class CentralPmsRbacMiddleware
         var humanAudience = context.User.Identity?.IsAuthenticated == true
             ? context.User.FindFirst("exitpass_audience")?.Value
             : null;
-        if (humanAudience is not null &&
+        if (metadata is not null &&
+            humanAudience is not null &&
             requiredPermissions.Any(permission =>
                 !ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, humanAudience)))
         {

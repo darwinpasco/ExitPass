@@ -29,6 +29,8 @@ public sealed class ApprovedIdentityRoleCatalogTests
     [InlineData("SYSTEM_ADMINISTRATOR", "NATIVE_PARKING_APP", false)]
     [InlineData("OPERATIONS_SUPERVISOR", "MANAGEMENT_PLATFORM", true)]
     [InlineData("OPERATIONS_SUPERVISOR", "OPERATOR_CONSOLE", true)]
+    [InlineData("OPERATIONS_SUPERVISOR", "APT", true)]
+    [InlineData("OPERATIONS_SUPERVISOR", "NATIVE_PARKING_APP", false)]
     [InlineData("FISCAL_Z_READING_CLOSER", "OPERATOR_CONSOLE", true)]
     [InlineData("FISCAL_Z_READING_CLOSER", "MANAGEMENT_PLATFORM", false)]
     [InlineData("ANNEX_E1_GOVERNED_CORRECTOR", "MANAGEMENT_PLATFORM", true)]
@@ -120,6 +122,21 @@ public sealed class ApprovedIdentityRoleCatalogTests
             ApprovedIdentityRoleCatalog.SiteGroupScope).Should().BeFalse();
     }
 
+    [Fact]
+    public void OperationsSupervisor_IsSiteScopedAcrossItsThreeApprovedApplications()
+    {
+        ApprovedIdentityRoleCatalog.TryGetPolicy(
+            ApprovedIdentityRoleCatalog.OperationsSupervisor,
+            out var policy).Should().BeTrue();
+
+        policy!.AllowedApplicationAudiences.Should().Equal(
+            ApprovedIdentityRoleCatalog.OperatorConsoleAudience,
+            ApprovedIdentityRoleCatalog.ManagementPlatformAudience,
+            ApprovedIdentityRoleCatalog.AptAudience);
+        policy.AllowedAssignmentScopes.Should().Equal(ApprovedIdentityRoleCatalog.SiteScope);
+        policy.DefaultAssignmentScope.Should().Be(ApprovedIdentityRoleCatalog.SiteScope);
+    }
+
     [Theory]
     [InlineData("statutory-discounts.review.queue.read")]
     [InlineData("statutory-discounts.review.detail.read")]
@@ -141,6 +158,38 @@ public sealed class ApprovedIdentityRoleCatalogTests
         const string permission = "statutory-discounts.evidence.review.view";
         ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "MANAGEMENT_PLATFORM").Should().BeTrue();
         ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "OPERATOR_CONSOLE").Should().BeTrue();
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "APT").Should().BeFalse();
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "NATIVE_PARKING_APP").Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("apt.access")]
+    [InlineData("apt.cashier.operate")]
+    [InlineData("cash-custody-movements.initiate")]
+    [InlineData("cash-custody-movements.acknowledge")]
+    [InlineData("cash-custody-movements.correct")]
+    [InlineData("cash-custody-movements.read")]
+    public void AptPermissions_AreLimitedToAptSessions(string permission)
+    {
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "APT").Should().BeTrue();
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "MANAGEMENT_PLATFORM").Should().BeFalse();
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "OPERATOR_CONSOLE").Should().BeFalse();
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "NATIVE_PARKING_APP").Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("shift.manage")]
+    [InlineData("fiscal-reporting.z.read")]
+    [InlineData("statutory-discounts.decision.approve")]
+    public void NonAptPermissions_AreExcludedFromAptSessions(string permission) =>
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "APT").Should().BeFalse();
+
+    [Fact]
+    public void FiscalZClosePermission_IsLimitedToOperatorConsoleSessions()
+    {
+        const string permission = "fiscal-reporting.z.generate";
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "OPERATOR_CONSOLE").Should().BeTrue();
+        ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "MANAGEMENT_PLATFORM").Should().BeFalse();
         ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "APT").Should().BeFalse();
         ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, "NATIVE_PARKING_APP").Should().BeFalse();
     }
