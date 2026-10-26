@@ -10,7 +10,9 @@ import {
   type FiscalReportingSite,
   type History,
   type MonthlyESalesReadResult,
-  type OperatorFiscalReportingClient
+  type OperatorFiscalReportingClient,
+  type StatutorySalesBookReport,
+  type StatutorySalesBookType
 } from "./fiscalReporting";
 
 export function OperatorFiscalReportingPage({ client, siteReferences, permissions }: {
@@ -38,6 +40,9 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
   const [summary, setSummary] = useState<BirSalesSummary>();
   const [annexMonth, setAnnexMonth] = useState("");
   const [annexWorkbook, setAnnexWorkbook] = useState<AnnexE1Workbook>();
+  const [statutoryBooks, setStatutoryBooks] = useState<Partial<Record<StatutorySalesBookType, StatutorySalesBookReport>>>({});
+  const [statutoryBookErrors, setStatutoryBookErrors] = useState<Partial<Record<StatutorySalesBookType, string>>>({});
+  const [statutoryBookLoading, setStatutoryBookLoading] = useState<StatutorySalesBookType>();
   const [annexLookupComplete, setAnnexLookupComplete] = useState(false);
   const [annexLoading, setAnnexLoading] = useState(false);
   const [monthlyESalesMonth, setMonthlyESalesMonth] = useState("");
@@ -175,6 +180,9 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
   useEffect(() => {
     const match = /^(\d{4})-(\d{2})$/.exec(annexMonth);
     setAnnexWorkbook(undefined);
+    setStatutoryBooks({});
+    setStatutoryBookErrors({});
+    setStatutoryBookLoading(undefined);
     setAnnexError(undefined);
     setAnnexLookupComplete(false);
     if (!siteId || !match) {
@@ -353,7 +361,32 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     setAnnexWorkbook(undefined);
     setAnnexError(undefined);
     setAnnexLookupComplete(false);
+    setStatutoryBooks({});
+    setStatutoryBookErrors({});
+    setStatutoryBookLoading(undefined);
     setAnnexMonth(value);
+  }
+
+  async function readStatutorySalesBook(type: StatutorySalesBookType) {
+    const match = /^(\d{4})-(\d{2})$/.exec(annexMonth);
+    if (!match) {
+      setStatutoryBookErrors((current) => ({ ...current, [type]: "Select a valid reporting month." }));
+      return;
+    }
+    setStatutoryBookLoading(type);
+    setStatutoryBookErrors((current) => ({ ...current, [type]: undefined }));
+    try {
+      const report = await client.readStatutorySalesBook(siteId, type, Number(match[1]), Number(match[2]));
+      setStatutoryBooks((current) => ({ ...current, [type]: report }));
+    } catch (cause) {
+      setStatutoryBooks((current) => ({ ...current, [type]: undefined }));
+      setStatutoryBookErrors((current) => ({
+        ...current,
+        [type]: operationMessage(cause, `Annex ${type.toUpperCase()} could not be loaded.`),
+      }));
+    } finally {
+      setStatutoryBookLoading(undefined);
+    }
   }
 
   async function readMonthlyESales() {
@@ -444,6 +477,14 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
           onGenerateAnnex={() => void generateAnnexE1()}
           annexXlsxUrl={annexWorkbook ? client.annexE1Url(siteId, annexWorkbook.workbookId, "xlsx") : "#"}
           annexPdfUrl={annexWorkbook ? client.annexE1Url(siteId, annexWorkbook.workbookId, "pdf") : "#"}
+          statutoryBooks={statutoryBooks}
+          statutoryBookErrors={statutoryBookErrors}
+          statutoryBookLoading={statutoryBookLoading}
+          onReadStatutoryBook={(type) => void readStatutorySalesBook(type)}
+          statutoryBookUrl={(type, format) => {
+            const match = /^(\d{4})-(\d{2})$/.exec(annexMonth);
+            return match ? client.statutorySalesBookUrl(siteId, type, Number(match[1]), Number(match[2]), format) : "#";
+          }}
         />
       : <p className="stateMessage warning">Z Reading permission is required to access Daily BIR Sales Summary.</p>)}
     {tab === "esales" && (has(fiscalReportingPermissions.zRead)
@@ -538,7 +579,8 @@ function MonthlyESalesPanel({ month, onMonthChange, result, error, busy, onRead,
 
 function BirSalesSummaryPanel({ zHistory, selectedZReference, onSelectZ, summaryId, onSummaryIdChange, summary, error,
   canGenerate, busy, onGenerate, onRead, summaryUrl, annexMonth, onAnnexMonthChange, annexWorkbook, annexLookupComplete, annexLoading, annexError,
-  onGenerateAnnex, annexXlsxUrl, annexPdfUrl }: {
+  onGenerateAnnex, annexXlsxUrl, annexPdfUrl, statutoryBooks, statutoryBookErrors, statutoryBookLoading,
+  onReadStatutoryBook, statutoryBookUrl }: {
   zHistory?: History;
   selectedZReference: string;
   onSelectZ: (value: string) => void;
@@ -560,6 +602,11 @@ function BirSalesSummaryPanel({ zHistory, selectedZReference, onSelectZ, summary
   onGenerateAnnex: () => void;
   annexXlsxUrl: string;
   annexPdfUrl: string;
+  statutoryBooks: Partial<Record<StatutorySalesBookType, StatutorySalesBookReport>>;
+  statutoryBookErrors: Partial<Record<StatutorySalesBookType, string>>;
+  statutoryBookLoading?: StatutorySalesBookType;
+  onReadStatutoryBook: (type: StatutorySalesBookType) => void;
+  statutoryBookUrl: (type: StatutorySalesBookType, format: "xlsx" | "pdf") => string;
 }) {
   const committedReadings = zHistory?.readings.filter((reading) => reading.reportStatus === "COMMITTED") ?? [];
   return <div className="fiscalPane" role="tabpanel">
@@ -610,9 +657,52 @@ function BirSalesSummaryPanel({ zHistory, selectedZReference, onSelectZ, summary
         <SummaryValue label="Generated (PHT)" value={formatPhtInstant(summary.generatedAt)} />
       </dl>
       <div className="reportFilters"><a className="primaryButton" href={summaryUrl("pdf")}>Download PDF</a><a className="primaryButton" href={summaryUrl("csv")}>Download CSV</a><a className="primaryButton" href={summaryUrl("json")}>Download JSON</a></div>
-      <section aria-labelledby="annex-e1-title"><h4 id="annex-e1-title">Annex E-1 - BIR Sales Summary Report</h4><p>Official monthly BIR Sales Summary Report workbook from POS authority.</p><div className="reportFilters"><label>Calendar month<input type="month" aria-label="Annex E-1 calendar month" value={annexMonth} onChange={(event) => onAnnexMonthChange(event.target.value)} /></label>{annexLookupComplete && !annexWorkbook && !annexError && <button type="button" onClick={onGenerateAnnex} disabled={!canGenerate || busy || annexLoading || !annexMonth}>Generate Annex E-1</button>}{annexWorkbook && <><a className="primaryButton" href={annexPdfUrl}>Download PDF</a><a className="primaryButton" href={annexXlsxUrl}>Download XLSX</a></>}</div>{annexLoading && <p role="status">Loading current Annex E-1 workbook...</p>}{annexError && <p className="errorMessage" role="alert">{annexError}</p>}{annexLookupComplete && !annexWorkbook && !annexError && <p role="status">No Annex E-1 workbook has been generated for this month.</p>}{annexWorkbook && <p role="status">Current Annex E-1: {annexWorkbook.annexEReference}, revision {annexWorkbook.revision}, generated {formatPhtInstant(annexWorkbook.generatedAt)} PHT ({annexWorkbook.fileName}).</p>}</section>
     </>}
+    <div className="reportFilters"><label>Annex reporting month<input type="month" aria-label="Annex reporting month" value={annexMonth} onChange={(event) => onAnnexMonthChange(event.target.value)} /></label></div>
+    <section className="annexReportSection" aria-labelledby="annex-e1-title"><h4 id="annex-e1-title">Annex E-1 - BIR Sales Summary Report</h4><div className="reportFilters">{annexLookupComplete && !annexWorkbook && !annexError && <button type="button" onClick={onGenerateAnnex} disabled={!canGenerate || busy || annexLoading || !annexMonth}>Generate Annex E-1</button>}{annexWorkbook && <><a className="primaryButton" href={annexPdfUrl}>Download PDF</a><a className="primaryButton" href={annexXlsxUrl}>Download XLSX</a></>}</div>{annexLoading && <p role="status">Loading current Annex E-1 workbook...</p>}{annexError && <p className="errorMessage" role="alert">{annexError}</p>}{annexLookupComplete && !annexWorkbook && !annexError && <p role="status">No Annex E-1 workbook has been generated for this month.</p>}{annexWorkbook && <p role="status">Current Annex E-1: {annexWorkbook.annexEReference}, revision {annexWorkbook.revision}, generated {formatPhtInstant(annexWorkbook.generatedAt)} PHT ({annexWorkbook.fileName}).</p>}</section>
+    <StatutorySalesBookPanel type="e2" report={statutoryBooks.e2} error={statutoryBookErrors.e2} loading={statutoryBookLoading === "e2"} month={annexMonth} busy={busy} onRead={() => onReadStatutoryBook("e2")} downloadUrl={(format) => statutoryBookUrl("e2", format)} />
+    <StatutorySalesBookPanel type="e3" report={statutoryBooks.e3} error={statutoryBookErrors.e3} loading={statutoryBookLoading === "e3"} month={annexMonth} busy={busy} onRead={() => onReadStatutoryBook("e3")} downloadUrl={(format) => statutoryBookUrl("e3", format)} />
   </div>;
+}
+
+function StatutorySalesBookPanel({ type, report, error, loading, month, busy, onRead, downloadUrl }: {
+  type: StatutorySalesBookType;
+  report?: StatutorySalesBookReport;
+  error?: string;
+  loading: boolean;
+  month: string;
+  busy: boolean;
+  onRead: () => void;
+  downloadUrl: (format: "xlsx" | "pdf") => string;
+}) {
+  const annex = type === "e2" ? "E-2" : "E-3";
+  const title = type === "e2" ? "Senior Citizen Sales Book/Report" : "Persons with Disability Sales Book/Report";
+  return <section className="annexReportSection" aria-labelledby={`annex-${type}-title`}>
+    <div className="readingTitle"><div><h4 id={`annex-${type}-title`}>Annex {annex} - {title}</h4></div>{report && <span className="statusPill">{report.summary.reportStatus}</span>}</div>
+    <div className="reportFilters"><button type="button" onClick={onRead} disabled={busy || loading || !month}>{loading ? "Loading report" : `View Annex ${annex}`}</button>{report && <><a className="primaryButton" href={downloadUrl("xlsx")}>Download XLSX</a><a className="primaryButton" href={downloadUrl("pdf")}>Download PDF</a></>}</div>
+    {error && <p className="errorMessage" role="alert">{error}</p>}
+    {report?.summary.warnings.map((warning) => <p className="stateMessage warning" role="status" key={warning}>{warning}</p>)}
+    {report?.summary.isEmpty && <p role="status">No qualifying transactions exist for this Site POS Server and reporting month. All totals are {money(0, report.summary.currencyCode)}.</p>}
+    {report && !report.summary.isEmpty && <StatutorySalesBookTable report={report} />}
+    {report && <dl className="periodCard" aria-label={`Annex ${annex} totals`}>
+      <SummaryValue label="POS Server" value={report.summary.posServerCode} />
+      <SummaryValue label="POS Serial Number" value={report.header.serialNumber} />
+      <SummaryValue label="Machine Identification Number" value={report.header.machineIdentificationNumber} />
+      <SummaryValue label="Transactions" value={String(report.summary.qualifyingTransactionCount)} />
+      <SummaryValue label="Fiscal Periods" value={`${report.summary.committedZPeriodCount}/${report.summary.scopedFiscalPeriodCount} finalized`} />
+      <SummaryValue label="Sales Including VAT" value={money(report.summary.salesInclusiveVatMinorUnits, report.summary.currencyCode)} />
+      <SummaryValue label="VAT Amount" value={money(report.summary.vatAmountMinorUnits, report.summary.currencyCode)} />
+      <SummaryValue label="VAT Exempt Sales" value={money(report.summary.vatExemptSalesMinorUnits, report.summary.currencyCode)} />
+      <SummaryValue label="5% Discount" value={money(report.summary.discount5MinorUnits, report.summary.currencyCode)} />
+      <SummaryValue label="20% Discount" value={money(report.summary.discount20MinorUnits, report.summary.currencyCode)} />
+      <SummaryValue label="Net Sales" value={money(report.summary.netSalesMinorUnits, report.summary.currencyCode)} />
+    </dl>}
+  </section>;
+}
+
+function StatutorySalesBookTable({ report }: { report: StatutorySalesBookReport }) {
+  const annex = report.summary.type === "AnnexE2" ? "E-2" : "E-3";
+  return <div className="tableViewport"><table aria-label={`Annex ${annex} qualifying Sales Invoices`}><thead><tr>{["Date", "Beneficiary Name", "ID Number", "TIN", "SI/OR", "Sales Including VAT", "VAT Amount", "VAT Exempt Sales", "5% Discount", "20% Discount", "Net Sales"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead><tbody>{report.rows.map((row) => <tr key={row.fiscalDocumentId}><td>{row.transactionDate}</td><td>{row.beneficiaryFullName}</td><td>{row.statutoryIdNumber}</td><td>{row.beneficiaryTin ?? ""}</td><td>{row.salesInvoiceNumber}</td><td>{money(row.salesInclusiveVatMinorUnits, report.summary.currencyCode)}</td><td>{money(row.vatAmountMinorUnits, report.summary.currencyCode)}</td><td>{money(row.vatExemptSalesMinorUnits, report.summary.currencyCode)}</td><td>{money(row.discount5MinorUnits, report.summary.currencyCode)}</td><td>{money(row.discount20MinorUnits, report.summary.currencyCode)}</td><td>{money(row.netSalesMinorUnits, report.summary.currencyCode)}</td></tr>)}</tbody></table></div>;
 }
 
 function SummaryValue({ label, value }: { label: string; value: string }) {

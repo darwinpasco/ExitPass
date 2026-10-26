@@ -359,7 +359,7 @@ describe("Operator Console fiscal reporting", () => {
     await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
     expect(await screen.findByText(/Current Annex E-1:/)).toBeInTheDocument();
 
-    const month = screen.getByLabelText("Annex E-1 calendar month");
+    const month = screen.getByLabelText("Annex reporting month");
     await userEvent.clear(month);
     await userEvent.type(month, "2026-10");
 
@@ -367,6 +367,81 @@ describe("Operator Console fiscal reporting", () => {
     expect(screen.queryByText(/Current Annex E-1:/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Generate Annex E-1" })).toBeEnabled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("places E-2 and E-3 below E-1 and loads monthly reports without a daily summary", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    client.readStatutorySalesBook = vi.fn(client.readStatutorySalesBook);
+    client.generateBirSalesSummary = vi.fn(client.generateBirSalesSummary);
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Daily BIR Sales Summary" }));
+
+    const headings = screen.getAllByRole("heading").map((heading) => heading.textContent);
+    expect(headings.indexOf("Annex E-1 - BIR Sales Summary Report")).toBeLessThan(headings.indexOf("Annex E-2 - Senior Citizen Sales Book/Report"));
+    expect(headings.indexOf("Annex E-2 - Senior Citizen Sales Book/Report")).toBeLessThan(headings.indexOf("Annex E-3 - Persons with Disability Sales Book/Report"));
+    expect(screen.getByLabelText("Annex reporting month")).toHaveValue("2026-09");
+    expect(screen.queryByRole("tab", { name: "Annex E-2" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Annex E-3" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "View Annex E-2" }));
+    await waitFor(() => expect(client.readStatutorySalesBook).toHaveBeenCalledWith("SITE-PITX", "e2", 2026, 9));
+    expect(await screen.findByText(/No qualifying transactions exist for this Site POS Server/)).toBeInTheDocument();
+    const e2Section = screen.getByRole("heading", { name: "Annex E-2 - Senior Citizen Sales Book/Report" }).closest("section")!;
+    expect(e2Section).toHaveTextContent("PRELIMINARY");
+    expect(within(e2Section).getByRole("link", { name: "Download XLSX" })).toHaveAttribute("href", expect.stringContaining("/annex-e/e2/statutory-sales-book/download"));
+    expect(client.generateBirSalesSummary).not.toHaveBeenCalled();
+  });
+
+  it("keeps E-2 and E-3 failures visible without replacing another Annex result", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    client.readStatutorySalesBook = vi.fn(async (_site, type) => {
+      if (type === "e3") throw new Error("The statutory sales-book response did not match the approved contract.");
+      return createOperatorFiscalReportingFixture().readStatutorySalesBook("SITE-PITX", type, 2026, 9);
+    });
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Daily BIR Sales Summary" }));
+    await userEvent.click(screen.getByRole("button", { name: "View Annex E-2" }));
+    expect(await screen.findByLabelText("Annex E-2 totals")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "View Annex E-3" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("approved contract");
+    expect(screen.getByLabelText("Annex E-2 totals")).toBeInTheDocument();
+  });
+
+  it("renders the eleven official columns and POS-authoritative statutory totals", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    const base = await client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 9);
+    const row = {
+      fiscalDocumentId: "91000000-0000-4000-8000-000000000010",
+      transactionDate: "2026-09-10",
+      beneficiaryFullName: "Synthetic Senior",
+      statutoryIdNumber: "SC-TEST-001",
+      beneficiaryTin: undefined,
+      salesInvoiceNumber: "SI-00000000000117",
+      salesInclusiveVatMinorUnits: 10000,
+      vatAmountMinorUnits: 1071,
+      vatExemptSalesMinorUnits: 0,
+      discount5MinorUnits: 0,
+      discount20MinorUnits: 2000,
+      netSalesMinorUnits: 8000,
+    };
+    client.readStatutorySalesBook = vi.fn(async () => ({
+      ...base,
+      summary: { ...base.summary, qualifyingTransactionCount: 1, salesInclusiveVatMinorUnits: 10000, vatAmountMinorUnits: 1071, discount20MinorUnits: 2000, netSalesMinorUnits: 8000, isEmpty: false, reportStatus: "FINAL" as const },
+      rows: [row],
+    }));
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Daily BIR Sales Summary" }));
+    await userEvent.click(screen.getByRole("button", { name: "View Annex E-2" }));
+
+    const table = await screen.findByRole("table", { name: "Annex E-2 qualifying Sales Invoices" });
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(11);
+    expect(table).toHaveTextContent("Synthetic Senior");
+    expect(screen.getByLabelText("Annex E-2 totals")).toHaveTextContent("20% Discount₱20.00");
+    expect(screen.getByLabelText("Annex E-2 totals")).toHaveTextContent("Net Sales₱80.00");
   });
 
   it("keeps actual current-workbook service failures visible", async () => {

@@ -52,6 +52,47 @@ describe("Operator fiscal-reporting HTTP client", () => {
     expect(client.annexE1Url("SITE-PITX", "workbook-1", "pdf")).toContain("format=pdf");
   });
 
+  it("reads and downloads consolidated Annex E-2 and E-3 without browser-supplied fiscal identifiers", async () => {
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(statutorySalesBookPayload("AnnexE2")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    const report = await client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10);
+
+    expect(report.summary.type).toBe("AnnexE2");
+    expect(report.summary.qualifyingTransactionCount).toBe(1);
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/annex-e/e2/statutory-sales-book?calendarYear=2026&calendarMonth=10"
+    );
+    expect(String(fetchImpl.mock.calls[0][0])).not.toContain("channelTerminalId");
+    expect(client.statutorySalesBookUrl("SITE-PITX", "e3", 2026, 10, "xlsx")).toBe(
+      "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/annex-e/e3/statutory-sales-book/download?calendarYear=2026&calendarMonth=10&format=xlsx"
+    );
+  });
+
+  it("rejects malformed statutory sales-book responses", async () => {
+    const payload = statutorySalesBookPayload("AnnexE3");
+    payload.report.summary.qualifyingTransactionCount = 2;
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    await expect(client.readStatutorySalesBook("SITE-PITX", "e3", 2026, 10)).rejects.toThrow();
+  });
+
+  it("rejects a statutory sales book for a different reporting month", async () => {
+    const payload = statutorySalesBookPayload("AnnexE2");
+    payload.report.summary.calendarMonth = 9;
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    await expect(client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10)).rejects.toThrow();
+  });
+
   it("builds explicit PDF and JSON X/Z Reading download URLs", () => {
     const client = createOperatorFiscalReportingClient(vi.fn() as unknown as typeof fetch);
 
@@ -290,5 +331,56 @@ function monthlyESalesPayload() {
       firstBusinessDate: "2026-09-04",
       lastBusinessDate: "2026-09-30"
     }]
+  };
+}
+
+function statutorySalesBookPayload(type: "AnnexE2" | "AnnexE3") {
+  return {
+    succeeded: true,
+    code: "statutory_sales_book_read",
+    report: {
+      header: {
+        serialNumber: "EP-PITX-L3-POS-0001",
+        machineIdentificationNumber: "MIN-PITX-L3-01",
+        posServerCode: "PITX-L3-POS-01"
+      },
+      summary: {
+        type,
+        sitePosServerId: "3a138565-1b88-55f8-c83d-5380db6edccc",
+        fiscalIdentityId: "ad02beb5-b8cd-4545-9ff2-5586782c686a",
+        currencyCode: "PHP",
+        calendarYear: 2026,
+        calendarMonth: 10,
+        posServerCode: "PITX-L3-POS-01",
+        qualifyingTransactionCount: 1,
+        salesInclusiveVatMinorUnits: 10000,
+        vatAmountMinorUnits: 1071,
+        vatExemptSalesMinorUnits: 0,
+        discount5MinorUnits: 0,
+        discount20MinorUnits: 2000,
+        netSalesMinorUnits: 8000,
+        reportAsOf: "2026-10-17T08:00:00Z",
+        warnings: [],
+        reportStatus: "FINAL",
+        isEmpty: false,
+        scopedFiscalPeriodCount: 31,
+        closedFiscalPeriodCount: 31,
+        committedZPeriodCount: 31
+      },
+      rows: [{
+        fiscalDocumentId: "91000000-0000-4000-8000-000000000010",
+        transactionDate: "2026-10-17",
+        beneficiaryFullName: "Synthetic Beneficiary",
+        statutoryIdNumber: "TEST-001",
+        beneficiaryTin: null,
+        salesInvoiceNumber: "SI-00000000000117",
+        salesInclusiveVatMinorUnits: 10000,
+        vatAmountMinorUnits: 1071,
+        vatExemptSalesMinorUnits: 0,
+        discount5MinorUnits: 0,
+        discount20MinorUnits: 2000,
+        netSalesMinorUnits: 8000
+      }]
+    }
   };
 }
