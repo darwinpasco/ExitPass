@@ -89,3 +89,17 @@ public sealed record TotpEnrollmentResponse(
     string? ErrorCode = null);
 
 public sealed record HumanChallengeAcceptedResponse(string Outcome, Guid CorrelationId);
+
+public sealed record AptCashCustodyCounterpartyDirectoryResponse(
+    string Outcome,
+    IReadOnlyList<AptCashCustodyCounterpartyDto> Counterparties,
+    string? ErrorCode,
+    bool Retryable,
+    Guid CorrelationId);
+
+public sealed record AptCashCustodyCounterpartyDto(
+    Guid UserReference,
+    string LoginIdentifier,
+    string DisplayName,
+    string RoleCode,
+    string RoleLabel);

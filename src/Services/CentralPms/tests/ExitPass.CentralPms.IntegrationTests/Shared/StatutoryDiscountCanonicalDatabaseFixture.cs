@@ -545,6 +545,10 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_WebPayInvoiceCustomerInformation_v1.2.sql"),
                     ValidatorPath: null),
                 new ApplicationSchemaSource(
+                    "governed device administration",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_DeviceAdministration_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_DeviceAdministration_v1.3.sql")),
+                new ApplicationSchemaSource(
                     "Operator Console server-owned operating context",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_OperatorConsoleOperatingContext_v1.3.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_OperatorConsoleOperatingContext_v1.3.sql")),
@@ -556,6 +560,10 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                     "approved Identity/RBAC role catalog",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_IdentityRbacApprovedRoleCatalog_v1.3.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_IdentityRbacApprovedRoleCatalog_v1.3.sql")),
+                new ApplicationSchemaSource(
+                    "APT cash-custody movement authorization",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_AptCashCustodyMovementAuthorization_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPmsAptCashCustodyMovementAuthorization_v1.3.sql")),
                 new ApplicationSchemaSource(
                     "Operator Console fiscal Operations Supervisor role repair",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_OperatorConsoleFiscalReportingOperationsSupervisorRoleRepair_v1.3.sql"),
