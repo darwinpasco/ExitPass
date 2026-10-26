@@ -6,6 +6,7 @@ using System.Text.Encodings.Web;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.FiscalReporting;
 using ExitPass.CentralPms.Application.Security;
+using ExitPass.CentralPms.Application.VendorParking.Routing;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using FluentAssertions;
 using Microsoft.AspNetCore.Antiforgery;
@@ -995,6 +996,76 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         gateway.Requests.Should().BeEmpty();
     }
 
+    [Theory]
+    [InlineData("e2")]
+    [InlineData("e3")]
+    public async Task StatutorySalesBookReadIsOperatorScopedTerminalFreeAndRetiredFromManagementPlatform(string annex)
+    {
+        var gateway = new FakeGateway(_ => Response(200, "{\"succeeded\":true,\"code\":\"statutory_sales_book_read\",\"report\":{}}"));
+        using var factory = CreateFactory(gateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            includePermission:false,additionalPermissions:["fiscal-reporting.z.read"]);
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/{annex}/statutory-sales-book?calendarYear=2026&calendarMonth=10");
+        using var retired = await client.GetAsync(
+            $"/v1/management-platform/fiscal-reporting/sites/{SiteId:D}/annex-e/{annex}/statutory-sales-book?calendarYear=2026&calendarMonth=10");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        retired.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var request = gateway.Requests.Should().ContainSingle().Subject;
+        request.Action.Should().Be(FiscalReportingGatewayAction.StatutorySalesBookRead);
+        request.SiteId.Should().Be(SiteId);
+        request.AnnexType.Should().Be(annex);
+        request.CalendarYear.Should().Be(2026);
+        request.CalendarMonth.Should().Be(10);
+        request.ExportFormat.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("e2", "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
+    [InlineData("e3", "pdf", "application/pdf")]
+    public async Task StatutorySalesBookDownloadPreservesAuthoritativeArtifact(string annex,string format,string contentType)
+    {
+        var bytes=Encoding.UTF8.GetBytes($"authoritative-{annex}-{format}");
+        var gateway=new FakeGateway(_=>new FiscalReportingGatewayResponse(200,contentType,bytes,"ok",$"annex-{annex}.{format}",ContentSha256:"statutory-book-sha"));
+        using var factory=CreateFactory(gateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR",
+            includePermission:false,additionalPermissions:["fiscal-reporting.z.read"]);
+        using var client=factory.CreateClient();
+
+        using var response=await client.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/{annex}/statutory-sales-book/download?calendarYear=2026&calendarMonth=10&format={format}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await response.Content.ReadAsByteArrayAsync()).Should().Equal(bytes);
+        response.Content.Headers.ContentType!.MediaType.Should().Be(contentType);
+        response.Headers.GetValues("X-Content-SHA256").Should().ContainSingle("statutory-book-sha");
+        var request=gateway.Requests.Should().ContainSingle().Subject;
+        request.Action.Should().Be(FiscalReportingGatewayAction.StatutorySalesBookDownload);
+        request.ExportFormat.Should().Be(format);
+    }
+
+    [Fact]
+    public async Task StatutorySalesBookRejectsWrongSiteAndNonOperationsSupervisorBeforePos()
+    {
+        var wrongSiteGateway=new FakeGateway();
+        using var wrongSiteFactory=CreateFactory(wrongSiteGateway,new FakeReferenceRepository(),"OPERATIONS_SUPERVISOR");
+        using var wrongSiteClient=wrongSiteFactory.CreateClient();
+        using var wrongSite=await wrongSiteClient.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{OtherSiteId:D}/annex-e/e2/statutory-sales-book?calendarYear=2026&calendarMonth=10");
+
+        var roleGateway=new FakeGateway();
+        using var roleFactory=CreateFactory(roleGateway,new FakeReferenceRepository(),"SITE_OPERATOR");
+        using var roleClient=roleFactory.CreateClient();
+        using var roleDenied=await roleClient.GetAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/annex-e/e2/statutory-sales-book?calendarYear=2026&calendarMonth=10");
+
+        wrongSite.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        roleDenied.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        wrongSiteGateway.Requests.Should().BeEmpty();
+        roleGateway.Requests.Should().BeEmpty();
+    }
+
     private static string EjUrl(Guid siteId, string identifier) =>
         $"/v1/ops/operator-console/fiscal-reporting/sites/{siteId:D}/electronic-journal" +
         $"?periodStart=2026-09-23T00%3A00%3A00Z&periodEnd=2026-09-25T00%3A00%3A00Z&search={Uri.EscapeDataString(identifier)}";
@@ -1049,6 +1120,8 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
                 services.AddSingleton<IFiscalIssuanceReferenceRepository>(references);
                 services.RemoveAll<ICentralPmsRbacRepository>();
                 services.AddSingleton<ICentralPmsRbacRepository>(new FakeRbacRepository(role));
+                services.RemoveAll<ISiteVendorAdapterRouteRegistry>();
+                services.AddSingleton<ISiteVendorAdapterRouteRegistry, MissingVendorAdapterRouteRegistry>();
                 services.RemoveAll<IAntiforgery>();
                 services.AddSingleton<IAntiforgery, TestAntiforgery>();
             });
@@ -1058,6 +1131,17 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         bool IncludePermission,
         bool Authenticated,
         IReadOnlyCollection<string> AdditionalPermissions);
+
+    private sealed class MissingVendorAdapterRouteRegistry : ISiteVendorAdapterRouteRegistry
+    {
+        public Task<SiteVendorAdapterRoute> ResolveAsync(
+            Guid siteId,
+            Guid siteGroupId,
+            Guid? vendorSystemId,
+            CancellationToken cancellationToken) =>
+            Task.FromException<SiteVendorAdapterRoute>(
+                new SiteVendorAdapterRoutingException("SITE_ADAPTER_MAPPING_NOT_FOUND"));
+    }
 
     private sealed class TestAntiforgery : IAntiforgery
     {

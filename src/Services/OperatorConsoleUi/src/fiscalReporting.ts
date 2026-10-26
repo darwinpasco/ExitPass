@@ -158,6 +158,52 @@ export interface AnnexE1Workbook {
     generatedAt: string;
     status: string;
 }
+export type StatutorySalesBookType = "e2" | "e3";
+export interface StatutorySalesBookRow {
+    fiscalDocumentId: string;
+    transactionDate: string;
+    beneficiaryFullName: string;
+    statutoryIdNumber: string;
+    beneficiaryTin?: string;
+    salesInvoiceNumber: string;
+    salesInclusiveVatMinorUnits: number;
+    vatAmountMinorUnits: number;
+    vatExemptSalesMinorUnits: number;
+    discount5MinorUnits: number;
+    discount20MinorUnits: number;
+    netSalesMinorUnits: number;
+}
+export interface StatutorySalesBookReport {
+    header: {
+        serialNumber: string;
+        machineIdentificationNumber: string;
+        posServerCode: string;
+    };
+    summary: {
+        type: "AnnexE2" | "AnnexE3";
+        sitePosServerId: string;
+        fiscalIdentityId: string;
+        currencyCode: "PHP";
+        calendarYear: number;
+        calendarMonth: number;
+        posServerCode: string;
+        qualifyingTransactionCount: number;
+        salesInclusiveVatMinorUnits: number;
+        vatAmountMinorUnits: number;
+        vatExemptSalesMinorUnits: number;
+        discount5MinorUnits: number;
+        discount20MinorUnits: number;
+        netSalesMinorUnits: number;
+        reportAsOf: string;
+        warnings: string[];
+        reportStatus: "PRELIMINARY" | "FINAL";
+        isEmpty: boolean;
+        scopedFiscalPeriodCount: number;
+        closedFiscalPeriodCount: number;
+        committedZPeriodCount: number;
+    };
+    rows: StatutorySalesBookRow[];
+}
 export interface MonthlyESalesRow {
     machineIdentificationNumber: string;
     calendarMonth: number;
@@ -303,6 +349,8 @@ export interface OperatorFiscalReportingClient {
     readCurrentAnnexE1(site: string, calendarYear: number, calendarMonth: number): Promise<AnnexE1Workbook | undefined>;
     readAnnexE1(site: string, workbookId: string): Promise<AnnexE1Workbook>;
     annexE1Url(site: string, workbookId: string, format?: "xlsx" | "pdf"): string;
+    readStatutorySalesBook(site: string, type: StatutorySalesBookType, calendarYear: number, calendarMonth: number): Promise<StatutorySalesBookReport>;
+    statutorySalesBookUrl(site: string, type: StatutorySalesBookType, calendarYear: number, calendarMonth: number, format: "xlsx" | "pdf"): string;
     readMonthlyESales(site: string, calendarYear: number, calendarMonth: number): Promise<MonthlyESalesReadResult>;
     monthlyESalesUrl(site: string, calendarYear: number, calendarMonth: number, format: "json" | "csv" | "pdf"): string;
 }
@@ -538,6 +586,19 @@ export function createOperatorFiscalReportingClient(
         annexE1Url(s, workbookId, format = "xlsx") {
             return p(s, `/annex-e/e1/workbooks/${encodeURIComponent(workbookId)}/download?format=${format}`);
         },
+        async readStatutorySalesBook(s, type, calendarYear, calendarMonth) {
+            const query = new URLSearchParams({ calendarYear: String(calendarYear), calendarMonth: String(calendarMonth) });
+            const value = await json(p(s, `/annex-e/${type}/statutory-sales-book?${query}`));
+            return statutorySalesBook(rec(value), type, calendarYear, calendarMonth);
+        },
+        statutorySalesBookUrl(s, type, calendarYear, calendarMonth, format) {
+            const query = new URLSearchParams({
+                calendarYear: String(calendarYear),
+                calendarMonth: String(calendarMonth),
+                format,
+            });
+            return p(s, `/annex-e/${type}/statutory-sales-book/download?${query}`);
+        },
         async readMonthlyESales(s, calendarYear, calendarMonth) {
             const query = new URLSearchParams({ calendarYear: String(calendarYear), calendarMonth: String(calendarMonth) });
             const response = await fetchImpl(p(s, `/monthly-esales?${query}`), {
@@ -653,6 +714,37 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
         generatedAt: "2026-10-01T00:00:00Z",
         status: "COMMITTED",
     };
+    const statutorySalesBook = (type: StatutorySalesBookType): StatutorySalesBookReport => ({
+        header: {
+            serialNumber: "EP-PITX-L3-POS-0001",
+            machineIdentificationNumber: "MIN-PITX-L3-01",
+            posServerCode: "PITX-L3-POS-01",
+        },
+        summary: {
+            type: type === "e2" ? "AnnexE2" : "AnnexE3",
+            sitePosServerId: "3a138565-1b88-55f8-c83d-5380db6edccc",
+            fiscalIdentityId: "ad02beb5-b8cd-4545-9ff2-5586782c686a",
+            currencyCode: "PHP",
+            calendarYear: 2026,
+            calendarMonth: 9,
+            posServerCode: "PITX-L3-POS-01",
+            qualifyingTransactionCount: 0,
+            salesInclusiveVatMinorUnits: 0,
+            vatAmountMinorUnits: 0,
+            vatExemptSalesMinorUnits: 0,
+            discount5MinorUnits: 0,
+            discount20MinorUnits: 0,
+            netSalesMinorUnits: 0,
+            reportAsOf: "2026-10-01T00:00:00Z",
+            warnings: [],
+            reportStatus: "PRELIMINARY",
+            isEmpty: true,
+            scopedFiscalPeriodCount: 30,
+            closedFiscalPeriodCount: 29,
+            committedZPeriodCount: 29,
+        },
+        rows: [],
+    });
     const monthlyESales: MonthlyESalesReport = {
         sitePosServerId: "3a138565-1b88-55f8-c83d-5380db6edccc",
         fiscalIdentityId: "ad02beb5-b8cd-4545-9ff2-5586782c686a",
@@ -770,6 +862,9 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
         readAnnexE1: async () => workbook,
         annexE1Url: (s, id, format = "xlsx") =>
             `/v1/ops/operator-console/fiscal-reporting/sites/${s}/annex-e/e1/workbooks/${id}/download?format=${format}`,
+        readStatutorySalesBook: async (_s, type) => statutorySalesBook(type),
+        statutorySalesBookUrl: (s, type, year, month, format) =>
+            `/v1/ops/operator-console/fiscal-reporting/sites/${s}/annex-e/${type}/statutory-sales-book/download?calendarYear=${year}&calendarMonth=${month}&format=${format}`,
         readMonthlyESales: async () => ({ status: "FINAL", report: monthlyESales }),
         monthlyESalesUrl: (s, year, month, format) =>
             `/v1/ops/operator-console/fiscal-reporting/sites/${s}/monthly-esales/download?calendarYear=${year}&calendarMonth=${month}&format=${format}`,
@@ -870,6 +965,77 @@ function annexWorkbook(value: Record<string, unknown>): AnnexE1Workbook {
         generatedAt: str(value.generatedAt),
         status: str(value.status),
     };
+}
+function statutorySalesBook(
+    value: Record<string, unknown>,
+    requestedType: StatutorySalesBookType,
+    requestedYear: number,
+    requestedMonth: number,
+): StatutorySalesBookReport {
+    if (value.succeeded !== true || value.code !== "statutory_sales_book_read") throw bad();
+    const report = rec(value.report);
+    const header = rec(report.header);
+    const summary = rec(report.summary);
+    const expectedType = requestedType === "e2" ? "AnnexE2" : "AnnexE3";
+    if (summary.type !== expectedType || summary.currencyCode !== "PHP" || !Array.isArray(report.rows) ||
+        !Array.isArray(summary.warnings) || !summary.warnings.every((warning) => typeof warning === "string")) throw bad();
+    const reportStatus = str(summary.reportStatus);
+    if (reportStatus !== "PRELIMINARY" && reportStatus !== "FINAL") throw bad();
+    const rows = report.rows.map((item): StatutorySalesBookRow => {
+        const row = rec(item);
+        return {
+            fiscalDocumentId: uuid(row.fiscalDocumentId),
+            transactionDate: str(row.transactionDate),
+            beneficiaryFullName: str(row.beneficiaryFullName),
+            statutoryIdNumber: str(row.statutoryIdNumber),
+            beneficiaryTin: optionalString(row.beneficiaryTin),
+            salesInvoiceNumber: str(row.salesInvoiceNumber),
+            salesInclusiveVatMinorUnits: nonNegative(row.salesInclusiveVatMinorUnits),
+            vatAmountMinorUnits: nonNegative(row.vatAmountMinorUnits),
+            vatExemptSalesMinorUnits: nonNegative(row.vatExemptSalesMinorUnits),
+            discount5MinorUnits: nonNegative(row.discount5MinorUnits),
+            discount20MinorUnits: nonNegative(row.discount20MinorUnits),
+            netSalesMinorUnits: nonNegative(row.netSalesMinorUnits),
+        };
+    });
+    const result: StatutorySalesBookReport = {
+        header: {
+            serialNumber: str(header.serialNumber),
+            machineIdentificationNumber: str(header.machineIdentificationNumber),
+            posServerCode: str(header.posServerCode),
+        },
+        summary: {
+            type: expectedType,
+            sitePosServerId: uuid(summary.sitePosServerId),
+            fiscalIdentityId: uuid(summary.fiscalIdentityId),
+            currencyCode: "PHP",
+            calendarYear: nonNegative(summary.calendarYear),
+            calendarMonth: nonNegative(summary.calendarMonth),
+            posServerCode: str(summary.posServerCode),
+            qualifyingTransactionCount: nonNegative(summary.qualifyingTransactionCount),
+            salesInclusiveVatMinorUnits: nonNegative(summary.salesInclusiveVatMinorUnits),
+            vatAmountMinorUnits: nonNegative(summary.vatAmountMinorUnits),
+            vatExemptSalesMinorUnits: nonNegative(summary.vatExemptSalesMinorUnits),
+            discount5MinorUnits: nonNegative(summary.discount5MinorUnits),
+            discount20MinorUnits: nonNegative(summary.discount20MinorUnits),
+            netSalesMinorUnits: nonNegative(summary.netSalesMinorUnits),
+            reportAsOf: str(summary.reportAsOf),
+            warnings: summary.warnings as string[],
+            reportStatus,
+            isEmpty: summary.isEmpty === true,
+            scopedFiscalPeriodCount: nonNegative(summary.scopedFiscalPeriodCount),
+            closedFiscalPeriodCount: nonNegative(summary.closedFiscalPeriodCount),
+            committedZPeriodCount: nonNegative(summary.committedZPeriodCount),
+        },
+        rows,
+    };
+    if (result.header.posServerCode !== result.summary.posServerCode ||
+        result.summary.calendarYear !== requestedYear ||
+        result.summary.calendarMonth !== requestedMonth ||
+        result.summary.qualifyingTransactionCount !== rows.length ||
+        result.summary.isEmpty !== (rows.length === 0) ||
+        result.summary.calendarMonth < 1 || result.summary.calendarMonth > 12) throw bad();
+    return result;
 }
 function monthlyESalesReport(value: Record<string, unknown>): MonthlyESalesReport {
     if (!Array.isArray(value.rows)) throw bad();
@@ -1048,6 +1214,16 @@ function optionalString(v: unknown) {
 function num(v: unknown) {
     if (typeof v !== "number" || !Number.isSafeInteger(v)) throw bad();
     return v;
+}
+function nonNegative(v: unknown) {
+    const value = num(v);
+    if (value < 0) throw bad();
+    return value;
+}
+function uuid(v: unknown) {
+    const value = str(v);
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)) throw bad();
+    return value;
 }
 function bad() {
     return new Error(

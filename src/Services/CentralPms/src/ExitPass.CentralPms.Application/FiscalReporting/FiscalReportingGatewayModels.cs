@@ -70,7 +70,6 @@ public sealed record FiscalReportingGatewayRequest(
     Guid? SupersedesWorkbookId = null,
     string? CorrectionApprovalReference = null,
     string? ResetReason = null,
-    Guid? ChannelTerminalId = null,
     string? AnnexType = null);
 
 public sealed record FiscalReportingGatewayResponse(

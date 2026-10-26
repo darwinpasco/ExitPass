@@ -508,16 +508,14 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
     [Theory]
     [InlineData("e2")]
     [InlineData("e3")]
-    public async Task StatutorySalesBookReadUsesServerResolvedFiscalAndTerminalScope(string annex)
+    public async Task StatutorySalesBookReadUsesServerResolvedPosScopeWithoutTerminalInput(string annex)
     {
-        var terminal = Guid.Parse("40000000-0000-4000-8000-000000000081");
         var handler = new CaptureHandler(_ => Json("{\"succeeded\":true,\"report\":{}}"));
 
         await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
             Request(FiscalReportingGatewayAction.StatutorySalesBookRead) with
             {
                 AnnexType = annex,
-                ChannelTerminalId = terminal,
                 CalendarYear = 2026,
                 CalendarMonth = 10
             });
@@ -526,7 +524,7 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
         Assert.Equal($"/v1/fiscal-reports/annex-e/{annex}/", request.RequestUri!.AbsolutePath);
         Assert.Contains($"sitePosServerId={Pos:D}", request.RequestUri.Query);
         Assert.Contains($"fiscalIdentityId={Identity:D}", request.RequestUri.Query);
-        Assert.Contains($"channelTerminalId={terminal:D}", request.RequestUri.Query);
+        Assert.DoesNotContain("channelTerminalId", request.RequestUri.Query, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("currencyCode=PHP", request.RequestUri.Query);
         Assert.Contains("calendarYear=2026", request.RequestUri.Query);
         Assert.Contains("calendarMonth=10", request.RequestUri.Query);
@@ -541,7 +539,6 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
     [InlineData("e3", "pdf", "application/pdf")]
     public async Task StatutorySalesBookExportsPassThroughAuthoritativeBytesAndMetadata(string annex, string format, string contentType)
     {
-        var terminal = Guid.Parse("40000000-0000-4000-8000-000000000081");
         var response = new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new ByteArrayContent(Encoding.UTF8.GetBytes($"{annex}-{format}-bytes"))
@@ -555,7 +552,6 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
             Request(FiscalReportingGatewayAction.StatutorySalesBookDownload) with
             {
                 AnnexType = annex,
-                ChannelTerminalId = terminal,
                 CalendarYear = 2026,
                 CalendarMonth = 10,
                 ExportFormat = format
@@ -563,7 +559,7 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
 
         var request = Assert.Single(handler.Requests);
         Assert.Equal($"/v1/fiscal-reports/annex-e/{annex}/download", request.RequestUri!.AbsolutePath);
-        Assert.Contains($"channelTerminalId={terminal:D}", request.RequestUri.Query);
+        Assert.DoesNotContain("channelTerminalId", request.RequestUri.Query, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("format=" + format, request.RequestUri.Query);
         Assert.Equal("fiscal_statutory_sales_book.export", Header(request, "X-PosServer-Admin-Permission"));
         Assert.Equal($"ANNEX-{annex.ToUpperInvariant()}_202610.{format}", result.FileName);
