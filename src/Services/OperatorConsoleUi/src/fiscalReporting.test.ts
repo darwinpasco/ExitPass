@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createOperatorFiscalReportingClient } from "./fiscalReporting";
+import numericWireResponse from "./test/fixtures/statutorySalesBookNumericWireResponse.json";
 
 describe("Operator fiscal-reporting HTTP client", () => {
   it("submits only the selected committed period and Z reference through the Site-scoped Central PMS route", async () => {
@@ -52,9 +53,9 @@ describe("Operator fiscal-reporting HTTP client", () => {
     expect(client.annexE1Url("SITE-PITX", "workbook-1", "pdf")).toContain("format=pdf");
   });
 
-  it("reads and downloads consolidated Annex E-2 and E-3 without browser-supplied fiscal identifiers", async () => {
+  it("reads the authoritative numeric Annex E-2 representation and builds terminal-free downloads", async () => {
     const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
-      new Response(JSON.stringify(statutorySalesBookPayload("AnnexE2")), {
+      new Response(JSON.stringify(numericWireResponse.e2), {
         status: 200,
         headers: { "Content-Type": "application/json" }
       }));
@@ -63,7 +64,7 @@ describe("Operator fiscal-reporting HTTP client", () => {
     const report = await client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10);
 
     expect(report.summary.type).toBe("AnnexE2");
-    expect(report.summary.qualifyingTransactionCount).toBe(1);
+    expect(report.summary.qualifyingTransactionCount).toBe(0);
     expect(fetchImpl.mock.calls[0][0]).toBe(
       "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/annex-e/e2/statutory-sales-book?calendarYear=2026&calendarMonth=10"
     );
@@ -71,6 +72,80 @@ describe("Operator fiscal-reporting HTTP client", () => {
     expect(client.statutorySalesBookUrl("SITE-PITX", "e3", 2026, 10, "xlsx")).toBe(
       "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/annex-e/e3/statutory-sales-book/download?calendarYear=2026&calendarMonth=10&format=xlsx"
     );
+  });
+
+  it("reads the authoritative numeric Annex E-3 representation", async () => {
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(numericWireResponse.e3), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    const report = await client.readStatutorySalesBook("SITE-PITX", "e3", 2026, 10);
+
+    expect(report.summary.type).toBe("AnnexE3");
+    expect(report.summary.qualifyingTransactionCount).toBe(0);
+  });
+
+  it.each([
+    ["e2", "AnnexE2"],
+    ["e3", "AnnexE3"]
+  ] as const)("retains the approved named %s compatibility representation", async (requestedType, responseType) => {
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(statutorySalesBookPayload(responseType)), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    const report = await client.readStatutorySalesBook("SITE-PITX", requestedType, 2026, 10);
+
+    expect(report.summary.type).toBe(responseType);
+  });
+
+  it("rejects a valid wire enum for the wrong requested Annex", async () => {
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(statutorySalesBookPayload(1)), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    await expect(client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10)).rejects.toThrow();
+  });
+
+  it("rejects an unknown statutory sales-book enum value", async () => {
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(statutorySalesBookPayload(2)), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    await expect(client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10)).rejects.toThrow();
+  });
+
+  it("loads a valid zero-row PRELIMINARY report from the numeric wire contract", async () => {
+    const payload = statutorySalesBookPayload(0);
+    payload.report.summary.qualifyingTransactionCount = 0;
+    payload.report.summary.salesInclusiveVatMinorUnits = 0;
+    payload.report.summary.vatAmountMinorUnits = 0;
+    payload.report.summary.vatExemptSalesMinorUnits = 0;
+    payload.report.summary.discount5MinorUnits = 0;
+    payload.report.summary.discount20MinorUnits = 0;
+    payload.report.summary.netSalesMinorUnits = 0;
+    payload.report.summary.reportStatus = "PRELIMINARY";
+    payload.report.summary.isEmpty = true;
+    payload.report.rows = [];
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    const report = await client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10);
+
+    expect(report.summary).toMatchObject({ type: "AnnexE2", reportStatus: "PRELIMINARY", isEmpty: true });
+    expect(report.rows).toEqual([]);
   });
 
   it("rejects malformed statutory sales-book responses", async () => {
@@ -81,6 +156,31 @@ describe("Operator fiscal-reporting HTTP client", () => {
     const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
 
     await expect(client.readStatutorySalesBook("SITE-PITX", "e3", 2026, 10)).rejects.toThrow();
+  });
+
+  it("rejects statutory sales-book totals that do not reconcile to report rows", async () => {
+    const payload = statutorySalesBookPayload(0);
+    payload.report.summary.netSalesMinorUnits += 1;
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    await expect(client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10)).rejects.toThrow();
+  });
+
+  it.each([
+    ["missing fiscal identity", (payload: ReturnType<typeof statutorySalesBookPayload>) => { payload.report.summary.fiscalIdentityId = ""; }],
+    ["incorrect currency", (payload: ReturnType<typeof statutorySalesBookPayload>) => { payload.report.summary.currencyCode = "USD"; }],
+    ["unrecognized report status", (payload: ReturnType<typeof statutorySalesBookPayload>) => { payload.report.summary.reportStatus = "UNKNOWN"; }],
+    ["inconsistent empty-report flag", (payload: ReturnType<typeof statutorySalesBookPayload>) => { payload.report.summary.isEmpty = true; }]
+  ])("rejects a statutory sales book with %s", async (_case, mutate) => {
+    const payload = statutorySalesBookPayload(0);
+    mutate(payload);
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    await expect(client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10)).rejects.toThrow();
   });
 
   it("rejects a statutory sales book for a different reporting month", async () => {
@@ -334,7 +434,7 @@ function monthlyESalesPayload() {
   };
 }
 
-function statutorySalesBookPayload(type: "AnnexE2" | "AnnexE3") {
+function statutorySalesBookPayload(type: unknown) {
   return {
     succeeded: true,
     code: "statutory_sales_book_read",
