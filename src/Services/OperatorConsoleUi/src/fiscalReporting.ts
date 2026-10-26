@@ -977,7 +977,8 @@ function statutorySalesBook(
     const header = rec(report.header);
     const summary = rec(report.summary);
     const expectedType = requestedType === "e2" ? "AnnexE2" : "AnnexE3";
-    if (summary.type !== expectedType || summary.currencyCode !== "PHP" || !Array.isArray(report.rows) ||
+    const responseType = statutorySalesBookReportType(summary.type);
+    if (responseType !== expectedType || summary.currencyCode !== "PHP" || !Array.isArray(report.rows) ||
         !Array.isArray(summary.warnings) || !summary.warnings.every((warning) => typeof warning === "string")) throw bad();
     const reportStatus = str(summary.reportStatus);
     if (reportStatus !== "PRELIMINARY" && reportStatus !== "FINAL") throw bad();
@@ -1005,7 +1006,7 @@ function statutorySalesBook(
             posServerCode: str(header.posServerCode),
         },
         summary: {
-            type: expectedType,
+            type: responseType,
             sitePosServerId: uuid(summary.sitePosServerId),
             fiscalIdentityId: uuid(summary.fiscalIdentityId),
             currencyCode: "PHP",
@@ -1029,13 +1030,41 @@ function statutorySalesBook(
         },
         rows,
     };
+    const totals = {
+        salesInclusiveVatMinorUnits: safeSum(rows.map((row) => row.salesInclusiveVatMinorUnits)),
+        vatAmountMinorUnits: safeSum(rows.map((row) => row.vatAmountMinorUnits)),
+        vatExemptSalesMinorUnits: safeSum(rows.map((row) => row.vatExemptSalesMinorUnits)),
+        discount5MinorUnits: safeSum(rows.map((row) => row.discount5MinorUnits)),
+        discount20MinorUnits: safeSum(rows.map((row) => row.discount20MinorUnits)),
+        netSalesMinorUnits: safeSum(rows.map((row) => row.netSalesMinorUnits)),
+    };
     if (result.header.posServerCode !== result.summary.posServerCode ||
         result.summary.calendarYear !== requestedYear ||
         result.summary.calendarMonth !== requestedMonth ||
         result.summary.qualifyingTransactionCount !== rows.length ||
         result.summary.isEmpty !== (rows.length === 0) ||
-        result.summary.calendarMonth < 1 || result.summary.calendarMonth > 12) throw bad();
+        result.summary.calendarMonth < 1 || result.summary.calendarMonth > 12 ||
+        result.summary.salesInclusiveVatMinorUnits !== totals.salesInclusiveVatMinorUnits ||
+        result.summary.vatAmountMinorUnits !== totals.vatAmountMinorUnits ||
+        result.summary.vatExemptSalesMinorUnits !== totals.vatExemptSalesMinorUnits ||
+        result.summary.discount5MinorUnits !== totals.discount5MinorUnits ||
+        result.summary.discount20MinorUnits !== totals.discount20MinorUnits ||
+        result.summary.netSalesMinorUnits !== totals.netSalesMinorUnits) throw bad();
     return result;
+}
+
+function statutorySalesBookReportType(value: unknown): "AnnexE2" | "AnnexE3" {
+    if (value === 0 || value === "AnnexE2") return "AnnexE2";
+    if (value === 1 || value === "AnnexE3") return "AnnexE3";
+    throw bad();
+}
+
+function safeSum(values: number[]) {
+    return values.reduce((total, value) => {
+        const next = total + value;
+        if (!Number.isSafeInteger(next)) throw bad();
+        return next;
+    }, 0);
 }
 function monthlyESalesReport(value: Record<string, unknown>): MonthlyESalesReport {
     if (!Array.isArray(value.rows)) throw bad();
