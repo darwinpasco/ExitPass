@@ -1314,7 +1314,10 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.SubmittedAt,
             result.ReviewedAt,
             result.PayableBasisApplicationStatus,
-            result.CorrelationId);
+            result.CorrelationId)
+        {
+            BeneficiaryFullName = result.BeneficiaryFullName
+        };
 
     private static OperatorConsoleStatutoryDiscountDecisionResponse ToContract(
         StatutoryDiscountServiceChannelReviewDecisionResult result) =>

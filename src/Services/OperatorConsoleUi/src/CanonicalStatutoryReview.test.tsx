@@ -177,6 +177,7 @@ describe("canonical Central PMS statutory review", () => {
       reviewStatus: "APPROVED" as const,
       sessionEligibilityStatus: "ELIGIBLE" as const,
       payableBasisStatus: "NOT_YET_CREATED" as const,
+      beneficiaryFullName: "Maria Santos",
       reviewerDecision: "APPROVE",
       reviewedAt: "2026-08-24T08:05:00+08:00",
       originalAmountMinorUnits: undefined,
@@ -190,6 +191,7 @@ describe("canonical Central PMS statutory review", () => {
     expect(screen.getByText("Eligible")).toBeInTheDocument();
     expect(screen.getByText("Not yet created")).toBeInTheDocument();
     expect(screen.getByText("Pending payable-basis creation")).toBeInTheDocument();
+    expect(screen.getByText("Beneficiary name").nextElementSibling).toHaveTextContent("Maria Santos");
     expect(screen.getByText(/Central PMS will calculate and apply the benefit when the payable basis is created/)).toBeInTheDocument();
     expect(screen.queryByText(/Final payable:/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Not applied/i)).not.toBeInTheDocument();

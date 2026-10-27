@@ -141,13 +141,19 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                 correlationId);
         }
 
-        var beneficiaryIdentity = string.Equals(
-                canonical.ReviewStatus,
-                StatutoryDiscountServiceChannelReviewStatuses.PendingReview,
-                StringComparison.Ordinal) && _beneficiaryIdentities is not null
+        var beneficiaryIdentity = _beneficiaryIdentities is not null
             ? await _beneficiaryIdentities.GetAsync(decisionCommandReference, cancellationToken).ConfigureAwait(false)
             : null;
-        var value = ToDetail(canonical, metadata, correlationId, beneficiaryIdentity);
+        var editableBeneficiaryIdentity = string.Equals(
+            canonical.ReviewStatus,
+            StatutoryDiscountServiceChannelReviewStatuses.PendingReview,
+            StringComparison.Ordinal)
+                ? beneficiaryIdentity
+                : null;
+        var value = ToDetail(canonical, metadata, correlationId, editableBeneficiaryIdentity) with
+        {
+            BeneficiaryFullName = beneficiaryIdentity?.BeneficiaryFullName
+        };
         await AuditAsync("STATUTORY_BENEFIT_REVIEW_DETAIL", "SUCCESS", "DETAIL_RETURNED", actor, metadata.SiteReference, correlationId, cancellationToken);
         return ManagementStatutoryBenefitReviewResult<ManagementStatutoryBenefitReviewDetail>.Succeeded(value, correlationId);
     }

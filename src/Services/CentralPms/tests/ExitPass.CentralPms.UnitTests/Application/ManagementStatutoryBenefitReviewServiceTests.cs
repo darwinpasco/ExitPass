@@ -153,6 +153,30 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
     }
 
     [Fact]
+    public async Task Detail_ForFinalizedRequest_ReturnsStoredBeneficiaryNameWithoutRestrictedIdentityFields()
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail(status: "APPROVED", reviewerDecision: "APPROVE")
+        };
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        beneficiaryIdentities.GetAsync(DecisionReference, Arg.Any<CancellationToken>())
+            .Returns(BeneficiaryIdentity(isFinal: true));
+
+        var result = await CreateService(
+                AllowedRepository(),
+                canonical,
+                beneficiaryIdentities: beneficiaryIdentities)
+            .GetAsync(Actor(), DecisionReference, CorrelationId, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        result.Value!.BeneficiaryFullName.Should().Be("Maria Santos");
+        result.Value.StatutoryIdType.Should().BeNull();
+        result.Value.StatutoryIdNumber.Should().BeNull();
+        result.Value.BeneficiaryTin.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Detail_ForApprovedOperatorConsoleRequestWithoutApplication_RecoversCanonicalApplication()
     {
         var validationId = Guid.Parse("72000000-0000-4000-8000-000000000721");
@@ -1135,7 +1159,8 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         IOperatorConsoleStatutoryDiscountEvidenceRepository? operatorConsoleEvidence = null,
         IStatutoryEvidenceProtectedObjectStorageAdapter? evidenceStorage = null,
         FakeAuditRepository? audit = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null)
     {
         var review = evidenceReview ?? Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>();
         if (evidenceReview is null)
@@ -1158,8 +1183,30 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             }),
             audit ?? new FakeAuditRepository(),
             NullLogger<ManagementStatutoryBenefitReviewService>.Instance,
-            timeProvider ?? new FixedTimeProvider(CurrentTime));
+            timeProvider ?? new FixedTimeProvider(CurrentTime),
+            beneficiaryIdentities);
     }
+
+    private static StatutoryBeneficiaryIdentityRecord BeneficiaryIdentity(bool isFinal) =>
+        new(
+            DecisionReference,
+            SiteA,
+            "SENIOR_CITIZEN",
+            "Maria Santos",
+            "SENIOR_CITIZEN_ID",
+            "SC-2026-001",
+            "123-456-789-000",
+            UserId,
+            StatutoryBeneficiaryIdentityCaptureChannels.ManagementPlatform,
+            CurrentTime,
+            UserId,
+            StatutoryBeneficiaryIdentityCaptureChannels.ManagementPlatform,
+            CurrentTime,
+            isFinal ? UserId : null,
+            isFinal ? CurrentTime : null,
+            isFinal ? $"MANAGEMENT_PLATFORM:{DecisionReference:D}" : null,
+            CorrelationId,
+            isFinal);
 
     private static OperatorConsoleStatutoryEvidenceReviewResult AuthoritativeEvidence()
     {

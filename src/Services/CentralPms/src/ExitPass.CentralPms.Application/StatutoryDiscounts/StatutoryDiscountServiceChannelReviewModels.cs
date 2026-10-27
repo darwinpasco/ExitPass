@@ -154,6 +154,7 @@ public sealed record StatutoryDiscountServiceChannelReviewDetail(
 {
     public string? IdControlReference { get; init; }
     public DateOnly? BirthDate { get; init; }
+    public string? BeneficiaryFullName { get; init; }
 
     /// <summary>
     /// Internal provider-neutral vendor identity used to re-resolve the parking tariff before

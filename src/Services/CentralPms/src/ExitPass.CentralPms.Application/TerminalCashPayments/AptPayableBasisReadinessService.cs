@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.ManagementPlatform;
+using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.StatutoryEvidence;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.VendorParking;
@@ -29,6 +30,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
     private readonly IStatutoryEvidenceChannelService _statutoryEvidence;
     private readonly IWebPayStatutoryDiscountPendingLifecycleRediscoveryService _statutoryLifecycleRediscovery;
     private readonly IParkingSessionInvoiceCustomerInformationService _customerInformation;
+    private readonly IStatutoryDiscountServiceChannelReviewRepository? _statutoryReviews;
 
     public AptPayableBasisReadinessService(
         IResolveVendorParkingUseCase vendorResolution,
@@ -39,7 +41,8 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         IStatutoryDiscountDecisionFacadeService statutoryDiscounts,
         IStatutoryEvidenceChannelService statutoryEvidence,
         IWebPayStatutoryDiscountPendingLifecycleRediscoveryService statutoryLifecycleRediscovery,
-        IParkingSessionInvoiceCustomerInformationService customerInformation)
+        IParkingSessionInvoiceCustomerInformationService customerInformation,
+        IStatutoryDiscountServiceChannelReviewRepository? statutoryReviews = null)
     {
         _vendorResolution = vendorResolution;
         _parkingSessions = parkingSessions;
@@ -50,6 +53,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         _statutoryEvidence = statutoryEvidence;
         _statutoryLifecycleRediscovery = statutoryLifecycleRediscovery;
         _customerInformation = customerInformation;
+        _statutoryReviews = statutoryReviews;
     }
 
     public async Task<AptPayableBasisReadinessResult> ResolveAsync(
@@ -678,6 +682,15 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
                 currency: null);
         }
 
+        if (string.Equals(
+                readback.PayableBasisReadinessStatus,
+                StatutoryDiscountPayableBasisReadinessStatuses.DecisionApprovedApplicationNotRequested,
+                StringComparison.Ordinal))
+        {
+            readback = await ContinueApprovedOperatorApplicationAsync(readback, correlationId, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         if ((string.Equals(
                     readback.PayableBasisReadinessStatus,
                     StatutoryDiscountPayableBasisReadinessStatuses.PayableBasisReady,
@@ -805,6 +818,91 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             finalPayableAmountMinorUnits: null,
             currency: null);
     }
+
+    private async Task<StatutoryDiscountDecisionResult> ContinueApprovedOperatorApplicationAsync(
+        StatutoryDiscountDecisionResult readback,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (_statutoryReviews is null)
+        {
+            return readback;
+        }
+
+        var review = await _statutoryReviews.GetAsync(
+                readback.StatutoryDiscountDecisionCommandId,
+                correlationId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (review is null ||
+            review.StatutoryDiscountDecisionCommandId != readback.StatutoryDiscountDecisionCommandId ||
+            review.ParkingSessionId != readback.ParkingSessionId ||
+            !string.Equals(review.SourceChannel, StatutoryDiscountSourceChannels.OperatorConsole, StringComparison.Ordinal) ||
+            !string.Equals(review.ReviewStatus, StatutoryDiscountServiceChannelReviewStatuses.Approved, StringComparison.Ordinal) ||
+            !string.Equals(review.ReviewerDecision, "APPROVE", StringComparison.Ordinal) ||
+            review.ReviewerUserId is not Guid reviewerUserId ||
+            reviewerUserId == Guid.Empty ||
+            !string.IsNullOrWhiteSpace(review.PayableBasisApplicationStatus))
+        {
+            return readback;
+        }
+
+        return await _statutoryDiscounts.SubmitAsync(
+                ToApprovedOperatorApplicationCommand(review, reviewerUserId, correlationId),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static StatutoryDiscountDecisionCommand ToApprovedOperatorApplicationCommand(
+        StatutoryDiscountServiceChannelReviewDetail review,
+        Guid reviewerUserId,
+        Guid correlationId) =>
+        new(
+            review.RequestReference,
+            review.SourceChannel,
+            review.ParkingSessionId,
+            review.SiteId,
+            review.SiteGroupId,
+            review.TicketReference,
+            review.PlateNumber,
+            review.EntitlementType,
+            review.IdDocumentType ?? string.Empty,
+            review.IssuingAuthority ?? string.Empty,
+            review.ExpiryDate,
+            review.MaskedIdReference ?? string.Empty,
+            review.EvidenceRequired,
+            review.EvidenceReferences.Select(evidence => new StatutoryDiscountEvidenceReference(
+                evidence.EvidenceType,
+                evidence.CaptureMethod,
+                FileName: null,
+                ContentType: null,
+                SizeBytes: null,
+                evidence.StorageReference,
+                evidence.ReferenceNumberMasked,
+                evidence.VerificationStatus)).ToArray(),
+            reviewerUserId,
+            OperatorDeviceBindingId: null,
+            OperatorShiftId: null,
+            review.RequesterAttestation,
+            review.AttestationNotes,
+            review.ReasonCode,
+            Decision: null,
+            DecisionReasonCode: null,
+            ReviewerUserId: reviewerUserId,
+            ReviewerAttestation: true,
+            ApplyPayableBasis: true,
+            review.OriginalTariffSnapshotId,
+            BeneficiaryResidencySatisfied: string.Equals(
+                review.GoverningPolicy?.BeneficiaryResidencyScope,
+                "RESIDENT_ONLY",
+                StringComparison.Ordinal) ? true : null,
+            $"operator-console-review-auto-apply:{review.StatutoryDiscountDecisionCommandId:N}",
+            correlationId)
+        {
+            IdControlReference = review.IdControlReference,
+            BirthDate = review.BirthDate,
+            ExistingStatutoryDiscountValidationId = review.StatutoryDiscountValidationId
+        };
 
     private static StatutoryBasisReadiness FromStatutoryReadback(
         StatutoryDiscountDecisionResult readback,

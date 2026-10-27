@@ -90,6 +90,42 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
     }
 
     [Fact]
+    public async Task Resolve_WhenApprovedOperatorReviewWasNotApplied_ContinuesZeroPayableApplication()
+    {
+        var applied = Applied(
+            sourceChannel: StatutoryDiscountSourceChannels.OperatorConsole,
+            netPayableAmountMinorUnits: 0,
+            statutoryDiscountAmountMinorUnits: 10000);
+        var context = CreateContext(
+            ApprovedApplicationNotRequested(StatutoryDiscountSourceChannels.OperatorConsole),
+            submittedReadback: applied,
+            statutoryReview: ApprovedOperatorReview(),
+            zeroPayableAppliedTariff: true);
+        var cashier = new AptZeroPayableCompletionActor(
+            Guid.Parse("41000000-0000-0000-0000-000000000016"),
+            "Mara Del Carmen",
+            "apt-pitx-level-3-01");
+
+        var result = await context.Sut.ResolveAsync(
+            ResolveRequest(DecisionCommandId),
+            cashier,
+            CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.Response.Should().NotBeNull();
+        result.Response!.ReadyForCashAcceptance.Should().BeTrue();
+        result.Response.AuthoritativeAmountMinorUnits.Should().Be(0);
+        result.Response.StatutoryDiscountReadiness!.PayableBasisReadinessStatus
+            .Should().Be(StatutoryDiscountPayableBasisReadinessStatuses.PayableBasisReady);
+        context.StatutoryDiscounts.SubmitCallCount.Should().Be(1);
+        context.StatutoryDiscounts.LastSubmittedCommand.Should().NotBeNull();
+        context.StatutoryDiscounts.LastSubmittedCommand!.ApplyPayableBasis.Should().BeTrue();
+        context.StatutoryDiscounts.LastSubmittedCommand.IdempotencyKey
+            .Should().Be($"operator-console-review-auto-apply:{DecisionCommandId:N}");
+        context.StatutoryDiscounts.CompletionActor.Should().Be(cashier);
+    }
+
+    [Fact]
     public async Task Resolve_WhenApplicationProcessing_BlocksWithCanonicalApplicationIdentity()
     {
         var context = CreateContext(ApplicationProcessing());
@@ -569,7 +605,9 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         Guid? rediscoveredDecisionCommandId = null,
         InvoiceCustomerInformationReadStatus customerInformationStatus = InvoiceCustomerInformationReadStatus.NotSupplied,
         ResolveVendorParkingResult? vendorResolutionResult = null,
-        bool zeroPayableAppliedTariff = false)
+        bool zeroPayableAppliedTariff = false,
+        StatutoryDiscountDecisionResult? submittedReadback = null,
+        StatutoryDiscountServiceChannelReviewDetail? statutoryReview = null)
     {
         var session = ParkingSession.Rehydrate(
             ParkingSessionId,
@@ -587,7 +625,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             ? Tariff(AppliedTariffSnapshotId, 100m, 100m, 0m, OriginalTariffSnapshotId)
             : Tariff(AppliedTariffSnapshotId, 100m, 20m, 80m, OriginalTariffSnapshotId);
         var terminalCashEligibility = new RecordingTerminalCashEligibilityReader();
-        var statutoryDiscounts = new RecordingStatutoryDiscountFacadeService(statutoryReadback);
+        var statutoryDiscounts = new RecordingStatutoryDiscountFacadeService(statutoryReadback, submittedReadback);
 
         var vendorResolution = new FixedVendorResolution(
             session,
@@ -603,7 +641,8 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
                 statutoryDiscounts,
                 new FixedStatutoryEvidenceChannelService(evidenceReadiness),
                 new FixedStatutoryLifecycleRediscoveryService(rediscoveredDecisionCommandId),
-                new FixedInvoiceCustomerInformationService(customerInformationStatus)),
+                new FixedInvoiceCustomerInformationService(customerInformationStatus),
+                statutoryReview is null ? null : new FixedStatutoryReviewRepository(statutoryReview)),
             terminalCashEligibility,
             statutoryDiscounts,
             vendorResolution);
@@ -677,8 +716,10 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             appliedTariffSnapshotId: null,
             netPayableAmountMinorUnits: null);
 
-    private static StatutoryDiscountDecisionResult ApprovedApplicationNotRequested() =>
+    private static StatutoryDiscountDecisionResult ApprovedApplicationNotRequested(
+        string sourceChannel = StatutoryDiscountSourceChannels.WebPay) =>
         Applied(
+            sourceChannel: sourceChannel,
             decisionStatus: "APPROVED",
             applicationRequested: false,
             applicationCommandStatus: StatutoryDiscountApplicationStageStatuses.NotRequested,
@@ -725,6 +766,52 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             applicationRecoveryAction: StatutoryDiscountDecisionRecoveryActions.WaitAndRetry,
             errorCode: "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE");
 
+    private static StatutoryDiscountServiceChannelReviewDetail ApprovedOperatorReview() =>
+        new(
+            DecisionCommandId,
+            ValidationId,
+            Guid.Parse("41000000-0000-0000-0000-000000000013"),
+            ParkingSessionId,
+            StatutoryDiscountSourceChannels.OperatorConsole,
+            SiteId,
+            SiteGroupId,
+            "TICKET-001",
+            "ABC1234",
+            "SENIOR_CITIZEN",
+            StatutoryDiscountDecisionCommandStatuses.Completed,
+            StatutoryDiscountDecisionV2ResultStates.Approved,
+            StatutoryDiscountServiceChannelReviewStatuses.Approved,
+            "SENIOR_CITIZEN_ID",
+            "Paranaque City",
+            ExpiryDate: null,
+            "SC-****-0001",
+            EvidenceReferences: [],
+            RequesterAttestation: true,
+            AttestationNotes: "Reviewed evidence accepted.",
+            ReasonCode: "LGU_FULL_WAIVER",
+            EvidenceRequired: true,
+            EvidenceRecorded: true,
+            OriginalTariffSnapshotId,
+            OriginalAmountMinorUnits: 10000,
+            VatExclusiveAmountMinorUnits: 8929,
+            VatAmountMinorUnits: 1071,
+            StatutoryDiscountAmountMinorUnits: 10000,
+            FinalPayableAmountMinorUnits: 0,
+            Currency: "PHP",
+            GoverningPolicy: null,
+            ReviewerUserId: Guid.Parse("41000000-0000-0000-0000-000000000017"),
+            ReviewerAccessEvaluationId: Guid.Parse("41000000-0000-0000-0000-000000000018"),
+            ReviewerDecision: "APPROVE",
+            ReviewerReasonCode: "LGU_FULL_WAIVER",
+            SubmittedAt: DateTimeOffset.Parse("2026-07-28T00:01:00Z"),
+            ReviewedAt: DateTimeOffset.Parse("2026-07-28T00:02:00Z"),
+            PayableBasisApplicationStatus: null,
+            CorrelationId)
+        {
+            IdControlReference = "SC-ID-0001",
+            BirthDate = DateOnly.Parse("1950-01-01")
+        };
+
     private static StatutoryDiscountDecisionResult TerminalApplicationFailure() =>
         Applied(
             applicationCommandStatus: StatutoryDiscountApplicationStageStatuses.FailedNonRetryable,
@@ -738,6 +825,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             errorCode: "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_FAILED");
 
     private static StatutoryDiscountDecisionResult Applied(
+        string sourceChannel = StatutoryDiscountSourceChannels.WebPay,
         string decisionStatus = "APPLIED_PAYABLE_BASIS",
         string? decisionResultStatus = "APPROVED",
         string decisionCommandStatus = StatutoryDiscountDecisionCommandStatuses.Completed,
@@ -760,7 +848,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             RequestReference: Guid.Parse("41000000-0000-0000-0000-000000000013"),
             ValidationId,
             ParkingSessionId,
-            StatutoryDiscountSourceChannels.WebPay,
+            sourceChannel,
             "SENIOR_CITIZEN",
             decisionStatus,
             PolicyResolutionBasis: "NATIONAL_RA9994",
@@ -922,16 +1010,22 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
 
     private sealed class RecordingStatutoryDiscountFacadeService : IStatutoryDiscountDecisionFacadeService
     {
-        private readonly StatutoryDiscountDecisionResult? _readback;
+        private StatutoryDiscountDecisionResult? _readback;
+        private readonly StatutoryDiscountDecisionResult? _submittedReadback;
 
-        public RecordingStatutoryDiscountFacadeService(StatutoryDiscountDecisionResult? readback)
+        public RecordingStatutoryDiscountFacadeService(
+            StatutoryDiscountDecisionResult? readback,
+            StatutoryDiscountDecisionResult? submittedReadback)
         {
             _readback = readback;
+            _submittedReadback = submittedReadback;
         }
 
         public int GetCallCount { get; private set; }
 
         public int SubmitCallCount { get; private set; }
+
+        public StatutoryDiscountDecisionCommand? LastSubmittedCommand { get; private set; }
 
         public AptZeroPayableCompletionActor? CompletionActor { get; private set; }
 
@@ -940,7 +1034,10 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             CancellationToken cancellationToken)
         {
             SubmitCallCount++;
-            throw new NotSupportedException("APT payable-basis facade tests must not submit statutory decisions.");
+            LastSubmittedCommand = command;
+            _readback = _submittedReadback ?? throw new NotSupportedException(
+                "APT payable-basis facade test did not configure a submission result.");
+            return Task.FromResult(_readback);
         }
 
         public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAvailabilityAsync(
@@ -966,6 +1063,49 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             CompletionActor = actor;
             return Task.FromResult(_readback);
         }
+    }
+
+    private sealed class FixedStatutoryReviewRepository(StatutoryDiscountServiceChannelReviewDetail review)
+        : IStatutoryDiscountServiceChannelReviewRepository
+    {
+        public Task<StatutoryDiscountServiceChannelReviewDetail?> GetAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid correlationId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<StatutoryDiscountServiceChannelReviewDetail?>(
+                statutoryDiscountDecisionCommandId == review.StatutoryDiscountDecisionCommandId ? review : null);
+
+        public Task UpsertIntakeAsync(
+            StatutoryDiscountServiceChannelReviewIntakeCommand command,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<StatutoryDiscountServiceChannelReviewQueueResult> ListAsync(
+            StatutoryDiscountServiceChannelReviewQueueQuery query,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<StatutoryDiscountServiceChannelValidationLinkage?> EnsureApprovedValidationLinkageAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid reviewerUserId,
+            string? decisionReasonCode,
+            StatutoryDiscountServiceChannelReviewedDocument reviewedDocument,
+            Guid correlationId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<StatutoryDiscountServiceChannelReviewerAuthority?> GetValidationReviewerAuthorityAsync(
+            Guid statutoryDiscountValidationId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<StatutoryDiscountServiceChannelReviewDetail> RecordReviewCompletionAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid reviewerUserId,
+            Guid? operatorDeviceBindingId,
+            Guid? operatorShiftId,
+            Guid accessEvaluationId,
+            string decision,
+            string? decisionReasonCode,
+            StatutoryDiscountServiceChannelReviewedDocument reviewedDocument,
+            Guid correlationId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class FixedStatutoryEvidenceChannelService : IStatutoryEvidenceChannelService
