@@ -115,6 +115,23 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
     }
 
     [Fact]
+    public async Task GetAsync_WhenBeneficiaryIdentityExists_ReturnsTheAuthorizedFullName()
+    {
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        beneficiaryIdentities.GetAsync(CommandId, Arg.Any<CancellationToken>())
+            .Returns(BeneficiaryIdentity(isFinal: true));
+        var fixture = CreateFixture(beneficiaryIdentities: beneficiaryIdentities);
+        fixture.Repository.GetAsync(CommandId, Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(ReviewDetail(reviewStatus: StatutoryDiscountServiceChannelReviewStatuses.Approved));
+
+        var result = await fixture.Sut.GetAsync(CommandId, AccessContext(), CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.BeneficiaryFullName.Should().Be("Maria Santos");
+        await beneficiaryIdentities.Received(1).GetAsync(CommandId, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task DecideAsync_WhenApprovalAllowed_CompletesSameCanonicalDecision()
     {
         var fixture = CreateFixture();
@@ -174,6 +191,63 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             Arg.Any<Guid>(),
             Arg.Any<CancellationToken>());
         await fixture.Staged.DidNotReceiveWithAnyArgs().CreateOrResolveApplicationAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task DecideAsync_WhenOperatorOriginApprovalCompletes_AppliesPayableBasis()
+    {
+        var applyPayableBasis = Substitute.For<IOperatorConsoleStatutoryDiscountApplyPayableBasisService>();
+        var fixture = CreateFixture(applyPayableBasis: applyPayableBasis);
+        fixture.Repository.GetAsync(CommandId, Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(ReviewDetail(sourceChannel: StatutoryDiscountSourceChannels.OperatorConsole));
+        fixture.Staged.GetDecisionAsync(CommandId, Arg.Any<CancellationToken>())
+            .Returns(AwaitingDecision());
+        fixture.Repository.EnsureApprovedValidationLinkageAsync(
+                CommandId,
+                UserId,
+                Arg.Any<string?>(),
+                Arg.Any<StatutoryDiscountServiceChannelReviewedDocument>(),
+                CorrelationId,
+                Arg.Any<CancellationToken>())
+            .Returns(ValidationLinkage());
+        fixture.Staged.CompleteDecisionApprovedAsync(
+                CommandId,
+                ValidationLinkage().StatutoryDiscountValidationId,
+                Arg.Any<Guid?>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<string?>(),
+                Arg.Any<bool>(),
+                Arg.Any<StatutoryDiscountDecisionV2TariffFacts?>(),
+                Arg.Any<string?>(),
+                CorrelationId,
+                Arg.Any<CancellationToken>())
+            .Returns(CompletedDecision(StatutoryDiscountDecisionV2ResultStates.Approved));
+        fixture.Repository.RecordReviewCompletionAsync(
+                CommandId,
+                UserId,
+                DeviceBindingId,
+                ShiftId,
+                EvaluationId,
+                "APPROVE",
+                Arg.Any<string?>(),
+                Arg.Any<StatutoryDiscountServiceChannelReviewedDocument>(),
+                CorrelationId,
+                Arg.Any<CancellationToken>())
+            .Returns(ReviewDetail(
+                StatutoryDiscountServiceChannelReviewStatuses.Approved,
+                StatutoryDiscountSourceChannels.OperatorConsole,
+                ValidationLinkage().StatutoryDiscountValidationId));
+
+        await fixture.Sut.DecideAsync(DecisionCommand(), AccessContext(), CancellationToken.None);
+
+        await applyPayableBasis.Received(1).ApplyAsync(
+            Arg.Is<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(command =>
+                command.ValidationId == ValidationLinkage().StatutoryDiscountValidationId &&
+                command.CanonicalReviewContinuation &&
+                command.AllowProcessingApplicationCompletion &&
+                command.IdempotencyKey == $"operator-console-review-auto-apply:{CommandId:N}:apply"),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -382,7 +456,10 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             Arg.Any<CancellationToken>());
     }
 
-    private static TestFixture CreateFixture(bool allowed = true)
+    private static TestFixture CreateFixture(
+        bool allowed = true,
+        IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null,
+        IOperatorConsoleStatutoryDiscountApplyPayableBasisService? applyPayableBasis = null)
     {
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
@@ -400,7 +477,9 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             accessWriter,
             repository,
             staged,
-            parkingEligibilityRepository);
+            parkingEligibilityRepository,
+            beneficiaryIdentities,
+            applyPayableBasis);
         return new TestFixture(accessService, repository, staged, parkingEligibilityRepository, sut);
     }
 
@@ -627,6 +706,27 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             ResolvedAt: Now,
             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             CorrelationId);
+
+    private static StatutoryBeneficiaryIdentityRecord BeneficiaryIdentity(bool isFinal) =>
+        new(
+            CommandId,
+            SiteId,
+            "SENIOR_CITIZEN",
+            "Maria Santos",
+            "SENIOR_CITIZEN_ID",
+            "SC-2026-001",
+            null,
+            UserId,
+            StatutoryBeneficiaryIdentityCaptureChannels.OperatorConsole,
+            Now,
+            UserId,
+            StatutoryBeneficiaryIdentityCaptureChannels.OperatorConsole,
+            Now,
+            isFinal ? UserId : null,
+            isFinal ? Now : null,
+            isFinal ? $"OPERATOR_CONSOLE:{CommandId:D}" : null,
+            CorrelationId,
+            isFinal);
 
     private sealed record TestFixture(
         IOperatorConsoleAccessEvaluationService AccessService,

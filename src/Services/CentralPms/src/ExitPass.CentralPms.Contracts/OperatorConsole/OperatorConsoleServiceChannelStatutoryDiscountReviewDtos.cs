@@ -73,7 +73,10 @@ public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewDetailR
     DateTimeOffset SubmittedAt,
     DateTimeOffset? ReviewedAt,
     string? PayableBasisApplicationStatus,
-    Guid CorrelationId);
+    Guid CorrelationId)
+{
+    public string? BeneficiaryFullName { get; init; }
+}
 
 /// <summary>
 /// Browser-safe Operator Console decision body. Reviewer identity, timestamp, and scope

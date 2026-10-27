@@ -203,6 +203,7 @@ export interface CanonicalStatutoryReviewDetail extends CanonicalStatutoryReview
   reviewerReasonCode?: string;
   reviewedAt?: string;
   payableBasisApplicationStatus?: string;
+  beneficiaryFullName?: string;
   correlationId: string;
 }
 

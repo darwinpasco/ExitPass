@@ -20,6 +20,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
     private readonly IStatutoryDiscountStagedCommandService _stagedCommandService;
     private readonly IStatutoryDiscountParkingEligibilityRepository _parkingEligibilityRepository;
     private readonly IStatutoryBeneficiaryIdentityRepository? _beneficiaryIdentities;
+    private readonly IOperatorConsoleStatutoryDiscountApplyPayableBasisService? _applyPayableBasis;
 
     public OperatorConsoleServiceChannelStatutoryDiscountReviewService(
         IOperatorConsoleAccessEvaluationService accessEvaluationService,
@@ -27,7 +28,8 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
         IStatutoryDiscountServiceChannelReviewRepository reviewRepository,
         IStatutoryDiscountStagedCommandService stagedCommandService,
         IStatutoryDiscountParkingEligibilityRepository parkingEligibilityRepository,
-        IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null)
+        IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null,
+        IOperatorConsoleStatutoryDiscountApplyPayableBasisService? applyPayableBasis = null)
     {
         _accessEvaluationService = accessEvaluationService ?? throw new ArgumentNullException(nameof(accessEvaluationService));
         _accessEvaluationWriter = accessEvaluationWriter ?? throw new ArgumentNullException(nameof(accessEvaluationWriter));
@@ -35,6 +37,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
         _stagedCommandService = stagedCommandService ?? throw new ArgumentNullException(nameof(stagedCommandService));
         _parkingEligibilityRepository = parkingEligibilityRepository ?? throw new ArgumentNullException(nameof(parkingEligibilityRepository));
         _beneficiaryIdentities = beneficiaryIdentities;
+        _applyPayableBasis = applyPayableBasis;
     }
 
     public async Task<StatutoryDiscountServiceChannelReviewQueueResult> ListAsync(
@@ -100,7 +103,12 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
             return null;
         }
 
-        return detail;
+        var beneficiaryIdentity = _beneficiaryIdentities is null
+            ? null
+            : await _beneficiaryIdentities.GetAsync(statutoryDiscountDecisionCommandId, cancellationToken)
+                .ConfigureAwait(false);
+
+        return detail with { BeneficiaryFullName = beneficiaryIdentity?.BeneficiaryFullName };
     }
 
     public async Task<StatutoryDiscountServiceChannelReviewDecisionResult> DecideAsync(
@@ -197,6 +205,11 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
                         command.CorrelationId,
                         cancellationToken)
                     .ConfigureAwait(false);
+            }
+
+            if (requestedDecision == "APPROVE")
+            {
+                await ApplyApprovedPayableBasisAsync(terminalDetail, command, cancellationToken).ConfigureAwait(false);
             }
 
             return Existing(command, access, requestedDecision, canonical, terminalDetail);
@@ -303,6 +316,11 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
             }
         }
 
+        if (requestedDecision == "APPROVE")
+        {
+            await ApplyApprovedPayableBasisAsync(review, command, cancellationToken).ConfigureAwait(false);
+        }
+
         return new StatutoryDiscountServiceChannelReviewDecisionResult(
             access.EvaluationId,
             true,
@@ -327,6 +345,40 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
             IneligibilityReason: null,
             ErrorCode: null,
             command.CorrelationId);
+    }
+
+    private async Task ApplyApprovedPayableBasisAsync(
+        StatutoryDiscountServiceChannelReviewDetail review,
+        StatutoryDiscountServiceChannelReviewDecisionCommand command,
+        CancellationToken cancellationToken)
+    {
+        if (_applyPayableBasis is null ||
+            !string.Equals(review.SourceChannel, StatutoryDiscountSourceChannels.OperatorConsole, StringComparison.Ordinal) ||
+            review.StatutoryDiscountValidationId is not Guid validationId ||
+            validationId == Guid.Empty ||
+            review.ReviewerUserId is not Guid reviewerUserId ||
+            reviewerUserId == Guid.Empty ||
+            !string.IsNullOrWhiteSpace(review.PayableBasisApplicationStatus))
+        {
+            return;
+        }
+
+        await _applyPayableBasis.ApplyAsync(
+                new OperatorConsoleStatutoryDiscountApplyPayableBasisCommand(
+                    validationId,
+                    reviewerUserId,
+                    OperatorDeviceBindingId: null,
+                    review.SiteId,
+                    review.SiteGroupId,
+                    OperatorShiftId: null,
+                    review.OriginalTariffSnapshotId,
+                    $"operator-console-review-auto-apply:{review.StatutoryDiscountDecisionCommandId:N}:apply",
+                    command.CorrelationId,
+                    AllowProcessingApplicationCompletion: true,
+                    ServiceChannelCaller: null,
+                    CanonicalReviewContinuation: true),
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private static bool HasAnyBeneficiaryIdentity(StatutoryDiscountServiceChannelReviewDecisionCommand command) =>
