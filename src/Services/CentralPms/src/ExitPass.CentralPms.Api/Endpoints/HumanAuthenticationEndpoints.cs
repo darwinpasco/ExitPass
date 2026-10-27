@@ -1,6 +1,7 @@
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.HumanAuthentication;
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.HumanAuthentication;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Mvc;
@@ -25,6 +26,7 @@ public static class HumanAuthenticationEndpoints
         var apt = app.MapGroup("/v1/apt/human-sessions").WithTags("AptHumanAuthentication");
         apt.MapPost("", CreateAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls().AcceptGovernedAptDevicePrincipal();
         apt.MapGet("/{sessionReference:guid}", GetAptSessionAsync).RequireInternalServiceMtls().AcceptGovernedAptDevicePrincipal();
+        apt.MapGet("/{sessionReference:guid}/cash-custody-movement-counterparties", ListAptCashCustodyMovementCounterpartiesAsync).RequireInternalServiceMtls().AcceptGovernedAptDevicePrincipal();
         apt.MapPost("/{sessionReference:guid}/continue", ContinueAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls().AcceptGovernedAptDevicePrincipal();
         apt.MapPost("/{sessionReference:guid}/reauthenticate", ReauthenticateAptSessionAsync).DisableAntiforgery().RequireInternalServiceMtls().AcceptGovernedAptDevicePrincipal();
         apt.MapPost("/{sessionReference:guid}/password/change", ChangeAptPasswordAsync).DisableAntiforgery().RequireInternalServiceMtls().AcceptGovernedAptDevicePrincipal();
@@ -229,6 +231,81 @@ public static class HumanAuthenticationEndpoints
         return Results.Json(result.Response, statusCode: result.HttpStatusCode);
     }
 
+    private static async Task<IResult> ListAptCashCustodyMovementCounterpartiesAsync(
+        Guid sessionReference,
+        [FromQuery] Guid siteId,
+        [FromQuery] string movementType,
+        [FromQuery] string? originalMovementType,
+        [FromQuery] string? requiredCounterpartyReference,
+        HttpRequest request,
+        HttpResponse response,
+        IHumanAuthenticationService service,
+        IAptCashCustodyCounterpartyDirectory directory,
+        [FromServices] IHumanSessionTokenService tokens,
+        IOptions<HumanAuthenticationOptions> options,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken)
+    {
+        SetNoStore(response);
+        var correlationId = HumanSessionAuthenticationHandler.ResolveCorrelationId(request);
+        var token = HumanSessionAuthenticationHandler.ResolveToken(request, options.Value);
+        var deviceId = ResolveDeviceServiceIdentity(request);
+        if (token is null || !_tokensMatchReference(tokens, token, sessionReference))
+        {
+            return CounterpartyFailure(404, "SESSION_NOT_FOUND", correlationId);
+        }
+        if (!deviceId.HasValue || siteId == Guid.Empty)
+        {
+            return CounterpartyFailure(403, "APT_DEVICE_TRUST_REQUIRED", correlationId);
+        }
+        if (!AptCashCustodyCounterpartyPolicy.TryResolveEligibleRoleCodes(movementType, originalMovementType, out _)
+            || (AptCashCustodyCounterpartyPolicy.Normalize(movementType) == AptCashCustodyMovementTypes.CashReturn
+                && string.IsNullOrWhiteSpace(requiredCounterpartyReference)))
+        {
+            return CounterpartyFailure(400, "INVALID_MOVEMENT_COUNTERPARTY_QUERY", correlationId);
+        }
+
+        var result = await service.ResolveSessionAsync(
+            token,
+            HumanSessionAudiences.Apt,
+            deviceId,
+            BuildContext(request, options.Value, tokens, deviceId, siteId),
+            true,
+            cancellationToken);
+        var session = result.Response.Session;
+        if (!result.Response.Authenticated || session is null)
+        {
+            return CounterpartyFailure(result.HttpStatusCode, result.Response.ErrorCode ?? "SESSION_INVALID", result.Response.CorrelationId);
+        }
+        if (session.DeviceServiceIdentityReference != deviceId
+            || !session.SiteReferences.Contains(siteId)
+            || !session.Permissions.Contains(AptHumanPermissionCatalog.CashCustodyMovementInitiate, StringComparer.Ordinal))
+        {
+            return CounterpartyFailure(403, "MOVEMENT_COUNTERPARTY_DIRECTORY_DENIED", result.Response.CorrelationId);
+        }
+
+        var candidates = await directory.ListEligibleAsync(
+            new AptCashCustodyCounterpartyQuery(
+                session.UserReference,
+                siteId,
+                movementType,
+                originalMovementType,
+                requiredCounterpartyReference,
+                timeProvider.GetUtcNow()),
+            cancellationToken);
+        return Results.Ok(new AptCashCustodyCounterpartyDirectoryResponse(
+            "AVAILABLE",
+            candidates.Select(value => new AptCashCustodyCounterpartyDto(
+                value.UserReference,
+                value.LoginIdentifier,
+                value.DisplayName,
+                value.RoleCode,
+                value.RoleLabel)).ToArray(),
+            null,
+            false,
+            result.Response.CorrelationId));
+    }
+
     private static async Task<IResult> ContinueAptSessionAsync(Guid sessionReference, HttpRequest request, HttpResponse response, IHumanAuthenticationService service, [FromServices] IHumanSessionTokenService tokens, IOptions<HumanAuthenticationOptions> options, CancellationToken cancellationToken)
     {
         var token = HumanSessionAuthenticationHandler.ResolveToken(request, options.Value);
@@ -420,4 +497,7 @@ public static class HumanAuthenticationEndpoints
     }
 
     private static IResult SafeFailure(int status, string code, Guid correlationId) => Results.Json(new HumanAuthenticationResponse("REJECTED", false, null, null, code, false, correlationId), statusCode: status);
+    private static IResult CounterpartyFailure(int status, string code, Guid correlationId) => Results.Json(
+        new AptCashCustodyCounterpartyDirectoryResponse("REJECTED", Array.Empty<AptCashCustodyCounterpartyDto>(), code, false, correlationId),
+        statusCode: status);
 }

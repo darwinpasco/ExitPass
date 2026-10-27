@@ -424,6 +424,8 @@ static void ConfigureHumanAuthentication(WebApplicationBuilder builder, string m
     builder.Services.AddSingleton<ICredentialChallengeDelivery, SmtpCredentialChallengeDelivery>();
     builder.Services.AddScoped<IHumanAuthenticationRepository>(services =>
         new PostgresHumanAuthenticationRepository(mainDatabaseConnectionString, services.GetRequiredService<IHumanSessionTokenService>()));
+    builder.Services.AddScoped<IAptCashCustodyCounterpartyDirectory>(_ =>
+        new PostgresAptCashCustodyCounterpartyDirectory(mainDatabaseConnectionString));
     builder.Services.AddScoped<HumanAuthenticationService>();
     builder.Services.AddScoped<IHumanAuthenticationService>(services => services.GetRequiredService<HumanAuthenticationService>());
     builder.Services.AddScoped<IHumanMfaAdministrationService>(services => services.GetRequiredService<HumanAuthenticationService>());

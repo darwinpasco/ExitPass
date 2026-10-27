@@ -126,8 +126,8 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
     public async Task Production_apt_session_is_device_site_and_permission_bound_without_payable_basis_conflation()
     {
         var seed = await SeedScopedUserAsync([ApprovedIdentityRoleCatalog.AptCashierOperator]);
-        var device = await SeedAptDeviceAsync(seed.SiteId);
         using var certificate = CreateCertificate("i022-apt-client");
+        var device = await SeedAptDeviceAsync(seed.SiteId, certificate);
         await using var factory = ProductionFactory(certificate);
         using var apt = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -176,6 +176,92 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         var refreshed = await apt.GetAsync($"/v1/apt/human-sessions/{login.Session.SessionReference:D}");
         refreshed.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
             "authorization-epoch changes revoke every affected H-006 audience without imposing Operator Console device/shift requirements");
+    }
+
+    [Fact]
+    public async Task Production_apt_counterparty_directory_is_site_scoped_role_filtered_and_fail_closed()
+    {
+        var initiator = await SeedScopedUserAsync(
+            [ApprovedIdentityRoleCatalog.AptCashCustodyMovementOperator],
+            userType: "OPERATIONS_USER",
+            displayName: "Movement Cashier");
+        var supervisor = await SeedScopedUserAsync(
+            [ApprovedIdentityRoleCatalog.AptCashCustodySupervisor],
+            userType: "OPERATIONS_USER",
+            displayName: "Duplicate Receiving Person");
+        var custodian = await SeedScopedUserAsync(
+            [ApprovedIdentityRoleCatalog.AptSiteCustodian],
+            userType: "OPERATIONS_USER",
+            displayName: "Duplicate Receiving Person");
+        var collector = await SeedScopedUserAsync(
+            [ApprovedIdentityRoleCatalog.AptCashCollector],
+            userType: "OPERATIONS_USER",
+            displayName: "Authorized Collector");
+        var suspended = await SeedScopedUserAsync(
+            [ApprovedIdentityRoleCatalog.AptSiteCustodian],
+            userType: "OPERATIONS_USER",
+            displayName: "Suspended Custodian");
+        var expired = await SeedScopedUserAsync(
+            [ApprovedIdentityRoleCatalog.AptSiteCustodian],
+            userType: "OPERATIONS_USER",
+            displayName: "Expired Custodian");
+        var otherSite = await SeedScopedUserAsync(
+            [ApprovedIdentityRoleCatalog.AptSiteCustodian],
+            userType: "OPERATIONS_USER",
+            displayName: "Other Site Custodian",
+            siteId: Guid.Parse("b336964f-3b84-5404-8690-97ead0929b1f"));
+        await ExecuteAsync("UPDATE identity.users SET user_status='SUSPENDED' WHERE user_id=@user_id;", ("user_id", suspended.UserId));
+        await ExecuteAsync("UPDATE identity.users SET effective_to=now()-interval '1 minute' WHERE user_id=@user_id;", ("user_id", expired.UserId));
+
+        using var certificate = CreateCertificate("counterparty-directory-client");
+        var device = await SeedAptDeviceAsync(initiator.SiteId, certificate);
+        await using var factory = ProductionFactory(certificate);
+        using var apt = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+            HandleCookies = false,
+            AllowAutoRedirect = false
+        });
+        apt.DefaultRequestHeaders.Add(CertificateHeader, "trusted");
+        apt.DefaultRequestHeaders.Add("X-ExitPass-Service-Identity-Id", device.ToString("D"));
+        var loginResponse = await apt.PostAsJsonAsync("/v1/apt/human-sessions",
+            new AptHumanSessionCreateRequest(initiator.Username, Password, initiator.SiteId));
+        loginResponse.StatusCode.Should().Be(HttpStatusCode.OK, await loginResponse.Content.ReadAsStringAsync());
+        var login = (await loginResponse.Content.ReadFromJsonAsync<HumanAuthenticationResponse>())!;
+        apt.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("ExitPass-HumanSession", login.AptSessionToken);
+
+        var safeDropResponse = await apt.GetAsync(
+            $"/v1/apt/human-sessions/{login.Session!.SessionReference:D}/cash-custody-movement-counterparties?siteId={initiator.SiteId:D}&movementType=SafeDrop");
+        safeDropResponse.StatusCode.Should().Be(HttpStatusCode.OK, await safeDropResponse.Content.ReadAsStringAsync());
+        var safeDrop = (await safeDropResponse.Content.ReadFromJsonAsync<AptCashCustodyCounterpartyDirectoryResponse>())!;
+        safeDrop.Counterparties.Select(value => value.UserReference).Should().BeEquivalentTo([supervisor.UserId, custodian.UserId]);
+        safeDrop.Counterparties.Select(value => value.DisplayName).Should().OnlyContain(value => value == "Duplicate Receiving Person");
+        safeDrop.Counterparties.Should().NotContain(value => value.UserReference == initiator.UserId
+            || value.UserReference == collector.UserId
+            || value.UserReference == suspended.UserId
+            || value.UserReference == expired.UserId
+            || value.UserReference == otherSite.UserId);
+
+        var remittanceResponse = await apt.GetAsync(
+            $"/v1/apt/human-sessions/{login.Session.SessionReference:D}/cash-custody-movement-counterparties?siteId={initiator.SiteId:D}&movementType=DirectRemittance");
+        var remittance = (await remittanceResponse.Content.ReadFromJsonAsync<AptCashCustodyCounterpartyDirectoryResponse>())!;
+        remittance.Counterparties.Should().ContainSingle(value => value.UserReference == collector.UserId);
+
+        var historicalResponse = await apt.GetAsync(
+            $"/v1/apt/human-sessions/{login.Session.SessionReference:D}/cash-custody-movement-counterparties?siteId={initiator.SiteId:D}&movementType=SafeDrop&requiredCounterpartyReference={Uri.EscapeDataString(supervisor.Username)}");
+        var historical = (await historicalResponse.Content.ReadFromJsonAsync<AptCashCustodyCounterpartyDirectoryResponse>())!;
+        historical.Counterparties.Should().ContainSingle(value => value.UserReference == supervisor.UserId);
+
+        await ExecuteAsync("""
+            UPDATE identity.user_roles
+            SET assignment_status='REVOKED', revoked_at=now(), effective_to=now(),
+                revoked_by_service_identity_id=@service_id, updated_by_service_identity_id=@service_id
+            WHERE user_id=@user_id AND assignment_status='ACTIVE';
+            """, ("user_id", supervisor.UserId), ("service_id", CentralPmsServiceIdentityId));
+        var revokedResponse = await apt.GetAsync(
+            $"/v1/apt/human-sessions/{login.Session.SessionReference:D}/cash-custody-movement-counterparties?siteId={initiator.SiteId:D}&movementType=SafeDrop&requiredCounterpartyReference={supervisor.UserId:D}");
+        var revoked = (await revokedResponse.Content.ReadFromJsonAsync<AptCashCustodyCounterpartyDirectoryResponse>())!;
+        revoked.Counterparties.Should().BeEmpty("recipient authority is re-evaluated after selection");
     }
 
     [Fact]
@@ -318,8 +404,8 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
             ApprovedIdentityRoleCatalog.OperationsSupervisor,
             ApprovedIdentityRoleCatalog.AptCashierOperator
         ]);
-        var device = await SeedAptDeviceAsync(seed.SiteId);
         using var certificate = CreateCertificate("i022-apt-revocation-client");
+        var device = await SeedAptDeviceAsync(seed.SiteId, certificate);
         await using var factory = ProductionFactory(certificate);
         using var management = WebClient(factory);
         using var review = WebClient(factory);
@@ -507,7 +593,11 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
             """, ("decision_id", review.Decision.StatutoryDiscountDecisionCommandId))).Should().Be(1);
     }
 
-    private async Task<Seed> SeedScopedUserAsync(IReadOnlyCollection<string> roleCodes)
+    private async Task<Seed> SeedScopedUserAsync(
+        IReadOnlyCollection<string> roleCodes,
+        string userType = "SITE_OPERATOR",
+        string displayName = "I-022 integration user",
+        Guid? siteId = null)
     {
         var authenticationOptions = new HumanAuthenticationOptions
         {
@@ -528,17 +618,17 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         var protector = new AesGcmTotpSecretProtector(configured);
         var protectedSecret = protector.Protect(userId, authenticatorId, totpSecret);
         var siteGroupId = Guid.Parse("a6dbadf6-68b5-5bed-a7e0-a75faee70841");
-        var siteId = Guid.Parse("2d1dcdf8-f563-537c-8542-0bde7cc9da97");
+        var effectiveSiteId = siteId ?? Guid.Parse("2d1dcdf8-f563-537c-8542-0bde7cc9da97");
         await ExecuteAsync("""
             UPDATE sites.site_groups SET site_group_status='ACTIVE' WHERE site_group_id=@site_group_id;
             UPDATE sites.sites SET site_status='ACTIVE' WHERE site_id=@site_id AND site_group_id=@site_group_id;
-            """, ("site_group_id", siteGroupId), ("site_id", siteId));
+            """, ("site_group_id", siteGroupId), ("site_id", effectiveSiteId));
         var username = $"i022.{Guid.NewGuid():N}"[..24];
 
         const string sql = """
             INSERT INTO identity.users (user_id,username,display_name,user_type,user_status,effective_from,
                 created_by_service_identity_id,updated_by_service_identity_id)
-            VALUES (@user_id,@username,'I-022 integration user','SITE_OPERATOR','ACTIVE',now()-interval '1 minute',@service_id,@service_id);
+            VALUES (@user_id,@username,@display_name,@user_type::identity.user_type_enum,'ACTIVE',now()-interval '1 minute',@service_id,@service_id);
             INSERT INTO identity.local_credentials (local_credential_id,user_id,credential_status,password_verifier,
                 verifier_salt,verifier_algorithm_code,verifier_algorithm_version,verifier_work_factor,
                 verifier_memory_kib,verifier_parallelism,activated_at,last_changed_at,
@@ -553,7 +643,8 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
                 @format_version,now(),now(),@service_id,@service_id);
             """;
         await ExecuteAsync(sql,
-            ("user_id", userId), ("username", username), ("service_id", CentralPmsServiceIdentityId),
+            ("user_id", userId), ("username", username), ("display_name", displayName), ("user_type", userType),
+            ("service_id", CentralPmsServiceIdentityId),
             ("verifier", material.Verifier), ("salt", material.Salt), ("algorithm", material.AlgorithmCode),
             ("algorithm_version", material.AlgorithmVersion), ("work_factor", material.Iterations),
             ("memory_kib", material.MemoryKiB), ("parallelism", material.Parallelism),
@@ -578,9 +669,9 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
                     now()-interval '1 minute',@service_id,@service_id);
                 """, ("user_id", userId), ("role_id", roleId), ("user_role_id", userRoleId),
                 ("service_id", CentralPmsServiceIdentityId));
-            await InsertScopeAsync(userRoleId, "SITE", siteId, null);
+            await InsertScopeAsync(userRoleId, "SITE", effectiveSiteId, null);
         }
-        return new Seed(userId, username, firstRoleId!.Value, firstUserRoleId!.Value, siteId, siteGroupId, totpSecret);
+        return new Seed(userId, username, firstRoleId!.Value, firstUserRoleId!.Value, effectiveSiteId, siteGroupId, totpSecret);
     }
 
     private Task InsertScopeAsync(Guid userRoleId, string scopeType, Guid? siteId, Guid? siteGroupId) =>
@@ -594,19 +685,31 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
             ("site_id", (object?)siteId ?? DBNull.Value), ("site_group_id", (object?)siteGroupId ?? DBNull.Value),
             ("service_id", CentralPmsServiceIdentityId));
 
-    private async Task<Guid> SeedAptDeviceAsync(Guid siteId)
+    private async Task<Guid> SeedAptDeviceAsync(Guid siteId, X509Certificate2 certificate)
     {
         var deviceId = Guid.NewGuid();
+        var fingerprint = Convert.ToHexString(certificate.GetCertHash(HashAlgorithmName.SHA256)).ToLowerInvariant();
         await ExecuteAsync("""
             INSERT INTO identity.service_identities (service_identity_id,service_identity_code,service_identity_name,
-                identity_type,identity_status,effective_from,created_by_service_identity_id,updated_by_service_identity_id)
-            VALUES (@device_id,@code,@code,'DEVICE','ACTIVE',now()-interval '1 minute',@service_id,@service_id);
+                identity_type,identity_status,owning_service_name,credential_reference,credential_type,
+                effective_from,last_rotated_at,created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (@device_id,@code,@code,'DEVICE','ACTIVE','ASSISTED_PAYMENT_TERMINAL',@credential_reference,
+                'MTLS_CERTIFICATE_REFERENCE',now()-interval '1 minute',now()-interval '1 minute',@service_id,@service_id);
+            INSERT INTO identity.devices (device_id,device_reference,service_identity_id,device_name,device_type,
+                terminal_identifier,lifecycle_status,credential_version,last_provisioning_status,enrolled_at,effective_from)
+            VALUES (@device_id,@code,@device_id,@code,'ASSISTED_PAYMENT_TERMINAL',@code,
+                'ACTIVE',1,'CONSUMED',now()-interval '1 minute',now()-interval '1 minute');
+            INSERT INTO identity.device_credential_history (device_credential_history_id,device_id,credential_version,
+                credential_type,credential_status,credential_fingerprint,activated_at,correlation_id)
+            VALUES (gen_random_uuid(),@device_id,1,'MTLS_CERTIFICATE_REFERENCE','ACTIVE',@fingerprint,
+                now()-interval '1 minute',gen_random_uuid());
             INSERT INTO sites.device_assignments (device_assignment_id,site_id,service_identity_id,assignment_type,
                 assignment_status,assignment_reason_code,assigned_by_service_identity_id,
                 created_by_service_identity_id,updated_by_service_identity_id)
             VALUES (gen_random_uuid(),@site_id,@device_id,'PAYMENT_DEVICE','ACTIVE','I022_PROOF',
                 @service_id,@service_id,@service_id);
             """, ("device_id", deviceId), ("code", $"I022_APT_{deviceId:N}"[..32]),
+            ("credential_reference", $"device-mtls-sha256:{fingerprint}"), ("fingerprint", fingerprint),
             ("service_id", CentralPmsServiceIdentityId), ("site_id", siteId));
         return deviceId;
     }
