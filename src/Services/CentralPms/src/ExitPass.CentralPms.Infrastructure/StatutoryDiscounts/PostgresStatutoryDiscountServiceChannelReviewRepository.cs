@@ -253,6 +253,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 COALESCE(dpa.detailed_rule_verification_status::text, frozen_policy.detailed_rule_verification_status::text) AS governing_detailed_rule_verification_status,
                 COALESCE(dpa.parking_service_applicability::text, frozen_policy.parking_service_applicability::text) AS governing_parking_service_applicability,
                 COALESCE(dpa.benefit_type::text, frozen_policy.benefit_type::text) AS governing_benefit_type,
+                frozen_policy.discount_percentage_basis_points AS governing_discount_percentage_basis_points,
                 COALESCE(dpa.beneficiary_residency_scope::text, frozen_policy.beneficiary_residency_scope::text) AS governing_beneficiary_residency_scope,
                 COALESCE(dpa.official_source_available, frozen_policy.official_source_available) AS governing_official_source_available,
                 COALESCE(dpa.ordinance_text_available, frozen_policy.ordinance_text_available) AS governing_ordinance_text_available,
@@ -271,8 +272,8 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             LEFT JOIN discounts.statutory_discount_validations AS validation
               ON validation.statutory_discount_validation_id = r.statutory_discount_validation_id
             LEFT JOIN discounts.statutory_discount_policy_versions AS frozen_policy
-              ON dpa.statutory_discount_decision_command_id IS NULL
-             AND frozen_policy.statutory_discount_policy_version_id = COALESCE(
+              ON frozen_policy.statutory_discount_policy_version_id = COALESCE(
+                    dpa.statutory_discount_policy_version_id,
                     r.statutory_discount_policy_version_id,
                     validation.statutory_discount_policy_version_id)
             LEFT JOIN LATERAL (
@@ -1228,7 +1229,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             GetNullableDateTimeOffset(reader, "governing_effective_from"),
             GetNullableDateTimeOffset(reader, "governing_effective_to"),
             requirements,
-            "FROZEN_LOCAL_ORDINANCE_POLICY_AUTHORITY");
+            "FROZEN_LOCAL_ORDINANCE_POLICY_AUTHORITY")
+        {
+            DiscountPercentageBasisPoints = GetNullableInt32(reader, "governing_discount_percentage_basis_points")
+        };
     }
 
     private static IReadOnlyList<StatutoryDiscountServiceChannelReviewEvidenceFact> ReadEvidence(NpgsqlDataReader reader)
@@ -1269,6 +1273,12 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
     {
         var ordinal = reader.GetOrdinal(name);
         return reader.IsDBNull(ordinal) ? null : reader.GetInt64(ordinal);
+    }
+
+    private static int? GetNullableInt32(NpgsqlDataReader reader, string name)
+    {
+        var ordinal = reader.GetOrdinal(name);
+        return reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
     }
 
     private static DateOnly? GetNullableDateOnly(NpgsqlDataReader reader, string name)

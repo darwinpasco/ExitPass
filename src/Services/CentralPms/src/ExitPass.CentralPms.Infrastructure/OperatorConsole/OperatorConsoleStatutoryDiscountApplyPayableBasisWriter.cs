@@ -205,8 +205,9 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                     'policyResolutionBasis', sdv.policy_resolution_basis::text,
                     'succeedingHoursDiscountRule', CASE
                         WHEN dpa.benefit_type = 'FULL_FEE_EXEMPTION'::discounts.parking_benefit_type_enum THEN 'NOT_APPLICABLE'
-                        ELSE 'STANDARD_20_PERCENT'
+                        ELSE 'APPLY_APPROVED_PERCENTAGE'
                     END,
+                    'discountPercentageBasisPoints', pv.discount_percentage_basis_points,
                     'discountBaseScope', COALESCE(pv.discount_base_scope::text, 'VAT_EXCLUSIVE'),
                     'stackingPolicy', 'STATUTORY_FIRST',
                     'legalBasisPriority', COALESCE(dpa.legal_basis_reference, p.local_ordinance_reference, p.national_law_reference, 'LOCKED_SCHEMA'),
@@ -819,7 +820,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 ToMinorUnits(originalSnapshot.GrossAmount),
                 validation.EntitlementType,
                 policy.BenefitType,
-                policy.DiscountBaseScope));
+                policy.DiscountBaseScope,
+                policy.DiscountPercentageBasisPoints));
 
         if (!result.Accepted)
         {
@@ -852,7 +854,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             vatRate = OperatorConsoleStatutoryDiscountComputationContract.VatRate,
             statutoryDiscountRate = IsFullFeeExemption(policy)
                 ? OperatorConsoleStatutoryDiscountComputationContract.FullFeeExemptionRate
-                : OperatorConsoleStatutoryDiscountComputationContract.StatutoryDiscountRate,
+                : policy.DiscountPercentageBasisPoints!.Value / 10_000m,
+            discountPercentageBasisPoints = policy.DiscountPercentageBasisPoints,
             formula = "discounted_vat_exclusive = vat_exclusive - statutory_discount; payable_vat = round(discounted_vat_exclusive * 0.12); final_payable = discounted_vat_exclusive + payable_vat",
             originalAmountMinorUnits = computed.GrossAmountMinorUnits,
             vatExclusiveBasisAmountMinorUnits = computed.VatExclusiveAmountMinorUnits,
@@ -912,6 +915,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             var legalBasisPriority = RequiredString(root, "legalBasisPriority");
             var requiresEvidence = RequiredBoolean(root, "requiresEvidence");
             var policyEffectSupportStatus = OptionalString(root, "policyEffectSupportStatus");
+            var discountPercentageBasisPoints = OptionalInt(root, "discountPercentageBasisPoints");
 
             if (snapshotPolicyId != validation.StatutoryDiscountPolicyId.Value)
             {
@@ -944,6 +948,15 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                     "POLICY_FULL_FEE_EXEMPTION_FACTS_INVALID");
             }
 
+            if (!fullFeeExemption && discountPercentageBasisPoints is not (> 0 and <= 10_000))
+            {
+                return (
+                    false,
+                    null,
+                    "POLICY_DISCOUNT_PERCENTAGE_INVALID",
+                    "POLICY_DISCOUNT_PERCENTAGE_INVALID");
+            }
+
             if (policyEffectSupportStatus is not null &&
                 !string.Equals(policyEffectSupportStatus, "SUPPORTED_BY_CURRENT_CALCULATION", StringComparison.Ordinal))
             {
@@ -972,6 +985,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                     OptionalString(root, "freePeriodApplication"),
                     succeedingHoursDiscountRule,
                     discountBaseScope,
+                    discountPercentageBasisPoints,
                     stackingPolicy,
                     legalBasisPriority,
                     requiresEvidence,
@@ -1207,6 +1221,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         string? FreePeriodApplication,
         string SucceedingHoursDiscountRule,
         string DiscountBaseScope,
+        int? DiscountPercentageBasisPoints,
         string StackingPolicy,
         string LegalBasisPriority,
         bool RequiresEvidence,

@@ -1910,28 +1910,40 @@ function StatutoryDiscountRequestPanel({
           {showSupportReference && <CustomerSupportReference value={decision.correlationId} />}
 
           {getAppliedStatutoryPaymentBasis(decision) && (
-            <dl className="payable-breakdown">
-              <div>
-                <dt>Original parking fee</dt>
-                <dd>{formatCurrencyAmount(decision.originalAmountMinorUnits, decision.currency)}</dd>
-              </div>
-              <div>
-                <dt>Amount before VAT</dt>
-                <dd>{formatCurrencyAmount(decision.vatExclusiveBasisAmountMinorUnits, decision.currency)}</dd>
-              </div>
-              <div>
-                <dt>VAT Amount</dt>
-                <dd>{formatCurrencyAmount(decision.vatAmountMinorUnits, decision.currency)}</dd>
-              </div>
-              <div>
-                <dt>Statutory benefit</dt>
-                <dd>{formatCurrencyAmount(decision.statutoryDiscountAmountMinorUnits, decision.currency)}</dd>
-              </div>
-              <div>
-                <dt>Amount due</dt>
-                <dd>{formatCurrencyAmount(decision.finalPayableAmountMinorUnits, decision.currency)}</dd>
-              </div>
-            </dl>
+            <section aria-label="Parking Fee Calculation">
+              <h3>Parking Fee Calculation</h3>
+              <dl className="payable-breakdown">
+                <div>
+                  <dt>Original parking fee (VAT-inclusive)</dt>
+                  <dd>{formatCurrencyAmount(decision.originalAmountMinorUnits, decision.currency)}</dd>
+                </div>
+                <div>
+                  <dt>Original VAT component (12%)</dt>
+                  <dd>{formatCurrencyAmount(decision.originalVatAmountMinorUnits, decision.currency)}</dd>
+                </div>
+                <div>
+                  <dt>Original VAT-exclusive parking fee</dt>
+                  <dd>{formatCurrencyAmount(decision.vatExclusiveBasisAmountMinorUnits, decision.currency)}</dd>
+                </div>
+                <div>
+                  <dt>{formatLguBenefitLabel(decision.discountPercentageBasisPoints)}</dt>
+                  <dd>{formatAdjustment(decision.statutoryDiscountAmountMinorUnits, decision.currency)}</dd>
+                </div>
+                {decision.ordinanceReference && <div><dt>Ordinance reference</dt><dd>{decision.ordinanceReference}</dd></div>}
+                <div>
+                  <dt>Final VATable sales</dt>
+                  <dd>{formatCurrencyAmount(decision.finalVatableSalesMinorUnits, decision.currency)}</dd>
+                </div>
+                <div>
+                  <dt>Final applicable VAT (12%)</dt>
+                  <dd>{formatCurrencyAmount(decision.finalVatAmountMinorUnits, decision.currency)}</dd>
+                </div>
+                <div>
+                  <dt>Total amount payable</dt>
+                  <dd>{formatCurrencyAmount(decision.finalPayableAmountMinorUnits, decision.currency)}</dd>
+                </div>
+              </dl>
+            </section>
           )}
 
           {zeroPayableCompletion && (
@@ -3638,6 +3650,11 @@ function formatCurrencyAmount(amountMinorUnits?: number | null, currency?: strin
 
   const normalizedCurrency = currency?.trim() || "PHP";
   return `${normalizedCurrency.toUpperCase()} ${formatAmount(amountMinorUnits, normalizedCurrency)}`;
+}
+
+function formatLguBenefitLabel(discountPercentageBasisPoints?: number | null): string {
+  if (discountPercentageBasisPoints == null) return "LGU ordinance benefit";
+  return `LGU ordinance discount (${discountPercentageBasisPoints / 100}%)`;
 }
 
 function formatAdjustment(amountMinorUnits?: number | null, currency?: string | null): string | undefined {

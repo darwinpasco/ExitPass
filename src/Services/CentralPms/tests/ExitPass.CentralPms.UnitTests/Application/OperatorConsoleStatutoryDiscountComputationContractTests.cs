@@ -150,6 +150,29 @@ public sealed class OperatorConsoleStatutoryDiscountComputationContractTests
         result.ErrorCode.Should().Be("POLICY_BENEFIT_TYPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION");
     }
 
+    [Fact]
+    public void Compute_WhenApprovedPolicyUsesFivePercent_AppliesItsActualRate()
+    {
+        var result = OperatorConsoleStatutoryDiscountComputationContract.Compute(
+            Request(11200, "SENIOR_CITIZEN", 500));
+
+        result.Accepted.Should().BeTrue();
+        result.StatutoryDiscountAmountMinorUnits.Should().Be(500);
+        result.FinalPayableAmountMinorUnits.Should().Be(10640);
+        result.StatutoryDiscountRate.Should().Be(0.05m);
+        result.DiscountPercentageBasisPoints.Should().Be(500);
+    }
+
+    [Fact]
+    public void Compute_WhenPercentagePolicyHasNoApprovedRate_FailsClosed()
+    {
+        var result = OperatorConsoleStatutoryDiscountComputationContract.Compute(
+            Request(11200, "PWD", discountPercentageBasisPoints: null));
+
+        result.Accepted.Should().BeFalse();
+        result.ErrorCode.Should().Be("POLICY_DISCOUNT_PERCENTAGE_INVALID");
+    }
+
     /// <summary>
     /// Proves unsupported discount base scopes fail closed instead of mixing gross/net statutory rules.
     /// </summary>
@@ -197,12 +220,14 @@ public sealed class OperatorConsoleStatutoryDiscountComputationContractTests
 
     private static OperatorConsoleStatutoryDiscountComputationRequest Request(
         long grossAmountMinorUnits,
-        string entitlementType) =>
+        string entitlementType,
+        int? discountPercentageBasisPoints = 2000) =>
         new(
             grossAmountMinorUnits,
             entitlementType,
             OperatorConsoleStatutoryDiscountComputationContract.SupportedBenefitType,
-            OperatorConsoleStatutoryDiscountComputationContract.SupportedDiscountBaseScope);
+            OperatorConsoleStatutoryDiscountComputationContract.SupportedDiscountBaseScope,
+            discountPercentageBasisPoints);
 
     private static OperatorConsoleStatutoryDiscountComputationRequest FullFeeRequest(
         long grossAmountMinorUnits,
@@ -234,6 +259,7 @@ public sealed class OperatorConsoleStatutoryDiscountComputationContractTests
         result.DiscountBaseScope.Should().Be(OperatorConsoleStatutoryDiscountComputationContract.SupportedDiscountBaseScope);
         result.VatRate.Should().Be(0.12m);
         result.StatutoryDiscountRate.Should().Be(0.20m);
+        result.DiscountPercentageBasisPoints.Should().Be(2000);
         result.RoundingMode.Should().Be("HALF_AWAY_FROM_ZERO");
     }
 }

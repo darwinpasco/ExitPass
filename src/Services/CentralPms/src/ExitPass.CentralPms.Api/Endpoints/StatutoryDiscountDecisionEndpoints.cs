@@ -485,7 +485,13 @@ public static class StatutoryDiscountDecisionEndpoints
                     result.ExitAuthorization.PaymentConfirmationId,
                     result.ExitAuthorization.AuthorizationStatus,
                     result.ExitAuthorization.IssuedAt,
-                    result.ExitAuthorization.ExpirationTimestamp));
+                    result.ExitAuthorization.ExpirationTimestamp),
+            result.OriginalVatAmountMinorUnits,
+            result.FinalVatableSalesMinorUnits,
+            result.FinalVatAmountMinorUnits,
+            result.DiscountPercentageBasisPoints,
+            result.BenefitType,
+            result.OrdinanceReference);
 
     private static StatutoryDiscountParkingAvailabilityResponse ToAvailabilityResponse(
         StatutoryDiscountParkingAvailabilityResult result) =>

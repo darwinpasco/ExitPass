@@ -398,6 +398,12 @@ function statutoryDecisionResponse(overrides?: Record<string, unknown>) {
     originalAmountMinorUnits: null,
     vatExclusiveBasisAmountMinorUnits: null,
     vatAmountMinorUnits: null,
+    originalVatAmountMinorUnits: null,
+    finalVatableSalesMinorUnits: null,
+    finalVatAmountMinorUnits: null,
+    discountPercentageBasisPoints: null,
+    benefitType: null,
+    ordinanceReference: null,
     vatTreatment: null,
     statutoryDiscountAmountMinorUnits: null,
     finalPayableAmountMinorUnits: null,
@@ -429,10 +435,16 @@ function zeroPayableStatutoryDecisionResponse() {
     payableBasisReadinessAction: null,
     appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
     originalAmountMinorUnits: 10000,
-    vatExclusiveBasisAmountMinorUnits: 0,
-    vatAmountMinorUnits: 0,
-    vatTreatment: "VAT_EXEMPT",
-    statutoryDiscountAmountMinorUnits: 10000,
+    vatExclusiveBasisAmountMinorUnits: 8929,
+    vatAmountMinorUnits: 1071,
+    originalVatAmountMinorUnits: 1071,
+    finalVatableSalesMinorUnits: 0,
+    finalVatAmountMinorUnits: 0,
+    discountPercentageBasisPoints: null,
+    benefitType: "FULL_FEE_EXEMPTION",
+    ordinanceReference: "City Ordinance No. 48",
+    vatTreatment: "VAT_INCLUSIVE_NO_EXEMPTION",
+    statutoryDiscountAmountMinorUnits: 8929,
     finalPayableAmountMinorUnits: 0,
     currency: "PHP",
     zeroPayableStatutoryFinality: { finalityState: "ZERO_PAYABLE_STATUTORY_FINALITY" },
@@ -1499,8 +1511,8 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
 
     expect(await screen.findByRole("heading", { name: /full parking discount applied/i })).toBeInTheDocument();
-    expect(screen.getAllByText("Statutory benefit").some((label) => label.parentElement?.textContent?.includes("PHP 100.00"))).toBe(true);
-    expect(screen.getAllByText("Amount due").some((label) => label.parentElement?.textContent?.includes("PHP 0.00"))).toBe(true);
+    expect(screen.getAllByText("LGU ordinance benefit").some((label) => label.parentElement?.textContent?.includes("-PHP 89.29"))).toBe(true);
+    expect(screen.getAllByText("Total amount payable").some((label) => label.parentElement?.textContent?.includes("PHP 0.00"))).toBe(true);
     expect(screen.queryByRole("heading", { name: /payment method/i })).not.toBeInTheDocument();
     expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
     expect(routeCalls(fetchMock, "/apply-payable-basis")).toHaveLength(0);
@@ -1982,12 +1994,18 @@ describe("ExitPass WebPay UI", () => {
         payableBasisReadinessStatus: "READY",
         payableBasisReadinessAction: null,
         appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
-        originalAmountMinorUnits: 12500,
-        vatExclusiveBasisAmountMinorUnits: 8929,
-        vatAmountMinorUnits: 1071,
-        vatTreatment: "VAT_EXEMPT_WITH_DISCOUNT",
-        statutoryDiscountAmountMinorUnits: 2500,
-        finalPayableAmountMinorUnits: 10000,
+        originalAmountMinorUnits: 11200,
+        vatExclusiveBasisAmountMinorUnits: 10000,
+        vatAmountMinorUnits: 1200,
+        originalVatAmountMinorUnits: 1200,
+        finalVatableSalesMinorUnits: 8000,
+        finalVatAmountMinorUnits: 960,
+        discountPercentageBasisPoints: 2000,
+        benefitType: "STATUTORY_DISCOUNT_VAT_EXEMPT",
+        ordinanceReference: "Approved LGU Ordinance",
+        vatTreatment: "VAT_INCLUSIVE_NO_EXEMPTION",
+        statutoryDiscountAmountMinorUnits: 2000,
+        finalPayableAmountMinorUnits: 8960,
         currency: "PHP"
       })
     });
@@ -1997,10 +2015,15 @@ describe("ExitPass WebPay UI", () => {
     await submitBasicStatutoryRequest();
 
     expect(await screen.findByRole("heading", { name: /statutory discount applied/i })).toBeInTheDocument();
-    expect(screen.getByText("PHP 89.29")).toBeInTheDocument();
-    expect(screen.getByText("PHP 10.71")).toBeInTheDocument();
-    expect(screen.getAllByText("PHP 25.00").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("PHP 100.00").length).toBeGreaterThan(0);
+    const calculation = screen.getByRole("region", { name: "Parking Fee Calculation" });
+    expect(calculation).toHaveTextContent("Original parking fee (VAT-inclusive)PHP 112.00");
+    expect(calculation).toHaveTextContent("Original VAT component (12%)PHP 12.00");
+    expect(calculation).toHaveTextContent("Original VAT-exclusive parking feePHP 100.00");
+    expect(calculation).toHaveTextContent("LGU ordinance discount (20%)-PHP 20.00");
+    expect(calculation).toHaveTextContent("Ordinance referenceApproved LGU Ordinance");
+    expect(calculation).toHaveTextContent("Final VATable salesPHP 80.00");
+    expect(calculation).toHaveTextContent("Final applicable VAT (12%)PHP 9.60");
+    expect(calculation).toHaveTextContent("Total amount payablePHP 89.60");
     expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
     expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(0);
   });
@@ -2026,10 +2049,16 @@ describe("ExitPass WebPay UI", () => {
         payableBasisReadinessAction: null,
         appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
         originalAmountMinorUnits: 10000,
-        vatExclusiveBasisAmountMinorUnits: 0,
-        vatAmountMinorUnits: 0,
-        vatTreatment: "VAT_EXEMPT",
-        statutoryDiscountAmountMinorUnits: 10000,
+        vatExclusiveBasisAmountMinorUnits: 8929,
+        vatAmountMinorUnits: 1071,
+        originalVatAmountMinorUnits: 1071,
+        finalVatableSalesMinorUnits: 0,
+        finalVatAmountMinorUnits: 0,
+        discountPercentageBasisPoints: null,
+        benefitType: "FULL_FEE_EXEMPTION",
+        ordinanceReference: "City Ordinance No. 48",
+        vatTreatment: "VAT_INCLUSIVE_NO_EXEMPTION",
+        statutoryDiscountAmountMinorUnits: 8929,
         finalPayableAmountMinorUnits: 0,
         currency: "PHP",
         zeroPayableStatutoryFinality: {
@@ -2060,8 +2089,8 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.queryByRole("button", { name: /continue to payment/i })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /customer information/i, level: 2 })).toBeInTheDocument();
     expect(screen.getByLabelText(/customer name/i)).toHaveAttribute("readonly");
-    expect(screen.getAllByText("Statutory benefit").some((label) => label.parentElement?.textContent?.includes("PHP 100.00"))).toBe(true);
-    expect(screen.getAllByText("Amount due").some((label) => label.parentElement?.textContent?.includes("PHP 0.00"))).toBe(true);
+    expect(screen.getAllByText("LGU ordinance benefit").some((label) => label.parentElement?.textContent?.includes("-PHP 89.29"))).toBe(true);
+    expect(screen.getAllByText("Total amount payable").some((label) => label.parentElement?.textContent?.includes("PHP 0.00"))).toBe(true);
     expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
     expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/apply-payable-basis"))).toHaveLength(0);
   });
@@ -2168,12 +2197,18 @@ describe("ExitPass WebPay UI", () => {
         payableBasisReadinessStatus: "READY",
         payableBasisReadinessAction: null,
         appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
-        originalAmountMinorUnits: 12500,
-        vatExclusiveBasisAmountMinorUnits: 8929,
-        vatAmountMinorUnits: 1071,
-        vatTreatment: "VAT_EXEMPT_WITH_DISCOUNT",
-        statutoryDiscountAmountMinorUnits: 2500,
-        finalPayableAmountMinorUnits: 10000,
+        originalAmountMinorUnits: 11200,
+        vatExclusiveBasisAmountMinorUnits: 10000,
+        vatAmountMinorUnits: 1200,
+        originalVatAmountMinorUnits: 1200,
+        finalVatableSalesMinorUnits: 8000,
+        finalVatAmountMinorUnits: 960,
+        discountPercentageBasisPoints: 2000,
+        benefitType: "STATUTORY_DISCOUNT_VAT_EXEMPT",
+        ordinanceReference: "Synthetic approved policy",
+        vatTreatment: "VAT_INCLUSIVE_NO_EXEMPTION",
+        statutoryDiscountAmountMinorUnits: 2000,
+        finalPayableAmountMinorUnits: 8960,
         currency: "PHP"
       })
     });
@@ -2183,11 +2218,14 @@ describe("ExitPass WebPay UI", () => {
     await submitBasicStatutoryRequest();
 
     expect(await screen.findByRole("heading", { name: /statutory discount applied/i })).toBeInTheDocument();
-    expect(screen.getAllByText("PHP 125.00").length).toBeGreaterThan(0);
-    expect(screen.getByText("PHP 89.29")).toBeInTheDocument();
-    expect(screen.getByText("PHP 10.71")).toBeInTheDocument();
-    expect(screen.getAllByText("PHP 25.00").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("PHP 100.00").length).toBeGreaterThan(0);
+    const calculation = screen.getByRole("region", { name: "Parking Fee Calculation" });
+    expect(calculation).toHaveTextContent("Original parking fee (VAT-inclusive)PHP 112.00");
+    expect(calculation).toHaveTextContent("Original VAT component (12%)PHP 12.00");
+    expect(calculation).toHaveTextContent("Original VAT-exclusive parking feePHP 100.00");
+    expect(calculation).toHaveTextContent("LGU ordinance discount (20%)-PHP 20.00");
+    expect(calculation).toHaveTextContent("Final VATable salesPHP 80.00");
+    expect(calculation).toHaveTextContent("Final applicable VAT (12%)PHP 9.60");
+    expect(calculation).toHaveTextContent("Total amount payablePHP 89.60");
     expect(screen.queryByText("VAT Treatment")).not.toBeInTheDocument();
     expect(screen.queryByText("VAT_EXEMPT_WITH_DISCOUNT")).not.toBeInTheDocument();
     expect(screen.getAllByText(/approved statutory discount is included in the amount due/i).length).toBeGreaterThan(0);
@@ -2294,7 +2332,7 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: /full parking discount applied/i })).toBeInTheDocument();
-    expect(screen.getAllByText("Amount due").some((label) => label.parentElement?.textContent?.includes("PHP 0.00"))).toBe(true);
+    expect(screen.getAllByText("Total amount payable").some((label) => label.parentElement?.textContent?.includes("PHP 0.00"))).toBe(true);
     expect(screen.queryByRole("button", { name: /refresh status/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /apply approved discount/i })).not.toBeInTheDocument();
     expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);

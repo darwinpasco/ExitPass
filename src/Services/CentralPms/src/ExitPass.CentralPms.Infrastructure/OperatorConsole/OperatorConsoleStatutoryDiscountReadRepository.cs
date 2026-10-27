@@ -183,37 +183,54 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 sdv.decision_reason_code,
                 sdv.failure_reason_code,
                 sdv.policy_resolution_basis::text,
-                COALESCE(sdv.applied_policy_reference_id, sdv.evaluated_policy_reference_id, sdv.fallback_policy_reference_id) AS statutory_discount_policy_id,
-                NULL::uuid AS resolved_jurisdiction_id,
-                p.policy_code,
-                p.policy_name,
-                COALESCE(p.local_ordinance_reference, p.national_law_reference) AS legal_basis_reference,
-                p.local_ordinance_reference AS ordinance_reference,
+                COALESCE(
+                    dpa.statutory_discount_policy_version_id,
+                    sdv.statutory_discount_policy_version_id,
+                    sdv.applied_policy_reference_id,
+                    sdv.evaluated_policy_reference_id,
+                    sdv.fallback_policy_reference_id) AS statutory_discount_policy_id,
+                COALESCE(dpa.jurisdiction_id, frozen_policy.jurisdiction_id) AS resolved_jurisdiction_id,
+                COALESCE(dpa.policy_code, frozen_policy.policy_code, p.policy_code) AS policy_code,
+                COALESCE(dpa.ordinance_title, frozen_policy.ordinance_title, frozen_policy.policy_version_label, p.policy_name) AS policy_name,
+                COALESCE(dpa.legal_basis_reference, frozen_policy.legal_basis_reference, p.local_ordinance_reference, p.national_law_reference) AS legal_basis_reference,
+                COALESCE(dpa.ordinance_number, frozen_policy.ordinance_number, p.local_ordinance_reference) AS ordinance_reference,
                 p.national_law_reference,
-                p.policy_status::text AS verification_status,
-                'STATUTORY_DISCOUNT_VAT_EXEMPT' AS benefit_type,
-                NULL::integer AS free_duration_minutes,
-                'APPLY_NATIONAL_STATUTORY_DISCOUNT' AS succeeding_hours_discount_rule,
-                'VAT_EXCLUSIVE' AS discount_base_scope,
+                COALESCE(dpa.source_verification_status::text, frozen_policy.source_verification_status::text, p.policy_status::text) AS verification_status,
+                COALESCE(dpa.benefit_type::text, frozen_policy.benefit_type::text, 'STATUTORY_DISCOUNT_VAT_EXEMPT') AS benefit_type,
+                frozen_policy.free_duration_minutes,
+                CASE
+                    WHEN COALESCE(dpa.benefit_type::text, frozen_policy.benefit_type::text) = 'FULL_FEE_EXEMPTION' THEN 'NOT_APPLICABLE'
+                    ELSE 'APPLY_APPROVED_PERCENTAGE'
+                END AS succeeding_hours_discount_rule,
+                COALESCE(frozen_policy.discount_base_scope::text, 'VAT_EXCLUSIVE') AS discount_base_scope,
                 'STATUTORY_FIRST' AS stacking_policy,
                 jsonb_build_object(
-                    'statutoryDiscountPolicyId', COALESCE(sdv.applied_policy_reference_id, sdv.evaluated_policy_reference_id, sdv.fallback_policy_reference_id),
-                    'policyCode', p.policy_code,
-                    'policyName', p.policy_name,
+                    'statutoryDiscountPolicyId', COALESCE(
+                        dpa.statutory_discount_policy_version_id,
+                        sdv.statutory_discount_policy_version_id,
+                        sdv.applied_policy_reference_id,
+                        sdv.evaluated_policy_reference_id,
+                        sdv.fallback_policy_reference_id),
+                    'policyCode', COALESCE(dpa.policy_code, frozen_policy.policy_code, p.policy_code),
+                    'policyName', COALESCE(dpa.ordinance_title, frozen_policy.ordinance_title, frozen_policy.policy_version_label, p.policy_name),
                     'entitlementType', sdv.entitlement_type::text,
                     'policyResolutionBasis', sdv.policy_resolution_basis::text,
-                    'policyLevel', p.policy_level::text,
-                    'policyType', p.policy_type::text,
-                    'legalBasisReference', COALESCE(p.local_ordinance_reference, p.national_law_reference),
-                    'ordinanceReference', p.local_ordinance_reference,
+                    'policyLevel', COALESCE(frozen_policy.policy_level::text, p.policy_level::text),
+                    'policyType', COALESCE(frozen_policy.policy_type::text, p.policy_type::text),
+                    'legalBasisReference', COALESCE(dpa.legal_basis_reference, frozen_policy.legal_basis_reference, p.local_ordinance_reference, p.national_law_reference),
+                    'ordinanceReference', COALESCE(dpa.ordinance_number, frozen_policy.ordinance_number, p.local_ordinance_reference),
                     'nationalLawReference', p.national_law_reference,
-                    'verificationStatus', p.policy_status::text,
-                    'benefitType', 'STATUTORY_DISCOUNT_VAT_EXEMPT',
-                    'freeDurationMinutes', NULL,
-                    'succeedingHoursDiscountRule', 'APPLY_NATIONAL_STATUTORY_DISCOUNT',
-                    'discountBaseScope', 'VAT_EXCLUSIVE',
+                    'verificationStatus', COALESCE(dpa.source_verification_status::text, frozen_policy.source_verification_status::text, p.policy_status::text),
+                    'benefitType', COALESCE(dpa.benefit_type::text, frozen_policy.benefit_type::text, 'STATUTORY_DISCOUNT_VAT_EXEMPT'),
+                    'freeDurationMinutes', frozen_policy.free_duration_minutes,
+                    'succeedingHoursDiscountRule', CASE
+                        WHEN COALESCE(dpa.benefit_type::text, frozen_policy.benefit_type::text) = 'FULL_FEE_EXEMPTION' THEN 'NOT_APPLICABLE'
+                        ELSE 'APPLY_APPROVED_PERCENTAGE'
+                    END,
+                    'discountPercentageBasisPoints', frozen_policy.discount_percentage_basis_points,
+                    'discountBaseScope', COALESCE(frozen_policy.discount_base_scope::text, 'VAT_EXCLUSIVE'),
                     'stackingPolicy', 'STATUTORY_FIRST',
-                    'requiresEvidence', p.requires_evidence_capture
+                    'requiresEvidence', sdv.evidence_required
                 )::text AS resolved_policy_snapshot_json,
                 COALESCE(latest_application.original_tariff_snapshot_id, sdv.tariff_snapshot_id, active_tariff.tariff_snapshot_id) AS original_tariff_snapshot_id,
                 latest_application.payable_basis_application_id,
@@ -240,11 +257,6 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
               ON s.site_id = ps.site_id
             LEFT JOIN identity.users AS requester
               ON requester.user_id = sdv.requested_by_user_id
-            LEFT JOIN discounts.discount_policy_references AS p
-              ON p.discount_policy_reference_id = COALESCE(
-                    sdv.applied_policy_reference_id,
-                    sdv.evaluated_policy_reference_id,
-                    sdv.fallback_policy_reference_id)
             LEFT JOIN LATERAL (
                 SELECT statutory_discount_decision_command_id
                 FROM discounts.statutory_discount_decision_commands
@@ -253,6 +265,17 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 ORDER BY completed_at DESC NULLS LAST, created_at DESC, statutory_discount_decision_command_id DESC
                 LIMIT 1
             ) AS decision_command ON TRUE
+            LEFT JOIN discounts.statutory_discount_decision_policy_authorities AS dpa
+              ON dpa.statutory_discount_decision_command_id = decision_command.statutory_discount_decision_command_id
+            LEFT JOIN discounts.statutory_discount_policy_versions AS frozen_policy
+              ON frozen_policy.statutory_discount_policy_version_id = COALESCE(
+                    dpa.statutory_discount_policy_version_id,
+                    sdv.statutory_discount_policy_version_id)
+            LEFT JOIN discounts.discount_policy_references AS p
+              ON p.discount_policy_reference_id = COALESCE(
+                    sdv.applied_policy_reference_id,
+                    sdv.evaluated_policy_reference_id,
+                    sdv.fallback_policy_reference_id)
             LEFT JOIN LATERAL (
                 SELECT tariff_snapshot_id, gross_amount, net_amount, currency_code
                 FROM core.tariff_snapshots

@@ -257,4 +257,10 @@ public sealed record StatutoryDiscountDecisionResponse(
     CompletionAuthorityResponse? CompletionAuthority = null,
     ExitAuthorizationEligibilityResponse? ExitAuthorizationEligibility = null,
     ZeroPayableStatutoryFiscalCompletionResponse? ZeroPayableFiscalCompletion = null,
-    StatutoryExitAuthorizationResponse? ExitAuthorization = null);
+    StatutoryExitAuthorizationResponse? ExitAuthorization = null,
+    long? OriginalVatAmountMinorUnits = null,
+    long? FinalVatableSalesMinorUnits = null,
+    long? FinalVatAmountMinorUnits = null,
+    int? DiscountPercentageBasisPoints = null,
+    string? BenefitType = null,
+    string? OrdinanceReference = null);
