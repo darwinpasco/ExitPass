@@ -294,7 +294,13 @@ public sealed record StatutoryDiscountDecisionResult(
     CompletionAuthority? CompletionAuthority = null,
     ExitAuthorizationEligibility? ExitAuthorizationEligibility = null,
     ZeroPayableStatutoryFiscalIssuanceResult? ZeroPayableFiscalCompletion = null,
-    IssueExitAuthorizationResult? ExitAuthorization = null);
+    IssueExitAuthorizationResult? ExitAuthorization = null,
+    long? OriginalVatAmountMinorUnits = null,
+    long? FinalVatableSalesMinorUnits = null,
+    long? FinalVatAmountMinorUnits = null,
+    int? DiscountPercentageBasisPoints = null,
+    string? BenefitType = null,
+    string? OrdinanceReference = null);
 
 /// <summary>
 /// Controlled rejection from the shared statutory-discount facade.
@@ -409,6 +415,12 @@ internal static class StatutoryDiscountDecisionMappings
         var finalPayableAmountMinorUnits =
             application?.ApprovedFinalPayableAmountMinorUnits ?? decision.NetPayableAmountMinorUnits;
         var currency = application?.Currency ?? decision.Currency;
+        var finalTaxFacts = ResolveFinalTaxFacts(
+            decision.GrossAmountMinorUnits,
+            vatExclusiveBasisAmountMinorUnits,
+            vatAmountMinorUnits,
+            discountAmountMinorUnits,
+            finalPayableAmountMinorUnits);
         var decisionStatus = decision.DecisionResultStatus switch
         {
             StatutoryDiscountDecisionV2ResultStates.Approved when applicationApplied => "APPLIED_PAYABLE_BASIS",
@@ -480,7 +492,10 @@ internal static class StatutoryDiscountDecisionMappings
             PayableBasisReady: ResolvePayableBasisReady(decision, application, applicationRequested, finalPayableAmountMinorUnits, currency),
             PayableBasisReadinessStatus:
                 ResolvePayableBasisReadinessStatus(decision, application, applicationRequested, finalPayableAmountMinorUnits, currency),
-            PayableBasisReadinessAction: ResolvePayableBasisReadinessAction(decision, application, applicationRequested));
+            PayableBasisReadinessAction: ResolvePayableBasisReadinessAction(decision, application, applicationRequested),
+            OriginalVatAmountMinorUnits: finalTaxFacts.OriginalVatAmountMinorUnits,
+            FinalVatableSalesMinorUnits: finalTaxFacts.FinalVatableSalesMinorUnits,
+            FinalVatAmountMinorUnits: finalTaxFacts.FinalVatAmountMinorUnits);
     }
 
     public static StatutoryDiscountDecisionResult WithChannelSafeReviewFacts(
@@ -505,8 +520,19 @@ internal static class StatutoryDiscountDecisionMappings
             StatutoryDiscountAmountMinorUnits =
                 result.StatutoryDiscountAmountMinorUnits ?? review.StatutoryDiscountAmountMinorUnits,
             NetPayableAmountMinorUnits = result.NetPayableAmountMinorUnits ?? review.FinalPayableAmountMinorUnits,
-            Currency = result.Currency ?? review.Currency
+            Currency = result.Currency ?? review.Currency,
+            DiscountPercentageBasisPoints =
+                result.DiscountPercentageBasisPoints ?? review.GoverningPolicy?.DiscountPercentageBasisPoints,
+            BenefitType = result.BenefitType ?? review.GoverningPolicy?.BenefitType,
+            OrdinanceReference = result.OrdinanceReference ?? review.GoverningPolicy?.OrdinanceNumber
         };
+
+        var finalTaxFacts = ResolveFinalTaxFacts(
+            enriched.GrossAmountMinorUnits,
+            enriched.VatExclusiveBasisAmountMinorUnits,
+            enriched.VatAmountMinorUnits,
+            enriched.StatutoryDiscountAmountMinorUnits,
+            enriched.NetPayableAmountMinorUnits);
 
         return enriched with
         {
@@ -514,7 +540,10 @@ internal static class StatutoryDiscountDecisionMappings
                 ResolveVatTreatment(enriched.VatExclusiveBasisAmountMinorUnits, enriched.VatAmountMinorUnits),
             PayableBasisReady = ResolvePayableBasisReady(enriched),
             PayableBasisReadinessStatus = ResolvePayableBasisReadinessStatus(enriched),
-            PayableBasisReadinessAction = ResolvePayableBasisReadinessAction(enriched)
+            PayableBasisReadinessAction = ResolvePayableBasisReadinessAction(enriched),
+            OriginalVatAmountMinorUnits = finalTaxFacts.OriginalVatAmountMinorUnits,
+            FinalVatableSalesMinorUnits = finalTaxFacts.FinalVatableSalesMinorUnits,
+            FinalVatAmountMinorUnits = finalTaxFacts.FinalVatAmountMinorUnits
         };
     }
 
@@ -688,6 +717,48 @@ internal static class StatutoryDiscountDecisionMappings
         vatExclusiveBasisAmountMinorUnits.HasValue || vatAmountMinorUnits.HasValue
             ? ParkingVatInclusiveFiscalTreatment.VatTreatment
             : null;
+
+    private static (
+        long? OriginalVatAmountMinorUnits,
+        long? FinalVatableSalesMinorUnits,
+        long? FinalVatAmountMinorUnits) ResolveFinalTaxFacts(
+        long? originalAmountMinorUnits,
+        long? vatExclusiveBasisAmountMinorUnits,
+        long? originalVatAmountMinorUnits,
+        long? statutoryDiscountAmountMinorUnits,
+        long? finalPayableAmountMinorUnits)
+    {
+        if (!originalAmountMinorUnits.HasValue ||
+            !vatExclusiveBasisAmountMinorUnits.HasValue ||
+            !statutoryDiscountAmountMinorUnits.HasValue ||
+            !finalPayableAmountMinorUnits.HasValue)
+        {
+            return (null, null, null);
+        }
+
+        try
+        {
+            var facts = ParkingVatInclusiveFiscalTreatment.Calculate(
+                originalAmountMinorUnits.Value,
+                vatExclusiveBasisAmountMinorUnits.Value,
+                statutoryDiscountAmountMinorUnits.Value,
+                finalPayableAmountMinorUnits.Value);
+            if (originalVatAmountMinorUnits.HasValue &&
+                originalVatAmountMinorUnits.Value != facts.OriginalVatAmountMinorUnits)
+            {
+                return (null, null, null);
+            }
+
+            return (
+                facts.OriginalVatAmountMinorUnits,
+                facts.TaxableAmountMinorUnits,
+                facts.VatAmountMinorUnits);
+        }
+        catch (InvalidOperationException)
+        {
+            return (null, null, null);
+        }
+    }
 
     private static bool ResolvePayableBasisReady(
         StatutoryDiscountDecisionV2Record decision,

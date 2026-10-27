@@ -184,7 +184,10 @@ public sealed record StatutoryDiscountServiceChannelReviewPolicyAuthority(
     DateTimeOffset? EffectiveFrom,
     DateTimeOffset? EffectiveTo,
     IReadOnlyList<StatutoryDiscountPolicyEvidenceRequirement> RequiredEvidenceTypes,
-    string LegalApprovabilityReason);
+    string LegalApprovabilityReason)
+{
+    public int? DiscountPercentageBasisPoints { get; init; }
+}
 
 /// <summary>
 /// Durable statutory validation linkage created from a reviewed service-channel decision.

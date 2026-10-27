@@ -160,7 +160,8 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         string scenarioName,
         string benefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT",
         string discountBaseScope = "VAT_EXCLUSIVE",
-        bool fullFeeExempt = false)
+        bool fullFeeExempt = false,
+        int? discountPercentageBasisPoints = 2_000)
     {
         await EnsureSchemaAsync();
         var context = PaymentTestContext.Create(scenarioName);
@@ -169,7 +170,8 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
             context,
             benefitType: benefitType,
             discountBaseScope: discountBaseScope,
-            fullFeeExempt: fullFeeExempt);
+            fullFeeExempt: fullFeeExempt,
+            discountPercentageBasisPoints: fullFeeExempt ? null : discountPercentageBasisPoints);
         await SeedReviewerUserAsync(context, context.RequestedByUserId);
         return context;
     }
@@ -813,6 +815,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         string benefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT",
         string discountBaseScope = "VAT_EXCLUSIVE",
         bool fullFeeExempt = false,
+        int? discountPercentageBasisPoints = 2_000,
         DateTimeOffset? effectiveFrom = null)
     {
         var jurisdictionId = StableGuid(context.ParkingSessionId, "jurisdiction");
@@ -960,11 +963,14 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
                 ordinance_text_available,
                 ordinance_number_available,
                 ordinance_title_available,
+                ordinance_number,
+                ordinance_title,
                 legal_basis_reference,
                 source_type,
                 source_reference,
                 safe_channel_summary,
                 safe_reviewer_guidance,
+                discount_percentage_basis_points,
                 full_fee_exempt,
                 transaction_use_effective_from,
                 precedence_rank,
@@ -1000,13 +1006,16 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
                 true,
                 false,
                 false,
-                false,
-                false,
+                true,
+                true,
+                'CANONICAL-TEST-ORDINANCE',
+                'Canonical Test Parking Discount Ordinance',
                 'CANONICAL_TEST_LOCAL_ORDINANCE',
                 'CONTROLLED_OFFLINE_AUTHORITY'::discounts.policy_source_type_enum,
                 @source_reference,
                 'Canonical test statutory parking policy.',
                 'Review under frozen canonical test policy authority.',
+                @discount_percentage_basis_points,
                 @full_fee_exempt,
                 @effective_from,
                 100,
@@ -1050,6 +1059,10 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         command.Parameters.AddWithValue("evidence_type", evidenceType);
         command.Parameters.AddWithValue("benefit_type", benefitType);
         command.Parameters.AddWithValue("discount_base_scope", discountBaseScope);
+        command.Parameters.Add("discount_percentage_basis_points", NpgsqlDbType.Integer).Value =
+            !fullFeeExempt && discountPercentageBasisPoints.HasValue
+                ? discountPercentageBasisPoints.Value
+                : DBNull.Value;
         command.Parameters.Add("full_fee_exempt", NpgsqlDbType.Boolean).Value = fullFeeExempt;
         command.Parameters.Add("effective_from", NpgsqlDbType.TimestampTz).Value =
             effectiveFrom ?? DateTimeOffset.UtcNow.AddDays(-1);

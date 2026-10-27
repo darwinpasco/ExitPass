@@ -8,7 +8,6 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 public static class OperatorConsoleStatutoryDiscountComputationContract
 {
     public const decimal VatRate = 0.12m;
-    public const decimal StatutoryDiscountRate = 0.20m;
     public const string SupportedBenefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT";
     public const string SupportedDiscountBaseScope = "VAT_EXCLUSIVE";
     public const decimal FullFeeExemptionRate = 1m;
@@ -44,6 +43,12 @@ public static class OperatorConsoleStatutoryDiscountComputationContract
             return Rejected(request, "POLICY_BENEFIT_TYPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION");
         }
 
+        if (!fullFeeExemption &&
+            request.DiscountPercentageBasisPoints is not (> 0 and <= 10_000))
+        {
+            return Rejected(request, "POLICY_DISCOUNT_PERCENTAGE_INVALID");
+        }
+
         var expectedDiscountBaseScope = fullFeeExemption
             ? FullFeeExemptionDiscountBaseScope
             : SupportedDiscountBaseScope;
@@ -60,7 +65,9 @@ public static class OperatorConsoleStatutoryDiscountComputationContract
         // immutable payable-basis audit record. Fiscal issuance separately derives the VAT
         // due on the discounted parking consideration.
         var originalVatMinorUnits = request.GrossAmountMinorUnits - vatExclusiveMinorUnits;
-        var appliedDiscountRate = fullFeeExemption ? FullFeeExemptionRate : StatutoryDiscountRate;
+        var appliedDiscountRate = fullFeeExemption
+            ? FullFeeExemptionRate
+            : request.DiscountPercentageBasisPoints!.Value / 10_000m;
         var statutoryDiscountMinorUnits = fullFeeExemption
             ? vatExclusiveMinorUnits
             : decimal.ToInt64(decimal.Round(
@@ -86,6 +93,7 @@ public static class OperatorConsoleStatutoryDiscountComputationContract
             request.DiscountBaseScope,
             VatRate,
             appliedDiscountRate,
+            fullFeeExemption ? null : request.DiscountPercentageBasisPoints,
             RoundingMode,
             ErrorCode: null);
     }
@@ -108,7 +116,10 @@ public static class OperatorConsoleStatutoryDiscountComputationContract
             request.BenefitType,
             request.DiscountBaseScope,
             VatRate,
-            StatutoryDiscountRate,
+            request.DiscountPercentageBasisPoints is > 0 and <= 10_000
+                ? request.DiscountPercentageBasisPoints.Value / 10_000m
+                : 0m,
+            request.DiscountPercentageBasisPoints,
             RoundingMode,
             errorCode);
 }
@@ -120,7 +131,8 @@ public sealed record OperatorConsoleStatutoryDiscountComputationRequest(
     long GrossAmountMinorUnits,
     string EntitlementType,
     string BenefitType,
-    string DiscountBaseScope);
+    string DiscountBaseScope,
+    int? DiscountPercentageBasisPoints = null);
 
 /// <summary>
 /// Safe result of statutory discount payable-basis computation.
@@ -137,5 +149,6 @@ public sealed record OperatorConsoleStatutoryDiscountComputationResult(
     string DiscountBaseScope,
     decimal VatRate,
     decimal StatutoryDiscountRate,
+    int? DiscountPercentageBasisPoints,
     string RoundingMode,
     string? ErrorCode);

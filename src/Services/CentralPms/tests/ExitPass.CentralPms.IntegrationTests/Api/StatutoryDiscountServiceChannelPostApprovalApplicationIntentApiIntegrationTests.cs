@@ -179,7 +179,13 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             application.StatutoryDiscountAmountMinorUnits.Should().BeGreaterThan(0);
             application.FinalPayableAmountMinorUnits().Should().BeGreaterThan(0);
             application.Currency.Should().Be("PHP");
-            application.VatTreatment.Should().Be("VAT_EXCLUSIVE");
+            application.VatTreatment.Should().Be(ParkingVatInclusiveFiscalTreatment.VatTreatment);
+            application.OriginalVatAmountMinorUnits.Should().Be(application.VatAmountMinorUnits);
+            application.FinalVatableSalesMinorUnits.Should().Be(
+                application.VatExclusiveBasisAmountMinorUnits - application.StatutoryDiscountAmountMinorUnits);
+            application.FinalVatAmountMinorUnits.Should().Be(
+                application.NetPayableAmountMinorUnits - application.FinalVatableSalesMinorUnits);
+            application.DiscountPercentageBasisPoints.Should().Be(2_000);
             application.PayableBasisReady.Should().BeTrue();
             application.PayableBasisReadinessStatus.Should().Be(StatutoryDiscountPayableBasisReadinessStatuses.PayableBasisReady);
             application.PayableBasisReadinessAction.Should().BeNull();
@@ -271,6 +277,15 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                             SiteId = context.SiteId,
                             SitePosServerId = posServerId,
                             SitePosServerRef = "IST-SITE-POS-WEBPAY",
+                            WebPayTerminalIdentifier = "IST-WEBPAY-01",
+                            ChannelTerminals =
+                            [
+                                new ChannelTerminalIdentityOptions
+                                {
+                                    ChannelTerminalId = Guid.Parse("9b000000-0000-0000-0000-000000000018"),
+                                    TerminalIdentifier = "IST-WEBPAY-01"
+                                }
+                            ],
                             Environment = "IntegrationTest",
                             Enabled = true
                         }
@@ -300,6 +315,81 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                     .Be(application.StatutoryDiscountPayableBasisApplicationCommandId!.Value);
                 fiscalContext.AppliedStatutoryFiscalContext.SourceChannel.Should().Be(StatutoryDiscountSourceChannels.WebPay);
             }
+        }
+        finally
+        {
+            await CleanupServiceAssignmentsAsync(context);
+            await CleanupFiscalIssuanceReferencesAsync(context.ParkingSessionId);
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
+        }
+    }
+
+    [Fact]
+    public async Task ApprovedFivePercentPolicy_AppliesFrozenPolicyRateAndReturnsReconciledVatFacts()
+    {
+        const string sourceChannel = StatutoryDiscountSourceChannels.WebPay;
+        var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
+            nameof(ApprovedFivePercentPolicy_AppliesFrozenPolicyRateAndReturnsReconciledVatFacts),
+            discountPercentageBasisPoints: 500);
+        await SeedServiceAuthorizationAsync(context);
+
+        try
+        {
+            using var factory = CreateFactory(context);
+            using var serviceClient = factory.CreateClient();
+            using var operatorClient = factory.CreateClient();
+            AddServiceHeaders(serviceClient, sourceChannel);
+            AddOperatorHeaders(operatorClient, context);
+
+            var intake = await PostSharedDecisionAsync(
+                serviceClient,
+                Request(context, sourceChannel, applyPayableBasis: false),
+                $"five-percent-intake-{context.ParkingSessionId:N}",
+                context.CorrelationId,
+                HttpStatusCode.Created);
+            await CompleteReviewAsync(operatorClient, context, intake.StatutoryDiscountDecisionCommandId, "APPROVE");
+            var approvedReview = await StatutoryDiscountReviewIntegrationTestSupport
+                .CreateReviewRepository()
+                .GetAsync(intake.StatutoryDiscountDecisionCommandId, Guid.NewGuid(), CancellationToken.None);
+            approvedReview.Should().NotBeNull();
+            approvedReview!.GoverningPolicy.Should().NotBeNull();
+            approvedReview.GoverningPolicy!.OrdinanceNumber.Should().Be("CANONICAL-TEST-ORDINANCE");
+            approvedReview.GoverningPolicy.DiscountPercentageBasisPoints.Should().Be(500);
+
+            var application = await PostSharedDecisionAsync(
+                serviceClient,
+                Request(context, sourceChannel, applyPayableBasis: true),
+                $"five-percent-apply-{context.ParkingSessionId:N}",
+                Guid.NewGuid(),
+                HttpStatusCode.OK);
+
+            application.GrossAmountMinorUnits.Should().Be(10_000);
+            application.VatExclusiveBasisAmountMinorUnits.Should().Be(8_929);
+            application.VatAmountMinorUnits.Should().Be(1_071);
+            application.OriginalVatAmountMinorUnits.Should().Be(1_071);
+            application.DiscountPercentageBasisPoints.Should().Be(500);
+            application.StatutoryDiscountAmountMinorUnits.Should().Be(446);
+            application.FinalVatableSalesMinorUnits.Should().Be(8_483);
+            application.FinalVatAmountMinorUnits.Should().Be(1_018);
+            application.NetPayableAmountMinorUnits.Should().Be(9_501);
+            application.VatTreatment.Should().Be(ParkingVatInclusiveFiscalTreatment.VatTreatment);
+            application.BenefitType.Should().Be(OperatorConsoleStatutoryDiscountComputationContract.SupportedBenefitType);
+
+            var readback = await GetSharedReadbackAsync(serviceClient, intake.StatutoryDiscountDecisionCommandId);
+            readback.StatutoryDiscountPayableBasisApplicationCommandId.Should()
+                .Be(application.StatutoryDiscountPayableBasisApplicationCommandId);
+            readback.AppliedTariffSnapshotId.Should().Be(application.AppliedTariffSnapshotId);
+            readback.DiscountPercentageBasisPoints.Should().Be(500);
+            readback.StatutoryDiscountAmountMinorUnits.Should().Be(446);
+            readback.FinalVatableSalesMinorUnits.Should().Be(8_483);
+            readback.FinalVatAmountMinorUnits.Should().Be(1_018);
+            readback.NetPayableAmountMinorUnits.Should().Be(9_501);
+            (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(
+                intake.StatutoryDiscountDecisionCommandId)).Should().Be(1);
+            (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(
+                context.ParkingSessionId)).Should().Be(1);
+            (await StatutoryDiscountReviewIntegrationTestSupport.AppliedTariffSnapshotRowCountAsync(
+                context.ParkingSessionId)).Should().Be(1);
         }
         finally
         {
@@ -1702,6 +1792,15 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                                 SitePosServerRef = "IST-ZERO-PAYABLE-POS",
                                 BaseUrl = "http://zero-payable-pos.invalid/",
                                 ApiKeyFile = "integration-test-only",
+                                WebPayTerminalIdentifier = "IST-WEBPAY-01",
+                                ChannelTerminals =
+                                [
+                                    new ChannelTerminalIdentityOptions
+                                    {
+                                        ChannelTerminalId = Guid.Parse("9b000000-0000-0000-0000-000000000018"),
+                                        TerminalIdentifier = "IST-WEBPAY-01"
+                                    }
+                                ],
                                 Environment = "IntegrationTest",
                                 Enabled = true,
                                 FiscalDocumentTypeCodeId = Guid.Parse("9b000000-0000-0000-0000-000000000010"),

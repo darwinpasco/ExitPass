@@ -444,6 +444,12 @@ export type WebPayStatutoryDiscountDecisionResponse = {
   originalAmountMinorUnits?: number | null;
   vatExclusiveBasisAmountMinorUnits?: number | null;
   vatAmountMinorUnits?: number | null;
+  originalVatAmountMinorUnits?: number | null;
+  finalVatableSalesMinorUnits?: number | null;
+  finalVatAmountMinorUnits?: number | null;
+  discountPercentageBasisPoints?: number | null;
+  benefitType?: string | null;
+  ordinanceReference?: string | null;
   vatTreatment?: string | null;
   statutoryDiscountAmountMinorUnits?: number | null;
   finalPayableAmountMinorUnits?: number | null;
