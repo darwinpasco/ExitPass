@@ -307,6 +307,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         Guid? correlationId,
         HttpRequest httpRequest,
         IOperatorConsoleStatutoryDiscountReadService service,
+        IStatutoryBeneficiaryIdentityRepository beneficiaryIdentities,
         IOperatorConsoleAccessEvaluationService accessEvaluationService,
         IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
         ILoggerFactory loggerFactory)
@@ -353,6 +354,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 return AccessDenied(access, effectiveCorrelationId);
             }
 
+            result = await WithBeneficiaryNameAsync(result, beneficiaryIdentities, httpRequest.HttpContext.RequestAborted);
             activity?.SetStatus(ActivityStatusCode.Ok);
             return Results.Ok(ToContract(result));
         }
@@ -380,6 +382,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         Guid? correlationId,
         HttpRequest httpRequest,
         IOperatorConsoleStatutoryDiscountReadService service,
+        IStatutoryBeneficiaryIdentityRepository beneficiaryIdentities,
         IOperatorConsoleAccessEvaluationService accessEvaluationService,
         IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
         ILoggerFactory loggerFactory)
@@ -414,6 +417,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 return Results.NoContent();
             }
 
+            result = await WithBeneficiaryNameAsync(result, beneficiaryIdentities, httpRequest.HttpContext.RequestAborted);
             activity?.SetStatus(ActivityStatusCode.Ok);
             return Results.Ok(ToContract(result));
         }
@@ -529,6 +533,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         IOperatorConsoleStatutoryDiscountDraftService service,
         IOperatorConsoleStatutoryIdPhotoService idPhotoService,
         IStatutoryDiscountDecisionFacadeService decisionFacade,
+        IStatutoryBeneficiaryIdentityRepository beneficiaryIdentities,
         ILoggerFactory loggerFactory)
     {
         using var activity = ActivitySource.StartActivity("HTTP DraftOperatorConsoleStatutoryDiscount", ActivityKind.Server);
@@ -542,6 +547,20 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 
         try
         {
+            if (!StatutoryBeneficiaryIdentityNormalizer.TryNormalize(
+                    new StatutoryBeneficiaryIdentityInput(
+                        request.BeneficiaryFullName ?? string.Empty,
+                        request.IdDocumentType,
+                        request.IdControlReference ?? string.Empty,
+                        request.BeneficiaryTin),
+                    out var beneficiaryIdentity))
+            {
+                return Results.BadRequest(BuildError(
+                    "STATUTORY_BENEFICIARY_IDENTITY_REQUIRED",
+                    "Beneficiary full name, statutory ID type, and statutory ID number are required.",
+                    request.CorrelationId));
+            }
+
             var identity = OperatorConsoleIdentityContext.Resolve(
                 httpRequest,
                 request.UserId,
@@ -660,6 +679,25 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 if (canonical.DecisionCommandStatus != StatutoryDiscountDecisionCommandStatuses.AwaitingReview)
                 {
                     throw new InvalidOperationException("Canonical statutory processor request was not established.");
+                }
+
+                var savedIdentity = await beneficiaryIdentities.SaveBeforeDecisionAsync(
+                    canonical.StatutoryDiscountDecisionCommandId,
+                    identity.UserId,
+                    StatutoryBeneficiaryIdentityCaptureChannels.OperatorConsole,
+                    beneficiaryIdentity!,
+                    identity.CorrelationId,
+                    httpRequest.HttpContext.RequestAborted);
+                if (savedIdentity.Outcome is not StatutoryBeneficiaryIdentityWriteOutcome.Saved)
+                {
+                    return Results.Json(
+                        BuildError(
+                            savedIdentity.Classification,
+                            "The protected beneficiary identity could not be saved.",
+                            identity.CorrelationId),
+                        statusCode: savedIdentity.Outcome is StatutoryBeneficiaryIdentityWriteOutcome.ProtectionUnavailable
+                            ? StatusCodes.Status503ServiceUnavailable
+                            : StatusCodes.Status409Conflict);
                 }
             }
 
@@ -894,7 +932,26 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 result.FinalPayableAmountMinorUnits),
             result.Activity,
             result.StatutoryDiscountDecisionCommandId,
-            result.StatutoryDiscountPayableBasisApplicationCommandId);
+            result.StatutoryDiscountPayableBasisApplicationCommandId)
+        {
+            BeneficiaryFullName = result.BeneficiaryFullName
+        };
+
+    private static async Task<OperatorConsoleStatutoryDiscountDraftDetailResult> WithBeneficiaryNameAsync(
+        OperatorConsoleStatutoryDiscountDraftDetailResult result,
+        IStatutoryBeneficiaryIdentityRepository beneficiaryIdentities,
+        CancellationToken cancellationToken)
+    {
+        if (!result.StatutoryDiscountDecisionCommandId.HasValue)
+        {
+            return result;
+        }
+
+        var identity = await beneficiaryIdentities.GetAsync(
+            result.StatutoryDiscountDecisionCommandId.Value,
+            cancellationToken).ConfigureAwait(false);
+        return result with { BeneficiaryFullName = identity?.BeneficiaryFullName };
+    }
 
     private static OperatorConsoleStatutoryDiscountAuditReportResponse ToContract(
         OperatorConsoleStatutoryDiscountAuditReportResult result) =>

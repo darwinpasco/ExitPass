@@ -255,6 +255,71 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         decisions.Calls.Should().Be(0);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Approve_WithBeneficiaryName_ReusesReviewedDocumentIdentityAndAcceptsLegacyAliases(
+        bool includeLegacyIdentityAliases)
+    {
+        StatutoryBeneficiaryIdentityInput? savedInput = null;
+        var savedRecord = BeneficiaryIdentity(isFinal: false) with { BeneficiaryTin = null };
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        beneficiaryIdentities.SaveBeforeDecisionAsync(
+                DecisionReference,
+                UserId,
+                StatutoryBeneficiaryIdentityCaptureChannels.ManagementPlatform,
+                Arg.Any<StatutoryBeneficiaryIdentityInput>(),
+                CorrelationId,
+                Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                savedInput = callInfo.ArgAt<StatutoryBeneficiaryIdentityInput>(3);
+                savedRecord = savedRecord with
+                {
+                    BeneficiaryFullName = savedInput.BeneficiaryFullName,
+                    StatutoryIdType = savedInput.StatutoryIdType,
+                    StatutoryIdNumber = savedInput.StatutoryIdNumber,
+                    BeneficiaryTin = savedInput.BeneficiaryTin
+                };
+                return new StatutoryBeneficiaryIdentityWriteResult(
+                    StatutoryBeneficiaryIdentityWriteOutcome.Saved,
+                    "SAVED",
+                    savedRecord);
+            });
+        beneficiaryIdentities.GetAsync(DecisionReference, Arg.Any<CancellationToken>())
+            .Returns(_ => savedRecord);
+        beneficiaryIdentities.FinalizeApprovedAsync(
+                DecisionReference,
+                UserId,
+                Arg.Any<string>(),
+                CorrelationId,
+                Arg.Any<CancellationToken>())
+            .Returns(new StatutoryBeneficiaryIdentityWriteResult(
+                StatutoryBeneficiaryIdentityWriteOutcome.Saved,
+                "SAVED",
+                savedRecord with { IsFinal = true }));
+
+        var command = Command("APPROVE") with
+        {
+            BeneficiaryFullName = "  Maria   Santos  ",
+            BeneficiaryTin = null,
+            StatutoryIdType = includeLegacyIdentityAliases ? "PWD_ID" : null,
+            StatutoryIdNumber = includeLegacyIdentityAliases ? "ABC1234" : null
+        };
+
+        var result = await CreateService(
+                AllowedRepository(),
+                beneficiaryIdentities: beneficiaryIdentities)
+            .DecideAsync(Actor(), command, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        savedInput.Should().BeEquivalentTo(new StatutoryBeneficiaryIdentityInput(
+            "Maria Santos",
+            "PWD_ID",
+            "ABC1234",
+            null));
+    }
+
     [Fact]
     public async Task Detail_ForApprovedOperatorConsoleRequestWithoutApplication_RecoversCanonicalApplication()
     {

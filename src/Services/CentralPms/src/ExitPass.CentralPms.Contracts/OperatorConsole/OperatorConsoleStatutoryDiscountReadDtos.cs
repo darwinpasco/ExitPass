@@ -98,7 +98,10 @@ public sealed record OperatorConsoleStatutoryDiscountDraftDetailResponse(
     string? CurrencyCode,
     IReadOnlyList<string> Activity,
     Guid? StatutoryDiscountDecisionCommandId = null,
-    Guid? StatutoryDiscountPayableBasisApplicationCommandId = null);
+    Guid? StatutoryDiscountPayableBasisApplicationCommandId = null)
+{
+    public string? BeneficiaryFullName { get; init; }
+}
 
 /// <summary>
 /// Read-only audit/reporting response for Operator Console statutory discount validation.

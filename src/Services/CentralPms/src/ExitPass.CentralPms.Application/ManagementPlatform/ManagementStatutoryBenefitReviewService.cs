@@ -478,15 +478,12 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                     command.CorrelationId);
             }
 
+            var identityInput = ResolveBeneficiaryIdentityInput(command, review);
             var saved = await _beneficiaryIdentities.SaveBeforeDecisionAsync(
                 command.DecisionCommandReference,
                 actor.UserId,
                 StatutoryBeneficiaryIdentityCaptureChannels.ManagementPlatform,
-                new(
-                    command.BeneficiaryFullName ?? string.Empty,
-                    command.StatutoryIdType ?? string.Empty,
-                    command.StatutoryIdNumber ?? string.Empty,
-                    command.BeneficiaryTin),
+                identityInput,
                 command.CorrelationId,
                 cancellationToken).ConfigureAwait(false);
             if (saved.Outcome is not StatutoryBeneficiaryIdentityWriteOutcome.Saved)
@@ -731,6 +728,18 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         !string.IsNullOrWhiteSpace(command.StatutoryIdType) ||
         !string.IsNullOrWhiteSpace(command.StatutoryIdNumber) ||
         !string.IsNullOrWhiteSpace(command.BeneficiaryTin);
+
+    private static StatutoryBeneficiaryIdentityInput ResolveBeneficiaryIdentityInput(
+        ManagementStatutoryBenefitDecisionCommand command,
+        StatutoryDiscountServiceChannelReviewDetail review) =>
+        new(
+            command.BeneficiaryFullName ?? string.Empty,
+            FirstNonEmpty(command.StatutoryIdType, command.IdDocumentType, review.IdDocumentType),
+            FirstNonEmpty(command.StatutoryIdNumber, command.IdControlReference, review.IdControlReference),
+            command.BeneficiaryTin);
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
 
     private static bool RequiresBeneficiaryIdentity(StatutoryDiscountServiceChannelReviewDetail review) =>
         review.EntitlementType is "SENIOR_CITIZEN" or "PWD";
