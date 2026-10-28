@@ -505,6 +505,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         stored.Should().NotBeNull();
         stored!.PolicyCode.Should().Be("PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK");
         stored.PolicyResolutionBasis.Should().Be("NATIONAL_LAW_FALLBACK");
+        stored.LocalOrdinanceApplied.Should().BeFalse();
+        stored.NationalLawFallbackApplied.Should().BeTrue();
         stored.Snapshot.GetProperty("nationalLawReference").GetString().Should().Be("RA 9994");
         stored.Snapshot.GetProperty("benefitType").GetString().Should().Be("STATUTORY_DISCOUNT_VAT_EXEMPT");
         stored.Snapshot.GetProperty("freeDurationMinutes").ValueKind.Should().Be(JsonValueKind.Null);
@@ -581,6 +583,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             stored.Should().NotBeNull();
             stored!.PolicyId.Should().Be(DraftVerifiedLocalPolicyId);
             stored.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
+            stored.LocalOrdinanceApplied.Should().BeTrue();
+            stored.NationalLawFallbackApplied.Should().BeFalse();
             stored.Snapshot.GetProperty("ordinanceReference").GetString().Should().Be("INTEGRATION-DRAFT-ORD-195");
         }
         finally
@@ -1781,6 +1785,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
                 p.policy_code,
                 NULL::uuid AS resolved_jurisdiction_id,
                 sdv.policy_resolution_basis::text,
+                sdv.local_ordinance_applied,
+                sdv.national_law_fallback_applied,
                 jsonb_build_object(
                     'statutoryDiscountPolicyId', COALESCE(sdv.applied_policy_reference_id, sdv.evaluated_policy_reference_id, sdv.fallback_policy_reference_id),
                     'policyCode', p.policy_code,
@@ -1815,7 +1821,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             reader.IsDBNull(1) ? null : reader.GetString(1),
             reader.IsDBNull(2) ? null : reader.GetGuid(2),
             reader.GetString(3),
-            JsonDocument.Parse(reader.GetString(4)).RootElement.Clone());
+            reader.GetBoolean(4),
+            reader.GetBoolean(5),
+            JsonDocument.Parse(reader.GetString(6)).RootElement.Clone());
     }
 
     private static async Task<int> CountEvidenceReferencesAsync(Guid draftId, string evidenceType)
@@ -2019,6 +2027,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         string? PolicyCode,
         Guid? JurisdictionId,
         string PolicyResolutionBasis,
+        bool LocalOrdinanceApplied,
+        bool NationalLawFallbackApplied,
         JsonElement Snapshot);
 
     private static OperatorConsoleResolvedStatutoryDiscountPolicy Policy() =>

@@ -445,6 +445,41 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
     }
 
     [Fact]
+    public async Task ApprovedValidationLinkage_ReconcilesExistingDraftFromFrozenLocalOrdinanceAuthority()
+    {
+        var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            nameof(ApprovedValidationLinkage_ReconcilesExistingDraftFromFrozenLocalOrdinanceAuthority),
+            StatutoryDiscountSourceChannels.OperatorConsole);
+
+        try
+        {
+            var validationId = await LinkOperatorConsoleValidationAndRemoveDecisionAuthorityAsync(
+                seeded,
+                removeDecisionAuthority: false,
+                localOrdinanceApplied: false);
+            var repository = StatutoryDiscountReviewIntegrationTestSupport.CreateReviewRepository();
+
+            var linkage = await repository.EnsureApprovedValidationLinkageAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                seeded.Context.RequestedByUserId,
+                "ELIGIBLE",
+                ReviewedDocument(),
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+
+            linkage.Should().NotBeNull();
+            linkage!.StatutoryDiscountValidationId.Should().Be(validationId);
+            linkage.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
+            linkage.LocalOrdinanceApplied.Should().BeTrue();
+            linkage.AppliedPolicyReferenceId.Should().Be(seeded.Decision.AppliedPolicyReferenceId);
+        }
+        finally
+        {
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
+        }
+    }
+
+    [Fact]
     public async Task OperatorConsoleReview_FrozenValidationContextMismatchFailsClosedWithoutAuthority()
     {
         var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
@@ -584,7 +619,9 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
     }
 
     private static async Task<Guid> LinkOperatorConsoleValidationAndRemoveDecisionAuthorityAsync(
-        SeededServiceChannelReview seeded)
+        SeededServiceChannelReview seeded,
+        bool removeDecisionAuthority = true,
+        bool localOrdinanceApplied = true)
     {
         const string sql = """
             UPDATE discounts.statutory_discount_policy_versions
@@ -616,8 +653,8 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
                 'OSCA',
                 @policy_version_id,
                 'LOCAL_ORDINANCE_APPLIED',
-                true,
-                false,
+                @local_ordinance_applied,
+                @national_law_fallback_applied,
                 'OPERATOR_ASSISTED',
                 'REQUESTED',
                 true,
@@ -642,7 +679,8 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
              WHERE statutory_discount_decision_command_id = @decision_command_id;
 
             DELETE FROM discounts.statutory_discount_decision_policy_authorities
-             WHERE statutory_discount_decision_command_id = @decision_command_id;
+             WHERE statutory_discount_decision_command_id = @decision_command_id
+               AND @remove_decision_authority;
             """;
 
         var validationId = Guid.NewGuid();
@@ -655,6 +693,9 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
         command.Parameters.Add("decision_command_id", NpgsqlDbType.Uuid).Value = seeded.Decision.StatutoryDiscountDecisionCommandId;
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = seeded.Context.CorrelationId;
         command.Parameters.Add("submitted_by_user_id", NpgsqlDbType.Uuid).Value = seeded.Context.RequestedByUserId;
+        command.Parameters.Add("local_ordinance_applied", NpgsqlDbType.Boolean).Value = localOrdinanceApplied;
+        command.Parameters.Add("national_law_fallback_applied", NpgsqlDbType.Boolean).Value = !localOrdinanceApplied;
+        command.Parameters.Add("remove_decision_authority", NpgsqlDbType.Boolean).Value = removeDecisionAuthority;
         await command.ExecuteNonQueryAsync();
         return validationId;
     }

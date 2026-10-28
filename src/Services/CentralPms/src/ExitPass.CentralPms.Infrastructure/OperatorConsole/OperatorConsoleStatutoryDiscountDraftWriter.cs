@@ -266,6 +266,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 masked_id_reference,
                 id_control_reference,
                 policy_resolution_basis,
+                local_ordinance_applied,
+                national_law_fallback_applied,
                 validation_channel,
                 validation_status,
                 evidence_required,
@@ -291,6 +293,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 @masked_id_reference,
                 @id_control_reference,
                 @policy_resolution_basis::discounts.policy_resolution_basis_enum,
+                @local_ordinance_applied,
+                @national_law_fallback_applied,
                 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum,
                 'REQUESTED'::discounts.statutory_discount_validations_status_enum,
                 @evidence_required,
@@ -328,6 +332,14 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         npgsqlCommand.Parameters.Add("masked_id_reference", NpgsqlDbType.Varchar).Value = command.MaskedIdReference;
         npgsqlCommand.Parameters.Add("id_control_reference", NpgsqlDbType.Varchar).Value = command.IdControlReference!;
         npgsqlCommand.Parameters.Add("policy_resolution_basis", NpgsqlDbType.Text).Value = command.Policy.PolicyResolutionBasis;
+        var localOrdinanceApplied = policyAuthorityIds.PolicyVersionId.HasValue &&
+            string.Equals(command.Policy.PolicyResolutionBasis, "LOCAL_ORDINANCE_APPLIED", StringComparison.Ordinal) &&
+            string.Equals(command.Policy.PolicyLevel, "LOCAL_ORDINANCE", StringComparison.Ordinal) &&
+            string.Equals(command.Policy.PolicyType, "LOCAL_ORDINANCE", StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(command.Policy.SourceReference);
+        npgsqlCommand.Parameters.Add("local_ordinance_applied", NpgsqlDbType.Boolean).Value = localOrdinanceApplied;
+        npgsqlCommand.Parameters.Add("national_law_fallback_applied", NpgsqlDbType.Boolean).Value =
+            string.Equals(command.Policy.PolicyResolutionBasis, "NATIONAL_LAW_FALLBACK", StringComparison.Ordinal);
         npgsqlCommand.Parameters.Add("evidence_required", NpgsqlDbType.Boolean).Value = command.EvidenceRequired;
         npgsqlCommand.Parameters.Add("evidence_captured", NpgsqlDbType.Boolean).Value = HasProtectedPhoto(command);
         npgsqlCommand.Parameters.Add("decision_reason_code", NpgsqlDbType.Varchar).Value = DbValue(command.ReasonCode);
@@ -410,6 +422,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                      AND assignment.effective_from <= now()
                      AND (assignment.effective_to IS NULL OR assignment.effective_to > now())
                     WHERE policy_version.entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
+                      AND policy_version.policy_code = @policy_code
                       AND policy_version.source_verification_status IN (
                             'VERIFIED_OFFICIAL'::discounts.policy_verification_status_enum,
                             'VERIFIED_ACTIVE_OPERATIONAL'::discounts.policy_verification_status_enum,
