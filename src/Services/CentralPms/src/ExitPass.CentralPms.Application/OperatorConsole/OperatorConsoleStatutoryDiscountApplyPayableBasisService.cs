@@ -26,6 +26,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
     private readonly IStatutoryDiscountStagedCommandService _stagedCommandService;
     private readonly IStatutoryDiscountServiceChannelAuthorizationService _serviceChannelAuthorizationService;
     private readonly IStatutoryDiscountServiceChannelReviewRepository _reviewRepository;
+    private readonly IStatutoryDiscountParkingEligibilityRepository _parkingEligibilityRepository;
 
     /// <summary>
     /// Creates an Operator Console statutory discount payable-basis application service.
@@ -37,7 +38,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         IOperatorConsoleStatutoryDiscountReadService readService,
         IStatutoryDiscountStagedCommandService stagedCommandService,
         IStatutoryDiscountServiceChannelAuthorizationService serviceChannelAuthorizationService,
-        IStatutoryDiscountServiceChannelReviewRepository reviewRepository)
+        IStatutoryDiscountServiceChannelReviewRepository reviewRepository,
+        IStatutoryDiscountParkingEligibilityRepository parkingEligibilityRepository)
     {
         _accessEvaluationService = accessEvaluationService ?? throw new ArgumentNullException(nameof(accessEvaluationService));
         _accessEvaluationWriter = accessEvaluationWriter ?? throw new ArgumentNullException(nameof(accessEvaluationWriter));
@@ -47,6 +49,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         _serviceChannelAuthorizationService = serviceChannelAuthorizationService ??
             throw new ArgumentNullException(nameof(serviceChannelAuthorizationService));
         _reviewRepository = reviewRepository ?? throw new ArgumentNullException(nameof(reviewRepository));
+        _parkingEligibilityRepository = parkingEligibilityRepository ??
+            throw new ArgumentNullException(nameof(parkingEligibilityRepository));
     }
 
     /// <inheritdoc />
@@ -211,9 +215,9 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
                 decision.StatutoryDiscountDecisionCommandId);
         }
 
-        if (!decision.LocalOrdinanceApplied ||
-            !IsLocalOrdinanceBasis(decision.PolicyResolutionBasis) ||
-            string.IsNullOrWhiteSpace(detail.OrdinanceReference))
+        var applicationDecision = await ResolveApplicationDecisionAsync(decision, detail, cancellationToken)
+            .ConfigureAwait(false);
+        if (applicationDecision is null)
         {
             return NotAcceptedResult(
                 command,
@@ -223,6 +227,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
                 detail,
                 decision.StatutoryDiscountDecisionCommandId);
         }
+
+        decision = applicationDecision;
 
         var stageKey = DeriveLegacyApplicationStageIdempotencyKey(
             command.IdempotencyKey,
@@ -348,6 +354,74 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
 
     private static bool IsLocalOrdinanceBasis(string? value) =>
         value?.Trim().ToUpperInvariant() is "LOCAL_ORDINANCE" or "LOCAL_ORDINANCE_APPLIED";
+
+    private async Task<StatutoryDiscountDecisionV2Record?> ResolveApplicationDecisionAsync(
+        StatutoryDiscountDecisionV2Record decision,
+        OperatorConsoleStatutoryDiscountDraftDetailResult detail,
+        CancellationToken cancellationToken)
+    {
+        if (!IsLocalOrdinanceBasis(decision.PolicyResolutionBasis) ||
+            !IsLocalOrdinanceBasis(detail.PolicyResolutionBasis))
+        {
+            return null;
+        }
+
+        if (decision.LocalOrdinanceApplied &&
+            !string.IsNullOrWhiteSpace(detail.OrdinanceReference))
+        {
+            return decision;
+        }
+
+        var authority = await _parkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(
+                decision.StatutoryDiscountDecisionCommandId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (!IsVerifiedFrozenLocalOrdinanceAuthority(authority, decision, detail))
+        {
+            return null;
+        }
+
+        // The separate frozen authority is immutable evidence for the original decision.
+        // Recover a false copied flag in memory; never rewrite the completed decision.
+        return decision.LocalOrdinanceApplied
+            ? decision
+            : decision with { LocalOrdinanceApplied = true };
+    }
+
+    private static bool IsVerifiedFrozenLocalOrdinanceAuthority(
+        StatutoryDiscountDecisionPolicyAuthority? authority,
+        StatutoryDiscountDecisionV2Record decision,
+        OperatorConsoleStatutoryDiscountDraftDetailResult detail) =>
+        authority is not null &&
+        authority.StatutoryDiscountDecisionCommandId == decision.StatutoryDiscountDecisionCommandId &&
+        decision.AppliedPolicyReferenceId == authority.StatutoryDiscountPolicyVersionId &&
+        detail.StatutoryDiscountPolicyId == authority.StatutoryDiscountPolicyVersionId &&
+        detail.ResolvedJurisdictionId == authority.JurisdictionId &&
+        string.Equals(authority.EntitlementType, decision.EntitlementType, StringComparison.Ordinal) &&
+        string.Equals(authority.EntitlementType, detail.EntitlementType, StringComparison.Ordinal) &&
+        string.Equals(authority.PolicyCode, detail.PolicyCode, StringComparison.Ordinal) &&
+        string.Equals(authority.BenefitType, detail.BenefitType, StringComparison.Ordinal) &&
+        authority.SourceVerificationStatus is "VERIFIED_OFFICIAL" or "VERIFIED_ACTIVE_OPERATIONAL" or "ACTIVE_APPROVED" &&
+        string.Equals(authority.TransactionPublicationStatus, "ACTIVE_FOR_TRANSACTION_USE", StringComparison.Ordinal) &&
+        string.Equals(authority.ParkingServiceApplicability, "COVERED", StringComparison.Ordinal) &&
+        !string.IsNullOrWhiteSpace(authority.SourceReference) &&
+        HasMatchingRetainedOrdinanceReference(authority, detail.OrdinanceReference) &&
+        authority.PolicyAuthoritySemanticHash.StartsWith("sha256:", StringComparison.Ordinal) &&
+        (!authority.TransactionUseEffectiveFrom.HasValue || authority.TransactionUseEffectiveFrom.Value <= authority.ResolvedAt) &&
+        (!authority.TransactionUseEffectiveTo.HasValue || authority.TransactionUseEffectiveTo.Value > authority.ResolvedAt);
+
+    private static bool HasMatchingRetainedOrdinanceReference(
+        StatutoryDiscountDecisionPolicyAuthority authority,
+        string? reviewedOrdinanceReference)
+    {
+        if (string.IsNullOrWhiteSpace(reviewedOrdinanceReference))
+        {
+            return true;
+        }
+
+        return string.Equals(authority.OrdinanceNumber, reviewedOrdinanceReference, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(authority.LegalBasisReference, reviewedOrdinanceReference, StringComparison.OrdinalIgnoreCase);
+    }
 
     private async Task<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceResult>
         ApplyAndRecordLegacyApplicationAfterWriterAsync(

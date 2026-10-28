@@ -249,7 +249,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         OperatorConsoleStatutoryDiscountDraftPersistenceCommand command,
         CancellationToken cancellationToken)
     {
-        var policyAuthorityIds = await ResolvePersistencePolicyAuthorityIdsAsync(
+        var policyAuthority = await ResolvePersistencePolicyAuthorityAsync(
             connection,
             transaction,
             command,
@@ -266,6 +266,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 masked_id_reference,
                 id_control_reference,
                 policy_resolution_basis,
+                local_ordinance_applied,
+                national_law_fallback_applied,
                 validation_channel,
                 validation_status,
                 evidence_required,
@@ -291,6 +293,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 @masked_id_reference,
                 @id_control_reference,
                 @policy_resolution_basis::discounts.policy_resolution_basis_enum,
+                @local_ordinance_applied,
+                @national_law_fallback_applied,
                 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum,
                 'REQUESTED'::discounts.statutory_discount_validations_status_enum,
                 @evidence_required,
@@ -327,16 +331,21 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         npgsqlCommand.Parameters.Add("birth_date", NpgsqlDbType.Date).Value = command.BirthDate!.Value;
         npgsqlCommand.Parameters.Add("masked_id_reference", NpgsqlDbType.Varchar).Value = command.MaskedIdReference;
         npgsqlCommand.Parameters.Add("id_control_reference", NpgsqlDbType.Varchar).Value = command.IdControlReference!;
-        npgsqlCommand.Parameters.Add("policy_resolution_basis", NpgsqlDbType.Text).Value = command.Policy.PolicyResolutionBasis;
+        npgsqlCommand.Parameters.Add("policy_resolution_basis", NpgsqlDbType.Text).Value =
+            policyAuthority.PolicyResolutionBasis;
+        npgsqlCommand.Parameters.Add("local_ordinance_applied", NpgsqlDbType.Boolean).Value =
+            policyAuthority.LocalOrdinanceApplied;
+        npgsqlCommand.Parameters.Add("national_law_fallback_applied", NpgsqlDbType.Boolean).Value =
+            policyAuthority.NationalLawFallbackApplied;
         npgsqlCommand.Parameters.Add("evidence_required", NpgsqlDbType.Boolean).Value = command.EvidenceRequired;
         npgsqlCommand.Parameters.Add("evidence_captured", NpgsqlDbType.Boolean).Value = HasProtectedPhoto(command);
         npgsqlCommand.Parameters.Add("decision_reason_code", NpgsqlDbType.Varchar).Value = DbValue(command.ReasonCode);
         npgsqlCommand.Parameters.Add("requester_attestation", NpgsqlDbType.Boolean).Value = command.OperatorAttestation;
         npgsqlCommand.Parameters.Add("attestation_notes", NpgsqlDbType.Varchar).Value = DbValue(command.AttestationNotes);
         npgsqlCommand.Parameters.Add("policy_reference_id", NpgsqlDbType.Uuid).Value =
-            DbValue(policyAuthorityIds.LegacyPolicyReferenceId);
+            DbValue(policyAuthority.LegacyPolicyReferenceId);
         npgsqlCommand.Parameters.Add("policy_version_id", NpgsqlDbType.Uuid).Value =
-            DbValue(policyAuthorityIds.PolicyVersionId);
+            DbValue(policyAuthority.PolicyVersionId);
         npgsqlCommand.Parameters.Add("resolved_policy_snapshot_json", NpgsqlDbType.Jsonb).Value =
             command.Policy.PolicySnapshot.GetRawText();
         npgsqlCommand.Parameters.Add("requested_by_user_id", NpgsqlDbType.Uuid).Value = command.RequestedByUserId;
@@ -367,13 +376,58 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         };
     }
 
-    private static async Task<(Guid? LegacyPolicyReferenceId, Guid? PolicyVersionId)> ResolvePersistencePolicyAuthorityIdsAsync(
+    private static async Task<PersistencePolicyAuthority> ResolvePersistencePolicyAuthorityAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         OperatorConsoleStatutoryDiscountDraftPersistenceCommand command,
         CancellationToken cancellationToken)
     {
         const string sql = """
+            WITH selected_policy_version AS (
+                SELECT
+                    policy_version.statutory_discount_policy_version_id,
+                    policy_version.policy_resolution_basis::text,
+                    policy_version.policy_level::text,
+                    policy_version.policy_type::text,
+                    policy_version.source_reference
+                FROM discounts.statutory_discount_policy_versions AS policy_version
+                JOIN sites.site_jurisdiction_assignments AS assignment
+                  ON assignment.jurisdiction_id = policy_version.jurisdiction_id
+                 AND assignment.site_id = @site_id
+                 AND assignment.assignment_status = 'ACTIVE'
+                 AND assignment.effective_from <= now()
+                 AND (assignment.effective_to IS NULL OR assignment.effective_to > now())
+                WHERE policy_version.entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
+                  AND policy_version.policy_code = @policy_code
+                  AND policy_version.source_verification_status IN (
+                        'VERIFIED_OFFICIAL'::discounts.policy_verification_status_enum,
+                        'VERIFIED_ACTIVE_OPERATIONAL'::discounts.policy_verification_status_enum,
+                        'ACTIVE_APPROVED'::discounts.policy_verification_status_enum
+                  )
+                  AND policy_version.transaction_publication_status = 'ACTIVE_FOR_TRANSACTION_USE'
+                  AND policy_version.parking_service_applicability = 'COVERED'
+                  AND policy_version.policy_effect_support_status = 'SUPPORTED_BY_CURRENT_CALCULATION'
+                  AND (
+                        (policy_version.policy_scope_type = 'JURISDICTION' AND policy_version.site_group_id IS NULL AND policy_version.site_id IS NULL)
+                     OR (policy_version.policy_scope_type = 'SITE_GROUP' AND policy_version.site_group_id = @site_group_id AND policy_version.site_id IS NULL)
+                     OR (policy_version.policy_scope_type = 'SITE' AND policy_version.site_id = @site_id)
+                  )
+                  AND (policy_version.transaction_use_effective_from IS NULL OR policy_version.transaction_use_effective_from <= now())
+                  AND (policy_version.transaction_use_effective_to IS NULL OR policy_version.transaction_use_effective_to > now())
+                  AND policy_version.withdrawn_at IS NULL
+                  AND policy_version.retired_at IS NULL
+                  AND policy_version.superseded_by_policy_version_id IS NULL
+                ORDER BY
+                    CASE policy_version.policy_scope_type
+                        WHEN 'SITE' THEN 3
+                        WHEN 'SITE_GROUP' THEN 2
+                        ELSE 1
+                    END DESC,
+                    policy_version.precedence_rank,
+                    policy_version.transaction_use_effective_from DESC NULLS LAST,
+                    policy_version.policy_code
+                LIMIT 1
+            )
             SELECT
                 (
                     SELECT p.discount_policy_reference_id
@@ -400,45 +454,13 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                         p.policy_code
                     LIMIT 1
                 ) AS legacy_policy_reference_id,
-                (
-                    SELECT policy_version.statutory_discount_policy_version_id
-                    FROM discounts.statutory_discount_policy_versions AS policy_version
-                    JOIN sites.site_jurisdiction_assignments AS assignment
-                      ON assignment.jurisdiction_id = policy_version.jurisdiction_id
-                     AND assignment.site_id = @site_id
-                     AND assignment.assignment_status = 'ACTIVE'
-                     AND assignment.effective_from <= now()
-                     AND (assignment.effective_to IS NULL OR assignment.effective_to > now())
-                    WHERE policy_version.entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
-                      AND policy_version.source_verification_status IN (
-                            'VERIFIED_OFFICIAL'::discounts.policy_verification_status_enum,
-                            'VERIFIED_ACTIVE_OPERATIONAL'::discounts.policy_verification_status_enum,
-                            'ACTIVE_APPROVED'::discounts.policy_verification_status_enum
-                      )
-                      AND policy_version.transaction_publication_status = 'ACTIVE_FOR_TRANSACTION_USE'
-                      AND policy_version.parking_service_applicability = 'COVERED'
-                      AND policy_version.policy_effect_support_status = 'SUPPORTED_BY_CURRENT_CALCULATION'
-                      AND (
-                            (policy_version.policy_scope_type = 'JURISDICTION' AND policy_version.site_group_id IS NULL AND policy_version.site_id IS NULL)
-                         OR (policy_version.policy_scope_type = 'SITE_GROUP' AND policy_version.site_group_id = @site_group_id AND policy_version.site_id IS NULL)
-                         OR (policy_version.policy_scope_type = 'SITE' AND policy_version.site_id = @site_id)
-                      )
-                      AND (policy_version.transaction_use_effective_from IS NULL OR policy_version.transaction_use_effective_from <= now())
-                      AND (policy_version.transaction_use_effective_to IS NULL OR policy_version.transaction_use_effective_to > now())
-                      AND policy_version.withdrawn_at IS NULL
-                      AND policy_version.retired_at IS NULL
-                      AND policy_version.superseded_by_policy_version_id IS NULL
-                    ORDER BY
-                        CASE policy_version.policy_scope_type
-                            WHEN 'SITE' THEN 3
-                            WHEN 'SITE_GROUP' THEN 2
-                            ELSE 1
-                        END DESC,
-                        policy_version.precedence_rank,
-                        policy_version.transaction_use_effective_from DESC NULLS LAST,
-                        policy_version.policy_code
-                    LIMIT 1
-                ) AS policy_version_id;
+                selected_policy_version.statutory_discount_policy_version_id AS policy_version_id,
+                selected_policy_version.policy_resolution_basis,
+                selected_policy_version.policy_level,
+                selected_policy_version.policy_type,
+                selected_policy_version.source_reference
+            FROM (SELECT 1) AS anchor
+            LEFT JOIN selected_policy_version ON TRUE;
             """;
 
         await using var npgsqlCommand = new NpgsqlCommand(sql, connection, transaction);
@@ -465,7 +487,21 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 command.EntitlementType);
         }
 
-        return (legacyPolicyReferenceId, policyVersionId);
+        var policyResolutionBasis = reader.IsDBNull(2)
+            ? command.Policy.PolicyResolutionBasis
+            : reader.GetString(2);
+        var localOrdinanceApplied = policyVersionId.HasValue &&
+            string.Equals(policyResolutionBasis, "LOCAL_ORDINANCE_APPLIED", StringComparison.Ordinal) &&
+            !reader.IsDBNull(3) && string.Equals(reader.GetString(3), "LOCAL_ORDINANCE", StringComparison.Ordinal) &&
+            !reader.IsDBNull(4) && string.Equals(reader.GetString(4), "LOCAL_ORDINANCE", StringComparison.Ordinal) &&
+            !reader.IsDBNull(5) && !string.IsNullOrWhiteSpace(reader.GetString(5));
+
+        return new PersistencePolicyAuthority(
+            legacyPolicyReferenceId,
+            policyVersionId,
+            policyResolutionBasis,
+            localOrdinanceApplied,
+            string.Equals(policyResolutionBasis, "NATIONAL_LAW_FALLBACK", StringComparison.Ordinal));
     }
 
     private static async Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult> EnsureEvidenceMetadataAsync(
@@ -812,4 +848,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
 
     private static string? GetNullableString(NpgsqlDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+
+    private sealed record PersistencePolicyAuthority(
+        Guid? LegacyPolicyReferenceId,
+        Guid? PolicyVersionId,
+        string PolicyResolutionBasis,
+        bool LocalOrdinanceApplied,
+        bool NationalLawFallbackApplied);
 }
