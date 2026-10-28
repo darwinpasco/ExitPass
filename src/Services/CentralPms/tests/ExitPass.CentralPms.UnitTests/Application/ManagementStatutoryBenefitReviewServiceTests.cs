@@ -320,6 +320,40 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             null));
     }
 
+    [Theory]
+    [InlineData("SENIOR_CITIZEN_ID", "ABC1234")]
+    [InlineData("PWD_ID", "DIFFERENT123")]
+    public async Task Approve_WithConflictingLegacyIdentityAliases_FailsClosed(
+        string statutoryIdType,
+        string statutoryIdNumber)
+    {
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        var decisions = new FakeDecisionService();
+        var command = Command("APPROVE") with
+        {
+            BeneficiaryFullName = "Maria Santos",
+            StatutoryIdType = statutoryIdType,
+            StatutoryIdNumber = statutoryIdNumber
+        };
+
+        var result = await CreateService(
+                AllowedRepository(),
+                decisions: decisions,
+                beneficiaryIdentities: beneficiaryIdentities)
+            .DecideAsync(Actor(), command, CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Invalid);
+        result.Classification.Should().Be("STATUTORY_BENEFICIARY_IDENTITY_MISMATCH");
+        decisions.Calls.Should().Be(0);
+        await beneficiaryIdentities.DidNotReceiveWithAnyArgs().SaveBeforeDecisionAsync(
+            default,
+            default,
+            default!,
+            default!,
+            default,
+            default);
+    }
+
     [Fact]
     public async Task Detail_ForApprovedOperatorConsoleRequestWithoutApplication_RecoversCanonicalApplication()
     {

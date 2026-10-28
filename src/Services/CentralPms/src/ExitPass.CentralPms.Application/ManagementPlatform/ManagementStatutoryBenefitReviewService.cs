@@ -469,6 +469,11 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             return NotFound<ManagementStatutoryBenefitDecisionResult>(command.CorrelationId);
         }
 
+        if (!TryResolveReviewedDocument(command, review, decision, out var reviewedDocument, out var metadataError))
+        {
+            return Invalid<ManagementStatutoryBenefitDecisionResult>(metadataError!, command.CorrelationId);
+        }
+
         if (HasAnyBeneficiaryIdentity(command))
         {
             if (_beneficiaryIdentities is null)
@@ -478,12 +483,20 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                     command.CorrelationId);
             }
 
-            var identityInput = ResolveBeneficiaryIdentityInput(command, review);
+            if (!TryResolveBeneficiaryIdentityInput(
+                    command,
+                    reviewedDocument!,
+                    out var identityInput,
+                    out var identityError))
+            {
+                return Invalid<ManagementStatutoryBenefitDecisionResult>(identityError!, command.CorrelationId);
+            }
+
             var saved = await _beneficiaryIdentities.SaveBeforeDecisionAsync(
                 command.DecisionCommandReference,
                 actor.UserId,
                 StatutoryBeneficiaryIdentityCaptureChannels.ManagementPlatform,
-                identityInput,
+                identityInput!,
                 command.CorrelationId,
                 cancellationToken).ConfigureAwait(false);
             if (saved.Outcome is not StatutoryBeneficiaryIdentityWriteOutcome.Saved)
@@ -501,11 +514,6 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                 : await _beneficiaryIdentities.GetAsync(command.DecisionCommandReference, cancellationToken).ConfigureAwait(false);
             if (!HasCompleteBeneficiaryIdentity(review, identity))
                 return Invalid<ManagementStatutoryBenefitDecisionResult>("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED", command.CorrelationId);
-        }
-
-        if (!TryResolveReviewedDocument(command, review, decision, out var reviewedDocument, out var metadataError))
-        {
-            return Invalid<ManagementStatutoryBenefitDecisionResult>(metadataError!, command.CorrelationId);
         }
 
         var beneficiaryResidencyRequired = BeneficiaryResidencyIsRequired(review);
@@ -729,17 +737,38 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         !string.IsNullOrWhiteSpace(command.StatutoryIdNumber) ||
         !string.IsNullOrWhiteSpace(command.BeneficiaryTin);
 
-    private static StatutoryBeneficiaryIdentityInput ResolveBeneficiaryIdentityInput(
+    private static bool TryResolveBeneficiaryIdentityInput(
         ManagementStatutoryBenefitDecisionCommand command,
-        StatutoryDiscountServiceChannelReviewDetail review) =>
-        new(
-            command.BeneficiaryFullName ?? string.Empty,
-            FirstNonEmpty(command.StatutoryIdType, command.IdDocumentType, review.IdDocumentType),
-            FirstNonEmpty(command.StatutoryIdNumber, command.IdControlReference, review.IdControlReference),
-            command.BeneficiaryTin);
+        StatutoryDiscountServiceChannelReviewedDocument reviewedDocument,
+        out StatutoryBeneficiaryIdentityInput? identity,
+        out string? errorCode)
+    {
+        var reviewedIdType = NormalizeReviewedDocumentType(reviewedDocument.IdDocumentType) ?? string.Empty;
+        var reviewedIdNumber = NormalizeOptional(reviewedDocument.IdControlReference) ?? string.Empty;
+        var legacyIdType = NormalizeReviewedDocumentType(command.StatutoryIdType);
+        var legacyIdNumber = NormalizeOptional(command.StatutoryIdNumber);
+        if ((legacyIdType is not null && !string.Equals(legacyIdType, reviewedIdType, StringComparison.Ordinal)) ||
+            (legacyIdNumber is not null && !string.Equals(legacyIdNumber, reviewedIdNumber, StringComparison.Ordinal)))
+        {
+            identity = null;
+            errorCode = "STATUTORY_BENEFICIARY_IDENTITY_MISMATCH";
+            return false;
+        }
 
-    private static string FirstNonEmpty(params string?[] values) =>
-        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+        var candidate = new StatutoryBeneficiaryIdentityInput(
+            command.BeneficiaryFullName ?? string.Empty,
+            reviewedIdType,
+            reviewedIdNumber,
+            command.BeneficiaryTin);
+        if (!StatutoryBeneficiaryIdentityNormalizer.TryNormalize(candidate, out identity))
+        {
+            errorCode = "STATUTORY_BENEFICIARY_IDENTITY_INVALID";
+            return false;
+        }
+
+        errorCode = null;
+        return true;
+    }
 
     private static bool RequiresBeneficiaryIdentity(StatutoryDiscountServiceChannelReviewDetail review) =>
         review.EntitlementType is "SENIOR_CITIZEN" or "PWD";

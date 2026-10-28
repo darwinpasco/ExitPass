@@ -170,6 +170,38 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         body!.ErrorCode.Should().Be("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED");
     }
 
+    [Fact]
+    public async Task Draft_WhenProtectedIdentitySaveInitiallyFails_RetryUsesSameCanonicalCommandAndIdentityKey()
+    {
+        var decisionFacade = new FakeDecisionFacadeService();
+        var beneficiaryIdentities = new FakeBeneficiaryIdentityRepository(
+            new StatutoryBeneficiaryIdentityWriteResult(
+                StatutoryBeneficiaryIdentityWriteOutcome.ProtectionUnavailable,
+                "STATUTORY_BENEFICIARY_PROTECTION_UNAVAILABLE"),
+            new StatutoryBeneficiaryIdentityWriteResult(
+                StatutoryBeneficiaryIdentityWriteOutcome.Saved,
+                "STATUTORY_BENEFICIARY_IDENTITY_SAVED"));
+        using var factory = CreateFactory(
+            AcceptedResult(),
+            beneficiaryIdentities: beneficiaryIdentities,
+            decisionFacade: decisionFacade);
+        using var client = factory.CreateClient();
+
+        using var firstResponse = await client.PostAsJsonAsync(Endpoint, Request());
+        using var secondResponse = await client.PostAsJsonAsync(Endpoint, Request());
+
+        firstResponse.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+        var firstBody = await firstResponse.Content.ReadFromJsonAsync<ErrorResponse>();
+        firstBody.Should().NotBeNull();
+        firstBody!.ErrorCode.Should().Be("STATUTORY_BENEFICIARY_PROTECTION_UNAVAILABLE");
+        secondResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        decisionFacade.Commands.Should().HaveCount(2);
+        decisionFacade.Commands.Select(command => command.RequestReference).Distinct().Should().ContainSingle();
+        decisionFacade.Commands.Select(command => command.IdempotencyKey).Distinct().Should().ContainSingle();
+        beneficiaryIdentities.SavedDecisionCommandIds.Should().HaveCount(2);
+        beneficiaryIdentities.SavedDecisionCommandIds.Distinct().Should().ContainSingle().Which.Should().Be(DecisionCommandId);
+    }
+
     /// <summary>
     /// Verifies replaying the same valid draft request reuses the active draft instead of returning a generic failure.
     /// </summary>
@@ -571,7 +603,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     private static CustomWebApplicationFactory CreateFactory(
         OperatorConsoleStatutoryDiscountDraftResult result,
         bool throwValidation = false,
-        IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null) =>
+        IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null,
+        IStatutoryDiscountDecisionFacadeService? decisionFacade = null) =>
         new CustomWebApplicationFactory()
             .WithServiceOverrides(services =>
             {
@@ -581,7 +614,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
                 services.AddSingleton<IOperatorConsoleStatutoryDiscountDraftService>(
                     new FakeStatutoryDiscountDraftService(result, throwValidation));
                 services.RemoveAll<IStatutoryDiscountDecisionFacadeService>();
-                services.AddSingleton<IStatutoryDiscountDecisionFacadeService>(new FakeDecisionFacadeService());
+                services.AddSingleton<IStatutoryDiscountDecisionFacadeService>(
+                    decisionFacade ?? new FakeDecisionFacadeService());
                 services.RemoveAll<IStatutoryBeneficiaryIdentityRepository>();
                 services.AddSingleton<IStatutoryBeneficiaryIdentityRepository>(
                     beneficiaryIdentities ?? new FakeBeneficiaryIdentityRepository());
@@ -820,13 +854,18 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
     private sealed class FakeDecisionFacadeService : IStatutoryDiscountDecisionFacadeService
     {
+        public List<StatutoryDiscountDecisionCommand> Commands { get; } = [];
+
         public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAvailabilityAsync(
             StatutoryDiscountParkingAvailabilityRequest request,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<StatutoryDiscountDecisionResult> SubmitAsync(
             StatutoryDiscountDecisionCommand command,
-            CancellationToken cancellationToken) => Task.FromResult(new StatutoryDiscountDecisionResult(
+            CancellationToken cancellationToken)
+        {
+            Commands.Add(command);
+            return Task.FromResult(new StatutoryDiscountDecisionResult(
                 DecisionCommandId,
                 command.RequestReference,
                 command.ExistingStatutoryDiscountValidationId,
@@ -856,6 +895,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
                 StatutoryDiscountDecisionSemanticHash.SourceVersion,
                 DecisionCommandStatus: StatutoryDiscountDecisionCommandStatuses.AwaitingReview,
                 DecisionResultStatus: "PENDING_REVIEW"));
+        }
 
         public Task<StatutoryDiscountDecisionResult?> GetAsync(
             Guid statutoryDiscountDecisionCommandId,
@@ -865,7 +905,15 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
     private sealed class FakeBeneficiaryIdentityRepository : IStatutoryBeneficiaryIdentityRepository
     {
+        private readonly Queue<StatutoryBeneficiaryIdentityWriteResult> _saveResults;
+
+        public FakeBeneficiaryIdentityRepository(params StatutoryBeneficiaryIdentityWriteResult[] saveResults)
+        {
+            _saveResults = new Queue<StatutoryBeneficiaryIdentityWriteResult>(saveResults);
+        }
+
         public Guid? SavedDecisionCommandId { get; private set; }
+        public List<Guid> SavedDecisionCommandIds { get; } = [];
         public Guid? SavedActorUserId { get; private set; }
         public string? SavedCaptureChannel { get; private set; }
         public StatutoryBeneficiaryIdentityInput? SavedIdentity { get; private set; }
@@ -880,13 +928,16 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             CancellationToken cancellationToken)
         {
             SavedDecisionCommandId = statutoryDiscountDecisionCommandId;
+            SavedDecisionCommandIds.Add(statutoryDiscountDecisionCommandId);
             SavedActorUserId = actorUserId;
             SavedCaptureChannel = captureChannel;
             SavedIdentity = identity;
             SavedCorrelationReference = correlationReference;
-            return Task.FromResult(new StatutoryBeneficiaryIdentityWriteResult(
-                StatutoryBeneficiaryIdentityWriteOutcome.Saved,
-                "STATUTORY_BENEFICIARY_IDENTITY_SAVED"));
+            return Task.FromResult(_saveResults.Count > 0
+                ? _saveResults.Dequeue()
+                : new StatutoryBeneficiaryIdentityWriteResult(
+                    StatutoryBeneficiaryIdentityWriteOutcome.Saved,
+                    "STATUTORY_BENEFICIARY_IDENTITY_SAVED"));
         }
 
         public Task<StatutoryBeneficiaryIdentityWriteResult> FinalizeApprovedAsync(
