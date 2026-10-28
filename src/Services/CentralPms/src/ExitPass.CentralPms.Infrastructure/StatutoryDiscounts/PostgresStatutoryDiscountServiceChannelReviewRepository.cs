@@ -379,6 +379,14 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 return approved;
             }
 
+            var existingValidationPolicy = await ResolvePolicyAsync(connection, transaction, source, cancellationToken)
+                .ConfigureAwait(false);
+            if (existingValidationPolicy is null)
+            {
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return null;
+            }
+
             await UpdateExistingValidationForApprovalAsync(
                     connection,
                     transaction,
@@ -386,6 +394,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                     reviewerUserId,
                     decisionReasonCode,
                     reviewedDocument with { IdControlReference = source.IdControlReference },
+                    existingValidationPolicy,
                     correlationId,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -531,6 +540,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         Guid reviewerUserId,
         string? decisionReasonCode,
         StatutoryDiscountServiceChannelReviewedDocument reviewedDocument,
+        PolicyReferenceRow policy,
         Guid correlationId,
         CancellationToken cancellationToken)
     {
@@ -542,6 +552,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                    id_expiry_date = @id_expiry_date,
                    birth_date = @birth_date,
                    id_control_reference = @id_control_reference,
+                   statutory_discount_policy_version_id = @statutory_discount_policy_version_id,
+                   policy_resolution_basis = @policy_resolution_basis::discounts.policy_resolution_basis_enum,
+                   local_ordinance_applied = @local_ordinance_applied,
+                   national_law_fallback_applied = @national_law_fallback_applied,
                    masked_id_reference = CASE
                        WHEN length(@id_control_reference) <= 4 THEN @id_control_reference
                        ELSE repeat('*', length(@id_control_reference) - 4) || right(@id_control_reference, 4)
@@ -569,6 +583,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         command.Parameters.Add("id_control_reference", NpgsqlDbType.Varchar).Value =
             NormalizeSensitiveOptional(reviewedDocument.IdControlReference)
             ?? throw new InvalidOperationException("Approved statutory ID/control reference is required.");
+        command.Parameters.Add("statutory_discount_policy_version_id", NpgsqlDbType.Uuid).Value = policy.PolicyReferenceId;
+        command.Parameters.Add("policy_resolution_basis", NpgsqlDbType.Text).Value = policy.PolicyResolutionBasis;
+        command.Parameters.Add("local_ordinance_applied", NpgsqlDbType.Boolean).Value = policy.LocalOrdinanceApplied;
+        command.Parameters.Add("national_law_fallback_applied", NpgsqlDbType.Boolean).Value = policy.NationalLawFallbackApplied;
         AddNullable(command, "decision_reason_code", NpgsqlDbType.Varchar, NormalizeOptional(decisionReasonCode));
         command.Parameters.Add("validated_by_user_id", NpgsqlDbType.Uuid).Value = reviewerUserId;
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = correlationId;
@@ -909,6 +927,10 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         const string sql = """
             SELECT
                 authority.statutory_discount_policy_version_id AS policy_reference_id,
+                policy.policy_resolution_basis::text,
+                policy.policy_level::text,
+                policy.policy_type::text,
+                COALESCE(authority.ordinance_number, authority.legal_basis_reference, authority.source_reference) AS ordinance_authority_reference,
                 EXISTS (
                     SELECT 1
                     FROM discounts.statutory_discount_policy_version_evidence_requirements AS requirement
@@ -916,10 +938,23 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                       AND requirement.requirement_status = 'REQUIRED'
                 ) AS requires_evidence_capture
             FROM discounts.statutory_discount_decision_policy_authorities AS authority
+            JOIN discounts.statutory_discount_policy_versions AS policy
+              ON policy.statutory_discount_policy_version_id = authority.statutory_discount_policy_version_id
+             AND policy.entitlement_type::text = authority.entitlement_type
+             AND policy.jurisdiction_id = authority.jurisdiction_id
+             AND policy.policy_code = authority.policy_code
+             AND policy.policy_version = authority.policy_version
             WHERE authority.statutory_discount_decision_command_id = @statutory_discount_decision_command_id
               AND authority.entitlement_type = @entitlement_type
+              AND authority.source_verification_status IN ('VERIFIED_OFFICIAL', 'VERIFIED_ACTIVE_OPERATIONAL', 'ACTIVE_APPROVED')
               AND authority.transaction_publication_status = 'ACTIVE_FOR_TRANSACTION_USE'
               AND authority.parking_service_applicability = 'COVERED'
+              AND policy.policy_effect_support_status = 'SUPPORTED_BY_CURRENT_CALCULATION'
+              AND (policy.transaction_use_effective_from IS NULL OR policy.transaction_use_effective_from <= authority.resolved_at)
+              AND (policy.transaction_use_effective_to IS NULL OR policy.transaction_use_effective_to > authority.resolved_at)
+              AND policy.withdrawn_at IS NULL
+              AND policy.retired_at IS NULL
+              AND policy.superseded_by_policy_version_id IS NULL
             LIMIT 1;
             """;
 
@@ -935,10 +970,19 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             return null;
         }
 
+        var policyResolutionBasis = reader.GetString(reader.GetOrdinal("policy_resolution_basis"));
+        var localOrdinanceApplied =
+            string.Equals(policyResolutionBasis, "LOCAL_ORDINANCE_APPLIED", StringComparison.Ordinal) &&
+            string.Equals(reader.GetString(reader.GetOrdinal("policy_level")), "LOCAL_ORDINANCE", StringComparison.Ordinal) &&
+            string.Equals(reader.GetString(reader.GetOrdinal("policy_type")), "LOCAL_ORDINANCE", StringComparison.Ordinal) &&
+            !reader.IsDBNull(reader.GetOrdinal("ordinance_authority_reference")) &&
+            !string.IsNullOrWhiteSpace(reader.GetString(reader.GetOrdinal("ordinance_authority_reference")));
+
         return new PolicyReferenceRow(
             reader.GetGuid(reader.GetOrdinal("policy_reference_id")),
             reader.GetBoolean(reader.GetOrdinal("requires_evidence_capture")),
-            "LOCAL_ORDINANCE_APPLIED");
+            policyResolutionBasis,
+            localOrdinanceApplied);
     }
 
     private static async Task<Guid> InsertApprovedValidationAsync(
@@ -1328,9 +1372,11 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
     private sealed record PolicyReferenceRow(
         Guid PolicyReferenceId,
         bool RequiresEvidence,
-        string PolicyResolutionBasis)
+        string PolicyResolutionBasis,
+        bool LocalOrdinanceApplied)
     {
-        public bool LocalOrdinanceApplied => true;
+        public bool NationalLawFallbackApplied =>
+            string.Equals(PolicyResolutionBasis, "NATIONAL_LAW_FALLBACK", StringComparison.Ordinal);
     }
 
 }

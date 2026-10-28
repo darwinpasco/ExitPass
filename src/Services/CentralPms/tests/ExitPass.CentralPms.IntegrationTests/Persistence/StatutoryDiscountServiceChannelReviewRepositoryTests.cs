@@ -444,6 +444,47 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
         }
     }
 
+    [Theory]
+    [InlineData("SENIOR_CITIZEN")]
+    [InlineData("PWD")]
+    public async Task ApprovedValidationLinkage_ReconcilesExistingDraftFromFrozenLocalOrdinanceAuthority(
+        string entitlementType)
+    {
+        var seeded = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            $"{nameof(ApprovedValidationLinkage_ReconcilesExistingDraftFromFrozenLocalOrdinanceAuthority)}_{entitlementType}",
+            StatutoryDiscountSourceChannels.OperatorConsole,
+            entitlementType: entitlementType);
+
+        try
+        {
+            var validationId = await LinkOperatorConsoleValidationAndRemoveDecisionAuthorityAsync(
+                seeded,
+                entitlementType,
+                removeDecisionAuthority: false,
+                localOrdinanceApplied: false);
+            var repository = StatutoryDiscountReviewIntegrationTestSupport.CreateReviewRepository();
+
+            var linkage = await repository.EnsureApprovedValidationLinkageAsync(
+                seeded.Decision.StatutoryDiscountDecisionCommandId,
+                seeded.Context.RequestedByUserId,
+                "ELIGIBLE",
+                ReviewedDocument(),
+                seeded.Context.CorrelationId,
+                CancellationToken.None);
+
+            linkage.Should().NotBeNull();
+            linkage!.StatutoryDiscountValidationId.Should().Be(validationId);
+            linkage.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
+            linkage.LocalOrdinanceApplied.Should().BeTrue();
+            linkage.AppliedPolicyReferenceId.Should().Be(seeded.Decision.AppliedPolicyReferenceId);
+            linkage.EntitlementType.Should().Be(entitlementType);
+        }
+        finally
+        {
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(seeded.Context);
+        }
+    }
+
     [Fact]
     public async Task OperatorConsoleReview_FrozenValidationContextMismatchFailsClosedWithoutAuthority()
     {
@@ -584,7 +625,10 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
     }
 
     private static async Task<Guid> LinkOperatorConsoleValidationAndRemoveDecisionAuthorityAsync(
-        SeededServiceChannelReview seeded)
+        SeededServiceChannelReview seeded,
+        string entitlementType = "SENIOR_CITIZEN",
+        bool removeDecisionAuthority = true,
+        bool localOrdinanceApplied = true)
     {
         const string sql = """
             UPDATE discounts.statutory_discount_policy_versions
@@ -611,13 +655,13 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
             VALUES (
                 @validation_id,
                 @parking_session_id,
-                'SENIOR_CITIZEN',
-                'SENIOR_CITIZEN_ID',
+                @entitlement_type::discounts.statutory_entitlement_type_enum,
+                @id_document_type,
                 'OSCA',
                 @policy_version_id,
                 'LOCAL_ORDINANCE_APPLIED',
-                true,
-                false,
+                @local_ordinance_applied,
+                @national_law_fallback_applied,
                 'OPERATOR_ASSISTED',
                 'REQUESTED',
                 true,
@@ -642,7 +686,8 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
              WHERE statutory_discount_decision_command_id = @decision_command_id;
 
             DELETE FROM discounts.statutory_discount_decision_policy_authorities
-             WHERE statutory_discount_decision_command_id = @decision_command_id;
+             WHERE statutory_discount_decision_command_id = @decision_command_id
+               AND @remove_decision_authority;
             """;
 
         var validationId = Guid.NewGuid();
@@ -655,6 +700,12 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
         command.Parameters.Add("decision_command_id", NpgsqlDbType.Uuid).Value = seeded.Decision.StatutoryDiscountDecisionCommandId;
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = seeded.Context.CorrelationId;
         command.Parameters.Add("submitted_by_user_id", NpgsqlDbType.Uuid).Value = seeded.Context.RequestedByUserId;
+        command.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = entitlementType;
+        command.Parameters.Add("id_document_type", NpgsqlDbType.Varchar).Value =
+            entitlementType == "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID";
+        command.Parameters.Add("local_ordinance_applied", NpgsqlDbType.Boolean).Value = localOrdinanceApplied;
+        command.Parameters.Add("national_law_fallback_applied", NpgsqlDbType.Boolean).Value = !localOrdinanceApplied;
+        command.Parameters.Add("remove_decision_authority", NpgsqlDbType.Boolean).Value = removeDecisionAuthority;
         await command.ExecuteNonQueryAsync();
         return validationId;
     }
