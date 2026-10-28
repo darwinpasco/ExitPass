@@ -71,6 +71,7 @@ export interface StatutoryDiscountDraftDetail extends StatutoryDiscountQueueItem
   payableBasisPreview: string;
   currentPaymentStatus: string;
   idDocumentType?: string;
+  beneficiaryFullName?: string;
   maskedIdReference: string;
   issuingAuthority: string;
   evidenceCaptured: boolean;
@@ -382,6 +383,8 @@ export interface StatutoryDiscountDraftCreateInput {
   siteId?: string;
   siteGroupId?: string;
   entitlementType: "SENIOR_CITIZEN" | "PWD";
+  beneficiaryFullName: string;
+  beneficiaryTin?: string;
   idDocumentType: string;
   issuingAuthority: string;
   idControlReference: string;

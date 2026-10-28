@@ -172,6 +172,7 @@ interface DetailDto extends QueueItemDto {
   statutoryDiscountDecisionCommandId?: string | null;
   siteGroupId: string;
   idDocumentType?: string | null;
+  beneficiaryFullName?: string | null;
   issuingAuthority?: string | null;
   maskedIdReference?: string | null;
   evidenceCaptured: boolean;
@@ -951,6 +952,8 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
           ticketReference: input.ticketReference ?? null,
           plateNumber: input.plateNumber ?? null,
           entitlementType: input.entitlementType,
+          beneficiaryFullName: input.beneficiaryFullName,
+          beneficiaryTin: input.beneficiaryTin ?? null,
           idDocumentType: input.idDocumentType,
           issuingAuthority: input.issuingAuthority,
           birthDate: input.birthDate,
@@ -2541,6 +2544,7 @@ function toDraftDetail(item: DetailDto): StatutoryDiscountDraftDetail {
     payableBasisPreview: payableBasisPreview(item),
     currentPaymentStatus: "Read-only in this module",
     idDocumentType: item.idDocumentType?.trim() || mapEntitlement(item.entitlementType),
+    beneficiaryFullName: item.beneficiaryFullName?.trim() || undefined,
     maskedIdReference: item.maskedIdReference?.trim() || "Not available",
     issuingAuthority: item.issuingAuthority?.trim() || "Not available",
     evidenceCaptured: item.evidenceCaptured,

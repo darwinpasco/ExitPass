@@ -125,7 +125,10 @@ public sealed record OperatorConsoleStatutoryDiscountDraftDetailResult(
     long? PayableAmountMinorUnits,
     long? FinalPayableAmountMinorUnits,
     string? CurrencyCode,
-    IReadOnlyList<string> Activity);
+    IReadOnlyList<string> Activity)
+{
+    public string? BeneficiaryFullName { get; init; }
+}
 
 /// <summary>
 /// Query for read-only Operator Console statutory discount audit/reporting rows.

@@ -29,6 +29,12 @@ public sealed record OperatorConsoleStatutoryDiscountDraftRequest(
     Guid CorrelationId,
     string? EvidenceUploadReceipt = null)
 {
+    /// <summary>Beneficiary name retained in the existing protected statutory identity store.</summary>
+    public string? BeneficiaryFullName { get; init; }
+
+    /// <summary>Optional beneficiary TIN retained only in protected statutory identity storage.</summary>
+    public string? BeneficiaryTin { get; init; }
+
     /// <summary>
     /// Full statutory ID/control reference. It is accepted only on the authenticated
     /// request-creation path and is never returned by ordinary Operator Console readback.

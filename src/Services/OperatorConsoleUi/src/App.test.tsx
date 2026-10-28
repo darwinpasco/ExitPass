@@ -1593,6 +1593,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(screen.getByLabelText("ID document type")).toHaveValue("Senior Citizen");
     expect(screen.getByLabelText("ID document type")).toHaveAttribute("readonly");
+    await userEvent.type(screen.getByLabelText("TIN (optional)"), "123-456-789-000");
     await userEvent.type(screen.getByLabelText("Issuing authority"), "OSCA");
     expect(screen.queryByLabelText("Masked ID reference")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Expiry date")).not.toBeInTheDocument();
@@ -1608,6 +1609,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(idReferenceInput).toHaveValue("**3467");
     expect(screen.getByText("ID reference will be masked when displayed.")).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText(/Operator confirms the entitlement information and captured ID photo/i));
+    expect(submit).toBeDisabled();
+    await userEvent.type(screen.getByLabelText("Beneficiary Full Name"), "Maria Santos");
     expect(submit).toBeEnabled();
     await userEvent.click(submit);
 
@@ -1620,6 +1623,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       idPhoto: expect.any(File),
       evidenceCaptureRequested: true,
       operatorAttestation: true,
+      beneficiaryFullName: "Maria Santos",
+      beneficiaryTin: "123-456-789-000",
       idControlReference: "123467",
       maskedIdReference: "**3467",
       birthDate: "1990-01-01"
@@ -1657,6 +1662,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     const livePreview = await screen.findByLabelText("Live rear camera preview");
     setVideoDimensions(livePreview);
     await userEvent.click(screen.getByRole("button", { name: "Capture Photo" }));
+    await userEvent.type(screen.getByLabelText("Beneficiary Full Name"), "Maria Santos");
     await userEvent.type(screen.getByLabelText("Issuing authority"), "OSCA");
     const idReferenceInput = screen.getByLabelText("ID reference");
     await userEvent.type(idReferenceInput, "123467");
@@ -1665,6 +1671,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Submit Request" }));
 
     await waitFor(() => expect(apiClient.createStatutoryDiscountDraft).toHaveBeenCalledWith(expect.objectContaining({
+      beneficiaryTin: undefined,
       idControlReference: "123467",
       maskedIdReference: "**3467"
     })));
@@ -1702,6 +1709,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       ticketReference: "1474119573102",
       plateNumber: "ABC1102",
       entitlementType: "Senior Citizen",
+      beneficiaryFullName: "Maria Santos",
       idDocumentType: "SENIOR CITIZEN",
       issuingAuthority: "OSCA",
       maskedIdReference: "12****",
@@ -1736,6 +1744,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     const summary = await screen.findByRole("region", { name: "Senior Citizen" });
     expect(within(summary).getAllByText("Senior Citizen").length).toBeGreaterThanOrEqual(2);
+    expect(within(summary).getByText("Maria Santos")).toBeInTheDocument();
     expect(within(summary).getByText("OSCA")).toBeInTheDocument();
     expect(within(summary).getByText("12****")).toBeInTheDocument();
     expect(within(summary).getByText("Juan Dela Cruz")).toBeInTheDocument();
@@ -2579,6 +2588,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       parkingSessionId: "23100000-0000-0000-0000-000000000003",
       ticketReference: "E2E-231-SESSION-001",
       entitlementType: "SENIOR_CITIZEN",
+      beneficiaryFullName: "Maria Santos",
       idDocumentType: "SENIOR_CITIZEN_ID",
       issuingAuthority: "OSCA",
       idControlReference: "12345678",
@@ -2612,6 +2622,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       parkingSessionId: "23100000-0000-0000-0000-000000000003",
       ticketReference: "E2E-231-SESSION-001",
       entitlementType: "SENIOR_CITIZEN",
+      beneficiaryFullName: "Maria Santos",
+      beneficiaryTin: null,
       idDocumentType: "SENIOR_CITIZEN_ID",
       issuingAuthority: "OSCA",
       idControlReference: "12345678",

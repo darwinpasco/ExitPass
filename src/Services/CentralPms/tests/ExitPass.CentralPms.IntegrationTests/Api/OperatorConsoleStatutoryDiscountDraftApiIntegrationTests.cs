@@ -34,6 +34,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     private static readonly Guid DraftId = Guid.Parse("48000000-0000-0000-0000-000000000008");
     private static readonly Guid CorrelationId = Guid.Parse("48000000-0000-0000-0000-000000000009");
     private static readonly Guid EvidenceReferenceId = Guid.Parse("48000000-0000-0000-0000-000000000011");
+    private static readonly Guid DecisionCommandId = Guid.Parse("48000000-0000-0000-0000-000000000012");
     private static readonly Guid ManualFixtureSiteId = Guid.Parse("77000000-0000-0000-0000-000000000002");
     private static readonly Guid ManualFixtureParkingSessionId = Guid.Parse("77000000-0000-0000-0000-000000000090");
     private static readonly Guid DraftPolicyJurisdictionId = Guid.Parse("6f000000-0000-0000-0000-000000000001");
@@ -107,7 +108,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     [Fact]
     public async Task Draft_WhenAccepted_ReturnsDraftEnvelope()
     {
-        using var factory = CreateFactory(AcceptedResult());
+        var beneficiaryIdentities = new FakeBeneficiaryIdentityRepository();
+        using var factory = CreateFactory(AcceptedResult(), beneficiaryIdentities: beneficiaryIdentities);
         using var client = factory.CreateClient();
 
         using var response = await client.PostAsJsonAsync(Endpoint, Request());
@@ -127,6 +129,15 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         body.ReusedExistingDraft.Should().BeFalse();
         body.PolicyCode.Should().Be("PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK");
         body.NationalLawReference.Should().Be("RA 9994");
+        beneficiaryIdentities.SavedDecisionCommandId.Should().Be(DecisionCommandId);
+        beneficiaryIdentities.SavedActorUserId.Should().Be(UserId);
+        beneficiaryIdentities.SavedCaptureChannel.Should().Be(StatutoryBeneficiaryIdentityCaptureChannels.OperatorConsole);
+        beneficiaryIdentities.SavedCorrelationReference.Should().Be(CorrelationId);
+        beneficiaryIdentities.SavedIdentity.Should().BeEquivalentTo(new StatutoryBeneficiaryIdentityInput(
+            "Maria Santos",
+            "OSCA_ID",
+            "12345678",
+            null));
     }
 
     [Fact]
@@ -141,6 +152,54 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
         body.Should().NotBeNull();
         body!.ErrorCode.Should().Be("STATUTORY_ID_PHOTO_REQUIRED");
+    }
+
+    [Fact]
+    public async Task Draft_WhenBeneficiaryNameIsMissing_ReturnsDeterministicBadRequest()
+    {
+        using var factory = CreateFactory(AcceptedResult());
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            Endpoint,
+            Request() with { BeneficiaryFullName = "   " });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED");
+    }
+
+    [Fact]
+    public async Task Draft_WhenProtectedIdentitySaveInitiallyFails_RetryUsesSameCanonicalCommandAndIdentityKey()
+    {
+        var decisionFacade = new FakeDecisionFacadeService();
+        var beneficiaryIdentities = new FakeBeneficiaryIdentityRepository(
+            new StatutoryBeneficiaryIdentityWriteResult(
+                StatutoryBeneficiaryIdentityWriteOutcome.ProtectionUnavailable,
+                "STATUTORY_BENEFICIARY_PROTECTION_UNAVAILABLE"),
+            new StatutoryBeneficiaryIdentityWriteResult(
+                StatutoryBeneficiaryIdentityWriteOutcome.Saved,
+                "STATUTORY_BENEFICIARY_IDENTITY_SAVED"));
+        using var factory = CreateFactory(
+            AcceptedResult(),
+            beneficiaryIdentities: beneficiaryIdentities,
+            decisionFacade: decisionFacade);
+        using var client = factory.CreateClient();
+
+        using var firstResponse = await client.PostAsJsonAsync(Endpoint, Request());
+        using var secondResponse = await client.PostAsJsonAsync(Endpoint, Request());
+
+        firstResponse.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+        var firstBody = await firstResponse.Content.ReadFromJsonAsync<ErrorResponse>();
+        firstBody.Should().NotBeNull();
+        firstBody!.ErrorCode.Should().Be("STATUTORY_BENEFICIARY_PROTECTION_UNAVAILABLE");
+        secondResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        decisionFacade.Commands.Should().HaveCount(2);
+        decisionFacade.Commands.Select(command => command.RequestReference).Distinct().Should().ContainSingle();
+        decisionFacade.Commands.Select(command => command.IdempotencyKey).Distinct().Should().ContainSingle();
+        beneficiaryIdentities.SavedDecisionCommandIds.Should().HaveCount(2);
+        beneficiaryIdentities.SavedDecisionCommandIds.Distinct().Should().ContainSingle().Which.Should().Be(DecisionCommandId);
     }
 
     /// <summary>
@@ -543,7 +602,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
     private static CustomWebApplicationFactory CreateFactory(
         OperatorConsoleStatutoryDiscountDraftResult result,
-        bool throwValidation = false) =>
+        bool throwValidation = false,
+        IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null,
+        IStatutoryDiscountDecisionFacadeService? decisionFacade = null) =>
         new CustomWebApplicationFactory()
             .WithServiceOverrides(services =>
             {
@@ -553,7 +614,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
                 services.AddSingleton<IOperatorConsoleStatutoryDiscountDraftService>(
                     new FakeStatutoryDiscountDraftService(result, throwValidation));
                 services.RemoveAll<IStatutoryDiscountDecisionFacadeService>();
-                services.AddSingleton<IStatutoryDiscountDecisionFacadeService>(new FakeDecisionFacadeService());
+                services.AddSingleton<IStatutoryDiscountDecisionFacadeService>(
+                    decisionFacade ?? new FakeDecisionFacadeService());
+                services.RemoveAll<IStatutoryBeneficiaryIdentityRepository>();
+                services.AddSingleton<IStatutoryBeneficiaryIdentityRepository>(
+                    beneficiaryIdentities ?? new FakeBeneficiaryIdentityRepository());
             });
 
     private static CustomWebApplicationFactory CreatePhotoReceiptFactory() =>
@@ -589,6 +654,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             CorrelationId,
             EvidenceUploadReceipt: ProtectedPhotoReceipt)
         {
+            BeneficiaryFullName = "Maria Santos",
+            BeneficiaryTin = null,
             IdControlReference = "12345678",
             BirthDate = new DateOnly(1950, 1, 1)
         };
@@ -620,6 +687,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             Guid.NewGuid(),
             EvidenceUploadReceipt: ProtectedPhotoReceipt)
         {
+            BeneficiaryFullName = "Maria Santos",
+            BeneficiaryTin = null,
             IdControlReference = entitlementType == "PWD" ? "PWD12345678" : "SC12345678",
             BirthDate = new DateOnly(1950, 1, 1)
         };
@@ -785,14 +854,19 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
     private sealed class FakeDecisionFacadeService : IStatutoryDiscountDecisionFacadeService
     {
+        public List<StatutoryDiscountDecisionCommand> Commands { get; } = [];
+
         public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAvailabilityAsync(
             StatutoryDiscountParkingAvailabilityRequest request,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<StatutoryDiscountDecisionResult> SubmitAsync(
             StatutoryDiscountDecisionCommand command,
-            CancellationToken cancellationToken) => Task.FromResult(new StatutoryDiscountDecisionResult(
-                Guid.Parse("48000000-0000-0000-0000-000000000012"),
+            CancellationToken cancellationToken)
+        {
+            Commands.Add(command);
+            return Task.FromResult(new StatutoryDiscountDecisionResult(
+                DecisionCommandId,
                 command.RequestReference,
                 command.ExistingStatutoryDiscountValidationId,
                 command.ParkingSessionId,
@@ -821,11 +895,61 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
                 StatutoryDiscountDecisionSemanticHash.SourceVersion,
                 DecisionCommandStatus: StatutoryDiscountDecisionCommandStatuses.AwaitingReview,
                 DecisionResultStatus: "PENDING_REVIEW"));
+        }
 
         public Task<StatutoryDiscountDecisionResult?> GetAsync(
             Guid statutoryDiscountDecisionCommandId,
             Guid correlationId,
             CancellationToken cancellationToken) => Task.FromResult<StatutoryDiscountDecisionResult?>(null);
+    }
+
+    private sealed class FakeBeneficiaryIdentityRepository : IStatutoryBeneficiaryIdentityRepository
+    {
+        private readonly Queue<StatutoryBeneficiaryIdentityWriteResult> _saveResults;
+
+        public FakeBeneficiaryIdentityRepository(params StatutoryBeneficiaryIdentityWriteResult[] saveResults)
+        {
+            _saveResults = new Queue<StatutoryBeneficiaryIdentityWriteResult>(saveResults);
+        }
+
+        public Guid? SavedDecisionCommandId { get; private set; }
+        public List<Guid> SavedDecisionCommandIds { get; } = [];
+        public Guid? SavedActorUserId { get; private set; }
+        public string? SavedCaptureChannel { get; private set; }
+        public StatutoryBeneficiaryIdentityInput? SavedIdentity { get; private set; }
+        public Guid? SavedCorrelationReference { get; private set; }
+
+        public Task<StatutoryBeneficiaryIdentityWriteResult> SaveBeforeDecisionAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid actorUserId,
+            string captureChannel,
+            StatutoryBeneficiaryIdentityInput identity,
+            Guid correlationReference,
+            CancellationToken cancellationToken)
+        {
+            SavedDecisionCommandId = statutoryDiscountDecisionCommandId;
+            SavedDecisionCommandIds.Add(statutoryDiscountDecisionCommandId);
+            SavedActorUserId = actorUserId;
+            SavedCaptureChannel = captureChannel;
+            SavedIdentity = identity;
+            SavedCorrelationReference = correlationReference;
+            return Task.FromResult(_saveResults.Count > 0
+                ? _saveResults.Dequeue()
+                : new StatutoryBeneficiaryIdentityWriteResult(
+                    StatutoryBeneficiaryIdentityWriteOutcome.Saved,
+                    "STATUTORY_BENEFICIARY_IDENTITY_SAVED"));
+        }
+
+        public Task<StatutoryBeneficiaryIdentityWriteResult> FinalizeApprovedAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid reviewedByActorRef,
+            string approvalDecisionReference,
+            Guid correlationReference,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<StatutoryBeneficiaryIdentityRecord?> GetAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            CancellationToken cancellationToken) => Task.FromResult<StatutoryBeneficiaryIdentityRecord?>(null);
     }
 
     private static async Task SeedManualFixtureAsync()

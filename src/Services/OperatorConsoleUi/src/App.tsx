@@ -2428,6 +2428,8 @@ function SessionLookupPage({
   const [customerTin, setCustomerTin] = useState("");
   const [customerBusinessStyle, setCustomerBusinessStyle] = useState("");
   const [entitlementType, setEntitlementType] = useState<"SENIOR_CITIZEN" | "PWD">("SENIOR_CITIZEN");
+  const [beneficiaryFullName, setBeneficiaryFullName] = useState("");
+  const [beneficiaryTin, setBeneficiaryTin] = useState("");
   const [issuingAuthority, setIssuingAuthority] = useState("");
   const [idReference, setIdReference] = useState("");
   const [idReferenceEditing, setIdReferenceEditing] = useState(false);
@@ -2494,6 +2496,8 @@ function SessionLookupPage({
     setCustomerAddress("");
     setCustomerTin("");
     setCustomerBusinessStyle("");
+    setBeneficiaryFullName("");
+    setBeneficiaryTin("");
     setIssuingAuthority("");
     setIdReference("");
     setIdReferenceEditing(false);
@@ -2547,6 +2551,12 @@ function SessionLookupPage({
 
     const result = lookupState.data;
 
+    const normalizedBeneficiaryFullName = beneficiaryFullName.trim();
+    if (!normalizedBeneficiaryFullName) {
+      setDraftState({ status: "error", message: "Enter the beneficiary full name." });
+      return;
+    }
+
     const normalizedIdReference = idReference.trim();
     const maskedIdReference = maskStatutoryIdReference(normalizedIdReference);
     setIdReferenceEditing(false);
@@ -2578,6 +2588,8 @@ function SessionLookupPage({
         siteId: result.siteId,
         siteGroupId: result.siteGroupId,
         entitlementType,
+        beneficiaryFullName: normalizedBeneficiaryFullName,
+        beneficiaryTin: beneficiaryTin.trim() || undefined,
         idDocumentType: idDocumentTypeForEntitlement(entitlementType),
         issuingAuthority,
         idControlReference: normalizedIdReference,
@@ -2598,6 +2610,8 @@ function SessionLookupPage({
       setDraftState({ status: "loaded", data: draft.message });
       const currentDraft = await client.getCurrentStatutoryDiscountDraft(parkingSessionId);
       setCurrentDraftState(currentDraft ? { status: "loaded", data: currentDraft } : { status: "error", message: "The submitted statutory request could not be reloaded." });
+      setBeneficiaryFullName("");
+      setBeneficiaryTin("");
       setIdReference("");
       setOperatorAttestation(false);
       replaceIdPhoto(null);
@@ -2791,6 +2805,8 @@ function SessionLookupPage({
                   onChange={(event) => {
                     const next = event.target.value as "SENIOR_CITIZEN" | "PWD";
                     setEntitlementType(next);
+                    setBeneficiaryFullName("");
+                    setBeneficiaryTin("");
                     setIssuingAuthority("");
                     setIdReference("");
                     setIdReferenceEditing(false);
@@ -2802,8 +2818,16 @@ function SessionLookupPage({
                 </select>
               </label>
               <label>
+                Beneficiary Full Name
+                <input required aria-required="true" autoComplete="off" maxLength={256} value={beneficiaryFullName} onChange={(event) => setBeneficiaryFullName(event.target.value)} />
+              </label>
+              <label>
                 ID document type
                 <input value={idDocumentTypeForEntitlement(entitlementType)} readOnly />
+              </label>
+              <label>
+                TIN (optional)
+                <input autoComplete="off" maxLength={32} value={beneficiaryTin} onChange={(event) => setBeneficiaryTin(event.target.value)} />
               </label>
               <label>
                 Issuing authority
@@ -2842,6 +2866,7 @@ function SessionLookupPage({
                   type="submit"
                   disabled={
                     draftState.status === "loading" ||
+                    !beneficiaryFullName.trim() ||
                     !issuingAuthority.trim() ||
                     !idReference.trim() ||
                     !birthDate ||
@@ -2940,6 +2965,7 @@ function SubmittedStatutoryRequestSummary({
       </div>
       <dl className="detailGrid submittedRequestDetails">
         <dt>Entitlement</dt><dd>{plainEntitlementLabel(detail.entitlementType)}</dd>
+        <dt>Beneficiary name</dt><dd>{displayValue(detail.beneficiaryFullName)}</dd>
         <dt>ID document type</dt><dd>{statutoryDocumentTypeLabel(detail.idDocumentType, detail.entitlementType)}</dd>
         <dt>Issuing authority</dt><dd>{displayValue(detail.issuingAuthority)}</dd>
         <dt>ID reference</dt><dd>{displayValue(detail.maskedIdReference)}</dd>
