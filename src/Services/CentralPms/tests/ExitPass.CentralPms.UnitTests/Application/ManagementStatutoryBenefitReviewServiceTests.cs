@@ -176,6 +176,85 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         result.Value.BeneficiaryTin.Should().BeNull();
     }
 
+    [Theory]
+    [InlineData("SENIOR_CITIZEN", "PERCENTAGE_DISCOUNT")]
+    [InlineData("SENIOR_CITIZEN", "FULL_FEE_EXEMPTION")]
+    [InlineData("PWD", "PERCENTAGE_DISCOUNT")]
+    [InlineData("PWD", "FULL_FEE_EXEMPTION")]
+    public async Task Approve_ScOrPwdWithoutIdentity_IsRejectedRegardlessOfBenefitType(
+        string entitlementType,
+        string benefitType)
+    {
+        var canonical = new FakeCanonicalRepository
+        {
+            Detail = Detail() with
+            {
+                EntitlementType = entitlementType,
+                GoverningPolicy = ResidentOnlyPolicy() with { BenefitType = benefitType }
+            }
+        };
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        beneficiaryIdentities.GetAsync(DecisionReference, Arg.Any<CancellationToken>())
+            .Returns((StatutoryBeneficiaryIdentityRecord?)null);
+        var decisions = new FakeDecisionService();
+
+        var result = await CreateService(
+                AllowedRepository(),
+                canonical,
+                decisions,
+                beneficiaryIdentities: beneficiaryIdentities)
+            .DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Invalid);
+        result.Classification.Should().Be("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED");
+        decisions.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Reject_WithoutBeneficiaryIdentity_RemainsAvailable()
+    {
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        var decisions = new FakeDecisionService();
+
+        var result = await CreateService(
+                AllowedRepository(),
+                decisions: decisions,
+                beneficiaryIdentities: beneficiaryIdentities)
+            .DecideAsync(Actor(), Command("REJECT", "NOT_ELIGIBLE"), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Success);
+        decisions.Calls.Should().Be(1);
+        await beneficiaryIdentities.DidNotReceiveWithAnyArgs().GetAsync(default, default);
+    }
+
+    [Theory]
+    [InlineData("NAME")]
+    [InlineData("ID_TYPE")]
+    [InlineData("ID_NUMBER")]
+    public async Task Approve_WithIncompleteStoredIdentity_IsRejected(string missingField)
+    {
+        var identity = BeneficiaryIdentity(isFinal: false) with
+        {
+            BeneficiaryFullName = missingField == "NAME" ? "   " : "Maria Santos",
+            StatutoryIdType = missingField == "ID_TYPE" ? "" : "PWD_ID",
+            StatutoryIdNumber = missingField == "ID_NUMBER" ? " " : "PWD-2026-001",
+            BeneficiaryTin = null
+        };
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        beneficiaryIdentities.GetAsync(DecisionReference, Arg.Any<CancellationToken>()).Returns(identity);
+        var decisions = new FakeDecisionService();
+
+        var result = await CreateService(
+                AllowedRepository(),
+                decisions: decisions,
+                beneficiaryIdentities: beneficiaryIdentities)
+            .DecideAsync(Actor(), Command("APPROVE"), CancellationToken.None);
+
+        result.Outcome.Should().Be(ManagementStatutoryBenefitReviewOutcome.Invalid);
+        result.Classification.Should().Be("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED");
+        decisions.Calls.Should().Be(0);
+    }
+
     [Fact]
     public async Task Detail_ForApprovedOperatorConsoleRequestWithoutApplication_RecoversCanonicalApplication()
     {
@@ -283,7 +362,8 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         {
             Result = new AuthorizedStatutoryBenefitDecisionResult(true, true, true, "APPROVED", "APPROVE", null, null, SubmittedAt.AddMinutes(5))
         };
-        var service = CreateService(repository, canonical, decisions);
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        var service = CreateService(repository, canonical, decisions, beneficiaryIdentities: beneficiaryIdentities);
 
         var result = await service.DecideAsync(Actor(), Command("APPROVE", expectedVersion: 7), CancellationToken.None);
 
@@ -1162,6 +1242,24 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         TimeProvider? timeProvider = null,
         IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null)
     {
+        var canonicalRepository = canonical ?? new FakeCanonicalRepository { Detail = Detail() };
+        if (beneficiaryIdentities is null)
+        {
+            beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+            beneficiaryIdentities.GetAsync(DecisionReference, Arg.Any<CancellationToken>())
+                .Returns(BeneficiaryIdentity(
+                    isFinal: false,
+                    canonicalRepository.Detail?.EntitlementType ?? "PWD"));
+            beneficiaryIdentities.FinalizeApprovedAsync(
+                    DecisionReference,
+                    Arg.Any<Guid>(),
+                    Arg.Any<string>(),
+                    Arg.Any<Guid>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(new StatutoryBeneficiaryIdentityWriteResult(
+                    StatutoryBeneficiaryIdentityWriteOutcome.Saved,
+                    "SAVED"));
+        }
         var review = evidenceReview ?? Substitute.For<IOperatorConsoleStatutoryEvidenceReviewService>();
         if (evidenceReview is null)
         {
@@ -1170,7 +1268,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
         }
         return new(
             repository,
-            canonical ?? new FakeCanonicalRepository { Detail = Detail() },
+            canonicalRepository,
             decisions ?? new FakeDecisionService(),
             decisionFacade ?? Substitute.For<IStatutoryDiscountDecisionFacadeService>(),
             review,
@@ -1187,14 +1285,16 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             beneficiaryIdentities);
     }
 
-    private static StatutoryBeneficiaryIdentityRecord BeneficiaryIdentity(bool isFinal) =>
+    private static StatutoryBeneficiaryIdentityRecord BeneficiaryIdentity(
+        bool isFinal,
+        string entitlementType = "PWD") =>
         new(
             DecisionReference,
             SiteA,
-            "SENIOR_CITIZEN",
+            entitlementType,
             "Maria Santos",
-            "SENIOR_CITIZEN_ID",
-            "SC-2026-001",
+            entitlementType == "SENIOR_CITIZEN" ? "SENIOR_CITIZEN_ID" : "PWD_ID",
+            entitlementType == "SENIOR_CITIZEN" ? "SC-2026-001" : "PWD-2026-001",
             "123-456-789-000",
             UserId,
             StatutoryBeneficiaryIdentityCaptureChannels.ManagementPlatform,

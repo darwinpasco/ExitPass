@@ -184,7 +184,8 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
 
   const detail = state.status === "ready" ? state.data : undefined;
   const terminal = detail ? detail.reviewStatus !== "PENDING_REVIEW" : true;
-  const requiresStatutorySalesBookIdentity = detail?.governingPolicy?.benefitType === "PERCENTAGE_DISCOUNT";
+  const requiresBeneficiaryIdentity = detail?.entitlementType === "SENIOR_CITIZEN" || detail?.entitlementType === "PWD";
+  const hasStoredBeneficiaryIdentity = Boolean(detail?.beneficiaryFullName?.trim());
   const canApprove = client.canApproveStatutoryDiscount?.() ?? false;
   const canReject = client.canRejectStatutoryDiscount?.() ?? false;
 
@@ -221,7 +222,7 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
     if (!detail || !confirming || submitting) return;
     if (!attested) { setError("Confirm that you reviewed the required evidence and request facts."); return; }
     if (confirming === "REJECT" && !reason) { setError("A rejection reason is required."); return; }
-    if (confirming === "APPROVE" && requiresStatutorySalesBookIdentity && (!beneficiaryFullName.trim() || !statutoryIdType || !statutoryIdNumber.trim())) { setError("Full name, governed ID type, and statutory ID number are required before approval."); return; }
+    if (confirming === "APPROVE" && requiresBeneficiaryIdentity && !hasStoredBeneficiaryIdentity && (!beneficiaryFullName.trim() || !statutoryIdType || !statutoryIdNumber.trim())) { setError("Full name, governed ID type, and statutory ID number are required before approval."); return; }
     setSubmitting(true); setError(undefined); setMessage(undefined);
     try {
       const result = await client.submitCanonicalStatutoryReviewDecision({
@@ -230,10 +231,10 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
         reasonCode: confirming === "REJECT" ? reason : undefined,
         reviewerAttestation: attested,
         idempotencyKey: `operator-console-review-${detail.statutoryDiscountDecisionCommandId}-${confirming.toLowerCase()}`,
-        beneficiaryFullName: requiresStatutorySalesBookIdentity ? beneficiaryFullName.trim() || undefined : undefined,
-        statutoryIdType: requiresStatutorySalesBookIdentity ? statutoryIdType || undefined : undefined,
-        statutoryIdNumber: requiresStatutorySalesBookIdentity ? statutoryIdNumber.trim() || undefined : undefined,
-        beneficiaryTin: requiresStatutorySalesBookIdentity ? beneficiaryTin.trim() || undefined : undefined
+        beneficiaryFullName: requiresBeneficiaryIdentity && !hasStoredBeneficiaryIdentity ? beneficiaryFullName.trim() || undefined : undefined,
+        statutoryIdType: requiresBeneficiaryIdentity && !hasStoredBeneficiaryIdentity ? statutoryIdType || undefined : undefined,
+        statutoryIdNumber: requiresBeneficiaryIdentity && !hasStoredBeneficiaryIdentity ? statutoryIdNumber.trim() || undefined : undefined,
+        beneficiaryTin: requiresBeneficiaryIdentity && !hasStoredBeneficiaryIdentity ? beneficiaryTin.trim() || undefined : undefined
       });
       if (!result.decisionAccepted) setError(result.errorCode ?? "Central PMS did not accept the decision.");
       else setMessage(result.alreadyDecided ? "This request was already decided. The authoritative state has been refreshed." : `Decision recorded: ${result.currentValidationStatus}.`);
@@ -271,7 +272,7 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
       <section className="panel" aria-labelledby="canonical-decision"><div className="panelHeader"><h3 id="canonical-decision">Decision</h3><span className="statusPill">{terminal ? "Final" : "Pending"}</span></div>
         {message && <p className="successMessage" role="status">{message}</p>}{error && <p className="errorMessage" role="alert">{error}</p>}
         {terminal ? <p>The Central PMS decision is final and cannot be changed in Operator Console.</p> : <>
-          {requiresStatutorySalesBookIdentity && <fieldset className="canonicalReviewFilters"><legend>BIR statutory beneficiary identity</legend>
+          {requiresBeneficiaryIdentity && !hasStoredBeneficiaryIdentity && <fieldset className="canonicalReviewFilters"><legend>BIR statutory beneficiary identity</legend>
             <p className="fieldHint">Restricted values are used only for the approved fiscal snapshot and Annex E-2/E-3 exports.</p>
             <label>Full Name<input autoComplete="off" value={beneficiaryFullName} onChange={(event)=>setBeneficiaryFullName(event.target.value)} /></label>
             <label>ID Type<select value={statutoryIdType} onChange={(event)=>setStatutoryIdType(event.target.value)}><option value="">Select ID type</option>{detail.entitlementType === "SENIOR_CITIZEN" ? <><option value="OSCA_ID">OSCA ID</option><option value="SENIOR_CITIZEN_ID">Senior Citizen ID</option></> : <option value="PWD_ID">PWD ID</option>}</select></label>

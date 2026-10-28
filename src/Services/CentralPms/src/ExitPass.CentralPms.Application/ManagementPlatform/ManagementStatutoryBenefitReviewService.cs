@@ -493,12 +493,16 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
                 return Invalid<ManagementStatutoryBenefitDecisionResult>(saved.Classification, command.CorrelationId);
         }
 
-        if (decision == "APPROVE" && IsPercentageSalesBookCandidate(review))
+        var existingApprovedDecision = string.Equals(
+            review.ReviewStatus,
+            StatutoryDiscountServiceChannelReviewStatuses.Approved,
+            StringComparison.Ordinal);
+        if (decision == "APPROVE" && RequiresBeneficiaryIdentity(review) && !existingApprovedDecision)
         {
             var identity = _beneficiaryIdentities is null
                 ? null
                 : await _beneficiaryIdentities.GetAsync(command.DecisionCommandReference, cancellationToken).ConfigureAwait(false);
-            if (identity is null)
+            if (!HasCompleteBeneficiaryIdentity(review, identity))
                 return Invalid<ManagementStatutoryBenefitDecisionResult>("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED", command.CorrelationId);
         }
 
@@ -728,8 +732,21 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
         !string.IsNullOrWhiteSpace(command.StatutoryIdNumber) ||
         !string.IsNullOrWhiteSpace(command.BeneficiaryTin);
 
-    private static bool IsPercentageSalesBookCandidate(StatutoryDiscountServiceChannelReviewDetail review) =>
-        string.Equals(review.GoverningPolicy?.BenefitType, "PERCENTAGE_DISCOUNT", StringComparison.Ordinal);
+    private static bool RequiresBeneficiaryIdentity(StatutoryDiscountServiceChannelReviewDetail review) =>
+        review.EntitlementType is "SENIOR_CITIZEN" or "PWD";
+
+    private static bool HasCompleteBeneficiaryIdentity(
+        StatutoryDiscountServiceChannelReviewDetail review,
+        StatutoryBeneficiaryIdentityRecord? identity) =>
+        identity is not null &&
+        string.Equals(identity.EntitlementType, review.EntitlementType, StringComparison.Ordinal) &&
+        StatutoryBeneficiaryIdentityNormalizer.TryNormalize(
+            new StatutoryBeneficiaryIdentityInput(
+                identity.BeneficiaryFullName,
+                identity.StatutoryIdType,
+                identity.StatutoryIdNumber,
+                identity.BeneficiaryTin),
+            out _);
 
     private async Task<StatutoryDiscountServiceChannelReviewDetail> ContinueApprovedApplicationIfRequiredAsync(
         StatutoryDiscountServiceChannelReviewDetail canonical,
@@ -1050,7 +1067,7 @@ public sealed class ManagementStatutoryBenefitReviewService : IManagementStatuto
             decision,
             metadata.Version,
             correlationId,
-            IsPercentageSalesBookCandidate(source),
+            RequiresBeneficiaryIdentity(source),
             beneficiaryIdentity?.BeneficiaryFullName,
             beneficiaryIdentity?.StatutoryIdType,
             beneficiaryIdentity?.StatutoryIdNumber,
