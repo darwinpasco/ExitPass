@@ -547,10 +547,22 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 
         try
         {
+            if (!StatutoryBeneficiaryIdentityNormalizer.TryNormalizeDocumentType(
+                    request.EntitlementType,
+                    request.IdDocumentType,
+                    out var canonicalDocumentType,
+                    out var documentTypeError))
+            {
+                return Results.BadRequest(BuildError(
+                    documentTypeError ?? StatutoryBeneficiaryIdentityNormalizer.InvalidDocumentTypeClassification,
+                    DocumentTypeErrorMessage(documentTypeError),
+                    request.CorrelationId));
+            }
+
             if (!StatutoryBeneficiaryIdentityNormalizer.TryNormalize(
                     new StatutoryBeneficiaryIdentityInput(
                         request.BeneficiaryFullName ?? string.Empty,
-                        request.IdDocumentType,
+                        canonicalDocumentType,
                         request.IdControlReference ?? string.Empty,
                         request.BeneficiaryTin),
                     out var beneficiaryIdentity))
@@ -603,7 +615,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                     request.TicketReference,
                     request.PlateNumber,
                     request.EntitlementType,
-                    request.IdDocumentType,
+                    canonicalDocumentType,
                     request.IssuingAuthority,
                     request.ExpiryDate,
                     request.MaskedIdReference,
@@ -637,7 +649,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                         request.TicketReference,
                         request.PlateNumber,
                         request.EntitlementType,
-                        request.IdDocumentType,
+                        canonicalDocumentType,
                         request.IssuingAuthority,
                         request.ExpiryDate,
                         result.StoredMaskedIdReference ?? string.Empty,
@@ -765,6 +777,15 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         string.Equals(entitlementType?.Trim(), "PWD", StringComparison.OrdinalIgnoreCase)
             ? "PWD_ID"
             : "SENIOR_CITIZEN_ID";
+
+    private static string DocumentTypeErrorMessage(string? classification) => classification switch
+    {
+        StatutoryBeneficiaryIdentityNormalizer.IdentityRequiredClassification =>
+            "Beneficiary full name, statutory ID type, and statutory ID number are required.",
+        StatutoryBeneficiaryIdentityNormalizer.DocumentTypeMismatchClassification =>
+            "The statutory ID type does not match the selected entitlement.",
+        _ => "The statutory ID type is not supported."
+    };
 
     private static async Task<IResult> UploadStatutoryIdPhotoAsync(
         Guid parkingSessionId,

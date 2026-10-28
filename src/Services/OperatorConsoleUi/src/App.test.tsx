@@ -1625,6 +1625,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       operatorAttestation: true,
       beneficiaryFullName: "Maria Santos",
       beneficiaryTin: "123-456-789-000",
+      idDocumentType: "SENIOR_CITIZEN_ID",
       idControlReference: "123467",
       maskedIdReference: "**3467",
       birthDate: "1990-01-01"
@@ -1826,7 +1827,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
   });
 
   it("TicketLookup_MapsPwdEntitlementToReadOnlyPwdDocumentType", async () => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:pwd-id-preview") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    installPhoneCamera();
+    const onDraftCreate = vi.fn();
     render(<App apiClient={createMockOperatorConsoleApiClient({
+      onDraftCreate,
       drafts: [],
       ticketLookupResults: [{
         ...mockCompletedTicketLookup(),
@@ -1845,6 +1851,24 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(screen.getByLabelText("ID document type")).toHaveValue("PWD");
     expect(screen.getByLabelText("ID document type")).toHaveAttribute("readonly");
+
+    await userEvent.type(screen.getByLabelText("Beneficiary Full Name"), "Maria Santos");
+    await userEvent.type(screen.getByLabelText("Issuing authority"), "NCDA");
+    await userEvent.type(screen.getByLabelText("ID reference"), "PWD123456");
+    await userEvent.type(screen.getByLabelText("Birth date"), "1980-01-01");
+    await userEvent.click(screen.getByRole("button", { name: "Take ID Photo" }));
+    const livePreview = await screen.findByLabelText("Live rear camera preview");
+    setVideoDimensions(livePreview);
+    await userEvent.click(screen.getByRole("button", { name: "Capture Photo" }));
+    await userEvent.click(screen.getByLabelText(/Operator confirms the entitlement information and captured ID photo/i));
+    await userEvent.click(screen.getByRole("button", { name: "Submit Request" }));
+
+    await waitFor(() => expect(onDraftCreate).toHaveBeenCalledWith(expect.objectContaining({
+      entitlementType: "PWD",
+      idDocumentType: "PWD_ID",
+      beneficiaryFullName: "Maria Santos",
+      beneficiaryTin: undefined
+    })));
   });
 
   it("TicketLookup_CreatesCustomerInformationBeforePaymentAndKeepsItBelowStatutoryRequest", async () => {
