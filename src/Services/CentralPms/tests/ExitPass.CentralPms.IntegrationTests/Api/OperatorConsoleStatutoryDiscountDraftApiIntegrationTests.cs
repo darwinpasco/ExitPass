@@ -62,6 +62,48 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             .HttpMethods.Should().ContainSingle().Which.Should().Be(HttpMethod.Post.Method);
     }
 
+    [Theory]
+    [InlineData("SENIOR_CITIZEN", "Senior Citizen", "SENIOR_CITIZEN_ID")]
+    [InlineData("SENIOR_CITIZEN", "OSCA_ID", "SENIOR_CITIZEN_ID")]
+    [InlineData("PWD", "PWD", "PWD_ID")]
+    [InlineData("PWD", "PWD_ID", "PWD_ID")]
+    public void DocumentTypeNormalizer_AcceptsSupportedCanonicalAndLegacyValues(
+        string entitlementType,
+        string documentType,
+        string expected)
+    {
+        var accepted = StatutoryBeneficiaryIdentityNormalizer.TryNormalizeDocumentType(
+            entitlementType,
+            documentType,
+            out var normalized,
+            out var classification);
+
+        accepted.Should().BeTrue();
+        normalized.Should().Be(expected);
+        classification.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("SENIOR_CITIZEN", null, "STATUTORY_BENEFICIARY_IDENTITY_REQUIRED")]
+    [InlineData("SENIOR_CITIZEN", " ", "STATUTORY_BENEFICIARY_IDENTITY_REQUIRED")]
+    [InlineData("SENIOR_CITIZEN", "PASSPORT", "STATUTORY_BENEFICIARY_IDENTITY_INVALID_DOCUMENT_TYPE")]
+    [InlineData("SENIOR_CITIZEN", "PWD_ID", "STATUTORY_BENEFICIARY_IDENTITY_DOCUMENT_TYPE_MISMATCH")]
+    public void DocumentTypeNormalizer_RejectsMissingUnsupportedAndMismatchedValues(
+        string entitlementType,
+        string? documentType,
+        string expectedClassification)
+    {
+        var accepted = StatutoryBeneficiaryIdentityNormalizer.TryNormalizeDocumentType(
+            entitlementType,
+            documentType,
+            out var normalized,
+            out var classification);
+
+        accepted.Should().BeFalse();
+        normalized.Should().BeEmpty();
+        classification.Should().Be(expectedClassification);
+    }
+
     /// <summary>
     /// Verifies the documented route is discoverable through Swagger/OpenAPI.
     /// </summary>
@@ -108,8 +150,14 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     [Fact]
     public async Task Draft_WhenAccepted_ReturnsDraftEnvelope()
     {
+        var draftService = new FakeStatutoryDiscountDraftService(AcceptedResult(), throwValidation: false);
+        var decisionFacade = new FakeDecisionFacadeService();
         var beneficiaryIdentities = new FakeBeneficiaryIdentityRepository();
-        using var factory = CreateFactory(AcceptedResult(), beneficiaryIdentities: beneficiaryIdentities);
+        using var factory = CreateFactory(
+            AcceptedResult(),
+            beneficiaryIdentities: beneficiaryIdentities,
+            decisionFacade: decisionFacade,
+            draftService: draftService);
         using var client = factory.CreateClient();
 
         using var response = await client.PostAsJsonAsync(Endpoint, Request());
@@ -135,9 +183,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         beneficiaryIdentities.SavedCorrelationReference.Should().Be(CorrelationId);
         beneficiaryIdentities.SavedIdentity.Should().BeEquivalentTo(new StatutoryBeneficiaryIdentityInput(
             "Maria Santos",
-            "OSCA_ID",
+            "SENIOR_CITIZEN_ID",
             "12345678",
             null));
+        draftService.Commands.Should().ContainSingle().Which.IdDocumentType.Should().Be("SENIOR_CITIZEN_ID");
+        decisionFacade.Commands.Should().ContainSingle().Which.IdDocumentType.Should().Be("SENIOR_CITIZEN_ID");
     }
 
     [Fact]
@@ -163,6 +213,69 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         using var response = await client.PostAsJsonAsync(
             Endpoint,
             Request() with { BeneficiaryFullName = "   " });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED");
+    }
+
+    [Fact]
+    public async Task Draft_WhenPwdLegacyDocumentLabelIsComplete_PersistsCanonicalDocumentType()
+    {
+        var request = Request() with
+        {
+            EntitlementType = "PWD",
+            IdDocumentType = "PWD",
+            IssuingAuthority = "NCDA"
+        };
+        var result = AcceptedResult() with { EntitlementType = "PWD" };
+        var beneficiaryIdentities = new FakeBeneficiaryIdentityRepository();
+        var decisionFacade = new FakeDecisionFacadeService();
+        using var factory = CreateFactory(
+            result,
+            beneficiaryIdentities: beneficiaryIdentities,
+            decisionFacade: decisionFacade);
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(Endpoint, request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        beneficiaryIdentities.SavedIdentity!.StatutoryIdType.Should().Be("PWD_ID");
+        decisionFacade.Commands.Should().ContainSingle().Which.IdDocumentType.Should().Be("PWD_ID");
+    }
+
+    [Theory]
+    [InlineData(null, "STATUTORY_BENEFICIARY_IDENTITY_REQUIRED")]
+    [InlineData("", "STATUTORY_BENEFICIARY_IDENTITY_REQUIRED")]
+    [InlineData("PASSPORT", "STATUTORY_BENEFICIARY_IDENTITY_INVALID_DOCUMENT_TYPE")]
+    [InlineData("PWD_ID", "STATUTORY_BENEFICIARY_IDENTITY_DOCUMENT_TYPE_MISMATCH")]
+    public async Task Draft_WhenDocumentTypeIsMissingUnsupportedOrMismatched_ReturnsSpecificBadRequest(
+        string? idDocumentType,
+        string expectedErrorCode)
+    {
+        using var factory = CreateFactory(AcceptedResult());
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            Endpoint,
+            Request() with { IdDocumentType = idDocumentType! });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be(expectedErrorCode);
+    }
+
+    [Fact]
+    public async Task Draft_WhenIdReferenceIsMissing_ReturnsIdentityRequired()
+    {
+        using var factory = CreateFactory(AcceptedResult());
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            Endpoint,
+            Request() with { IdControlReference = " " });
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
@@ -604,7 +717,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         OperatorConsoleStatutoryDiscountDraftResult result,
         bool throwValidation = false,
         IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null,
-        IStatutoryDiscountDecisionFacadeService? decisionFacade = null) =>
+        IStatutoryDiscountDecisionFacadeService? decisionFacade = null,
+        IOperatorConsoleStatutoryDiscountDraftService? draftService = null) =>
         new CustomWebApplicationFactory()
             .WithServiceOverrides(services =>
             {
@@ -612,7 +726,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
                 services.AddSingleton<IOperatorConsoleStatutoryIdPhotoService>(new FakeStatutoryIdPhotoService());
                 services.RemoveAll<IOperatorConsoleStatutoryDiscountDraftService>();
                 services.AddSingleton<IOperatorConsoleStatutoryDiscountDraftService>(
-                    new FakeStatutoryDiscountDraftService(result, throwValidation));
+                    draftService ?? new FakeStatutoryDiscountDraftService(result, throwValidation));
                 services.RemoveAll<IStatutoryDiscountDecisionFacadeService>();
                 services.AddSingleton<IStatutoryDiscountDecisionFacadeService>(
                     decisionFacade ?? new FakeDecisionFacadeService());
@@ -816,6 +930,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             OperatorConsoleStatutoryDiscountDraftCommand command,
             CancellationToken cancellationToken)
         {
+            Commands.Add(command);
             if (_throwValidation)
             {
                 throw new ArgumentException("EntitlementType is required.");
@@ -823,6 +938,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
             return Task.FromResult(_result);
         }
+
+        public List<OperatorConsoleStatutoryDiscountDraftCommand> Commands { get; } = [];
     }
 
     private sealed class FakeStatutoryIdPhotoService : IOperatorConsoleStatutoryIdPhotoService

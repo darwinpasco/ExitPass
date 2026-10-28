@@ -99,6 +99,51 @@ public interface IStatutoryBeneficiaryIdentityRepository
 
 public static class StatutoryBeneficiaryIdentityNormalizer
 {
+    public const string IdentityRequiredClassification = "STATUTORY_BENEFICIARY_IDENTITY_REQUIRED";
+    public const string InvalidDocumentTypeClassification = "STATUTORY_BENEFICIARY_IDENTITY_INVALID_DOCUMENT_TYPE";
+    public const string DocumentTypeMismatchClassification = "STATUTORY_BENEFICIARY_IDENTITY_DOCUMENT_TYPE_MISMATCH";
+
+    public static bool TryNormalizeDocumentType(
+        string? entitlementType,
+        string? statutoryIdType,
+        out string normalized,
+        out string? classification)
+    {
+        normalized = string.Empty;
+        classification = null;
+
+        if (string.IsNullOrWhiteSpace(statutoryIdType))
+        {
+            classification = IdentityRequiredClassification;
+            return false;
+        }
+
+        var entitlement = NormalizeAlias(entitlementType);
+        var documentType = NormalizeAlias(statutoryIdType);
+        var documentEntitlement = documentType switch
+        {
+            "SENIOR_CITIZEN" or "SENIOR_CITIZEN_ID" or "OSCA_ID" => "SENIOR_CITIZEN",
+            "PWD" or "PWD_ID" => "PWD",
+            _ => null
+        };
+
+        if (documentEntitlement is null)
+        {
+            classification = InvalidDocumentTypeClassification;
+            return false;
+        }
+
+        if (entitlement is not ("SENIOR_CITIZEN" or "PWD") ||
+            !string.Equals(entitlement, documentEntitlement, StringComparison.Ordinal))
+        {
+            classification = DocumentTypeMismatchClassification;
+            return false;
+        }
+
+        normalized = documentEntitlement == "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID";
+        return true;
+    }
+
     public static bool TryNormalize(
         StatutoryBeneficiaryIdentityInput? input,
         out StatutoryBeneficiaryIdentityInput? normalized)
@@ -134,4 +179,12 @@ public static class StatutoryBeneficiaryIdentityNormalizer
             ? normalized
             : null;
     }
+
+    private static string NormalizeAlias(string? value) =>
+        string.Join(
+            "_",
+            (value ?? string.Empty)
+                .Trim()
+                .ToUpperInvariant()
+                .Split([' ', '_', '-'], StringSplitOptions.RemoveEmptyEntries));
 }

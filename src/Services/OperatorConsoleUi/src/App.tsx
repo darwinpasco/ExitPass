@@ -2823,7 +2823,7 @@ function SessionLookupPage({
               </label>
               <label>
                 ID document type
-                <input value={idDocumentTypeForEntitlement(entitlementType)} readOnly />
+                <input value={statutoryDocumentTypeLabel(idDocumentTypeForEntitlement(entitlementType), entitlementType)} readOnly />
               </label>
               <label>
                 TIN (optional)
@@ -4686,7 +4686,7 @@ export function maskStatutoryIdReference(value: string) {
 }
 
 function idDocumentTypeForEntitlement(entitlementType: "SENIOR_CITIZEN" | "PWD") {
-  return entitlementType === "PWD" ? "PWD" : "Senior Citizen";
+  return entitlementType === "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID";
 }
 
 function statutoryDocumentTypeLabel(value: string | undefined, entitlementType: string) {
