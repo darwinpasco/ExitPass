@@ -171,6 +171,7 @@ function detailResponse(canonicalStatus?: "APPROVED" | "REJECTED") {
     parkingSessionId: "55000000-0000-0000-0000-000000000001",
     sourceChannel: "WEBPAY",
     entitlementType: "PWD",
+    beneficiaryFullName: "Maria Santos",
     commandStatus: decided ? "COMPLETED" : "AWAITING_REVIEW",
     decisionResultStatus: canonicalStatus ?? "NOT_DECIDED",
     reviewStatus: canonicalStatus ?? "PENDING_REVIEW",

@@ -273,6 +273,83 @@ describe("canonical Central PMS statutory review", () => {
       beneficiaryTin: "123-456-789-000"
     })));
   });
+
+  it.each([
+    ["SENIOR_CITIZEN", "PERCENTAGE_DISCOUNT"],
+    ["SENIOR_CITIZEN", "FULL_FEE_EXEMPTION"],
+    ["PWD", "PERCENTAGE_DISCOUNT"],
+    ["PWD", "FULL_FEE_EXEMPTION"]
+  ])("requires beneficiary identity for %s with %s", async (entitlementType, benefitType) => {
+    const user = userEvent.setup();
+    const client = createMockOperatorConsoleApiClient();
+    client.submitCanonicalStatutoryReviewDecision = vi.fn(client.submitCanonicalStatutoryReviewDecision);
+    client.getCanonicalStatutoryReview = vi.fn(async (): Promise<CanonicalStatutoryReviewDetail> => ({
+      ...detailResponse("PHP"),
+      currency: "PHP",
+      entitlementType,
+      governingPolicy: {
+        statutoryDiscountPolicyVersionId: "57000000-0000-0000-0000-000000000001",
+        jurisdictionId: "57000000-0000-0000-0000-000000000002",
+        jurisdictionCode: "PARANAQUE",
+        jurisdictionDisplayName: "Paranaque City",
+        policyCode: "PARANAQUE-STATUTORY-PARKING",
+        policyVersion: "1",
+        sourceVerificationStatus: "VERIFIED",
+        transactionPublicationStatus: "PUBLISHED",
+        detailedRuleVerificationStatus: "VERIFIED",
+        parkingServiceApplicability: "APPLICABLE",
+        benefitType,
+        beneficiaryResidencyScope: "CITY",
+        officialSourceAvailable: true,
+        ordinanceTextAvailable: true,
+        ordinanceNumberAvailable: true,
+        requiredEvidenceTypes: []
+      }
+    }));
+    render(<CanonicalStatutoryReviewDetailPage client={client} decisionId={decisionId} onBack={() => undefined} />);
+
+    expect(await screen.findByText("BIR statutory beneficiary identity")).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: /reviewed the required evidence/i }));
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await user.click(screen.getByRole("button", { name: "Confirm decision" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Full name, governed ID type, and statutory ID number are required before approval.");
+    expect(client.submitCanonicalStatutoryReviewDecision).not.toHaveBeenCalled();
+  });
+
+  it("uses an already stored complete beneficiary identity without duplicate entry", async () => {
+    const user = userEvent.setup();
+    const client = createMockOperatorConsoleApiClient();
+    client.getCanonicalStatutoryReview = vi.fn(async (): Promise<CanonicalStatutoryReviewDetail> => ({
+      ...detailResponse("PHP"),
+      currency: "PHP",
+      beneficiaryFullName: "Maria Santos"
+    }));
+    client.submitCanonicalStatutoryReviewDecision = vi.fn(async () => ({
+      decisionAccepted: true as const,
+      decisionPersisted: true,
+      currentValidationStatus: "APPROVED" as const,
+      decision: "APPROVE" as const,
+      alreadyDecided: false,
+      decisionChanged: true,
+      correlationId: "99000000-0000-0000-0000-000000000001"
+    }));
+    render(<CanonicalStatutoryReviewDetailPage client={client} decisionId={decisionId} onBack={() => undefined} />);
+
+    expect(await screen.findByText("Beneficiary name")).toBeInTheDocument();
+    expect(screen.queryByText("BIR statutory beneficiary identity")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: /reviewed the required evidence/i }));
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await user.click(screen.getByRole("button", { name: "Confirm decision" }));
+
+    await waitFor(() => expect(client.submitCanonicalStatutoryReviewDecision).toHaveBeenCalledWith(expect.objectContaining({
+      decision: "APPROVE",
+      beneficiaryFullName: undefined,
+      statutoryIdType: undefined,
+      statutoryIdNumber: undefined,
+      beneficiaryTin: undefined
+    })));
+  });
 });
 
 function session(): OperatorConsoleHumanSession {

@@ -163,20 +163,23 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
                 return NotAccepted(command, access, requestedDecision, saved.Classification, detail);
         }
 
-        if (requestedDecision == "APPROVE" && IsPercentageSalesBookCandidate(detail))
-        {
-            var identity = _beneficiaryIdentities is null
-                ? null
-                : await _beneficiaryIdentities.GetAsync(command.StatutoryDiscountDecisionCommandId, cancellationToken).ConfigureAwait(false);
-            if (identity is null)
-                return NotAccepted(command, access, requestedDecision, "STATUTORY_BENEFICIARY_IDENTITY_REQUIRED", detail);
-        }
-
         var canonical = await _stagedCommandService.GetDecisionAsync(command.StatutoryDiscountDecisionCommandId, cancellationToken)
             .ConfigureAwait(false);
         if (canonical is null)
         {
             return NotAccepted(command, access, requestedDecision, "STATUTORY_DISCOUNT_DECISION_NOT_FOUND", detail);
+        }
+
+        var existingApprovedDecision =
+            canonical.CommandStatus is StatutoryDiscountDecisionV2CommandStates.Completed &&
+            canonical.DecisionResultStatus is StatutoryDiscountDecisionV2ResultStates.Approved;
+        if (requestedDecision == "APPROVE" && RequiresBeneficiaryIdentity(detail) && !existingApprovedDecision)
+        {
+            var identity = _beneficiaryIdentities is null
+                ? null
+                : await _beneficiaryIdentities.GetAsync(command.StatutoryDiscountDecisionCommandId, cancellationToken).ConfigureAwait(false);
+            if (!HasCompleteBeneficiaryIdentity(detail, identity))
+                return NotAccepted(command, access, requestedDecision, "STATUTORY_BENEFICIARY_IDENTITY_REQUIRED", detail);
         }
 
         var targetResult = requestedDecision == "APPROVE"
@@ -387,8 +390,21 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
         !string.IsNullOrWhiteSpace(command.StatutoryIdNumber) ||
         !string.IsNullOrWhiteSpace(command.BeneficiaryTin);
 
-    private static bool IsPercentageSalesBookCandidate(StatutoryDiscountServiceChannelReviewDetail detail) =>
-        string.Equals(detail.GoverningPolicy?.BenefitType, "PERCENTAGE_DISCOUNT", StringComparison.Ordinal);
+    private static bool RequiresBeneficiaryIdentity(StatutoryDiscountServiceChannelReviewDetail detail) =>
+        detail.EntitlementType is "SENIOR_CITIZEN" or "PWD";
+
+    private static bool HasCompleteBeneficiaryIdentity(
+        StatutoryDiscountServiceChannelReviewDetail detail,
+        StatutoryBeneficiaryIdentityRecord? identity) =>
+        identity is not null &&
+        string.Equals(identity.EntitlementType, detail.EntitlementType, StringComparison.Ordinal) &&
+        StatutoryBeneficiaryIdentityNormalizer.TryNormalize(
+            new StatutoryBeneficiaryIdentityInput(
+                identity.BeneficiaryFullName,
+                identity.StatutoryIdType,
+                identity.StatutoryIdNumber,
+                identity.BeneficiaryTin),
+            out _);
 
     /// <summary>
     /// Executes the same canonical service-channel decision for a caller that has already

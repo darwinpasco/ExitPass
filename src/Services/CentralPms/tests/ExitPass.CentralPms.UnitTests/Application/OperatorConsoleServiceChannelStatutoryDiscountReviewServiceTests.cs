@@ -131,6 +131,60 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
         await beneficiaryIdentities.Received(1).GetAsync(CommandId, Arg.Any<CancellationToken>());
     }
 
+    [Theory]
+    [InlineData("SENIOR_CITIZEN", "PERCENTAGE_DISCOUNT")]
+    [InlineData("SENIOR_CITIZEN", "FULL_FEE_EXEMPTION")]
+    [InlineData("PWD", "PERCENTAGE_DISCOUNT")]
+    [InlineData("PWD", "FULL_FEE_EXEMPTION")]
+    public async Task DecideAsync_WhenScOrPwdApprovalHasNoIdentity_RejectsRegardlessOfBenefitType(
+        string entitlementType,
+        string benefitType)
+    {
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        beneficiaryIdentities.GetAsync(CommandId, Arg.Any<CancellationToken>())
+            .Returns((StatutoryBeneficiaryIdentityRecord?)null);
+        var fixture = CreateFixture(beneficiaryIdentities: beneficiaryIdentities);
+        fixture.Repository.GetAsync(CommandId, Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(ReviewDetail() with
+            {
+                EntitlementType = entitlementType,
+                GoverningPolicy = ReviewPolicy(benefitType)
+            });
+        fixture.Staged.GetDecisionAsync(CommandId, Arg.Any<CancellationToken>())
+            .Returns(AwaitingDecision() with { EntitlementType = entitlementType });
+
+        var result = await fixture.Sut.DecideAsync(DecisionCommand(), AccessContext(), CancellationToken.None);
+
+        result.DecisionAccepted.Should().BeFalse();
+        result.ErrorCode.Should().Be("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED");
+        await fixture.Staged.DidNotReceiveWithAnyArgs().CompleteDecisionApprovedAsync(
+            default, default, default, default, default, default, default, default, default, default, default);
+    }
+
+    [Theory]
+    [InlineData("NAME")]
+    [InlineData("ID_TYPE")]
+    [InlineData("ID_NUMBER")]
+    public async Task DecideAsync_WhenStoredIdentityIsIncomplete_RejectsApproval(string missingField)
+    {
+        var identity = BeneficiaryIdentity(isFinal: false) with
+        {
+            BeneficiaryFullName = missingField == "NAME" ? "   " : "Maria Santos",
+            StatutoryIdType = missingField == "ID_TYPE" ? "" : "SENIOR_CITIZEN_ID",
+            StatutoryIdNumber = missingField == "ID_NUMBER" ? " " : "SC-2026-001"
+        };
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        beneficiaryIdentities.GetAsync(CommandId, Arg.Any<CancellationToken>()).Returns(identity);
+        var fixture = CreateFixture(beneficiaryIdentities: beneficiaryIdentities);
+        fixture.Repository.GetAsync(CommandId, Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(ReviewDetail());
+        fixture.Staged.GetDecisionAsync(CommandId, Arg.Any<CancellationToken>()).Returns(AwaitingDecision());
+
+        var result = await fixture.Sut.DecideAsync(DecisionCommand(), AccessContext(), CancellationToken.None);
+
+        result.DecisionAccepted.Should().BeFalse();
+        result.ErrorCode.Should().Be("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED");
+    }
+
     [Fact]
     public async Task DecideAsync_WhenApprovalAllowed_CompletesSameCanonicalDecision()
     {
@@ -420,7 +474,8 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
     [Fact]
     public async Task DecideAsync_WhenCanonicalCompletedButReviewLinkPending_RepairsReviewLinkage()
     {
-        var fixture = CreateFixture();
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        var fixture = CreateFixture(beneficiaryIdentities: beneficiaryIdentities);
         fixture.Repository.GetAsync(CommandId, Arg.Any<Guid>(), Arg.Any<CancellationToken>())
             .Returns(ReviewDetail());
         fixture.Staged.GetDecisionAsync(CommandId, Arg.Any<CancellationToken>())
@@ -443,6 +498,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
         result.DecisionAccepted.Should().BeTrue();
         result.AlreadyDecided.Should().BeTrue();
         result.ReviewStatus.Should().Be(StatutoryDiscountServiceChannelReviewStatuses.Approved);
+        await beneficiaryIdentities.DidNotReceiveWithAnyArgs().GetAsync(default, default);
         await fixture.Repository.Received(1).RecordReviewCompletionAsync(
             CommandId,
             UserId,
@@ -461,6 +517,21 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
         IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null,
         IOperatorConsoleStatutoryDiscountApplyPayableBasisService? applyPayableBasis = null)
     {
+        if (beneficiaryIdentities is null)
+        {
+            beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+            beneficiaryIdentities.GetAsync(CommandId, Arg.Any<CancellationToken>())
+                .Returns(BeneficiaryIdentity(isFinal: false));
+            beneficiaryIdentities.FinalizeApprovedAsync(
+                    CommandId,
+                    Arg.Any<Guid>(),
+                    Arg.Any<string>(),
+                    Arg.Any<Guid>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(new StatutoryBeneficiaryIdentityWriteResult(
+                    StatutoryBeneficiaryIdentityWriteOutcome.Saved,
+                    "SAVED"));
+        }
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
             .Returns(AccessResult(allowed));
@@ -706,6 +777,30 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             ResolvedAt: Now,
             "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             CorrelationId);
+
+    private static StatutoryDiscountServiceChannelReviewPolicyAuthority ReviewPolicy(string benefitType) =>
+        new(
+            Guid.Parse("8a000000-0000-0000-0000-000000000020"),
+            Guid.Parse("8a000000-0000-0000-0000-000000000021"),
+            "137604000",
+            "Paranaque City",
+            "PARANAQUE-SC-PWD-PARKING",
+            "v1",
+            OrdinanceNumber: null,
+            OrdinanceTitle: null,
+            "VERIFIED_ACTIVE_OPERATIONAL",
+            "ACTIVE_FOR_TRANSACTION_USE",
+            "DETAILS_PARTIALLY_VERIFIED",
+            "COVERED",
+            benefitType,
+            "RESIDENT_ONLY",
+            OfficialSourceAvailable: true,
+            OrdinanceTextAvailable: true,
+            OrdinanceNumberAvailable: false,
+            EffectiveFrom: null,
+            EffectiveTo: null,
+            RequiredEvidenceTypes: [],
+            LegalApprovabilityReason: "VERIFIED_POLICY");
 
     private static StatutoryBeneficiaryIdentityRecord BeneficiaryIdentity(bool isFinal) =>
         new(
