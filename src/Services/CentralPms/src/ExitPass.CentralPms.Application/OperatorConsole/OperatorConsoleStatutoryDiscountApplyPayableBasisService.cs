@@ -366,7 +366,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
             return null;
         }
 
-        if (decision.LocalOrdinanceApplied)
+        if (decision.LocalOrdinanceApplied &&
+            !string.IsNullOrWhiteSpace(detail.OrdinanceReference))
         {
             return decision;
         }
@@ -381,8 +382,10 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         }
 
         // The separate frozen authority is immutable evidence for the original decision.
-        // Recover application in memory; never rewrite the completed decision.
-        return decision with { LocalOrdinanceApplied = true };
+        // Recover a false copied flag in memory; never rewrite the completed decision.
+        return decision.LocalOrdinanceApplied
+            ? decision
+            : decision with { LocalOrdinanceApplied = true };
     }
 
     private static bool IsVerifiedFrozenLocalOrdinanceAuthority(

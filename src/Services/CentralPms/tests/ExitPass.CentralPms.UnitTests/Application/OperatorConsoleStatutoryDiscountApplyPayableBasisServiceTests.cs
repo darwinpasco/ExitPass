@@ -56,8 +56,12 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         var writer = Substitute.For<IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter>();
         writer.ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand>(), Arg.Any<CancellationToken>())
             .Returns(PersistedApplication(alreadyApplied: false));
+        var policies = Substitute.For<IStatutoryDiscountParkingEligibilityRepository>();
 
-        var sut = CreateSut(AccessResult(allowed: true, []), writer);
+        var sut = CreateSut(
+            AccessResult(allowed: true, []),
+            writer,
+            parkingEligibilityRepository: policies);
 
         var result = await sut.ApplyAsync(Command(), CancellationToken.None);
 
@@ -75,6 +79,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         result.FinalPayableAmountMinorUnits.Should().Be(0);
         result.PolicySnapshotUsed.Should().BeTrue();
         result.PolicyCode.Should().Be("PH_PARANAQUE_SENIOR_FREE_PARKING");
+        await policies.DidNotReceiveWithAnyArgs().GetDecisionPolicyAuthorityAsync(default, default);
 
         await writer.Received(1).ApplyAsync(
             Arg.Is<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand>(request =>
@@ -340,18 +345,20 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
     }
 
     [Theory]
-    [InlineData("SENIOR_CITIZEN", "PH_PARANAQUE_SENIOR_FREE_PARKING")]
-    [InlineData("PWD", "PH_PARANAQUE_PWD_FREE_PARKING")]
-    public async Task ApplyAsync_CompletedDecisionWithInconsistentFlag_RecoversFromFrozenLocalOrdinanceAuthority(
+    [InlineData("SENIOR_CITIZEN", "PH_PARANAQUE_SENIOR_FREE_PARKING", false)]
+    [InlineData("PWD", "PH_PARANAQUE_PWD_FREE_PARKING", false)]
+    [InlineData("SENIOR_CITIZEN", "PH_PARANAQUE_SENIOR_FREE_PARKING", true)]
+    public async Task ApplyAsync_MissingRetainedReference_UsesVerifiedFrozenLocalOrdinanceAuthority(
         string entitlementType,
-        string policyCode)
+        string policyCode,
+        bool copiedLocalOrdinanceFlag)
     {
         var writer = Substitute.For<IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter>();
         writer.ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand>(), Arg.Any<CancellationToken>())
             .Returns(PersistedApplication(alreadyApplied: false));
         var readService = Substitute.For<IOperatorConsoleStatutoryDiscountReadService>();
         readService.GetDraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftDetailQuery>(), Arg.Any<CancellationToken>())
-            .Returns(DraftDetail() with
+            .Returns(RecoveryDraftDetail() with
             {
                 EntitlementType = entitlementType,
                 PolicyCode = policyCode,
@@ -362,7 +369,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
             .Returns(ApprovedDecision() with
             {
                 EntitlementType = entitlementType,
-                LocalOrdinanceApplied = false
+                LocalOrdinanceApplied = copiedLocalOrdinanceFlag
             });
         staged.CreateOrResolveApplicationAsync(Arg.Any<StatutoryDiscountPayableBasisApplicationV1Command>(), Arg.Any<CancellationToken>())
             .Returns(new StagedStatutoryDiscountCommandStartResult<StatutoryDiscountPayableBasisApplicationV1Record>(
@@ -396,6 +403,9 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
 
         result.ApplicationAccepted.Should().BeTrue();
         await policies.Received(1).GetDecisionPolicyAuthorityAsync(DecisionCommandId, Arg.Any<CancellationToken>());
+        await staged.Received(1).CreateOrResolveApplicationAsync(
+            Arg.Any<StatutoryDiscountPayableBasisApplicationV1Command>(),
+            Arg.Any<CancellationToken>());
         await writer.Received(1).ApplyAsync(
             Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand>(),
             Arg.Any<CancellationToken>());
@@ -410,6 +420,9 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
             .Returns(ApprovedDecision() with { LocalOrdinanceApplied = false });
         staged.GetApplicationByDecisionAsync(DecisionCommandId, Arg.Any<CancellationToken>())
             .Returns(AppliedApplicationRecord());
+        var readService = Substitute.For<IOperatorConsoleStatutoryDiscountReadService>();
+        readService.GetDraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftDetailQuery>(), Arg.Any<CancellationToken>())
+            .Returns(RecoveryDraftDetail());
         var policies = Substitute.For<IStatutoryDiscountParkingEligibilityRepository>();
         policies.GetDecisionPolicyAuthorityAsync(DecisionCommandId, Arg.Any<CancellationToken>())
             .Returns(FrozenLocalOrdinanceAuthority());
@@ -417,6 +430,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         var sut = CreateSut(
             AccessResult(allowed: true, []),
             writer,
+            readService,
             staged: staged,
             parkingEligibilityRepository: policies);
 
@@ -437,6 +451,9 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         var staged = Substitute.For<IStatutoryDiscountStagedCommandService>();
         staged.GetDecisionAsync(DecisionCommandId, Arg.Any<CancellationToken>())
             .Returns(ApprovedDecision() with { LocalOrdinanceApplied = false });
+        var readService = Substitute.For<IOperatorConsoleStatutoryDiscountReadService>();
+        readService.GetDraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftDetailQuery>(), Arg.Any<CancellationToken>())
+            .Returns(RecoveryDraftDetail());
         var policies = Substitute.For<IStatutoryDiscountParkingEligibilityRepository>();
         policies.GetDecisionPolicyAuthorityAsync(DecisionCommandId, Arg.Any<CancellationToken>())
             .Returns(FrozenLocalOrdinanceAuthority() with { EntitlementType = "PWD" });
@@ -444,6 +461,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         var sut = CreateSut(
             AccessResult(allowed: true, []),
             writer,
+            readService,
             staged: staged,
             parkingEligibilityRepository: policies);
 
@@ -452,6 +470,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         result.ApplicationAccepted.Should().BeFalse();
         result.ErrorCode.Should().Be("STATUTORY_DISCOUNT_LOCAL_ORDINANCE_REQUIRED");
         await writer.DidNotReceiveWithAnyArgs().ApplyAsync(default!, default);
+        await staged.DidNotReceiveWithAnyArgs().CreateOrResolveApplicationAsync(default!, default);
     }
 
     [Fact]
@@ -461,6 +480,9 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         var staged = Substitute.For<IStatutoryDiscountStagedCommandService>();
         staged.GetDecisionAsync(DecisionCommandId, Arg.Any<CancellationToken>())
             .Returns(ApprovedDecision() with { LocalOrdinanceApplied = false });
+        var readService = Substitute.For<IOperatorConsoleStatutoryDiscountReadService>();
+        readService.GetDraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftDetailQuery>(), Arg.Any<CancellationToken>())
+            .Returns(RecoveryDraftDetail());
         var policies = Substitute.For<IStatutoryDiscountParkingEligibilityRepository>();
         policies.GetDecisionPolicyAuthorityAsync(DecisionCommandId, Arg.Any<CancellationToken>())
             .Returns(FrozenLocalOrdinanceAuthority() with { SourceReference = " " });
@@ -468,6 +490,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         var sut = CreateSut(
             AccessResult(allowed: true, []),
             writer,
+            readService,
             staged: staged,
             parkingEligibilityRepository: policies);
 
@@ -476,6 +499,35 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         result.ApplicationAccepted.Should().BeFalse();
         result.ErrorCode.Should().Be("STATUTORY_DISCOUNT_LOCAL_ORDINANCE_REQUIRED");
         await writer.DidNotReceiveWithAnyArgs().ApplyAsync(default!, default);
+        await staged.DidNotReceiveWithAnyArgs().CreateOrResolveApplicationAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_TrueCopiedFlagWithoutRetainedReferenceOrVerifiedAuthority_FailsClosed()
+    {
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter>();
+        var readService = Substitute.For<IOperatorConsoleStatutoryDiscountReadService>();
+        readService.GetDraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftDetailQuery>(), Arg.Any<CancellationToken>())
+            .Returns(RecoveryDraftDetail());
+        var staged = Substitute.For<IStatutoryDiscountStagedCommandService>();
+        staged.GetDecisionAsync(DecisionCommandId, Arg.Any<CancellationToken>())
+            .Returns(ApprovedDecision() with { LocalOrdinanceApplied = true });
+        var policies = Substitute.For<IStatutoryDiscountParkingEligibilityRepository>();
+
+        var sut = CreateSut(
+            AccessResult(allowed: true, []),
+            writer,
+            readService,
+            staged,
+            parkingEligibilityRepository: policies);
+
+        var result = await sut.ApplyAsync(Command(), CancellationToken.None);
+
+        result.ApplicationAccepted.Should().BeFalse();
+        result.ErrorCode.Should().Be("STATUTORY_DISCOUNT_LOCAL_ORDINANCE_REQUIRED");
+        await policies.Received(1).GetDecisionPolicyAuthorityAsync(DecisionCommandId, Arg.Any<CancellationToken>());
+        await writer.DidNotReceiveWithAnyArgs().ApplyAsync(default!, default);
+        await staged.DidNotReceiveWithAnyArgs().CreateOrResolveApplicationAsync(default!, default);
     }
 
     [Fact]
@@ -626,7 +678,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
             PolicyCode: "PH_PARANAQUE_SENIOR_FREE_PARKING",
             BenefitType: "FULL_FEE_EXEMPTION",
             NationalLawReference: null,
-            OrdinanceReference: null,
+            OrdinanceReference: "PARANAQUE-ORD-001",
             PolicySnapshotUsed: true,
             IneligibilityReason: null,
             ErrorCode: null);
@@ -668,8 +720,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
             ResolvedJurisdictionId: JurisdictionId,
             PolicyCode: "PH_PARANAQUE_SENIOR_FREE_PARKING",
             PolicyName: "Paranaque Senior Citizen Free Parking",
-            LegalBasisReference: null,
-            OrdinanceReference: null,
+            LegalBasisReference: "PARANAQUE-ORD-001",
+            OrdinanceReference: "PARANAQUE-ORD-001",
             NationalLawReference: null,
             VerificationStatus: "ACTIVE",
             BenefitType: "FULL_FEE_EXEMPTION",
@@ -691,6 +743,13 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
             FinalPayableAmountMinorUnits: 0,
             CurrencyCode: "PHP",
             Activity: []);
+
+    private static OperatorConsoleStatutoryDiscountDraftDetailResult RecoveryDraftDetail() =>
+        DraftDetail() with
+        {
+            LegalBasisReference = null,
+            OrdinanceReference = null
+        };
 
     private static StatutoryDiscountDecisionV2Record ApprovedDecision() =>
         new(
