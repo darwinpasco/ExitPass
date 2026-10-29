@@ -39,6 +39,16 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
     private static readonly Guid SandboxPolicyId = Guid.Parse("25800000-0000-0000-0000-000000000005");
     private static readonly Guid CompatibilityPolicyId = Guid.Parse("25800000-0000-0000-0000-000000000006");
     private static readonly Guid DraftReadyPolicyId = Guid.Parse("25800000-0000-0000-0000-000000000007");
+    private static readonly Guid FixtureJurisdictionId = Guid.Parse("25800000-0000-0000-0000-000000000010");
+    private static readonly Guid FixtureJurisdictionAssignmentId = Guid.Parse("25800000-0000-0000-0000-000000000011");
+    private static readonly Guid SeniorVersionedPolicyId = Guid.Parse("25800000-0000-0000-0000-000000000020");
+    private static readonly Guid SeniorPolicyVersionId = Guid.Parse("25800000-0000-0000-0000-000000000021");
+    private static readonly Guid PwdVersionedPolicyId = Guid.Parse("25800000-0000-0000-0000-000000000022");
+    private static readonly Guid PwdPolicyVersionId = Guid.Parse("25800000-0000-0000-0000-000000000023");
+    private static readonly Guid ObsoleteSeniorPolicyId = Guid.Parse("25800000-0000-0000-0000-000000000024");
+    private static readonly Guid ObsoletePwdPolicyId = Guid.Parse("25800000-0000-0000-0000-000000000025");
+    private static readonly Guid ConflictingSeniorPolicyId = Guid.Parse("25800000-0000-0000-0000-000000000026");
+    private static readonly Guid ConflictingSeniorPolicyVersionId = Guid.Parse("25800000-0000-0000-0000-000000000027");
 
     /// <summary>
     /// Verifies repository resolution prefers the dedicated registry even when a compatibility row also matches.
@@ -82,6 +92,280 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
             result.Policy!.StatutoryDiscountPolicyId.Should().Be(SeniorReadyPolicyId);
             result.Policy.PolicyCode.Should().Be("DUMMY_OC_POLICY_SC_READY_VERIFIED");
             result.Policy.VerificationStatus.Should().Be("ACTIVE_APPROVED");
+        }
+        finally
+        {
+            await CleanupDedicatedRegistryFixtureAsync();
+        }
+    }
+
+    /// <summary>
+    /// Verifies canonical versioned Senior Citizen and PWD policies win when obsolete registry rows coexist.
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsync_WhenVersionedAndObsoletePoliciesCoexist_ReturnsCanonicalVersionedPolicies()
+    {
+        if (!await CanOpenDatabaseAsync() || !await HasDedicatedRegistryAsync())
+        {
+            return;
+        }
+
+        try
+        {
+            await PrepareParanaqueFixtureAsync();
+            await InsertDedicatedPolicyAsync(
+                ObsoleteSeniorPolicyId,
+                "I006_FIXTURE_SC",
+                "Obsolete Senior Citizen Policy",
+                "SENIOR_CITIZEN",
+                "ACTIVE_APPROVED",
+                "SENIOR_CITIZEN_ID");
+            await InsertDedicatedPolicyAsync(
+                ObsoletePwdPolicyId,
+                "I006_FIXTURE_PWD",
+                "Obsolete PWD Policy",
+                "PWD",
+                "ACTIVE_APPROVED",
+                "PWD_ID");
+            var repository = new OperatorConsoleStatutoryDiscountPolicyResolutionReadRepository(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+
+            var senior = await repository.ResolveAsync(
+                new OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest(
+                    FixtureSiteId,
+                    FixtureSiteGroupId,
+                    "SENIOR_CITIZEN",
+                    DateOnly.FromDateTime(DateTime.UtcNow)),
+                CancellationToken.None);
+            var pwd = await repository.ResolveAsync(
+                new OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest(
+                    FixtureSiteId,
+                    FixtureSiteGroupId,
+                    "PWD",
+                    DateOnly.FromDateTime(DateTime.UtcNow)),
+                CancellationToken.None);
+
+            senior.Resolved.Should().BeTrue();
+            senior.Policy!.PolicyCode.Should().Be("PH_PARANAQUE_SENIOR_FREE_PARKING");
+            senior.Policy.JurisdictionId.Should().NotBeNull();
+            senior.Policy.BenefitType.Should().Be("FULL_FEE_EXEMPTION");
+
+            pwd.Resolved.Should().BeTrue();
+            pwd.Policy!.PolicyCode.Should().Be("PH_PARANAQUE_PWD_FREE_PARKING");
+            pwd.Policy.JurisdictionId.Should().Be(senior.Policy.JurisdictionId);
+            pwd.Policy.BenefitType.Should().Be("FULL_FEE_EXEMPTION");
+        }
+        finally
+        {
+            await CleanupDedicatedRegistryFixtureAsync();
+        }
+    }
+
+    /// <summary>
+    /// Verifies an unready canonical version blocks fallback to an obsolete matching registry policy.
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsync_WhenVersionedAuthorityIsNotPublished_DoesNotFallBackToObsoletePolicy()
+    {
+        if (!await CanOpenDatabaseAsync() || !await HasDedicatedRegistryAsync())
+        {
+            return;
+        }
+
+        try
+        {
+            await PrepareBaseFixtureAsync();
+            await InsertDedicatedPolicyAsync(
+                ObsoleteSeniorPolicyId,
+                "I006_FIXTURE_SC",
+                "Obsolete Senior Citizen Policy",
+                "SENIOR_CITIZEN",
+                "ACTIVE_APPROVED",
+                "SENIOR_CITIZEN_ID");
+            await InsertVersionedPolicyAsync(
+                SeniorVersionedPolicyId,
+                SeniorPolicyVersionId,
+                "PH_FIXTURE_UNREADY_SENIOR_POLICY",
+                "Fixture Unready Senior Citizen Policy",
+                "SENIOR_CITIZEN",
+                "SENIOR_CITIZEN_ID");
+            await SetPolicyVersionPublicationStatusAsync(SeniorPolicyVersionId, "DRAFT");
+
+            var repository = new OperatorConsoleStatutoryDiscountPolicyResolutionReadRepository(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+
+            var result = await repository.ResolveAsync(
+                new OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest(
+                    FixtureSiteId,
+                    FixtureSiteGroupId,
+                    "SENIOR_CITIZEN",
+                    DateOnly.FromDateTime(DateTime.UtcNow)),
+                CancellationToken.None);
+
+            result.Resolved.Should().BeFalse();
+            result.Policy.Should().BeNull();
+            result.ErrorCode.Should().Be("STATUTORY_DISCOUNT_POLICY_UNVERIFIED");
+        }
+        finally
+        {
+            await CleanupDedicatedRegistryFixtureAsync();
+        }
+    }
+
+    /// <summary>
+    /// Verifies competing canonical policies at the same scope and precedence fail closed.
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsync_WhenVersionedPoliciesConflictAtSamePrecedence_FailsClosed()
+    {
+        if (!await CanOpenDatabaseAsync() || !await HasDedicatedRegistryAsync())
+        {
+            return;
+        }
+
+        try
+        {
+            await PrepareBaseFixtureAsync();
+            await InsertVersionedPolicyAsync(
+                SeniorVersionedPolicyId,
+                SeniorPolicyVersionId,
+                "PH_FIXTURE_READY_SENIOR_POLICY",
+                "Fixture Ready Senior Citizen Policy",
+                "SENIOR_CITIZEN",
+                "SENIOR_CITIZEN_ID");
+            await InsertVersionedPolicyAsync(
+                ConflictingSeniorPolicyId,
+                ConflictingSeniorPolicyVersionId,
+                "PH_FIXTURE_CONFLICTING_SENIOR_POLICY",
+                "Fixture Conflicting Senior Citizen Policy",
+                "SENIOR_CITIZEN",
+                "SENIOR_CITIZEN_ID");
+
+            var repository = new OperatorConsoleStatutoryDiscountPolicyResolutionReadRepository(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+
+            var result = await repository.ResolveAsync(
+                new OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest(
+                    FixtureSiteId,
+                    FixtureSiteGroupId,
+                    "SENIOR_CITIZEN",
+                    DateOnly.FromDateTime(DateTime.UtcNow)),
+                CancellationToken.None);
+
+            result.Resolved.Should().BeFalse();
+            result.Policy.Should().BeNull();
+            result.ErrorCode.Should().Be("STATUTORY_DISCOUNT_POLICY_UNVERIFIED");
+        }
+        finally
+        {
+            await CleanupDedicatedRegistryFixtureAsync();
+        }
+    }
+
+    /// <summary>
+    /// Verifies an entitlement without a policy for the Site jurisdiction remains unavailable.
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsync_WhenVersionedPolicyDoesNotCoverRequestedEntitlement_RemainsBlocked()
+    {
+        if (!await CanOpenDatabaseAsync() || !await HasDedicatedRegistryAsync())
+        {
+            return;
+        }
+
+        try
+        {
+            await PrepareBaseFixtureAsync();
+            await InsertVersionedPolicyAsync(
+                SeniorVersionedPolicyId,
+                SeniorPolicyVersionId,
+                "PH_FIXTURE_READY_SENIOR_POLICY",
+                "Fixture Ready Senior Citizen Policy",
+                "SENIOR_CITIZEN",
+                "SENIOR_CITIZEN_ID");
+
+            var repository = new OperatorConsoleStatutoryDiscountPolicyResolutionReadRepository(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+
+            var result = await repository.ResolveAsync(
+                new OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest(
+                    FixtureSiteId,
+                    FixtureSiteGroupId,
+                    "PWD",
+                    DateOnly.FromDateTime(DateTime.UtcNow)),
+                CancellationToken.None);
+
+            result.Resolved.Should().BeFalse();
+            result.Policy.Should().BeNull();
+            result.ErrorCode.Should().Be("LOCAL_PARKING_ORDINANCE_NOT_APPLICABLE");
+        }
+        finally
+        {
+            await CleanupDedicatedRegistryFixtureAsync();
+        }
+    }
+
+    /// <summary>
+    /// Verifies a versioned policy creates a draft without resolving through an obsolete registry code.
+    /// </summary>
+    [Fact]
+    public async Task DraftWriter_WhenCanonicalVersionedPolicyCoexistsWithObsoletePolicy_CreatesDraft()
+    {
+        if (!await CanOpenDatabaseAsync() || !await HasDedicatedRegistryAsync())
+        {
+            return;
+        }
+
+        try
+        {
+            await PrepareParanaqueFixtureAsync();
+            await InsertDedicatedPolicyAsync(
+                ObsoleteSeniorPolicyId,
+                "I006_FIXTURE_SC",
+                "Obsolete Senior Citizen Policy",
+                "SENIOR_CITIZEN",
+                "ACTIVE_APPROVED",
+                "SENIOR_CITIZEN_ID");
+            var connectionString = CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString();
+            var repository = new OperatorConsoleStatutoryDiscountPolicyResolutionReadRepository(connectionString);
+            var policyResolution = await repository.ResolveAsync(
+                new OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest(
+                    FixtureSiteId,
+                    FixtureSiteGroupId,
+                    "SENIOR_CITIZEN",
+                    DateOnly.FromDateTime(DateTime.UtcNow)),
+                CancellationToken.None);
+            policyResolution.Resolved.Should().BeTrue();
+
+            var writer = new OperatorConsoleStatutoryDiscountDraftWriter(connectionString);
+            var draft = await writer.PersistAsync(
+                new OperatorConsoleStatutoryDiscountDraftPersistenceCommand(
+                    FixtureParkingSessionId,
+                    "SENIOR_CITIZEN",
+                    "SENIOR_CITIZEN_ID",
+                    "OSCA",
+                    ExpiryDate: null,
+                    "****2580",
+                    EvidenceRequired: true,
+                    "VERSIONED_POLICY_RESOLUTION_TEST",
+                    OperatorAttestation: true,
+                    "Versioned policy resolution integration test.",
+                    FixtureUserId,
+                    Guid.NewGuid(),
+                    policyResolution.Policy!,
+                    $"test/operator-console/statutory-id/{FixtureSiteId:N}/{FixtureParkingSessionId:N}/photo.jpg",
+                    new string('A', 64),
+                    "image/jpeg",
+                    1024)
+                {
+                    IdControlReference = "SC-2580",
+                    BirthDate = new DateOnly(1950, 1, 1)
+                },
+                CancellationToken.None);
+
+            draft.Persisted.Should().BeTrue();
+            draft.Policy.Should().NotBeNull();
+            draft.Policy!.PolicyCode.Should().Be("PH_PARANAQUE_SENIOR_FREE_PARKING");
         }
         finally
         {
@@ -511,6 +795,56 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
         await CleanupDedicatedRegistryFixtureAsync();
 
         const string sql = """
+            INSERT INTO sites.jurisdictions (
+                jurisdiction_id,
+                jurisdiction_code,
+                jurisdiction_type,
+                display_name,
+                province_name,
+                region_name,
+                country_code,
+                psgc_code,
+                jurisdiction_status,
+                effective_from,
+                source_reference)
+            VALUES (
+                @jurisdiction_id,
+                @jurisdiction_code,
+                'CITY'::sites.jurisdiction_type_enum,
+                'Paranaque Integration Jurisdiction',
+                'Metro Manila',
+                'National Capital Region',
+                'PH',
+                NULL,
+                'ACTIVE'::sites.jurisdiction_status_enum,
+                now() - interval '1 day',
+                'controlled authority integration fixture')
+            ON CONFLICT (jurisdiction_id) DO UPDATE
+            SET jurisdiction_status = 'ACTIVE'::sites.jurisdiction_status_enum,
+                effective_to = NULL,
+                updated_at = now();
+
+            INSERT INTO sites.site_jurisdiction_assignments (
+                site_jurisdiction_assignment_id,
+                site_id,
+                jurisdiction_id,
+                assignment_status,
+                effective_from,
+                source_reference,
+                approval_reference)
+            VALUES (
+                @jurisdiction_assignment_id,
+                @site_id,
+                @jurisdiction_id,
+                'ACTIVE'::sites.site_jurisdiction_assignment_status_enum,
+                now() - interval '1 day',
+                'controlled authority integration fixture',
+                'operator-console-versioned-policy-resolution')
+            ON CONFLICT (site_jurisdiction_assignment_id) DO UPDATE
+            SET assignment_status = 'ACTIVE'::sites.site_jurisdiction_assignment_status_enum,
+                effective_to = NULL,
+                updated_at = now();
+
             UPDATE sites.sites
                SET lgu_code = @lgu_code,
                    updated_at = now()
@@ -579,9 +913,42 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
         await using var connection = await OpenConnectionAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("lgu_code", NpgsqlDbType.Varchar).Value = FixtureLguCode;
+        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = FixtureJurisdictionId;
+        command.Parameters.Add("jurisdiction_code", NpgsqlDbType.Varchar).Value = FixtureLguCode;
+        command.Parameters.Add("jurisdiction_assignment_id", NpgsqlDbType.Uuid).Value = FixtureJurisdictionAssignmentId;
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = FixtureSiteId;
         command.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = FixtureUserId;
         await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task PrepareParanaqueFixtureAsync()
+    {
+        await PrepareBaseFixtureAsync();
+
+        const string sql = """
+            UPDATE sites.site_jurisdiction_assignments
+               SET jurisdiction_id = (
+                       SELECT jurisdiction_id
+                       FROM sites.jurisdictions
+                       WHERE jurisdiction_code = 'PH-PSGC-1381000000'
+                         AND jurisdiction_status = 'ACTIVE'::sites.jurisdiction_status_enum
+                       LIMIT 1
+                   ),
+                   updated_at = now()
+             WHERE site_jurisdiction_assignment_id = @jurisdiction_assignment_id
+               AND EXISTS (
+                       SELECT 1
+                       FROM sites.jurisdictions
+                       WHERE jurisdiction_code = 'PH-PSGC-1381000000'
+                         AND jurisdiction_status = 'ACTIVE'::sites.jurisdiction_status_enum
+                   );
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("jurisdiction_assignment_id", NpgsqlDbType.Uuid).Value = FixtureJurisdictionAssignmentId;
+        var updated = await command.ExecuteNonQueryAsync();
+        updated.Should().Be(1, "the disposable canonical database must contain the accepted Parañaque jurisdiction");
     }
 
     private static async Task InsertDedicatedPolicyAsync(
@@ -702,6 +1069,171 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
         await command.ExecuteNonQueryAsync();
     }
 
+    private static async Task InsertVersionedPolicyAsync(
+        Guid policyId,
+        Guid policyVersionId,
+        string policyCode,
+        string policyName,
+        string entitlementType,
+        string requiredEvidenceType)
+    {
+        await InsertDedicatedPolicyAsync(
+            policyId,
+            policyCode,
+            policyName,
+            entitlementType,
+            "VERIFIED_ACTIVE_OPERATIONAL",
+            requiredEvidenceType);
+
+        const string sql = """
+            UPDATE discounts.statutory_discount_policy_registry
+               SET jurisdiction_id = @jurisdiction_id,
+                   local_government_unit_id = @jurisdiction_id,
+                   jurisdiction_code = @jurisdiction_code,
+                   beneficiary_residency_scope = 'RESIDENT_ONLY'::discounts.beneficiary_residency_scope_enum,
+                   benefit_type = 'FULL_FEE_EXEMPTION'::discounts.parking_benefit_type_enum,
+                   discount_base_scope = 'NOT_APPLICABLE'::discounts.discount_base_scope_enum,
+                   full_fee_exempt = true,
+                   legal_basis_reference = 'CONTROLLED_FIXTURE_AUTHORITY',
+                   ordinance_reference = NULL,
+                   source_reference = @source_reference,
+                   updated_at = now()
+             WHERE statutory_discount_policy_registry_id = @policy_id;
+
+            INSERT INTO discounts.statutory_discount_policy_versions (
+                statutory_discount_policy_version_id,
+                statutory_discount_policy_registry_id,
+                policy_code,
+                policy_version,
+                policy_version_label,
+                entitlement_type,
+                jurisdiction_id,
+                local_government_unit_id,
+                jurisdiction_code,
+                jurisdiction_display_name,
+                policy_scope_type,
+                policy_level,
+                policy_type,
+                policy_resolution_basis,
+                source_verification_status,
+                transaction_publication_status,
+                detailed_rule_verification_status,
+                parking_service_applicability,
+                benefit_type,
+                policy_effect_support_status,
+                discount_base_scope,
+                beneficiary_residency_scope,
+                official_source_identified,
+                official_source_available,
+                ordinance_text_available,
+                ordinance_number_available,
+                ordinance_title_available,
+                ordinance_number,
+                ordinance_title,
+                legal_basis_reference,
+                source_type,
+                source_reference,
+                safe_channel_summary,
+                safe_reviewer_guidance,
+                full_fee_exempt,
+                transaction_use_effective_from,
+                precedence_rank,
+                policy_semantic_hash,
+                reviewed_by,
+                reviewed_at,
+                approved_by,
+                approved_at,
+                correlation_id)
+            VALUES (
+                @policy_version_id,
+                @policy_id,
+                @policy_code,
+                '2026.09.1',
+                @policy_name,
+                @entitlement_type::discounts.statutory_entitlement_type_enum,
+                @jurisdiction_id,
+                @jurisdiction_id,
+                @jurisdiction_code,
+                'Paranaque Integration Jurisdiction',
+                'JURISDICTION'::discounts.policy_scope_type_enum,
+                'LOCAL_ORDINANCE'::discounts.discount_policy_level_enum,
+                'LOCAL_ORDINANCE'::discounts.discount_policy_type_enum,
+                'LOCAL_ORDINANCE_APPLIED'::discounts.policy_resolution_basis_enum,
+                'VERIFIED_ACTIVE_OPERATIONAL'::discounts.policy_verification_status_enum,
+                'ACTIVE_FOR_TRANSACTION_USE'::discounts.statutory_policy_publication_status_enum,
+                'PARTIALLY_VERIFIED'::discounts.policy_detail_verification_status_enum,
+                'COVERED'::discounts.parking_service_applicability_status_enum,
+                'FULL_FEE_EXEMPTION'::discounts.parking_benefit_type_enum,
+                'SUPPORTED_BY_CURRENT_CALCULATION'::discounts.policy_effect_support_status_enum,
+                'NOT_APPLICABLE'::discounts.discount_base_scope_enum,
+                'RESIDENT_ONLY'::discounts.beneficiary_residency_scope_enum,
+                true,
+                false,
+                false,
+                false,
+                false,
+                NULL,
+                NULL,
+                NULL,
+                'CONTROLLED_OFFLINE_AUTHORITY'::discounts.policy_source_type_enum,
+                @source_reference,
+                'Verified local full-fee parking authority.',
+                'Confirm resident eligibility and required statutory evidence.',
+                true,
+                now() - interval '1 day',
+                10,
+                @policy_semantic_hash,
+                'integration-test-reviewer',
+                now() - interval '2 days',
+                'integration-test-approver',
+                now() - interval '1 day',
+                gen_random_uuid())
+            ON CONFLICT (statutory_discount_policy_version_id) DO UPDATE
+            SET source_verification_status = EXCLUDED.source_verification_status,
+                transaction_publication_status = EXCLUDED.transaction_publication_status,
+                parking_service_applicability = EXCLUDED.parking_service_applicability,
+                policy_effect_support_status = EXCLUDED.policy_effect_support_status,
+                transaction_use_effective_from = EXCLUDED.transaction_use_effective_from,
+                transaction_use_effective_to = NULL,
+                withdrawn_at = NULL,
+                retired_at = NULL,
+                superseded_by_policy_version_id = NULL,
+                updated_at = now();
+
+            INSERT INTO discounts.statutory_discount_policy_version_evidence_requirements (
+                statutory_discount_policy_version_evidence_requirement_id,
+                statutory_discount_policy_version_id,
+                evidence_type,
+                requirement_status,
+                safe_requirement_label)
+            VALUES (
+                gen_random_uuid(),
+                @policy_version_id,
+                @required_evidence_type::discounts.discount_evidence_type_enum,
+                'REQUIRED',
+                'Required statutory identification')
+            ON CONFLICT (statutory_discount_policy_version_id, evidence_type) DO UPDATE
+            SET requirement_status = 'REQUIRED',
+                safe_requirement_label = EXCLUDED.safe_requirement_label,
+                updated_at = now();
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("policy_id", NpgsqlDbType.Uuid).Value = policyId;
+        command.Parameters.Add("policy_version_id", NpgsqlDbType.Uuid).Value = policyVersionId;
+        command.Parameters.Add("policy_code", NpgsqlDbType.Varchar).Value = policyCode;
+        command.Parameters.Add("policy_name", NpgsqlDbType.Varchar).Value = policyName;
+        command.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = entitlementType;
+        command.Parameters.Add("required_evidence_type", NpgsqlDbType.Text).Value = requiredEvidenceType;
+        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = FixtureJurisdictionId;
+        command.Parameters.Add("jurisdiction_code", NpgsqlDbType.Varchar).Value = FixtureLguCode;
+        command.Parameters.Add("source_reference", NpgsqlDbType.Varchar).Value = "controlled-authority:paranaque-parking-benefit:v1";
+        command.Parameters.Add("policy_semantic_hash", NpgsqlDbType.Varchar).Value =
+            $"sha256:{new string(entitlementType == "PWD" ? 'd' : 'c', 64)}";
+        await command.ExecuteNonQueryAsync();
+    }
+
     private static async Task InsertCompatibilityLocalPolicyAsync(Guid policyId, string policyCode, string entitlementType)
     {
         const string sql = """
@@ -764,6 +1296,22 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
         await command.ExecuteNonQueryAsync();
     }
 
+    private static async Task SetPolicyVersionPublicationStatusAsync(Guid policyVersionId, string publicationStatus)
+    {
+        const string sql = """
+            UPDATE discounts.statutory_discount_policy_versions
+               SET transaction_publication_status = @publication_status::discounts.statutory_policy_publication_status_enum,
+                   updated_at = now()
+             WHERE statutory_discount_policy_version_id = @policy_version_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("policy_version_id", NpgsqlDbType.Uuid).Value = policyVersionId;
+        command.Parameters.Add("publication_status", NpgsqlDbType.Text).Value = publicationStatus;
+        await command.ExecuteNonQueryAsync();
+    }
+
     private static async Task CleanupDedicatedRegistryFixtureAsync()
     {
         const string sql = """
@@ -807,11 +1355,38 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
                OR policy_code LIKE 'E2E_OC_POLICY_%'
                OR policy_code LIKE 'SANDBOX_OC_POLICY_%';
 
+            DELETE FROM discounts.statutory_discount_policy_version_evidence_requirements
+            WHERE statutory_discount_policy_version_id IN (
+                @senior_policy_version_id,
+                @pwd_policy_version_id,
+                @conflicting_senior_policy_version_id
+            );
+
+            DELETE FROM discounts.statutory_discount_policy_versions
+            WHERE statutory_discount_policy_version_id IN (
+                @senior_policy_version_id,
+                @pwd_policy_version_id,
+                @conflicting_senior_policy_version_id
+            );
+
             DELETE FROM discounts.statutory_discount_policy_registry
             WHERE policy_code LIKE 'DUMMY_OC_POLICY_%'
                OR policy_code LIKE 'TEST_OC_POLICY_%'
                OR policy_code LIKE 'E2E_OC_POLICY_%'
-               OR policy_code LIKE 'SANDBOX_OC_POLICY_%';
+               OR policy_code LIKE 'SANDBOX_OC_POLICY_%'
+               OR statutory_discount_policy_registry_id IN (
+                    @senior_versioned_policy_id,
+                    @pwd_versioned_policy_id,
+                    @obsolete_senior_policy_id,
+                    @obsolete_pwd_policy_id,
+                    @conflicting_senior_policy_id
+               );
+
+            DELETE FROM sites.site_jurisdiction_assignments
+            WHERE site_jurisdiction_assignment_id = @jurisdiction_assignment_id;
+
+            DELETE FROM sites.jurisdictions
+            WHERE jurisdiction_id = @jurisdiction_id;
 
             COMMIT;
             """;
@@ -820,6 +1395,16 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = FixtureParkingSessionId;
         command.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = FixtureUserId;
+        command.Parameters.Add("senior_policy_version_id", NpgsqlDbType.Uuid).Value = SeniorPolicyVersionId;
+        command.Parameters.Add("pwd_policy_version_id", NpgsqlDbType.Uuid).Value = PwdPolicyVersionId;
+        command.Parameters.Add("conflicting_senior_policy_version_id", NpgsqlDbType.Uuid).Value = ConflictingSeniorPolicyVersionId;
+        command.Parameters.Add("senior_versioned_policy_id", NpgsqlDbType.Uuid).Value = SeniorVersionedPolicyId;
+        command.Parameters.Add("pwd_versioned_policy_id", NpgsqlDbType.Uuid).Value = PwdVersionedPolicyId;
+        command.Parameters.Add("obsolete_senior_policy_id", NpgsqlDbType.Uuid).Value = ObsoleteSeniorPolicyId;
+        command.Parameters.Add("obsolete_pwd_policy_id", NpgsqlDbType.Uuid).Value = ObsoletePwdPolicyId;
+        command.Parameters.Add("conflicting_senior_policy_id", NpgsqlDbType.Uuid).Value = ConflictingSeniorPolicyId;
+        command.Parameters.Add("jurisdiction_assignment_id", NpgsqlDbType.Uuid).Value = FixtureJurisdictionAssignmentId;
+        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = FixtureJurisdictionId;
         await command.ExecuteNonQueryAsync();
     }
 
