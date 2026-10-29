@@ -21,6 +21,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
     private readonly IFiscalIssuanceReferenceRepository _references;
     private readonly IFiscalIssuanceOrchestrationService _orchestration;
     private readonly IFiscalIssuancePosServerLiveIntegrationService _posServer;
+    private readonly IStatutoryBeneficiaryIdentityRepository _beneficiaryIdentities;
     private readonly FiscalIssuancePosServerIntegrationOptions _options;
     private readonly Guid _centralPmsServiceIdentityId;
 
@@ -28,6 +29,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
         IFiscalIssuanceReferenceRepository references,
         IFiscalIssuanceOrchestrationService orchestration,
         IFiscalIssuancePosServerLiveIntegrationService posServer,
+        IStatutoryBeneficiaryIdentityRepository beneficiaryIdentities,
         FiscalIssuancePosServerIntegrationOptions options,
         Guid centralPmsServiceIdentityId)
     {
@@ -39,6 +41,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
         _references = references;
         _orchestration = orchestration;
         _posServer = posServer;
+        _beneficiaryIdentities = beneficiaryIdentities;
         _options = options;
         _centralPmsServiceIdentityId = centralPmsServiceIdentityId;
     }
@@ -79,6 +82,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
             }
         }
 
+        var beneficiaryIdentity = await ReadRequiredBeneficiaryIdentityAsync(finality, cancellationToken)
+            .ConfigureAwait(false);
         var endpoint = ResolveEndpoint(finality.SiteId);
         var reference = existing ?? await _orchestration.PreparePendingAsync(
             new PrepareFiscalIssuanceCommand(
@@ -118,7 +123,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
 
         var issue = await _posServer.TryIssueFiscalDocumentViaPosServerAsync(
             reference.FiscalIssuanceReferenceId,
-            BuildMapping(reference, command, upstreamReference, channelTerminal),
+            BuildMapping(reference, command, upstreamReference, channelTerminal, beneficiaryIdentity),
             new PosServerCreateResultRecordingContext(
                 upstreamReference,
                 reference.SitePosServerId,
@@ -133,6 +138,29 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
             resolved,
             issue.MappedRequest is not null && issue.PosServerResult is not null,
             issue.PosServerResult?.Succeeded == false ? issue.PosServerResult.Code : resolved.LatestErrorCode);
+    }
+
+    private async Task<StatutoryBeneficiaryIdentityRecord?> ReadRequiredBeneficiaryIdentityAsync(
+        StatutoryDiscountZeroPayableFinality finality,
+        CancellationToken cancellationToken)
+    {
+        if (finality.EntitlementType is not ("SENIOR_CITIZEN" or "PWD"))
+        {
+            return null;
+        }
+
+        var identity = await _beneficiaryIdentities.GetAsync(
+            finality.StatutoryDiscountDecisionCommandId,
+            cancellationToken).ConfigureAwait(false);
+        if (identity is not { IsFinal: true } ||
+            identity.StatutoryDiscountDecisionCommandId != finality.StatutoryDiscountDecisionCommandId ||
+            identity.SiteId != finality.SiteId ||
+            !string.Equals(identity.EntitlementType, finality.EntitlementType, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(StatutoryBeneficiaryIdentityNormalizer.IdentityRequiredClassification);
+        }
+
+        return identity;
     }
 
     private SitePosServerEndpointOptions ResolveEndpoint(Guid siteId)
@@ -160,7 +188,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
         FiscalIssuanceReferenceRecord reference,
         ZeroPayableStatutoryFiscalIssuanceCommand command,
         string upstreamReference,
-        ChannelTerminalIdentity channelTerminal)
+        ChannelTerminalIdentity channelTerminal,
+        StatutoryBeneficiaryIdentityRecord? beneficiaryIdentity)
     {
         var finality = command.Finality;
         var vatExclusiveBasis = command.VatExclusiveBasisAmountMinorUnits;
@@ -304,7 +333,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 0,
                 currency,
                 finality.AppliedAt,
-                finality.SourceChannel),
+                finality.SourceChannel,
+                BeneficiaryIdentity: MapBeneficiary(beneficiaryIdentity)),
             SiteId: finality.SiteId,
             ChannelTerminalId: channelTerminal.ChannelTerminalId,
             TerminalIdentifier: channelTerminal.TerminalIdentifier,
@@ -323,6 +353,23 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                         ? null
                         : command.StatutoryIdNumber.Trim()));
     }
+
+    private static CentralPmsStatutoryBeneficiaryIdentityContext? MapBeneficiary(
+        StatutoryBeneficiaryIdentityRecord? identity) => identity is not { IsFinal: true } ? null : new(
+            identity.BeneficiaryFullName,
+            identity.StatutoryIdType,
+            identity.StatutoryIdNumber,
+            identity.BeneficiaryTin,
+            identity.CapturedByActorRef.ToString("D"),
+            identity.CapturedByChannel,
+            identity.CapturedAt,
+            identity.LastUpdatedByActorRef.ToString("D"),
+            identity.LastUpdatedByChannel,
+            identity.LastUpdatedAt,
+            identity.ReviewedByActorRef!.Value.ToString("D"),
+            identity.ReviewedAt!.Value,
+            identity.ApprovalDecisionReference!,
+            identity.CorrelationReference.ToString("D"));
 
     private static void AddDisplayFact(IDictionary<string, string> context, string key, string? value)
     {

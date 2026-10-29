@@ -60,18 +60,7 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
         {
             var rows = await ReadRowsAsync(subject.TariffSnapshotId, cancellationToken).ConfigureAwait(false);
             var result = Evaluate(subject, rows);
-            if (result.Status is not TerminalCashStatutoryFiscalLinkageStatus.CompleteApprovedContext ||
-                result.Context is not { PercentageComponentSeparatelyProven: true, StatutoryDiscountRateBasisPoints: 500 or 2000 } context)
-                return result;
-
-            var identity = _beneficiaryIdentities is null
-                ? null
-                : await _beneficiaryIdentities.GetAsync(context.StatutoryDiscountDecisionCommandId, cancellationToken).ConfigureAwait(false);
-            if (identity is not { IsFinal: true } || identity.SiteId != subject.SiteId ||
-                !string.Equals(identity.EntitlementType, context.EntitlementType, StringComparison.OrdinalIgnoreCase))
-                return TerminalCashStatutoryFiscalLinkageResult.TerminallyInconsistent("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED");
-
-            return TerminalCashStatutoryFiscalLinkageResult.Complete(context with { BeneficiaryIdentity = identity });
+            return await AttachRequiredBeneficiaryIdentityAsync(result, subject, cancellationToken).ConfigureAwait(false);
         }
         catch (NpgsqlException)
         {
@@ -83,6 +72,26 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
             return TerminalCashStatutoryFiscalLinkageResult.RetryableUnavailable(
                 "STATUTORY_FISCAL_CONTEXT_TEMPORARILY_UNAVAILABLE");
         }
+    }
+
+    private async Task<TerminalCashStatutoryFiscalLinkageResult> AttachRequiredBeneficiaryIdentityAsync(
+        TerminalCashStatutoryFiscalLinkageResult result,
+        StatutoryFiscalLinkageSubject subject,
+        CancellationToken cancellationToken)
+    {
+        if (result.Status is not TerminalCashStatutoryFiscalLinkageStatus.CompleteApprovedContext ||
+            result.Context is not { } context ||
+            context.EntitlementType is not ("SENIOR_CITIZEN" or "PWD"))
+            return result;
+
+        var identity = _beneficiaryIdentities is null
+            ? null
+            : await _beneficiaryIdentities.GetAsync(context.StatutoryDiscountDecisionCommandId, cancellationToken).ConfigureAwait(false);
+        if (identity is not { IsFinal: true } || identity.SiteId != subject.SiteId ||
+            !string.Equals(identity.EntitlementType, context.EntitlementType, StringComparison.OrdinalIgnoreCase))
+            return TerminalCashStatutoryFiscalLinkageResult.TerminallyInconsistent("STATUTORY_BENEFICIARY_IDENTITY_REQUIRED");
+
+        return TerminalCashStatutoryFiscalLinkageResult.Complete(context with { BeneficiaryIdentity = identity });
     }
 
     private async Task<IReadOnlyList<StatutoryFiscalLinkageRow>> ReadRowsAsync(

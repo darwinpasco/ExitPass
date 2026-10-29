@@ -102,7 +102,10 @@ public sealed class AptPayableBasisReadinessContractTests
                 RecoveryAction: null,
                 SafeErrorCode: null,
                 BlockingReasonCode: null,
-                Message: "Statutory-discount payable basis is applied."),
+                Message: "Statutory-discount payable basis is applied.",
+                OriginalVatAmountMinorUnits: 1071,
+                FinalVatableSalesMinorUnits: 6929,
+                FinalVatAmountMinorUnits: 1071),
             CashAcceptanceReadiness: "READY",
             ReadyForCashAcceptance: true,
             BlockingReasonCodes: [],
@@ -121,6 +124,9 @@ public sealed class AptPayableBasisReadinessContractTests
         json.Should().Contain("statutoryDiscountReadiness");
         json.Should().Contain("payableBasisReadinessStatus");
         json.Should().Contain("vatExclusiveBasisAmountMinorUnits");
+        json.Should().Contain("originalVatAmountMinorUnits");
+        json.Should().Contain("finalVatableSalesMinorUnits");
+        json.Should().Contain("finalVatAmountMinorUnits");
         var lowerJson = json.ToLowerInvariant();
         lowerJson.Should().NotContain("apikey");
         lowerJson.Should().NotContain("connectionstring");

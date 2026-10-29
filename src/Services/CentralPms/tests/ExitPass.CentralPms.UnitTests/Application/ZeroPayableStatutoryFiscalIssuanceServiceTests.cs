@@ -99,6 +99,113 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.False(result.FiscalPrerequisiteSatisfied);
     }
 
+    [Theory]
+    [InlineData("SENIOR_CITIZEN", "SENIOR_CITIZEN_ID", "000-000-000-000")]
+    [InlineData("PWD", "PWD_ID", null)]
+    public async Task IssueOrReadAsync_MapsFinalizedBeneficiaryIdentity(
+        string entitlementType,
+        string statutoryIdType,
+        string? beneficiaryTin)
+    {
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        CentralPmsFiscalDocumentMappingContext? mapped = null;
+        references.FindByStatutoryApplicationCommandIdAsync(ApplicationId, Arg.Any<CancellationToken>())
+            .Returns((FiscalIssuanceReferenceRecord?)null);
+        beneficiaryIdentities.GetAsync(DecisionId, Arg.Any<CancellationToken>())
+            .Returns(Identity(entitlementType, statutoryIdType, beneficiaryTin));
+        orchestration.PreparePendingAsync(Arg.Any<PrepareFiscalIssuanceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.PendingFiscalIssuance));
+        posServer.TryIssueFiscalDocumentViaPosServerAsync(
+                FiscalReferenceId,
+                Arg.Do<CentralPmsFiscalDocumentMappingContext>(value => mapped = value),
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(["test_stop_after_mapping"]));
+        var command = Command() with
+        {
+            Finality = Finality() with { EntitlementType = entitlementType }
+        };
+
+        await CreateService(references, orchestration, posServer, beneficiaryIdentities)
+            .IssueOrReadAsync(command, CancellationToken.None);
+
+        var beneficiary = Assert.IsType<CentralPmsStatutoryBeneficiaryIdentityContext>(
+            mapped?.AppliedStatutoryFiscalFacts?.BeneficiaryIdentity);
+        Assert.Equal("Synthetic Beneficiary", beneficiary.BeneficiaryFullName);
+        Assert.Equal(statutoryIdType, beneficiary.StatutoryIdType);
+        Assert.Equal("TEST-0001", beneficiary.StatutoryIdNumber);
+        Assert.Equal(beneficiaryTin, beneficiary.BeneficiaryTin);
+    }
+
+    [Theory]
+    [InlineData("MISSING")]
+    [InlineData("UNFINALIZED")]
+    [InlineData("WRONG_DECISION")]
+    [InlineData("WRONG_SITE")]
+    [InlineData("WRONG_ENTITLEMENT")]
+    public async Task IssueOrReadAsync_InvalidBeneficiaryIdentity_FailsBeforeFiscalPreparation(
+        string mismatch)
+    {
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        references.FindByStatutoryApplicationCommandIdAsync(ApplicationId, Arg.Any<CancellationToken>())
+            .Returns((FiscalIssuanceReferenceRecord?)null);
+        var identity = mismatch == "MISSING"
+            ? null
+            : Identity("SENIOR_CITIZEN", "SENIOR_CITIZEN_ID", null) with
+            {
+                IsFinal = mismatch != "UNFINALIZED",
+                StatutoryDiscountDecisionCommandId = mismatch == "WRONG_DECISION" ? Guid.NewGuid() : DecisionId,
+                SiteId = mismatch == "WRONG_SITE" ? Guid.NewGuid() : SiteId,
+                EntitlementType = mismatch == "WRONG_ENTITLEMENT" ? "PWD" : "SENIOR_CITIZEN"
+            };
+        beneficiaryIdentities.GetAsync(DecisionId, Arg.Any<CancellationToken>())
+            .Returns(identity);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            CreateService(references, orchestration, posServer, beneficiaryIdentities)
+                .IssueOrReadAsync(Command(), CancellationToken.None));
+
+        Assert.Equal(StatutoryBeneficiaryIdentityNormalizer.IdentityRequiredClassification, error.Message);
+        Assert.DoesNotContain("Synthetic Beneficiary", error.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("TEST-0001", error.ToString(), StringComparison.Ordinal);
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
+        await posServer.DidNotReceiveWithAnyArgs().TryIssueFiscalDocumentViaPosServerAsync(
+            default,
+            default!,
+            default!,
+            default);
+    }
+
+    [Fact]
+    public async Task IssueOrReadAsync_WhenFiscalDocumentAlreadyRecorded_DoesNotReloadIdentityOrReissue()
+    {
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        references.FindByStatutoryApplicationCommandIdAsync(ApplicationId, Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded, completed: true));
+
+        var result = await CreateService(references, orchestration, posServer, beneficiaryIdentities)
+            .IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.True(result.FiscalPrerequisiteSatisfied);
+        Assert.Equal("SI-00000007", result.FiscalDocumentNumber);
+        await beneficiaryIdentities.DidNotReceiveWithAnyArgs().GetAsync(default, default);
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
+        await posServer.DidNotReceiveWithAnyArgs().TryIssueFiscalDocumentViaPosServerAsync(
+            default,
+            default!,
+            default!,
+            default);
+    }
+
     [Fact]
     public async Task IssueOrReadAsync_CapturedEmptyCustomerInformation_PreservesStatutoryIdWithoutPaymentArtifacts()
     {
@@ -312,8 +419,51 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
     private static ZeroPayableStatutoryFiscalIssuanceService CreateService(
         IFiscalIssuanceReferenceRepository references,
         IFiscalIssuanceOrchestrationService orchestration,
-        IFiscalIssuancePosServerLiveIntegrationService posServer) =>
-        new(references, orchestration, posServer, Options(), CentralPmsServiceIdentityId);
+        IFiscalIssuancePosServerLiveIntegrationService posServer,
+        IStatutoryBeneficiaryIdentityRepository? beneficiaryIdentities = null)
+    {
+        if (beneficiaryIdentities is null)
+        {
+            beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+            beneficiaryIdentities.GetAsync(DecisionId, Arg.Any<CancellationToken>())
+                .Returns(Identity("SENIOR_CITIZEN", "SENIOR_CITIZEN_ID", "000-000-000-000"));
+        }
+
+        return new(
+            references,
+            orchestration,
+            posServer,
+            beneficiaryIdentities,
+            Options(),
+            CentralPmsServiceIdentityId);
+    }
+
+    private static StatutoryBeneficiaryIdentityRecord Identity(
+        string entitlementType,
+        string statutoryIdType,
+        string? beneficiaryTin)
+    {
+        var actorId = Guid.Parse("a1000000-0000-4000-8000-000000000022");
+        return new(
+            DecisionId,
+            SiteId,
+            entitlementType,
+            "Synthetic Beneficiary",
+            statutoryIdType,
+            "TEST-0001",
+            beneficiaryTin,
+            actorId,
+            StatutoryBeneficiaryIdentityCaptureChannels.OperatorConsole,
+            AppliedAt.AddMinutes(-2),
+            actorId,
+            StatutoryBeneficiaryIdentityCaptureChannels.OperatorConsole,
+            AppliedAt.AddMinutes(-1),
+            actorId,
+            AppliedAt,
+            "APPROVE",
+            Guid.Parse("a1000000-0000-4000-8000-000000000023"),
+            true);
+    }
 
     private static ZeroPayableStatutoryFiscalIssuanceCommand Command() =>
         new(
