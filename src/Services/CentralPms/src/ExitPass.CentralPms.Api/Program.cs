@@ -725,6 +725,7 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IFiscalIssuanceReferenceRepository>(),
             serviceProvider.GetRequiredService<IFiscalIssuanceOrchestrationService>(),
             serviceProvider.GetRequiredService<IFiscalIssuancePosServerLiveIntegrationService>(),
+            serviceProvider.GetRequiredService<IStatutoryBeneficiaryIdentityRepository>(),
             serviceProvider.GetRequiredService<FiscalIssuancePosServerIntegrationOptions>(),
             projectionServiceIdentityId));
 
