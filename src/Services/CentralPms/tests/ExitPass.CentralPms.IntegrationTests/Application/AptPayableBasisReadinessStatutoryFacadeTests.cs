@@ -196,7 +196,10 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
     [Fact]
     public async Task Resolve_WhenAppliedFactsComplete_UsesAppliedSnapshotAndFinalAmount()
     {
-        var context = CreateContext(Applied());
+        var context = CreateContext(Applied(
+            originalVatAmountMinorUnits: 1071,
+            finalVatableSalesMinorUnits: 6929,
+            finalVatAmountMinorUnits: 1071));
 
         var result = await context.Sut.ResolveAsync(ResolveRequest(DecisionCommandId), CancellationToken.None);
 
@@ -213,9 +216,60 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         result.Response.StatutoryDiscountReadiness.VatExclusiveBasisAmountMinorUnits.Should().Be(8929);
         result.Response.StatutoryDiscountReadiness.VatAmountMinorUnits.Should().Be(1071);
         result.Response.StatutoryDiscountReadiness.StatutoryDiscountAmountMinorUnits.Should().Be(2000);
+        result.Response.StatutoryDiscountReadiness.OriginalVatAmountMinorUnits.Should().Be(1071);
+        result.Response.StatutoryDiscountReadiness.FinalVatableSalesMinorUnits.Should().Be(6929);
+        result.Response.StatutoryDiscountReadiness.FinalVatAmountMinorUnits.Should().Be(1071);
         context.TerminalCashEligibility.LastRequest.Should().NotBeNull();
         context.TerminalCashEligibility.LastRequest!.TariffSnapshotId.Should().Be(AppliedTariffSnapshotId);
         context.TerminalCashEligibility.LastRequest.ExpectedAmountMinorUnits.Should().Be(8000);
+    }
+
+    [Fact]
+    public async Task Resolve_WhenFullFeeExemptionApplied_ForwardsAuthoritativeZeroVatFacts()
+    {
+        var context = CreateContext(
+            Applied(
+                grossAmountMinorUnits: 5000,
+                vatExclusiveBasisAmountMinorUnits: 4464,
+                vatAmountMinorUnits: 536,
+                statutoryDiscountAmountMinorUnits: 4464,
+                netPayableAmountMinorUnits: 0,
+                originalVatAmountMinorUnits: 536,
+                finalVatableSalesMinorUnits: 0,
+                finalVatAmountMinorUnits: 0),
+            zeroPayableAppliedTariff: true);
+
+        var result = await context.Sut.ResolveAsync(
+            ResolveRequest(DecisionCommandId),
+            new AptZeroPayableCompletionActor(
+                Guid.Parse("41000000-0000-0000-0000-000000000016"),
+                "Mara Del Carmen",
+                "apt-pitx-level-3-01"),
+            CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.Response.Should().NotBeNull();
+        result.Response!.StatutoryDiscountReadiness.Should().NotBeNull();
+        result.Response.StatutoryDiscountReadiness!.OriginalAmountMinorUnits.Should().Be(5000);
+        result.Response.StatutoryDiscountReadiness.VatExclusiveBasisAmountMinorUnits.Should().Be(4464);
+        result.Response.StatutoryDiscountReadiness.OriginalVatAmountMinorUnits.Should().Be(536);
+        result.Response.StatutoryDiscountReadiness.StatutoryDiscountAmountMinorUnits.Should().Be(4464);
+        result.Response.StatutoryDiscountReadiness.FinalVatableSalesMinorUnits.Should().Be(0);
+        result.Response.StatutoryDiscountReadiness.FinalVatAmountMinorUnits.Should().Be(0);
+        result.Response.StatutoryDiscountReadiness.FinalPayableAmountMinorUnits.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Resolve_WhenAuthoritativeVatFactsAreUnavailable_PreservesNulls()
+    {
+        var context = CreateContext(Applied());
+
+        var result = await context.Sut.ResolveAsync(ResolveRequest(DecisionCommandId), CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.Response!.StatutoryDiscountReadiness!.OriginalVatAmountMinorUnits.Should().BeNull();
+        result.Response.StatutoryDiscountReadiness.FinalVatableSalesMinorUnits.Should().BeNull();
+        result.Response.StatutoryDiscountReadiness.FinalVatAmountMinorUnits.Should().BeNull();
     }
 
     [Fact]
@@ -842,7 +896,13 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         string applicationRecoveryClassification = StatutoryDiscountDecisionRecoveryClassifications.None,
         string? applicationRecoveryAction = null,
         string? errorCode = null,
-        long statutoryDiscountAmountMinorUnits = 2000) =>
+        long statutoryDiscountAmountMinorUnits = 2000,
+        long grossAmountMinorUnits = 10000,
+        long vatExclusiveBasisAmountMinorUnits = 8929,
+        long vatAmountMinorUnits = 1071,
+        long? originalVatAmountMinorUnits = null,
+        long? finalVatableSalesMinorUnits = null,
+        long? finalVatAmountMinorUnits = null) =>
         new(
             DecisionCommandId,
             RequestReference: Guid.Parse("41000000-0000-0000-0000-000000000013"),
@@ -855,7 +915,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             AppliedPolicyReferenceId: Guid.Parse("41000000-0000-0000-0000-000000000014"),
             FallbackPolicyReferenceId: null,
             LocalOrdinanceApplied: false,
-            GrossAmountMinorUnits: 10000,
+            GrossAmountMinorUnits: grossAmountMinorUnits,
             StatutoryDiscountAmountMinorUnits: statutoryDiscountAmountMinorUnits,
             netPayableAmountMinorUnits,
             Currency: currency,
@@ -890,12 +950,15 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             OneShotComplete: true,
             SiteId,
             SiteGroupId,
-            VatExclusiveBasisAmountMinorUnits: 8929,
-            VatAmountMinorUnits: 1071,
+            VatExclusiveBasisAmountMinorUnits: vatExclusiveBasisAmountMinorUnits,
+            VatAmountMinorUnits: vatAmountMinorUnits,
             VatTreatment: "VAT_EXCLUSIVE",
             PayableBasisReady: payableBasisReady,
             PayableBasisReadinessStatus: payableBasisReadinessStatus,
-            PayableBasisReadinessAction: payableBasisReadinessAction);
+            PayableBasisReadinessAction: payableBasisReadinessAction,
+            OriginalVatAmountMinorUnits: originalVatAmountMinorUnits,
+            FinalVatableSalesMinorUnits: finalVatableSalesMinorUnits,
+            FinalVatAmountMinorUnits: finalVatAmountMinorUnits);
 
     private sealed record TestContext(
         AptPayableBasisReadinessService Sut,

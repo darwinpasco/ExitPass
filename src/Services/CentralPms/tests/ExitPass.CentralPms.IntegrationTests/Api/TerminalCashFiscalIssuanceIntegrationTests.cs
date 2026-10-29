@@ -5,6 +5,7 @@ using ExitPass.CentralPms.Api.Endpoints;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
@@ -189,6 +190,33 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal("171459612", customer.Tin);
         Assert.Equal("Pro Parking Inc", customer.BusinessStyle);
         Assert.Equal("SC-1234", customer.StatutoryIdNumber);
+    }
+
+    [Theory]
+    [InlineData("SENIOR_CITIZEN", "SENIOR_CITIZEN_ID")]
+    [InlineData("PWD", "PWD_ID")]
+    public async Task TerminalCashFiscalIssuance_FinalizedBeneficiaryIdentity_IsMappedToPosRequest(
+        string entitlementType,
+        string expectedStatutoryIdType)
+    {
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var service = CreateService(
+            CashPayment(amountDueMinorUnits: 10_000),
+            repo,
+            posIntegration,
+            new FakeStatutoryFiscalLinkageReader(TerminalCashStatutoryFiscalLinkageResult.Complete(
+                StatutoryContext(entitlementType, includeBeneficiaryIdentity: true))));
+
+        await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        var request = new PosServerFiscalDocumentRequestMapper().Map(posIntegration.LastFiscalContext!);
+        Assert.NotNull(request.AppliedStatutoryFiscalFacts?.BeneficiaryIdentity);
+        var beneficiary = request.AppliedStatutoryFiscalFacts!.BeneficiaryIdentity!;
+        Assert.Equal("Synthetic Beneficiary", beneficiary.BeneficiaryFullName);
+        Assert.Equal(expectedStatutoryIdType, beneficiary.StatutoryIdType);
+        Assert.Equal("TEST-0001", beneficiary.StatutoryIdNumber);
+        Assert.Equal("000-000-000-000", beneficiary.BeneficiaryTin);
     }
 
     [Fact]
@@ -1067,7 +1095,9 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private static TerminalCashStatutoryFiscalLinkageContext StatutoryContext() =>
+    private static TerminalCashStatutoryFiscalLinkageContext StatutoryContext(
+        string entitlementType = "SENIOR_CITIZEN",
+        bool includeBeneficiaryIdentity = false) =>
         new(
             StatutoryDecisionCommandId,
             StatutoryApplicationCommandId,
@@ -1080,7 +1110,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             TariffSnapshotId,
             AppliedPolicyReferenceId,
             "LOCAL_ORDINANCE",
-            "SENIOR_CITIZEN",
+            entitlementType,
             "ASSISTED_PAYMENT_TERMINAL",
             OriginalAmountMinorUnits: 12_500,
             VatExclusiveBasisAmountMinorUnits: 11_161,
@@ -1091,7 +1121,34 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             Currency: "PHP",
             DecisionTimestamp: DateTimeOffset.Parse("2026-07-28T01:20:00Z"),
             AppliedAt: DateTimeOffset.Parse("2026-07-28T01:21:00Z"),
-            IdControlReference: "SC-1234");
+            IdControlReference: "SC-1234",
+            BeneficiaryIdentity: includeBeneficiaryIdentity
+                ? FinalizedBeneficiaryIdentity(entitlementType)
+                : null);
+
+    private static StatutoryBeneficiaryIdentityRecord FinalizedBeneficiaryIdentity(string entitlementType)
+    {
+        var capturedAt = DateTimeOffset.Parse("2026-07-28T01:18:00Z");
+        return new StatutoryBeneficiaryIdentityRecord(
+            StatutoryDecisionCommandId,
+            CashPayment().SiteId,
+            entitlementType,
+            "Synthetic Beneficiary",
+            entitlementType == "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID",
+            "TEST-0001",
+            BeneficiaryTin: "000-000-000-000",
+            CapturedByActorRef: CashierUserId,
+            CapturedByChannel: StatutoryBeneficiaryIdentityCaptureChannels.OperatorConsole,
+            CapturedAt: capturedAt,
+            LastUpdatedByActorRef: CashierUserId,
+            LastUpdatedByChannel: StatutoryBeneficiaryIdentityCaptureChannels.OperatorConsole,
+            LastUpdatedAt: capturedAt,
+            ReviewedByActorRef: CashierUserId,
+            ReviewedAt: capturedAt.AddMinutes(1),
+            ApprovalDecisionReference: "APPROVE",
+            CorrelationReference: Guid.Parse("21000000-0000-4000-8000-000000000014"),
+            IsFinal: true);
+    }
 
     private static FiscalInvoiceCustomerInformationSnapshot InvoiceCustomerInformation() =>
         new(

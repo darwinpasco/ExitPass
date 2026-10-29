@@ -172,4 +172,7 @@ public sealed record AptStatutoryDiscountReadinessDto(
     string? RecoveryAction,
     string? SafeErrorCode,
     string? BlockingReasonCode,
-    string Message);
+    string Message,
+    long? OriginalVatAmountMinorUnits = null,
+    long? FinalVatableSalesMinorUnits = null,
+    long? FinalVatAmountMinorUnits = null);
