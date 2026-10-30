@@ -11,6 +11,7 @@ import type {
   WebPayReceiptPresentationResponse,
   WebPayHandoff,
   WebPayStatutoryDiscountAvailabilityResponse,
+  WebPayStatutoryDiscountApplicationRequest,
   WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest,
   WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse,
   WebPayStatutoryDiscountDecisionRequest,
@@ -783,7 +784,7 @@ export async function retrieveStatutoryDiscountDecision(
 
 export async function applyStatutoryDiscountPayableBasis(
   statutoryDiscountDecisionCommandId: string,
-  request: WebPayStatutoryDiscountDecisionRequest,
+  request: WebPayStatutoryDiscountApplicationRequest,
   idempotencyKey: string,
   correlationId?: string,
   fetchImpl: typeof fetch = fetch,
@@ -799,7 +800,7 @@ export async function applyStatutoryDiscountPayableBasis(
     throw new Error("A request key is required to apply the approved statutory discount safely.");
   }
 
-  const body = buildStatutoryDiscountDecisionBody(request);
+  const body = buildStatutoryDiscountApplicationBody(request);
   const requestCorrelationId = correlationId?.trim() || createCorrelationId();
   const response = await fetchImpl(
     `${getApiBaseUrl()}${statutoryDiscountDecisionPath}/${encodeURIComponent(normalizedDecisionId)}/apply-payable-basis`,
@@ -815,6 +816,32 @@ export async function applyStatutoryDiscountPayableBasis(
   );
 
   return readStatutoryDiscountDecisionResponse(response);
+}
+
+export function buildStatutoryDiscountApplicationBody(
+  request: WebPayStatutoryDiscountApplicationRequest
+): WebPayStatutoryDiscountApplicationRequest {
+  const requestReference = request.requestReference?.trim();
+  const parkingSessionId = request.parkingSessionId?.trim();
+  const entitlementType = request.entitlementType;
+  if (!requestReference || !parkingSessionId) {
+    throw new Error("The approved statutory discount is missing its canonical request references.");
+  }
+
+  if (entitlementType !== "SENIOR_CITIZEN" && entitlementType !== "PWD") {
+    throw new Error("The approved statutory discount has an unsupported entitlement.");
+  }
+
+  return {
+    requestReference,
+    parkingSessionId,
+    entitlementType,
+    ...(request.siteId?.trim() ? { siteId: request.siteId.trim() } : {}),
+    ...(request.siteGroupId?.trim() ? { siteGroupId: request.siteGroupId.trim() } : {}),
+    ...(request.originalTariffSnapshotId?.trim()
+      ? { originalTariffSnapshotId: request.originalTariffSnapshotId.trim() }
+      : {})
+  };
 }
 
 export function toFriendlyError(errorCode?: string, _message?: string): string {

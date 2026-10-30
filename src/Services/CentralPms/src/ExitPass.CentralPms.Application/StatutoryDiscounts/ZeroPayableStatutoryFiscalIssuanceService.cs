@@ -82,7 +82,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
             }
         }
 
-        var beneficiaryIdentity = await ReadRequiredBeneficiaryIdentityAsync(finality, cancellationToken)
+        var beneficiaryIdentity = await ReadBeneficiaryIdentityAsync(finality, cancellationToken)
             .ConfigureAwait(false);
         var endpoint = ResolveEndpoint(finality.SiteId);
         var reference = existing ?? await _orchestration.PreparePendingAsync(
@@ -140,7 +140,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
             issue.PosServerResult?.Succeeded == false ? issue.PosServerResult.Code : resolved.LatestErrorCode);
     }
 
-    private async Task<StatutoryBeneficiaryIdentityRecord?> ReadRequiredBeneficiaryIdentityAsync(
+    private async Task<StatutoryBeneficiaryIdentityRecord?> ReadBeneficiaryIdentityAsync(
         StatutoryDiscountZeroPayableFinality finality,
         CancellationToken cancellationToken)
     {
@@ -152,7 +152,12 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
         var identity = await _beneficiaryIdentities.GetAsync(
             finality.StatutoryDiscountDecisionCommandId,
             cancellationToken).ConfigureAwait(false);
-        if (identity is not { IsFinal: true } ||
+        if (identity is null)
+        {
+            return null;
+        }
+
+        if (!identity.IsFinal ||
             identity.StatutoryDiscountDecisionCommandId != finality.StatutoryDiscountDecisionCommandId ||
             identity.SiteId != finality.SiteId ||
             !string.Equals(identity.EntitlementType, finality.EntitlementType, StringComparison.Ordinal))
@@ -334,6 +339,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 currency,
                 finality.AppliedAt,
                 finality.SourceChannel,
+                NonPercentageBenefitAmountMinorUnits: vatExclusiveBasis,
                 BeneficiaryIdentity: MapBeneficiary(beneficiaryIdentity)),
             SiteId: finality.SiteId,
             ChannelTerminalId: channelTerminal.ChannelTerminalId,

@@ -82,6 +82,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal(0, privilege.VatPrivilegeAmountMinorUnits);
         Assert.Equal(0, mapped.AppliedStatutoryFiscalFacts!.VatAmountMinorUnits);
         Assert.Equal("VAT_INCLUSIVE_NO_EXEMPTION", mapped.AppliedStatutoryFiscalFacts.VatTreatment);
+        Assert.Equal(2679, mapped.AppliedStatutoryFiscalFacts.NonPercentageBenefitAmountMinorUnits);
         Assert.Equal(0, Assert.Single(mapped.Totals).AmountMinorUnits);
         Assert.NotNull(mapped.InvoiceCustomerInformation);
         Assert.Equal("Juan Dela Cruz", mapped.InvoiceCustomerInformation.CustomerName);
@@ -140,8 +141,42 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal(beneficiaryTin, beneficiary.BeneficiaryTin);
     }
 
+    [Fact]
+    public async Task IssueOrReadAsync_MissingBeneficiaryIdentity_PreservesZeroPayableFiscalIssuance()
+    {
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
+        CentralPmsFiscalDocumentMappingContext? mapped = null;
+        references.FindByStatutoryApplicationCommandIdAsync(ApplicationId, Arg.Any<CancellationToken>())
+            .Returns((FiscalIssuanceReferenceRecord?)null);
+        beneficiaryIdentities.GetAsync(DecisionId, Arg.Any<CancellationToken>())
+            .Returns((StatutoryBeneficiaryIdentityRecord?)null);
+        orchestration.PreparePendingAsync(Arg.Any<PrepareFiscalIssuanceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.PendingFiscalIssuance));
+        posServer.TryIssueFiscalDocumentViaPosServerAsync(
+                FiscalReferenceId,
+                Arg.Do<CentralPmsFiscalDocumentMappingContext>(value => mapped = value),
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(["test_stop_after_mapping"]));
+
+        await CreateService(references, orchestration, posServer, beneficiaryIdentities)
+            .IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.Null(mapped?.AppliedStatutoryFiscalFacts?.BeneficiaryIdentity);
+        await orchestration.Received(1).PreparePendingAsync(
+            Arg.Any<PrepareFiscalIssuanceCommand>(),
+            Arg.Any<CancellationToken>());
+        await posServer.Received(1).TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalReferenceId,
+            Arg.Any<CentralPmsFiscalDocumentMappingContext>(),
+            Arg.Any<PosServerCreateResultRecordingContext>(),
+            Arg.Any<CancellationToken>());
+    }
+
     [Theory]
-    [InlineData("MISSING")]
     [InlineData("UNFINALIZED")]
     [InlineData("WRONG_DECISION")]
     [InlineData("WRONG_SITE")]
@@ -155,9 +190,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
         references.FindByStatutoryApplicationCommandIdAsync(ApplicationId, Arg.Any<CancellationToken>())
             .Returns((FiscalIssuanceReferenceRecord?)null);
-        var identity = mismatch == "MISSING"
-            ? null
-            : Identity("SENIOR_CITIZEN", "SENIOR_CITIZEN_ID", null) with
+        var identity = Identity("SENIOR_CITIZEN", "SENIOR_CITIZEN_ID", null) with
             {
                 IsFinal = mismatch != "UNFINALIZED",
                 StatutoryDiscountDecisionCommandId = mismatch == "WRONG_DECISION" ? Guid.NewGuid() : DecisionId,
