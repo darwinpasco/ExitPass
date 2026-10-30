@@ -70,7 +70,9 @@ import type { StatutoryRecoveryStage, WebPayStatutoryRecoveryRecord } from "./st
 import {
   isTerminalStatutoryDecision,
   isZeroPayableExitAuthorized,
+  isZeroPayableExitConsumed,
   isZeroPayableExitExpired,
+  isZeroPayableExitInvalidated,
   pollStatutoryDecision,
   shouldPollStatutoryDecision
 } from "./statutoryDecisionPolling";
@@ -2061,6 +2063,10 @@ function StatutoryDiscountRequestPanel({
                   </div>
                 ) : isZeroPayableExitExpired(decision) ? (
                   <p>Exit authorization expired. Contact parking support before exiting.</p>
+                ) : isZeroPayableExitConsumed(decision) ? (
+                  <p>Exit authorization has already been used.</p>
+                ) : isZeroPayableExitInvalidated(decision) ? (
+                  <p>Exit authorization is no longer valid. Contact parking support before exiting.</p>
                 ) : decision.zeroPayableFiscalCompletion?.fiscalPrerequisiteSatisfied ? (
                   <p>Exit authorization is being prepared.</p>
                 ) : null}

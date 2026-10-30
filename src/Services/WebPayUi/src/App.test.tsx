@@ -1562,6 +1562,40 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.queryByRole("button", { name: /continue to payment/i })).not.toBeInTheDocument();
   });
 
+  it.each([
+    ["EXPIRED", "Exit authorization expired. Contact parking support before exiting."],
+    ["CONSUMED", "Exit authorization has already been used."],
+    ["INVALIDATED", "Exit authorization is no longer valid. Contact parking support before exiting."]
+  ])("WebPay_WhenZeroPayableExitAuthorizationIs%s_PresentsTheAuthoritativeStatus", async (authorizationStatus, expectedMessage) => {
+    const applied = {
+      ...zeroPayableStatutoryDecisionResponse(),
+      exitAuthorization: {
+        exitAuthorizationId: "12121212-1212-4121-8121-121212121212",
+        parkingSessionId: successResponse.parkingSessionId,
+        tariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+        completionBasis: "ZERO_PAYABLE_STATUTORY_FINALITY",
+        authorizationStatus,
+        issuedAt: "2026-09-21T00:00:00Z",
+        expirationTimestamp: "2030-09-21T00:15:00Z"
+      }
+    };
+    stubWebPayFetch({
+      statutoryRediscoveryPayload: statutoryPendingLifecycleRediscoveryResponse({
+        decisionStatus: "APPROVED", payableBasisStatus: "READY", lifecycleState: "APPLIED", retryable: false
+      }),
+      statutoryReadPayload: applied
+    });
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Plate" }));
+    await userEvent.type(screen.getByLabelText(/plate number/i), "ABC1234");
+    await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+
+    expect(await screen.findByText(expectedMessage)).toBeInTheDocument();
+    expect(screen.queryByText("Exit authorization is being prepared.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Proceed to exit")).not.toBeInTheDocument();
+  });
+
   it("WebPay_WhenPendingLifecycleRediscoveryHasNoActiveLifecycle_DoesNotFabricatePendingState", async () => {
     const fetchMock = stubWebPayFetch({
       statutoryRediscoveryPayload: statutoryPendingLifecycleRediscoveryResponse({

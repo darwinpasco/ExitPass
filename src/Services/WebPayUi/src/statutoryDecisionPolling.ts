@@ -10,8 +10,21 @@ export function isZeroPayableExitAuthorized(decision: WebPayStatutoryDiscountDec
 
 export function isZeroPayableExitExpired(decision: WebPayStatutoryDiscountDecisionResponse): boolean {
   const authorization = decision.exitAuthorization;
-  return Boolean(authorization && authorization.authorizationStatus.toUpperCase() === "ISSUED" &&
+  if (!authorization) {
+    return false;
+  }
+
+  const status = authorization.authorizationStatus.toUpperCase();
+  return status === "EXPIRED" || (status === "ISSUED" &&
     Date.parse(authorization.expirationTimestamp) <= Date.now());
+}
+
+export function isZeroPayableExitConsumed(decision: WebPayStatutoryDiscountDecisionResponse): boolean {
+  return decision.exitAuthorization?.authorizationStatus.toUpperCase() === "CONSUMED";
+}
+
+export function isZeroPayableExitInvalidated(decision: WebPayStatutoryDiscountDecisionResponse): boolean {
+  return decision.exitAuthorization?.authorizationStatus.toUpperCase() === "INVALIDATED";
 }
 
 export function isTerminalStatutoryDecision(decision: WebPayStatutoryDiscountDecisionResponse): boolean {
@@ -37,7 +50,9 @@ export function isTerminalStatutoryDecision(decision: WebPayStatutoryDiscountDec
     return true;
   }
 
-  if (isZeroPayableExitExpired(decision)) {
+  if (isZeroPayableExitExpired(decision) ||
+    isZeroPayableExitConsumed(decision) ||
+    isZeroPayableExitInvalidated(decision)) {
     return true;
   }
 

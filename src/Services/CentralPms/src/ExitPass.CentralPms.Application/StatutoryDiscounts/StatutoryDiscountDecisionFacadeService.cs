@@ -403,7 +403,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             authorityResolution.Authority,
             fiscalCompletion?.FiscalPrerequisiteSatisfied == true);
 
-        IssueExitAuthorizationResult? exitAuthorization = null;
+        StatutoryDiscountExitAuthorizationReadback? exitAuthorization = null;
         if (progressCompletion &&
             eligibility.ExitAuthorizationIssuanceAllowed &&
             _issueExitAuthorizationUseCase is not null)
@@ -415,7 +415,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                     "Zero-payable ExitAuthorization requires the authorized decision actor.");
             }
 
-            exitAuthorization = await _issueExitAuthorizationUseCase.ExecuteAsync(
+            var issuedAuthorization = await _issueExitAuthorizationUseCase.ExecuteAsync(
                     new IssueExitAuthorizationCommand(
                         ParkingSessionId: authorityResolution.Authority.ParkingSessionId,
                         PaymentAttemptId: null,
@@ -426,6 +426,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                         FiscalPrerequisiteSatisfied: true),
                     cancellationToken)
                 .ConfigureAwait(false);
+
+            exitAuthorization = ToChannelSafeReadback(issuedAuthorization);
 
             if (_vendorPaymentAcknowledgmentWorkflow is not null)
             {
@@ -441,6 +443,16 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                     .ConfigureAwait(false);
             }
         }
+        else if (!progressCompletion)
+        {
+            exitAuthorization = await _zeroPayableFinalityReader.ReadExitAuthorizationAsync(
+                    resolution.Finality!.StatutoryDiscountDecisionCommandId,
+                    resolution.Finality.StatutoryDiscountPayableBasisApplicationCommandId,
+                    resolution.Finality.ParkingSessionId,
+                    resolution.Finality.AppliedTariffSnapshotId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         return enriched with
         {
@@ -451,6 +463,20 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             ExitAuthorization = exitAuthorization
         };
     }
+
+    private static StatutoryDiscountExitAuthorizationReadback ToChannelSafeReadback(
+        IssueExitAuthorizationResult authorization) =>
+        new(
+            authorization.ExitAuthorizationId,
+            authorization.ParkingSessionId,
+            authorization.TariffSnapshotId,
+            authorization.CompletionBasis,
+            authorization.CompletionAuthorityReferenceId,
+            authorization.PaymentAttemptId,
+            authorization.PaymentConfirmationId,
+            authorization.AuthorizationStatus,
+            authorization.IssuedAt,
+            authorization.ExpirationTimestamp);
 
     private static bool IsPotentialZeroPayableFinality(StatutoryDiscountDecisionResult result) =>
         string.Equals(result.DecisionResultStatus, StatutoryDiscountDecisionV2ResultStates.Approved, StringComparison.Ordinal) &&
