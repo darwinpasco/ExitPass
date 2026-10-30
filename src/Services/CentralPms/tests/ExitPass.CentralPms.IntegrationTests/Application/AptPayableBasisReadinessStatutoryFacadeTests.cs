@@ -291,7 +291,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
                 CompletionBasis: "ZERO_PAYABLE_STATUTORY_FINALITY",
                 CompletionAuthorityReferenceId: ApplicationCommandId,
                 SafeErrorCode: null),
-            ExitAuthorization = new IssueExitAuthorizationResult(
+            ExitAuthorization = new StatutoryDiscountExitAuthorizationReadback(
                 ExitAuthorizationId,
                 ParkingSessionId,
                 AppliedTariffSnapshotId,
@@ -299,7 +299,6 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
                 CompletionAuthorityReferenceId: ApplicationCommandId,
                 PaymentAttemptId: null,
                 PaymentConfirmationId: null,
-                AuthorizationToken: "must-not-be-exposed",
                 AuthorizationStatus: "ISSUED",
                 IssuedAt: issuedAt,
                 ExpirationTimestamp: issuedAt.AddMinutes(15))

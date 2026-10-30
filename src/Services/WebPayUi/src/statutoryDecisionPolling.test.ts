@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WebPayStatutoryDiscountDecisionResponse } from "./types";
 import {
   pollStatutoryDecision,
+  isZeroPayableExitConsumed,
   isZeroPayableExitExpired,
+  isZeroPayableExitInvalidated,
   shouldPollStatutoryDecision,
   statutoryDecisionPollIntervalMs
 } from "./statutoryDecisionPolling";
@@ -160,6 +162,21 @@ describe("statutory decision polling", () => {
     } };
     expect(isZeroPayableExitExpired(expired)).toBe(true);
     expect(shouldPollStatutoryDecision(expired)).toBe(false);
+    const statusExpired = { ...invoiced, exitAuthorization: {
+      ...expired.exitAuthorization, authorizationStatus: "EXPIRED", expirationTimestamp: "2030-01-01T00:15:00Z"
+    } };
+    expect(isZeroPayableExitExpired(statusExpired)).toBe(true);
+    expect(shouldPollStatutoryDecision(statusExpired)).toBe(false);
+    const consumed = { ...invoiced, exitAuthorization: {
+      ...expired.exitAuthorization, authorizationStatus: "CONSUMED"
+    } };
+    expect(isZeroPayableExitConsumed(consumed)).toBe(true);
+    expect(shouldPollStatutoryDecision(consumed)).toBe(false);
+    const invalidated = { ...invoiced, exitAuthorization: {
+      ...expired.exitAuthorization, authorizationStatus: "INVALIDATED"
+    } };
+    expect(isZeroPayableExitInvalidated(invalidated)).toBe(true);
+    expect(shouldPollStatutoryDecision(invalidated)).toBe(false);
     expect(shouldPollStatutoryDecision({ ...fiscal, zeroPayableFiscalCompletion: {
       ...fiscal.zeroPayableFiscalCompletion, fiscalIssuanceState: "FISCAL_ISSUANCE_FAILED_REQUEST"
     } })).toBe(false);

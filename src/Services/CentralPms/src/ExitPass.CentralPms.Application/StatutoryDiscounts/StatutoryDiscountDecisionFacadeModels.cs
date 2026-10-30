@@ -294,7 +294,7 @@ public sealed record StatutoryDiscountDecisionResult(
     CompletionAuthority? CompletionAuthority = null,
     ExitAuthorizationEligibility? ExitAuthorizationEligibility = null,
     ZeroPayableStatutoryFiscalIssuanceResult? ZeroPayableFiscalCompletion = null,
-    IssueExitAuthorizationResult? ExitAuthorization = null,
+    StatutoryDiscountExitAuthorizationReadback? ExitAuthorization = null,
     long? OriginalVatAmountMinorUnits = null,
     long? FinalVatableSalesMinorUnits = null,
     long? FinalVatAmountMinorUnits = null,

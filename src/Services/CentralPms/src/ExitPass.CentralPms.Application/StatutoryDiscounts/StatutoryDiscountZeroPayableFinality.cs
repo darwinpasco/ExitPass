@@ -154,10 +154,29 @@ public sealed record StatutoryDiscountZeroPayableFinalityResolution(
     public bool IsAvailable => Finality is not null;
 }
 
+public sealed record StatutoryDiscountExitAuthorizationReadback(
+    Guid ExitAuthorizationId,
+    Guid ParkingSessionId,
+    Guid TariffSnapshotId,
+    string CompletionBasis,
+    Guid CompletionAuthorityReferenceId,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
+    string AuthorizationStatus,
+    DateTimeOffset IssuedAt,
+    DateTimeOffset ExpirationTimestamp);
+
 public interface IStatutoryDiscountZeroPayableFinalityReader
 {
     Task<StatutoryDiscountZeroPayableFinalityCandidate?> ReadAsync(
         Guid statutoryDiscountDecisionCommandId,
+        CancellationToken cancellationToken);
+
+    Task<StatutoryDiscountExitAuthorizationReadback?> ReadExitAuthorizationAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid statutoryDiscountPayableBasisApplicationCommandId,
+        Guid parkingSessionId,
+        Guid appliedTariffSnapshotId,
         CancellationToken cancellationToken);
 }
 

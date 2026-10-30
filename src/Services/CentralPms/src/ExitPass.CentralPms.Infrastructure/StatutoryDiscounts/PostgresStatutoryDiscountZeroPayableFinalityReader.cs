@@ -317,6 +317,72 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
         return candidate;
     }
 
+    public async Task<StatutoryDiscountExitAuthorizationReadback?> ReadExitAuthorizationAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid statutoryDiscountPayableBasisApplicationCommandId,
+        Guid parkingSessionId,
+        Guid appliedTariffSnapshotId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        const string sql = """
+            SELECT
+                exit_auth.exit_authorization_id,
+                exit_auth.parking_session_id,
+                exit_auth.tariff_snapshot_id,
+                exit_auth.completion_basis,
+                exit_auth.completion_authority_reference_id,
+                exit_auth.payment_attempt_id,
+                exit_auth.payment_confirmation_id,
+                exit_auth.authorization_status::text,
+                exit_auth.issued_at,
+                exit_auth.expires_at
+            FROM core.exit_authorizations AS exit_auth
+            WHERE exit_auth.statutory_discount_decision_command_id = @decision_command_id
+              AND exit_auth.statutory_discount_payable_basis_application_command_id = @application_command_id
+              AND exit_auth.parking_session_id = @parking_session_id
+              AND exit_auth.tariff_snapshot_id = @applied_tariff_snapshot_id
+              AND exit_auth.completion_basis = 'ZERO_PAYABLE_STATUTORY_FINALITY'
+              AND exit_auth.completion_authority_reference_id = @application_command_id
+            ORDER BY exit_auth.issued_at DESC, exit_auth.exit_authorization_id DESC
+            LIMIT 2;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("decision_command_id", NpgsqlDbType.Uuid, statutoryDiscountDecisionCommandId);
+        command.Parameters.AddWithValue("application_command_id", NpgsqlDbType.Uuid, statutoryDiscountPayableBasisApplicationCommandId);
+        command.Parameters.AddWithValue("parking_session_id", NpgsqlDbType.Uuid, parkingSessionId);
+        command.Parameters.AddWithValue("applied_tariff_snapshot_id", NpgsqlDbType.Uuid, appliedTariffSnapshotId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        var authorization = new StatutoryDiscountExitAuthorizationReadback(
+            RequiredGuid(reader, "exit_authorization_id"),
+            RequiredGuid(reader, "parking_session_id"),
+            RequiredGuid(reader, "tariff_snapshot_id"),
+            RequiredString(reader, "completion_basis"),
+            RequiredGuid(reader, "completion_authority_reference_id"),
+            NullableGuid(reader, "payment_attempt_id"),
+            NullableGuid(reader, "payment_confirmation_id"),
+            RequiredString(reader, "authorization_status"),
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("issued_at")),
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("expires_at")));
+
+        if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(
+                "Zero-payable statutory finality resolved more than one ExitAuthorization for the canonical application command.");
+        }
+
+        return authorization;
+    }
+
     private static StatutoryDiscountZeroPayableTariffAnchor ReadTariff(NpgsqlDataReader reader, string prefix) =>
         new(
             NullableGuid(reader, $"{prefix}_id"),
