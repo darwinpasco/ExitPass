@@ -23,6 +23,7 @@ import {
   ActivePaymentAttemptError,
   PayableBasisRefreshRequiredError,
   ReceiptPresentationError,
+  applyStatutoryDiscountPayableBasis,
   createPaymentIntent,
   createRequestReference,
   createStatutoryApplicationIdempotencyKey,
@@ -248,6 +249,7 @@ export function App() {
   const [statutoryRecoveryRefreshNonce, setStatutoryRecoveryRefreshNonce] = useState(0);
   const statutoryPollGeneration = useRef(0);
   const statutorySessionGeneration = useRef(0);
+  const statutoryApplicationAttemptedDecisionIds = useRef(new Set<string>());
   const paymentIntentInFlight = useRef(false);
   const skipNextStatutoryRecoveryRestore = useRef(false);
   const regularPaymentButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -264,6 +266,7 @@ export function App() {
 
   function handleQrDecoded(value: string) {
     pendingEvidenceDecision.current = null;
+    statutoryApplicationAttemptedDecisionIds.current.clear();
     statutorySessionGeneration.current += 1;
     const normalized = normalizeTicketReference(value);
     const context = extractPaymentIntentContext(value);
@@ -293,6 +296,7 @@ export function App() {
 
   function clearLookupState() {
     pendingEvidenceDecision.current = null;
+    statutoryApplicationAttemptedDecisionIds.current.clear();
     statutorySessionGeneration.current += 1;
     setError("");
     setResolveError("");
@@ -1047,6 +1051,10 @@ export function App() {
     setStatutoryDiscountState((current) => ({ ...current, isPolling: true, error: "", message: "Refreshing statutory discount status..." }));
     try {
       const decision = await retrieveStatutoryDiscountDecision(decisionId, statutoryDiscountState.correlationId || undefined);
+      const requiresApplicationIntent = canSubmitApplicationIntent(decision);
+      if (requiresApplicationIntent) {
+        statutoryApplicationAttemptedDecisionIds.current.delete(decision.statutoryDiscountDecisionCommandId);
+      }
       setStatutoryDiscountState((current) => ({
         ...current,
         decision,
@@ -1055,6 +1063,9 @@ export function App() {
         error: ""
       }));
       updateRecoveryFromDecision(decision);
+      if (requiresApplicationIntent) {
+        await applyApprovedStatutoryDecision(decision);
+      }
     } catch (apiError) {
       setStatutoryDiscountState((current) => ({
         ...current,
@@ -1065,9 +1076,86 @@ export function App() {
     }
   }
 
+  async function applyApprovedStatutoryDecision(decision: WebPayStatutoryDiscountDecisionResponse) {
+    const decisionId = decision.statutoryDiscountDecisionCommandId;
+    if (!canSubmitApplicationIntent(decision) || statutoryApplicationAttemptedDecisionIds.current.has(decisionId)) {
+      return;
+    }
+
+    statutoryApplicationAttemptedDecisionIds.current.add(decisionId);
+    const applicationIdempotencyKey =
+      statutoryDiscountState.applicationIdempotencyKey ||
+      statutoryRecoveryRecordRef.current?.applicationIdempotencyKey ||
+      createStatutoryApplicationIdempotencyKey(decisionId);
+    const correlationId = statutoryDiscountState.correlationId || decision.correlationId || createRequestReference();
+    setStatutoryDiscountState((current) => ({
+      ...current,
+      applicationIdempotencyKey,
+      correlationId,
+      isApplying: true,
+      isPolling: false,
+      message: "Applying the approved statutory discount...",
+      error: ""
+    }));
+    updateCurrentStatutoryRecovery(
+      {
+        applicationIdempotencyKey,
+        correlationId,
+        stage: "APPLICATION_PROCESSING"
+      },
+      {
+        parkingSessionId: decision.parkingSessionId,
+        entitlementType: normalizeEntitlementType(decision.entitlementType),
+        statutoryDiscountDecisionCommandId: decisionId,
+        requestReference: decision.requestReference,
+        applicationIdempotencyKey,
+        correlationId,
+        stage: "APPLICATION_PROCESSING"
+      }
+    );
+
+    try {
+      const applied = await applyStatutoryDiscountPayableBasis(
+        decisionId,
+        {
+          requestReference: decision.requestReference,
+          parkingSessionId: decision.parkingSessionId,
+          siteId: decision.siteId,
+          siteGroupId: decision.siteGroupId,
+          entitlementType: normalizeEntitlementType(decision.entitlementType),
+          originalTariffSnapshotId: decision.originalTariffSnapshotId
+        },
+        applicationIdempotencyKey,
+        correlationId
+      );
+      setStatutoryDiscountState((current) => ({
+        ...current,
+        decision: applied,
+        applicationIdempotencyKey,
+        correlationId: applied.correlationId || correlationId,
+        isApplying: false,
+        isPolling: shouldPollStatutoryDecision(applied),
+        message: getStatutoryDiscountStatusCopy(applied).body,
+        error: ""
+      }));
+      updateRecoveryFromDecision(applied);
+    } catch (apiError) {
+      setStatutoryDiscountState((current) => ({
+        ...current,
+        isApplying: false,
+        isPolling: false,
+        message: "",
+        error: apiError instanceof Error
+          ? apiError.message
+          : "The approved statutory discount could not be applied. Refresh status before trying again."
+      }));
+    }
+  }
+
   useEffect(() => {
     const decision = statutoryDiscountState.decision;
-    if (regularPaymentSelection || !decision || !statutoryDiscountState.isPolling || !shouldPollStatutoryDecision(decision)) {
+    if (regularPaymentSelection || !decision || canSubmitApplicationIntent(decision) ||
+        !statutoryDiscountState.isPolling || !shouldPollStatutoryDecision(decision)) {
       return;
     }
 
@@ -1120,6 +1208,15 @@ export function App() {
     resolvedSession?.parkingSessionId,
     regularPaymentSelection
   ]);
+
+  useEffect(() => {
+    const decision = statutoryDiscountState.decision;
+    if (!decision || statutoryDiscountState.isApplying || !canSubmitApplicationIntent(decision)) {
+      return;
+    }
+
+    void applyApprovedStatutoryDecision(decision);
+  }, [statutoryDiscountState.decision, statutoryDiscountState.isApplying]);
 
   useLayoutEffect(() => {
     return subscribeStatutoryRecoveryRecord((record) => {

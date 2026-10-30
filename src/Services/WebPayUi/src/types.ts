@@ -360,6 +360,15 @@ export type WebPayStatutoryDiscountDecisionRequest = {
   beneficiaryResidencySatisfied?: boolean | null;
 };
 
+export type WebPayStatutoryDiscountApplicationRequest = {
+  requestReference: string;
+  parkingSessionId: string;
+  siteId?: string | null;
+  siteGroupId?: string | null;
+  entitlementType: StatutoryDiscountEntitlementType;
+  originalTariffSnapshotId?: string | null;
+};
+
 export type WebPayZeroPayableStatutoryFinalityResponse = {
   parkingSessionId: string;
   statutoryDiscountDecisionCommandId: string;

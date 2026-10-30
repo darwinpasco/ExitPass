@@ -3,6 +3,7 @@ import {
   buildPaymentIntentBody,
   buildParkingSessionResolveBody,
   buildStatutoryDiscountPendingLifecycleRediscoveryBody,
+  buildStatutoryDiscountApplicationBody,
   buildStatutoryDiscountDecisionBody,
   applyStatutoryDiscountPayableBasis,
   createPaymentIntent,
@@ -459,6 +460,28 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(() => createStatutoryApplicationIdempotencyKey(" ")).toThrow(/request reference/i);
   });
 
+  it("WebPay_WhenApplicationIntentIsBuilt_UsesOnlyCanonicalReadbackReferences", () => {
+    const body = buildStatutoryDiscountApplicationBody({
+      requestReference: " bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb ",
+      parkingSessionId: " 55555555-5555-4555-8555-555555555555 ",
+      siteId: " 22222222-2222-4222-8222-222222222222 ",
+      siteGroupId: " 11111111-1111-4111-8111-111111111111 ",
+      entitlementType: "SENIOR_CITIZEN",
+      originalTariffSnapshotId: " 66666666-6666-4666-8666-666666666666 "
+    });
+
+    expect(body).toEqual({
+      requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      parkingSessionId: "55555555-5555-4555-8555-555555555555",
+      siteId: "22222222-2222-4222-8222-222222222222",
+      siteGroupId: "11111111-1111-4111-8111-111111111111",
+      entitlementType: "SENIOR_CITIZEN",
+      originalTariffSnapshotId: "66666666-6666-4666-8666-666666666666"
+    });
+    expect(body).not.toHaveProperty("idControlReference");
+    expect(body).not.toHaveProperty("requesterAttestation");
+  });
+
   it("WebPay_WhenApprovedDiscountApplied_UsesWebPayProxyRouteWithOriginalKeyAndSafeRequest", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -496,6 +519,8 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(body).not.toHaveProperty("reviewerUserId");
     expect(body).not.toHaveProperty("reviewerDecision");
     expect(body).not.toHaveProperty("reviewerAttestation");
+    expect(body).not.toHaveProperty("requesterAttestation");
+    expect(body).not.toHaveProperty("idControlReference");
     expect(body).not.toHaveProperty("operatorDeviceBindingId");
     expect(body).not.toHaveProperty("operatorShiftId");
     expect(body).not.toHaveProperty("statutoryDiscountAmountMinorUnits");
