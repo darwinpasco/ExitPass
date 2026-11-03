@@ -204,6 +204,31 @@ describe("Operator fiscal-reporting HTTP client", () => {
     expect(report.summary.lguWaiverVatInclusiveMinorUnits).toBe(5000);
   });
 
+  it("preserves an authoritative ordinance policy reference", async () => {
+    const payload = statutorySalesBookPayload(0);
+    payload.report.summary.discount20MinorUnits = 0;
+    payload.report.summary.netSalesMinorUnits = 0;
+    payload.report.rows[0].discount20MinorUnits = 0;
+    payload.report.rows[0].netSalesMinorUnits = 0;
+    payload.report.rows[0].nonPercentageBenefitAmountMinorUnits = 4464;
+    payload.report.rows[0].lguPrivilegeType = "FULL_FEE_EXEMPTION";
+    payload.report.rows[0].freeHoursGranted = null;
+    payload.report.rows[0].originalParkingFeeVatInclusiveMinorUnits = 5000;
+    payload.report.rows[0].lguWaiverVatInclusiveMinorUnits = 5000;
+    payload.report.rows[0].lguFinalPayableVatInclusiveMinorUnits = 0;
+    payload.report.rows[0].lguPolicyReference = "City Ordinance No. 48";
+    payload.report.summary.lguOriginalParkingFeeVatInclusiveMinorUnits = 5000;
+    payload.report.summary.lguWaiverVatInclusiveMinorUnits = 5000;
+    payload.report.summary.lguFinalPayableVatInclusiveMinorUnits = 0;
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    const report = await client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10);
+
+    expect(report.rows[0].lguPolicyReference).toBe("City Ordinance No. 48");
+  });
+
   it("rejects inconsistent VAT-inclusive LGU privilege facts", async () => {
     const payload = statutorySalesBookPayload(0);
     payload.report.rows[0].lguPrivilegeType = "FULL_FEE_EXEMPTION";
