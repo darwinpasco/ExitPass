@@ -427,6 +427,12 @@ describe("Operator Console fiscal reporting", () => {
       discount20MinorUnits: 2000,
       netSalesMinorUnits: 8000,
       nonPercentageBenefitAmountMinorUnits: 0,
+      lguPrivilegeType: undefined,
+      freeHoursGranted: undefined,
+      originalParkingFeeVatInclusiveMinorUnits: 0,
+      lguWaiverVatInclusiveMinorUnits: 0,
+      lguFinalPayableVatInclusiveMinorUnits: 0,
+      lguPolicyReference: undefined,
     };
     client.readStatutorySalesBook = vi.fn(async () => ({
       ...base,
@@ -439,12 +445,14 @@ describe("Operator Console fiscal reporting", () => {
     await userEvent.click(screen.getByRole("button", { name: "View Annex E-2" }));
 
     const table = await screen.findByRole("table", { name: "Annex E-2 qualifying Sales Invoices" });
-    expect(within(table).getAllByRole("columnheader")).toHaveLength(12);
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(18);
     expect(table).toHaveTextContent("Synthetic Senior");
-    expect(within(table).getByRole("columnheader", { name: "LGU Benefit / Exemption" })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "ADDITIONAL LGU PARKING-PRIVILEGE DETAIL" })).toHaveAttribute("colspan", "6");
+    expect(within(table).getByRole("columnheader", { name: "LGU Privilege Type" })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "LGU Policy Reference" })).toBeInTheDocument();
     expect(screen.getByLabelText("Annex E-2 totals")).toHaveTextContent("20% Discount₱20.00");
     expect(screen.getByLabelText("Annex E-2 totals")).toHaveTextContent("Net Sales₱80.00");
-    expect(screen.getByLabelText("Annex E-2 totals")).toHaveTextContent("LGU Benefit / Exemption₱0.00");
+    expect(screen.getByLabelText("Annex E-2 totals")).toHaveTextContent("LGU Waiver (VAT incl.)₱0.00");
   });
 
   it.each([
@@ -462,6 +470,9 @@ describe("Operator Console fiscal reporting", () => {
         vatAmountMinorUnits: 536,
         netSalesMinorUnits: 0,
         nonPercentageBenefitAmountMinorUnits: 4464,
+        lguOriginalParkingFeeVatInclusiveMinorUnits: 5000,
+        lguWaiverVatInclusiveMinorUnits: 5000,
+        lguFinalPayableVatInclusiveMinorUnits: 0,
         isEmpty: false,
       },
       rows: [{
@@ -478,6 +489,12 @@ describe("Operator Console fiscal reporting", () => {
         discount20MinorUnits: 0,
         netSalesMinorUnits: 0,
         nonPercentageBenefitAmountMinorUnits: 4464,
+        lguPrivilegeType: "FULL_FEE_EXEMPTION" as const,
+        freeHoursGranted: undefined,
+        originalParkingFeeVatInclusiveMinorUnits: 5000,
+        lguWaiverVatInclusiveMinorUnits: 5000,
+        lguFinalPayableVatInclusiveMinorUnits: 0,
+        lguPolicyReference: type === "e2" ? "PH_PARANAQUE_SENIOR_FREE_PARKING" : "PH_PARANAQUE_PWD_FREE_PARKING",
       }],
     }));
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
@@ -486,8 +503,9 @@ describe("Operator Console fiscal reporting", () => {
     await userEvent.click(screen.getByRole("button", { name: `View Annex ${annex}` }));
 
     const table = await screen.findByRole("table", { name: `Annex ${annex} qualifying Sales Invoices` });
-    expect(table).toHaveTextContent("₱44.64");
-    expect(screen.getByLabelText(`Annex ${annex} totals`)).toHaveTextContent("LGU Benefit / Exemption₱44.64");
+    expect(table).toHaveTextContent("FULL_FEE_EXEMPTION");
+    expect(table).toHaveTextContent("₱50.00");
+    expect(screen.getByLabelText(`Annex ${annex} totals`)).toHaveTextContent("LGU Waiver (VAT incl.)₱50.00");
   });
 
   it("keeps actual current-workbook service failures visible", async () => {

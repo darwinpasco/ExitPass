@@ -173,6 +173,12 @@ export interface StatutorySalesBookRow {
     discount20MinorUnits: number;
     netSalesMinorUnits: number;
     nonPercentageBenefitAmountMinorUnits: number;
+    lguPrivilegeType?: "FULL_FEE_EXEMPTION" | "FREE_DURATION";
+    freeHoursGranted?: number;
+    originalParkingFeeVatInclusiveMinorUnits: number;
+    lguWaiverVatInclusiveMinorUnits: number;
+    lguFinalPayableVatInclusiveMinorUnits: number;
+    lguPolicyReference?: string;
 }
 export interface StatutorySalesBookReport {
     header: {
@@ -196,6 +202,9 @@ export interface StatutorySalesBookReport {
         discount20MinorUnits: number;
         netSalesMinorUnits: number;
         nonPercentageBenefitAmountMinorUnits: number;
+        lguOriginalParkingFeeVatInclusiveMinorUnits: number;
+        lguWaiverVatInclusiveMinorUnits: number;
+        lguFinalPayableVatInclusiveMinorUnits: number;
         reportAsOf: string;
         warnings: string[];
         reportStatus: "PRELIMINARY" | "FINAL";
@@ -738,6 +747,9 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
             discount20MinorUnits: 0,
             netSalesMinorUnits: 0,
             nonPercentageBenefitAmountMinorUnits: 0,
+            lguOriginalParkingFeeVatInclusiveMinorUnits: 0,
+            lguWaiverVatInclusiveMinorUnits: 0,
+            lguFinalPayableVatInclusiveMinorUnits: 0,
             reportAsOf: "2026-10-01T00:00:00Z",
             warnings: [],
             reportStatus: "PRELIMINARY",
@@ -987,6 +999,21 @@ function statutorySalesBook(
     if (reportStatus !== "PRELIMINARY" && reportStatus !== "FINAL") throw bad();
     const rows = report.rows.map((item): StatutorySalesBookRow => {
         const row = rec(item);
+        const lguPrivilegeType = statutoryLguPrivilegeType(row.lguPrivilegeType);
+        const freeHoursGranted = optionalNonNegativeNumber(row.freeHoursGranted);
+        const originalParkingFeeVatInclusiveMinorUnits = nonNegative(row.originalParkingFeeVatInclusiveMinorUnits);
+        const lguWaiverVatInclusiveMinorUnits = nonNegative(row.lguWaiverVatInclusiveMinorUnits);
+        const lguFinalPayableVatInclusiveMinorUnits = nonNegative(row.lguFinalPayableVatInclusiveMinorUnits);
+        const lguPolicyReference = optionalString(row.lguPolicyReference);
+        if (lguPrivilegeType === "FULL_FEE_EXEMPTION") {
+            if (freeHoursGranted !== undefined || !lguPolicyReference ||
+                originalParkingFeeVatInclusiveMinorUnits < lguFinalPayableVatInclusiveMinorUnits ||
+                lguWaiverVatInclusiveMinorUnits !== originalParkingFeeVatInclusiveMinorUnits - lguFinalPayableVatInclusiveMinorUnits) throw bad();
+        } else if (lguPrivilegeType === "FREE_DURATION") {
+            if (freeHoursGranted === undefined || freeHoursGranted <= 0 || !lguPolicyReference) throw bad();
+        } else if (freeHoursGranted !== undefined || lguPolicyReference ||
+            originalParkingFeeVatInclusiveMinorUnits !== 0 || lguWaiverVatInclusiveMinorUnits !== 0 ||
+            lguFinalPayableVatInclusiveMinorUnits !== 0) throw bad();
         return {
             fiscalDocumentId: uuid(row.fiscalDocumentId),
             transactionDate: str(row.transactionDate),
@@ -1001,6 +1028,12 @@ function statutorySalesBook(
             discount20MinorUnits: nonNegative(row.discount20MinorUnits),
             netSalesMinorUnits: nonNegative(row.netSalesMinorUnits),
             nonPercentageBenefitAmountMinorUnits: nonNegative(row.nonPercentageBenefitAmountMinorUnits),
+            lguPrivilegeType,
+            freeHoursGranted,
+            originalParkingFeeVatInclusiveMinorUnits,
+            lguWaiverVatInclusiveMinorUnits,
+            lguFinalPayableVatInclusiveMinorUnits,
+            lguPolicyReference,
         };
     });
     const nonPercentageBenefitAmountMinorUnits = safeSum(
@@ -1028,6 +1061,9 @@ function statutorySalesBook(
             discount20MinorUnits: nonNegative(summary.discount20MinorUnits),
             netSalesMinorUnits: nonNegative(summary.netSalesMinorUnits),
             nonPercentageBenefitAmountMinorUnits,
+            lguOriginalParkingFeeVatInclusiveMinorUnits: nonNegative(summary.lguOriginalParkingFeeVatInclusiveMinorUnits),
+            lguWaiverVatInclusiveMinorUnits: nonNegative(summary.lguWaiverVatInclusiveMinorUnits),
+            lguFinalPayableVatInclusiveMinorUnits: nonNegative(summary.lguFinalPayableVatInclusiveMinorUnits),
             reportAsOf: str(summary.reportAsOf),
             warnings: summary.warnings as string[],
             reportStatus,
@@ -1046,6 +1082,9 @@ function statutorySalesBook(
         discount20MinorUnits: safeSum(rows.map((row) => row.discount20MinorUnits)),
         netSalesMinorUnits: safeSum(rows.map((row) => row.netSalesMinorUnits)),
         nonPercentageBenefitAmountMinorUnits: safeSum(rows.map((row) => row.nonPercentageBenefitAmountMinorUnits)),
+        lguOriginalParkingFeeVatInclusiveMinorUnits: safeSum(rows.map((row) => row.originalParkingFeeVatInclusiveMinorUnits)),
+        lguWaiverVatInclusiveMinorUnits: safeSum(rows.map((row) => row.lguWaiverVatInclusiveMinorUnits)),
+        lguFinalPayableVatInclusiveMinorUnits: safeSum(rows.map((row) => row.lguFinalPayableVatInclusiveMinorUnits)),
     };
     if (result.header.posServerCode !== result.summary.posServerCode ||
         result.summary.calendarYear !== requestedYear ||
@@ -1059,7 +1098,10 @@ function statutorySalesBook(
         result.summary.discount5MinorUnits !== totals.discount5MinorUnits ||
         result.summary.discount20MinorUnits !== totals.discount20MinorUnits ||
         result.summary.netSalesMinorUnits !== totals.netSalesMinorUnits ||
-        result.summary.nonPercentageBenefitAmountMinorUnits !== totals.nonPercentageBenefitAmountMinorUnits) throw bad();
+        result.summary.nonPercentageBenefitAmountMinorUnits !== totals.nonPercentageBenefitAmountMinorUnits ||
+        result.summary.lguOriginalParkingFeeVatInclusiveMinorUnits !== totals.lguOriginalParkingFeeVatInclusiveMinorUnits ||
+        result.summary.lguWaiverVatInclusiveMinorUnits !== totals.lguWaiverVatInclusiveMinorUnits ||
+        result.summary.lguFinalPayableVatInclusiveMinorUnits !== totals.lguFinalPayableVatInclusiveMinorUnits) throw bad();
     return result;
 }
 
@@ -1067,6 +1109,18 @@ function statutorySalesBookReportType(value: unknown): "AnnexE2" | "AnnexE3" {
     if (value === 0 || value === "AnnexE2") return "AnnexE2";
     if (value === 1 || value === "AnnexE3") return "AnnexE3";
     throw bad();
+}
+
+function statutoryLguPrivilegeType(value: unknown): "FULL_FEE_EXEMPTION" | "FREE_DURATION" | undefined {
+    if (value === null || value === undefined || value === "") return undefined;
+    if (value === "FULL_FEE_EXEMPTION" || value === "FREE_DURATION") return value;
+    throw bad();
+}
+
+function optionalNonNegativeNumber(value: unknown) {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw bad();
+    return value;
 }
 
 function safeSum(values: number[]) {

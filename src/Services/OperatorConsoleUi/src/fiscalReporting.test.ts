@@ -66,6 +66,7 @@ describe("Operator fiscal-reporting HTTP client", () => {
     expect(report.summary.type).toBe("AnnexE2");
     expect(report.summary.qualifyingTransactionCount).toBe(0);
     expect(report.summary.nonPercentageBenefitAmountMinorUnits).toBe(0);
+    expect(report.summary.lguWaiverVatInclusiveMinorUnits).toBe(0);
     expect(fetchImpl.mock.calls[0][0]).toBe(
       "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/annex-e/e2/statutory-sales-book?calendarYear=2026&calendarMonth=10"
     );
@@ -169,13 +170,22 @@ describe("Operator fiscal-reporting HTTP client", () => {
     await expect(client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10)).rejects.toThrow();
   });
 
-  it("parses and aggregates the authoritative nonpercentage LGU benefit", async () => {
+  it("parses and reconciles the authoritative full-fee LGU privilege detail", async () => {
     const payload = statutorySalesBookPayload(0);
     payload.report.summary.discount20MinorUnits = 0;
     payload.report.summary.netSalesMinorUnits = 0;
     payload.report.rows[0].discount20MinorUnits = 0;
     payload.report.rows[0].netSalesMinorUnits = 0;
     payload.report.rows[0].nonPercentageBenefitAmountMinorUnits = 4464;
+    payload.report.rows[0].lguPrivilegeType = "FULL_FEE_EXEMPTION";
+    payload.report.rows[0].freeHoursGranted = null;
+    payload.report.rows[0].originalParkingFeeVatInclusiveMinorUnits = 5000;
+    payload.report.rows[0].lguWaiverVatInclusiveMinorUnits = 5000;
+    payload.report.rows[0].lguFinalPayableVatInclusiveMinorUnits = 0;
+    payload.report.rows[0].lguPolicyReference = "PH_PARANAQUE_SENIOR_FREE_PARKING";
+    payload.report.summary.lguOriginalParkingFeeVatInclusiveMinorUnits = 5000;
+    payload.report.summary.lguWaiverVatInclusiveMinorUnits = 5000;
+    payload.report.summary.lguFinalPayableVatInclusiveMinorUnits = 0;
     const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
       new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
     const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
@@ -184,6 +194,30 @@ describe("Operator fiscal-reporting HTTP client", () => {
 
     expect(report.rows[0].nonPercentageBenefitAmountMinorUnits).toBe(4464);
     expect(report.summary.nonPercentageBenefitAmountMinorUnits).toBe(4464);
+    expect(report.rows[0]).toMatchObject({
+      lguPrivilegeType: "FULL_FEE_EXEMPTION",
+      originalParkingFeeVatInclusiveMinorUnits: 5000,
+      lguWaiverVatInclusiveMinorUnits: 5000,
+      lguFinalPayableVatInclusiveMinorUnits: 0,
+      lguPolicyReference: "PH_PARANAQUE_SENIOR_FREE_PARKING",
+    });
+    expect(report.summary.lguWaiverVatInclusiveMinorUnits).toBe(5000);
+  });
+
+  it("rejects inconsistent VAT-inclusive LGU privilege facts", async () => {
+    const payload = statutorySalesBookPayload(0);
+    payload.report.rows[0].lguPrivilegeType = "FULL_FEE_EXEMPTION";
+    payload.report.rows[0].originalParkingFeeVatInclusiveMinorUnits = 5000;
+    payload.report.rows[0].lguWaiverVatInclusiveMinorUnits = 4464;
+    payload.report.rows[0].lguFinalPayableVatInclusiveMinorUnits = 0;
+    payload.report.rows[0].lguPolicyReference = "PH_PARANAQUE_SENIOR_FREE_PARKING";
+    payload.report.summary.lguOriginalParkingFeeVatInclusiveMinorUnits = 5000;
+    payload.report.summary.lguWaiverVatInclusiveMinorUnits = 4464;
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    await expect(client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10)).rejects.toThrow();
   });
 
   it("rejects a statutory sales-book row without an authoritative nonpercentage benefit", async () => {
@@ -487,6 +521,10 @@ function statutorySalesBookPayload(type: unknown) {
         discount5MinorUnits: 0,
         discount20MinorUnits: 2000,
         netSalesMinorUnits: 8000,
+        nonPercentageBenefitAmountMinorUnits: 0,
+        lguOriginalParkingFeeVatInclusiveMinorUnits: 0,
+        lguWaiverVatInclusiveMinorUnits: 0,
+        lguFinalPayableVatInclusiveMinorUnits: 0,
         reportAsOf: "2026-10-17T08:00:00Z",
         warnings: [],
         reportStatus: "FINAL",
@@ -508,7 +546,13 @@ function statutorySalesBookPayload(type: unknown) {
         discount5MinorUnits: 0,
         discount20MinorUnits: 2000,
         netSalesMinorUnits: 8000,
-        nonPercentageBenefitAmountMinorUnits: 0
+        nonPercentageBenefitAmountMinorUnits: 0,
+        lguPrivilegeType: null as string | null,
+        freeHoursGranted: null as number | null,
+        originalParkingFeeVatInclusiveMinorUnits: 0,
+        lguWaiverVatInclusiveMinorUnits: 0,
+        lguFinalPayableVatInclusiveMinorUnits: 0,
+        lguPolicyReference: null as string | null
       }]
     }
   };
