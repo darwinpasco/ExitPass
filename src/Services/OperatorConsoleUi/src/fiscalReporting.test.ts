@@ -65,6 +65,7 @@ describe("Operator fiscal-reporting HTTP client", () => {
 
     expect(report.summary.type).toBe("AnnexE2");
     expect(report.summary.qualifyingTransactionCount).toBe(0);
+    expect(report.summary.nonPercentageBenefitAmountMinorUnits).toBe(0);
     expect(fetchImpl.mock.calls[0][0]).toBe(
       "/v1/ops/operator-console/fiscal-reporting/sites/SITE-PITX/annex-e/e2/statutory-sales-book?calendarYear=2026&calendarMonth=10"
     );
@@ -161,6 +162,33 @@ describe("Operator fiscal-reporting HTTP client", () => {
   it("rejects statutory sales-book totals that do not reconcile to report rows", async () => {
     const payload = statutorySalesBookPayload(0);
     payload.report.summary.netSalesMinorUnits += 1;
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    await expect(client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10)).rejects.toThrow();
+  });
+
+  it("parses and aggregates the authoritative nonpercentage LGU benefit", async () => {
+    const payload = statutorySalesBookPayload(0);
+    payload.report.summary.discount20MinorUnits = 0;
+    payload.report.summary.netSalesMinorUnits = 0;
+    payload.report.rows[0].discount20MinorUnits = 0;
+    payload.report.rows[0].netSalesMinorUnits = 0;
+    payload.report.rows[0].nonPercentageBenefitAmountMinorUnits = 4464;
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+      new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
+
+    const report = await client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 10);
+
+    expect(report.rows[0].nonPercentageBenefitAmountMinorUnits).toBe(4464);
+    expect(report.summary.nonPercentageBenefitAmountMinorUnits).toBe(4464);
+  });
+
+  it("rejects a statutory sales-book row without an authoritative nonpercentage benefit", async () => {
+    const payload = statutorySalesBookPayload(0);
+    delete (payload.report.rows[0] as Partial<(typeof payload.report.rows)[number]>).nonPercentageBenefitAmountMinorUnits;
     const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
       new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }));
     const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch);
@@ -479,7 +507,8 @@ function statutorySalesBookPayload(type: unknown) {
         vatExemptSalesMinorUnits: 0,
         discount5MinorUnits: 0,
         discount20MinorUnits: 2000,
-        netSalesMinorUnits: 8000
+        netSalesMinorUnits: 8000,
+        nonPercentageBenefitAmountMinorUnits: 0
       }]
     }
   };

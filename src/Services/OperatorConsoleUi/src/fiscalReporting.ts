@@ -172,6 +172,7 @@ export interface StatutorySalesBookRow {
     discount5MinorUnits: number;
     discount20MinorUnits: number;
     netSalesMinorUnits: number;
+    nonPercentageBenefitAmountMinorUnits: number;
 }
 export interface StatutorySalesBookReport {
     header: {
@@ -194,6 +195,7 @@ export interface StatutorySalesBookReport {
         discount5MinorUnits: number;
         discount20MinorUnits: number;
         netSalesMinorUnits: number;
+        nonPercentageBenefitAmountMinorUnits: number;
         reportAsOf: string;
         warnings: string[];
         reportStatus: "PRELIMINARY" | "FINAL";
@@ -735,6 +737,7 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
             discount5MinorUnits: 0,
             discount20MinorUnits: 0,
             netSalesMinorUnits: 0,
+            nonPercentageBenefitAmountMinorUnits: 0,
             reportAsOf: "2026-10-01T00:00:00Z",
             warnings: [],
             reportStatus: "PRELIMINARY",
@@ -997,8 +1000,12 @@ function statutorySalesBook(
             discount5MinorUnits: nonNegative(row.discount5MinorUnits),
             discount20MinorUnits: nonNegative(row.discount20MinorUnits),
             netSalesMinorUnits: nonNegative(row.netSalesMinorUnits),
+            nonPercentageBenefitAmountMinorUnits: nonNegative(row.nonPercentageBenefitAmountMinorUnits),
         };
     });
+    const nonPercentageBenefitAmountMinorUnits = safeSum(
+        rows.map((row) => row.nonPercentageBenefitAmountMinorUnits),
+    );
     const result: StatutorySalesBookReport = {
         header: {
             serialNumber: str(header.serialNumber),
@@ -1020,6 +1027,7 @@ function statutorySalesBook(
             discount5MinorUnits: nonNegative(summary.discount5MinorUnits),
             discount20MinorUnits: nonNegative(summary.discount20MinorUnits),
             netSalesMinorUnits: nonNegative(summary.netSalesMinorUnits),
+            nonPercentageBenefitAmountMinorUnits,
             reportAsOf: str(summary.reportAsOf),
             warnings: summary.warnings as string[],
             reportStatus,
@@ -1037,6 +1045,7 @@ function statutorySalesBook(
         discount5MinorUnits: safeSum(rows.map((row) => row.discount5MinorUnits)),
         discount20MinorUnits: safeSum(rows.map((row) => row.discount20MinorUnits)),
         netSalesMinorUnits: safeSum(rows.map((row) => row.netSalesMinorUnits)),
+        nonPercentageBenefitAmountMinorUnits: safeSum(rows.map((row) => row.nonPercentageBenefitAmountMinorUnits)),
     };
     if (result.header.posServerCode !== result.summary.posServerCode ||
         result.summary.calendarYear !== requestedYear ||
@@ -1049,7 +1058,8 @@ function statutorySalesBook(
         result.summary.vatExemptSalesMinorUnits !== totals.vatExemptSalesMinorUnits ||
         result.summary.discount5MinorUnits !== totals.discount5MinorUnits ||
         result.summary.discount20MinorUnits !== totals.discount20MinorUnits ||
-        result.summary.netSalesMinorUnits !== totals.netSalesMinorUnits) throw bad();
+        result.summary.netSalesMinorUnits !== totals.netSalesMinorUnits ||
+        result.summary.nonPercentageBenefitAmountMinorUnits !== totals.nonPercentageBenefitAmountMinorUnits) throw bad();
     return result;
 }
 

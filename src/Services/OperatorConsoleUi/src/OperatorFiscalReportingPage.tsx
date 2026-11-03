@@ -696,13 +696,14 @@ function StatutorySalesBookPanel({ type, report, error, loading, month, busy, on
       <SummaryValue label="5% Discount" value={money(report.summary.discount5MinorUnits, report.summary.currencyCode)} />
       <SummaryValue label="20% Discount" value={money(report.summary.discount20MinorUnits, report.summary.currencyCode)} />
       <SummaryValue label="Net Sales" value={money(report.summary.netSalesMinorUnits, report.summary.currencyCode)} />
+      <SummaryValue label="LGU Benefit / Exemption" value={money(report.summary.nonPercentageBenefitAmountMinorUnits, report.summary.currencyCode)} />
     </dl>}
   </section>;
 }
 
 function StatutorySalesBookTable({ report }: { report: StatutorySalesBookReport }) {
   const annex = report.summary.type === "AnnexE2" ? "E-2" : "E-3";
-  return <div className="tableViewport"><table aria-label={`Annex ${annex} qualifying Sales Invoices`}><thead><tr>{["Date", "Beneficiary Name", "ID Number", "TIN", "SI/OR", "Sales Including VAT", "VAT Amount", "VAT Exempt Sales", "5% Discount", "20% Discount", "Net Sales"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead><tbody>{report.rows.map((row) => <tr key={row.fiscalDocumentId}><td>{row.transactionDate}</td><td>{row.beneficiaryFullName}</td><td>{row.statutoryIdNumber}</td><td>{row.beneficiaryTin ?? ""}</td><td>{row.salesInvoiceNumber}</td><td>{money(row.salesInclusiveVatMinorUnits, report.summary.currencyCode)}</td><td>{money(row.vatAmountMinorUnits, report.summary.currencyCode)}</td><td>{money(row.vatExemptSalesMinorUnits, report.summary.currencyCode)}</td><td>{money(row.discount5MinorUnits, report.summary.currencyCode)}</td><td>{money(row.discount20MinorUnits, report.summary.currencyCode)}</td><td>{money(row.netSalesMinorUnits, report.summary.currencyCode)}</td></tr>)}</tbody></table></div>;
+  return <div className="tableViewport"><table aria-label={`Annex ${annex} qualifying Sales Invoices`}><thead><tr>{["Date", "Beneficiary Name", "ID Number", "TIN", "SI/OR", "Sales Including VAT", "VAT Amount", "VAT Exempt Sales", "5% Discount", "20% Discount", "Net Sales", "LGU Benefit / Exemption"].map((heading) => <th key={heading}>{heading}</th>)}</tr></thead><tbody>{report.rows.map((row) => <tr key={row.fiscalDocumentId}><td>{row.transactionDate}</td><td>{row.beneficiaryFullName}</td><td>{row.statutoryIdNumber}</td><td>{row.beneficiaryTin ?? ""}</td><td>{row.salesInvoiceNumber}</td><td>{money(row.salesInclusiveVatMinorUnits, report.summary.currencyCode)}</td><td>{money(row.vatAmountMinorUnits, report.summary.currencyCode)}</td><td>{money(row.vatExemptSalesMinorUnits, report.summary.currencyCode)}</td><td>{money(row.discount5MinorUnits, report.summary.currencyCode)}</td><td>{money(row.discount20MinorUnits, report.summary.currencyCode)}</td><td>{money(row.netSalesMinorUnits, report.summary.currencyCode)}</td><td>{money(row.nonPercentageBenefitAmountMinorUnits, report.summary.currencyCode)}</td></tr>)}</tbody></table></div>;
 }
 
 function SummaryValue({ label, value }: { label: string; value: string }) {
