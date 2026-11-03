@@ -410,7 +410,7 @@ describe("Operator Console fiscal reporting", () => {
     expect(screen.getByLabelText("Annex E-2 totals")).toBeInTheDocument();
   });
 
-  it("renders the eleven official columns and POS-authoritative statutory totals", async () => {
+  it("renders the eleven official columns, LGU extension, and percentage totals unchanged", async () => {
     const client = createOperatorFiscalReportingFixture();
     const base = await client.readStatutorySalesBook("SITE-PITX", "e2", 2026, 9);
     const row = {
@@ -426,10 +426,11 @@ describe("Operator Console fiscal reporting", () => {
       discount5MinorUnits: 0,
       discount20MinorUnits: 2000,
       netSalesMinorUnits: 8000,
+      nonPercentageBenefitAmountMinorUnits: 0,
     };
     client.readStatutorySalesBook = vi.fn(async () => ({
       ...base,
-      summary: { ...base.summary, qualifyingTransactionCount: 1, salesInclusiveVatMinorUnits: 10000, vatAmountMinorUnits: 1071, discount20MinorUnits: 2000, netSalesMinorUnits: 8000, isEmpty: false, reportStatus: "FINAL" as const },
+      summary: { ...base.summary, qualifyingTransactionCount: 1, salesInclusiveVatMinorUnits: 10000, vatAmountMinorUnits: 1071, discount20MinorUnits: 2000, netSalesMinorUnits: 8000, nonPercentageBenefitAmountMinorUnits: 0, isEmpty: false, reportStatus: "FINAL" as const },
       rows: [row],
     }));
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
@@ -438,10 +439,55 @@ describe("Operator Console fiscal reporting", () => {
     await userEvent.click(screen.getByRole("button", { name: "View Annex E-2" }));
 
     const table = await screen.findByRole("table", { name: "Annex E-2 qualifying Sales Invoices" });
-    expect(within(table).getAllByRole("columnheader")).toHaveLength(11);
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(12);
     expect(table).toHaveTextContent("Synthetic Senior");
+    expect(within(table).getByRole("columnheader", { name: "LGU Benefit / Exemption" })).toBeInTheDocument();
     expect(screen.getByLabelText("Annex E-2 totals")).toHaveTextContent("20% Discount₱20.00");
     expect(screen.getByLabelText("Annex E-2 totals")).toHaveTextContent("Net Sales₱80.00");
+    expect(screen.getByLabelText("Annex E-2 totals")).toHaveTextContent("LGU Benefit / Exemption₱0.00");
+  });
+
+  it.each([
+    ["e2", "E-2"],
+    ["e3", "E-3"],
+  ] as const)("renders the authoritative LGU benefit for Annex %s", async (type, annex) => {
+    const client = createOperatorFiscalReportingFixture();
+    const base = await client.readStatutorySalesBook("SITE-PITX", type, 2026, 9);
+    client.readStatutorySalesBook = vi.fn(async () => ({
+      ...base,
+      summary: {
+        ...base.summary,
+        qualifyingTransactionCount: 1,
+        salesInclusiveVatMinorUnits: 5000,
+        vatAmountMinorUnits: 536,
+        netSalesMinorUnits: 0,
+        nonPercentageBenefitAmountMinorUnits: 4464,
+        isEmpty: false,
+      },
+      rows: [{
+        fiscalDocumentId: "91000000-0000-4000-8000-000000000011",
+        transactionDate: "2026-09-10",
+        beneficiaryFullName: "Synthetic Beneficiary",
+        statutoryIdNumber: "TEST-001",
+        beneficiaryTin: undefined,
+        salesInvoiceNumber: "SI-00000000000118",
+        salesInclusiveVatMinorUnits: 5000,
+        vatAmountMinorUnits: 536,
+        vatExemptSalesMinorUnits: 0,
+        discount5MinorUnits: 0,
+        discount20MinorUnits: 0,
+        netSalesMinorUnits: 0,
+        nonPercentageBenefitAmountMinorUnits: 4464,
+      }],
+    }));
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Daily BIR Sales Summary" }));
+    await userEvent.click(screen.getByRole("button", { name: `View Annex ${annex}` }));
+
+    const table = await screen.findByRole("table", { name: `Annex ${annex} qualifying Sales Invoices` });
+    expect(table).toHaveTextContent("₱44.64");
+    expect(screen.getByLabelText(`Annex ${annex} totals`)).toHaveTextContent("LGU Benefit / Exemption₱44.64");
   });
 
   it("keeps actual current-workbook service failures visible", async () => {
