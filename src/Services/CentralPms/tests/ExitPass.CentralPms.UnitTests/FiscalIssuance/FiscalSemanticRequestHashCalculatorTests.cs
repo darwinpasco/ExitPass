@@ -240,6 +240,44 @@ public sealed class FiscalSemanticRequestHashCalculatorTests
         changedResult.HashValue.Should().NotBe(baselineResult.HashValue);
     }
 
+    [Theory]
+    [InlineData("policy_code")]
+    [InlineData("policy_version_id")]
+    [InlineData("ordinance_reference")]
+    public void Calculate_WhenZeroPayableFrozenPolicyMetadataChangesUnderSameIdempotencyKey_ReturnsDifferentHash(
+        string changedField)
+    {
+        var baseline = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.ZeroPayableContext());
+        var policy = baseline.AppliedStatutoryFiscalFacts!.PolicyReference with
+        {
+            PolicyCode = "PH_PARANAQUE_SENIOR_FREE_PARKING",
+            PolicyVersionId = Guid.Parse("3a22b6e2-5433-9a8b-cc60-139cf2a89a8e"),
+            OrdinanceReference = null
+        };
+        var changedPolicy = changedField switch
+        {
+            "policy_code" => policy with { PolicyCode = "PH_PARANAQUE_PWD_FREE_PARKING" },
+            "policy_version_id" => policy with { PolicyVersionId = Guid.NewGuid() },
+            "ordinance_reference" => policy with { OrdinanceReference = "City Ordinance No. 48" },
+            _ => throw new InvalidOperationException("Unsupported test mutation.")
+        };
+        var enrichedBaseline = baseline with
+        {
+            AppliedStatutoryFiscalFacts = baseline.AppliedStatutoryFiscalFacts with { PolicyReference = policy }
+        };
+        var changed = enrichedBaseline with
+        {
+            AppliedStatutoryFiscalFacts = enrichedBaseline.AppliedStatutoryFiscalFacts! with
+            {
+                PolicyReference = changedPolicy
+            }
+        };
+
+        enrichedBaseline.PayableBasis.UpstreamFinalityRef.Should().Be(changed.PayableBasis.UpstreamFinalityRef);
+        _sut.Calculate(enrichedBaseline).HashValue.Should().NotBe(_sut.Calculate(changed).HashValue);
+        _sut.Calculate(enrichedBaseline).HashValue.Should().Be(_sut.Calculate(enrichedBaseline).HashValue);
+    }
+
     [Fact]
     public void Calculate_WhenPosServerSemanticScopeFieldChannelTerminalChanges_ReturnsDifferentHash()
     {
