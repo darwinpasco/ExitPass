@@ -727,7 +727,7 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
     };
     const statutorySalesBook = (type: StatutorySalesBookType): StatutorySalesBookReport => ({
         header: {
-            serialNumber: "EP-PITX-L3-POS-0001",
+            serialNumber: "0026_B728_3B2F_8505",
             machineIdentificationNumber: "MIN-PITX-L3-01",
             posServerCode: "PITX-L3-POS-01",
         },
@@ -816,7 +816,7 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
             rows: [{
                 auditReference: "EJ-0001",
                 occurredAt: "2026-09-10T01:00:00Z",
-                terminal: "PITX-L3-WEBPAY-01",
+                terminal: "PITX-WEBPAY-01",
                 userId: "pos-server-fiscal-document-runtime",
                 userRole: "SYSTEM",
                 actionCode: "fiscal_document_committed",

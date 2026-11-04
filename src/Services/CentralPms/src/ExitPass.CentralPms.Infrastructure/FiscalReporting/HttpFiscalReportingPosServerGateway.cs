@@ -40,7 +40,7 @@ public sealed class HttpFiscalReportingPosServerGateway(
 
     private async Task<FiscalReportingGatewayResponse> GenerateZAsync(ResolvedEndpoint endpoint, FiscalReportingGatewayRequest request, CancellationToken ct)
     {
-        using var historyRequest = Build(endpoint, HttpMethod.Get, $"/v1/fiscal-reports/z-readings/history?{Scope(endpoint)}", "fiscal_z_reading.read", request.CorrelationId, request.ActorReference);
+        using var historyRequest = Build(endpoint, HttpMethod.Get, $"/v1/fiscal-reports/z-readings/history?{Scope(endpoint)}", "fiscal_z_reading.read", request.CorrelationId, request.ActorReference, request.ActorDisplayName);
         using var historyResponse = await httpClient.SendAsync(historyRequest, ct).ConfigureAwait(false);
         var historyBytes = await historyResponse.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
         if (!historyResponse.IsSuccessStatusCode) return new((int)historyResponse.StatusCode, "application/json; charset=utf-8", historyBytes, "fiscal_reporting_period_unavailable", Retryable: (int)historyResponse.StatusCode >= 500);
@@ -60,7 +60,7 @@ public sealed class HttpFiscalReportingPosServerGateway(
             periodId.ValueKind != JsonValueKind.String || stateVersion.ValueKind != JsonValueKind.Number)
             return Failure(409, "fiscal_reporting_open_period_unavailable", false);
 
-        using var outbound = Build(endpoint, HttpMethod.Post, "/v1/fiscal-reports/z-readings", "fiscal_z_reading.close", request.CorrelationId, request.ActorReference);
+        using var outbound = Build(endpoint, HttpMethod.Post, "/v1/fiscal-reports/z-readings", "fiscal_z_reading.close", request.CorrelationId, request.ActorReference, request.ActorDisplayName);
         outbound.Content = JsonContent.Create(new
         {
             operationKey = request.OperationKey,
@@ -189,18 +189,20 @@ public sealed class HttpFiscalReportingPosServerGateway(
         var effectivePermission = IsAnnexE1Correction(request)
             ? null
             : permission;
-        var outbound=Build(endpoint,method,path,effectivePermission,request.CorrelationId,request.ActorReference);
+        var outbound=Build(endpoint,method,path,effectivePermission,request.CorrelationId,request.ActorReference,request.ActorDisplayName);
         if(body is not null) outbound.Content=JsonContent.Create(body);
         return outbound;
     }
 
-    private HttpRequestMessage Build(ResolvedEndpoint endpoint, HttpMethod method, string path, string? permission, Guid correlation, string actorReference)
+    private HttpRequestMessage Build(ResolvedEndpoint endpoint, HttpMethod method, string path, string? permission, Guid correlation, string actorReference, string? actorDisplayName)
     {
         var request=new HttpRequestMessage(method,new Uri(endpoint.BaseUri,path));
         request.Headers.TryAddWithoutValidation(ApiKeyHeader,endpoint.ApiKey);
         if (permission is not null) request.Headers.TryAddWithoutValidation(PermissionHeader,permission);
         request.Headers.TryAddWithoutValidation("X-Correlation-Id",correlation.ToString("D"));
         request.Headers.TryAddWithoutValidation("X-Actor-Reference",actorReference);
+        if (!string.IsNullOrWhiteSpace(actorDisplayName))
+            request.Headers.TryAddWithoutValidation("X-Actor-Display-Name", actorDisplayName.Trim());
         return request;
     }
 

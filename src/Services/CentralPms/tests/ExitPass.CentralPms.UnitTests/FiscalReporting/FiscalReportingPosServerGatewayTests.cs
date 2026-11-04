@@ -39,6 +39,7 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
         Assert.Contains("fiscalDocumentNumber=SI-0001", handler.Requests.Single().RequestUri!.Query);
         Assert.Equal("pos-secret", Header(handler.Requests.Single(), "X-PosServer-Admin-Key"));
         Assert.Equal("electronic_journal.read", Header(handler.Requests.Single(), "X-PosServer-Admin-Permission"));
+        Assert.Equal("Juan Dela Cruz", Header(handler.Requests.Single(), "X-Actor-Display-Name"));
     }
 
     [Theory]
@@ -579,7 +580,7 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
 
     private HttpFiscalReportingPosServerGateway Gateway(HttpMessageHandler handler, FiscalIssuancePosServerIntegrationOptions options) =>
         new(new HttpClient(handler), new ConfiguredSitePosServerBindingResolver(options));
-    private FiscalReportingGatewayRequest Request(FiscalReportingGatewayAction action) => new(Site, action, Guid.NewGuid(), "actor");
+    private FiscalReportingGatewayRequest Request(FiscalReportingGatewayAction action) => new(Site, action, Guid.NewGuid(), "actor", "Juan Dela Cruz");
     private FiscalIssuancePosServerIntegrationOptions OptionsFor(params SitePosServerEndpointOptions[] endpoints) =>
         new() { RuntimeEnvironment = "Production", Endpoints = [.. endpoints] };
     private SitePosServerEndpointOptions Endpoint(Guid site, string url, bool enabled = true) => new()

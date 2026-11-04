@@ -40,6 +40,7 @@ public sealed record FiscalReportingGatewayRequest(
     FiscalReportingGatewayAction Action,
     Guid CorrelationId,
     string ActorReference,
+    string? ActorDisplayName = null,
     DateTimeOffset? PeriodStart = null,
     DateTimeOffset? PeriodEnd = null,
     string? Search = null,

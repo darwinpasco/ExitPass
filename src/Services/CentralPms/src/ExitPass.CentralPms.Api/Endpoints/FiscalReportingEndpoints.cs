@@ -623,6 +623,9 @@ public static class FiscalReportingEndpoints
     {
         var correlation=Guid.TryParse(request.Headers["X-Correlation-Id"].ToString(),out var parsed)&&parsed!=Guid.Empty?parsed:Guid.NewGuid();
         var actor=request.HttpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)??"unavailable";
+        var actorDisplayName=request.HttpContext.User.FindFirstValue("display_name")
+            ?? request.HttpContext.User.FindFirstValue(ClaimTypes.Name)
+            ?? actor;
         var logger=loggerFactory.CreateLogger("ExitPass.CentralPms.FiscalReporting");
         var actorUserId=Guid.TryParse(actor,out var parsedActorUserId)?parsedActorUserId:Guid.Empty;
         if(operatorScoped&&!await OperatorConsoleFiscalReportingAccess.IsOperationsSupervisorAsync(request.HttpContext.User,actorUserId,rbacRepository,ct).ConfigureAwait(false))
@@ -677,7 +680,7 @@ public static class FiscalReportingEndpoints
             resolvedSearch=matches[0].Reference.FiscalDocumentNumber;
         }
 
-        var result=await gateway.SendAsync(new(siteId,action,correlation,actor,start,end,resolvedSearch,operationKey,reportReference,
+        var result=await gateway.SendAsync(new(siteId,action,correlation,actor,actorDisplayName,start,end,resolvedSearch,operationKey,reportReference,
             fiscalReportingPeriodId,SummaryId:summaryId,WorkbookId:workbookId,GoverningZReadingReference:governingZReadingReference,
             CalendarYear:calendarYear,CalendarMonth:calendarMonth,ExportFormat:exportFormat,ActionCode:actionCode,
             ActorFilter:actorFilter,ResultFilter:resultFilter,ReferenceFilter:referenceFilter,FactType:factType,
