@@ -92,6 +92,8 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
 
                 authority.statutory_discount_decision_command_id AS authority_decision_id,
                 authority.statutory_discount_policy_version_id AS authority_policy_version_id,
+                authority.policy_code AS authority_policy_code,
+                authority.ordinance_number AS authority_ordinance_reference,
                 authority.entitlement_type AS authority_entitlement_type,
                 authority.benefit_type::text AS authority_benefit_type,
                 policy.entitlement_type::text AS policy_entitlement_type,
@@ -292,7 +294,11 @@ public sealed class PostgresStatutoryDiscountZeroPayableFinalityReader
                 NullableString(reader, "policy_support_status"),
                 NullableBoolean(reader, "policy_full_fee_exempt"),
                 NullableGuid(reader, "policy_site_id"),
-                NullableGuid(reader, "policy_site_group_id")),
+                NullableGuid(reader, "policy_site_group_id"))
+            {
+                PolicyCode = NullableString(reader, "authority_policy_code"),
+                OrdinanceReference = NullableString(reader, "authority_ordinance_reference")
+            },
             new StatutoryDiscountZeroPayableParkingAnchor(
                 NullableGuid(reader, "parking_session_id"),
                 NullableGuid(reader, "parking_site_id"),

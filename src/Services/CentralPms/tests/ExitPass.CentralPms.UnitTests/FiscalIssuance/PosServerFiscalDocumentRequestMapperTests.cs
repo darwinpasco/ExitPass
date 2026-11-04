@@ -674,8 +674,8 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
                 BenefitClassification = "FREE_PARKING",
                 OriginalAmountMinorUnits = 3_000,
                 VatExclusiveBasisAmountMinorUnits = 2_679,
-                VatAmountMinorUnits = 321,
-                VatTreatment = "VAT_EXCLUSIVE",
+                VatAmountMinorUnits = 0,
+                VatTreatment = ParkingVatInclusiveFiscalTreatment.VatTreatment,
                 StatutoryDiscountAmountMinorUnits = 2_679,
                 FinalPayableAmountMinorUnits = 0
             }

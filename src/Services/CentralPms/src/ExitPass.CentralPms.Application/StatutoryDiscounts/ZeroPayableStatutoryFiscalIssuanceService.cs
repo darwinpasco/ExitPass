@@ -327,7 +327,10 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 "FREE_PARKING",
                 new CentralPmsAppliedStatutoryPolicyReferenceContext(
                     NormalizePolicyResolutionBasis(command.PolicyResolutionBasis),
-                    AppliedPolicyReferenceId: finality.AppliedPolicyReferenceId),
+                    AppliedPolicyReferenceId: finality.AppliedPolicyReferenceId,
+                    PolicyCode: finality.PolicyCode,
+                    PolicyVersionId: finality.PolicyVersionId,
+                    OrdinanceReference: finality.OrdinanceReference),
                 finality.OriginalTariffSnapshotId,
                 finality.AppliedTariffSnapshotId,
                 finality.OriginalAmountMinorUnits,
@@ -422,6 +425,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
             !command.Cashier.IsValid() ||
             string.IsNullOrWhiteSpace(command.VatTreatment) ||
             string.IsNullOrWhiteSpace(command.PolicyResolutionBasis) ||
+            finality.PolicyVersionId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(finality.PolicyCode) ||
             NormalizePolicyResolutionBasis(command.PolicyResolutionBasis) != "LOCAL_ORDINANCE" ||
             command.StatutoryRequestReference == Guid.Empty ||
             authority.PaymentAttemptId is not null || authority.PaymentConfirmationId is not null)

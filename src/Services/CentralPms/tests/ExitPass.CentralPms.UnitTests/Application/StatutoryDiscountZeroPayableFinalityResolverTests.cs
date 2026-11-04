@@ -6,6 +6,8 @@ namespace ExitPass.CentralPms.UnitTests.Application;
 
 public sealed class StatutoryDiscountZeroPayableFinalityResolverTests
 {
+    private const string SeniorPolicyCode = "PH_PARANAQUE_SENIOR_FREE_PARKING";
+    private const string PwdPolicyCode = "PH_PARANAQUE_PWD_FREE_PARKING";
     private static readonly Guid DecisionId = Guid.Parse("8a000000-0000-0000-0000-000000000001");
     private static readonly Guid ParkingSessionId = Guid.Parse("8a000000-0000-0000-0000-000000000002");
     private static readonly Guid SiteId = Guid.Parse("8a000000-0000-0000-0000-000000000003");
@@ -50,7 +52,11 @@ public sealed class StatutoryDiscountZeroPayableFinalityResolverTests
             "WEBPAY",
             DecidedAt,
             AppliedAt,
-            CorrelationId));
+            CorrelationId)
+        {
+            PolicyVersionId = PolicyId,
+            PolicyCode = SeniorPolicyCode
+        });
     }
 
     [Fact]
@@ -104,7 +110,9 @@ public sealed class StatutoryDiscountZeroPayableFinalityResolverTests
             Policy = original.Policy with
             {
                 AuthorityEntitlementType = "PWD",
-                PolicyEntitlementType = "PWD"
+                PolicyEntitlementType = "PWD",
+                PolicyCode = PwdPolicyCode,
+                OrdinanceReference = "City Ordinance No. 48"
             }
         };
 
@@ -112,6 +120,20 @@ public sealed class StatutoryDiscountZeroPayableFinalityResolverTests
 
         result.IsAvailable.Should().BeTrue();
         result.Finality!.EntitlementType.Should().Be("PWD");
+        result.Finality.PolicyVersionId.Should().Be(PolicyId);
+        result.Finality.PolicyCode.Should().Be(PwdPolicyCode);
+        result.Finality.OrdinanceReference.Should().Be("City Ordinance No. 48");
+    }
+
+    [Fact]
+    public void Resolve_WhenFrozenAuthorityPolicyCodeIsMissing_Rejects()
+    {
+        var candidate = Candidate() with
+        {
+            Policy = Candidate().Policy with { PolicyCode = " " }
+        };
+
+        AssertRejected(candidate, "ZERO_PAYABLE_STATUTORY_POLICY_AUTHORITY_MISSING");
     }
 
     [Fact]
@@ -480,7 +502,11 @@ public sealed class StatutoryDiscountZeroPayableFinalityResolverTests
                 "SUPPORTED_BY_CURRENT_CALCULATION",
                 true,
                 SiteId,
-                SiteGroupId),
+                SiteGroupId)
+            {
+                PolicyCode = SeniorPolicyCode,
+                OrdinanceReference = null
+            },
             new StatutoryDiscountZeroPayableParkingAnchor(ParkingSessionId, SiteId, SiteGroupId),
             new StatutoryDiscountZeroPayableTariffAnchor(
                 OriginalTariffId,

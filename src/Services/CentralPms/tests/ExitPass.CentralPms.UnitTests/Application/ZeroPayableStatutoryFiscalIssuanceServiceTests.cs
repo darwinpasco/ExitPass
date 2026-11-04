@@ -9,6 +9,8 @@ namespace ExitPass.CentralPms.UnitTests.Application;
 
 public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
 {
+    private const string SeniorPolicyCode = "PH_PARANAQUE_SENIOR_FREE_PARKING";
+    private const string PwdPolicyCode = "PH_PARANAQUE_PWD_FREE_PARKING";
     private static readonly Guid SessionId = Guid.Parse("a1000000-0000-4000-8000-000000000001");
     private static readonly Guid DecisionId = Guid.Parse("a1000000-0000-4000-8000-000000000002");
     private static readonly Guid ApplicationId = Guid.Parse("a1000000-0000-4000-8000-000000000003");
@@ -83,6 +85,10 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal(0, mapped.AppliedStatutoryFiscalFacts!.VatAmountMinorUnits);
         Assert.Equal("VAT_INCLUSIVE_NO_EXEMPTION", mapped.AppliedStatutoryFiscalFacts.VatTreatment);
         Assert.Equal(2679, mapped.AppliedStatutoryFiscalFacts.NonPercentageBenefitAmountMinorUnits);
+        Assert.Equal(PolicyId, mapped.AppliedStatutoryFiscalFacts.PolicyReference.AppliedPolicyReferenceId);
+        Assert.Equal(PolicyId, mapped.AppliedStatutoryFiscalFacts.PolicyReference.PolicyVersionId);
+        Assert.Equal(SeniorPolicyCode, mapped.AppliedStatutoryFiscalFacts.PolicyReference.PolicyCode);
+        Assert.Null(mapped.AppliedStatutoryFiscalFacts.PolicyReference.OrdinanceReference);
         Assert.Equal(0, Assert.Single(mapped.Totals).AmountMinorUnits);
         Assert.NotNull(mapped.InvoiceCustomerInformation);
         Assert.Equal("Juan Dela Cruz", mapped.InvoiceCustomerInformation.CustomerName);
@@ -127,7 +133,12 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
             .Returns(FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(["test_stop_after_mapping"]));
         var command = Command() with
         {
-            Finality = Finality() with { EntitlementType = entitlementType }
+            Finality = Finality() with
+            {
+                EntitlementType = entitlementType,
+                PolicyCode = entitlementType == "PWD" ? PwdPolicyCode : SeniorPolicyCode,
+                OrdinanceReference = entitlementType == "PWD" ? "City Ordinance No. 48" : null
+            }
         };
 
         await CreateService(references, orchestration, posServer, beneficiaryIdentities)
@@ -139,6 +150,32 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal(statutoryIdType, beneficiary.StatutoryIdType);
         Assert.Equal("TEST-0001", beneficiary.StatutoryIdNumber);
         Assert.Equal(beneficiaryTin, beneficiary.BeneficiaryTin);
+        var policy = Assert.IsType<CentralPmsAppliedStatutoryPolicyReferenceContext>(
+            mapped?.AppliedStatutoryFiscalFacts?.PolicyReference);
+        Assert.Equal(PolicyId, policy.PolicyVersionId);
+        Assert.Equal(entitlementType == "PWD" ? PwdPolicyCode : SeniorPolicyCode, policy.PolicyCode);
+        Assert.Equal(entitlementType == "PWD" ? "City Ordinance No. 48" : null, policy.OrdinanceReference);
+    }
+
+    [Fact]
+    public async Task IssueOrReadAsync_MissingFrozenPolicyCode_FailsBeforeFiscalPreparation()
+    {
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            CreateService(references, orchestration, posServer).IssueOrReadAsync(
+                Command() with { Finality = Finality() with { PolicyCode = " " } },
+                CancellationToken.None));
+
+        Assert.Equal("ZERO_PAYABLE_STATUTORY_FISCAL_CONTEXT_INVALID", error.Message);
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
+        await posServer.DidNotReceiveWithAnyArgs().TryIssueFiscalDocumentViaPosServerAsync(
+            default,
+            default!,
+            default!,
+            default);
     }
 
     [Fact]
@@ -532,6 +569,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
             AppliedAt,
             Guid.Parse("a1000000-0000-4000-8000-00000000000e"))
         {
+            PolicyVersionId = PolicyId,
+            PolicyCode = SeniorPolicyCode,
             TicketNumber = "ZERO-TICKET-001",
             PlateNumber = "ZERO 1001",
             SiteName = "PITX Level 3",

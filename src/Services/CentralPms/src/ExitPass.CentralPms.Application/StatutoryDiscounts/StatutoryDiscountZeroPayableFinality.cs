@@ -28,6 +28,9 @@ public sealed record StatutoryDiscountZeroPayableFinality(
     Guid CorrelationId,
     string FinalityState = StatutoryDiscountFinalityStates.ZeroPayableStatutoryFinality)
 {
+    public Guid PolicyVersionId { get; init; }
+    public string PolicyCode { get; init; } = string.Empty;
+    public string? OrdinanceReference { get; init; }
     public string? IdControlReference { get; init; }
     public string? TicketNumber { get; init; }
     public string? PlateNumber { get; init; }
@@ -112,7 +115,11 @@ public sealed record StatutoryDiscountZeroPayablePolicyAnchor(
     string? PolicyEffectSupportStatus,
     bool? FullFeeExempt,
     Guid? PolicySiteId,
-    Guid? PolicySiteGroupId);
+    Guid? PolicySiteGroupId)
+{
+    public string? PolicyCode { get; init; }
+    public string? OrdinanceReference { get; init; }
+}
 
 public sealed record StatutoryDiscountZeroPayableParkingAnchor(
     Guid? ParkingSessionId,
@@ -235,6 +242,11 @@ public static class StatutoryDiscountZeroPayableFinalityResolver
             return Rejected("ZERO_PAYABLE_STATUTORY_POLICY_NOT_SUPPORTED");
         }
 
+        if (string.IsNullOrWhiteSpace(policy.PolicyCode))
+        {
+            return Rejected("ZERO_PAYABLE_STATUTORY_POLICY_AUTHORITY_MISSING");
+        }
+
         if (application.FinalPayableAmountMinorUnits is not 0 ||
             command.ApprovedFinalPayableAmountMinorUnits != 0 ||
             validation.FinalPayableAmountMinorUnits is not 0 ||
@@ -294,6 +306,11 @@ public static class StatutoryDiscountZeroPayableFinalityResolver
                 application.AppliedAt!.Value,
                 application.CorrelationId!.Value)
             {
+                PolicyVersionId = policy.PolicyVersionId!.Value,
+                PolicyCode = policy.PolicyCode.Trim(),
+                OrdinanceReference = string.IsNullOrWhiteSpace(policy.OrdinanceReference)
+                    ? null
+                    : policy.OrdinanceReference.Trim(),
                 IdControlReference = validation.IdControlReference,
                 TicketNumber = parkingSession.TicketNumber,
                 PlateNumber = parkingSession.PlateNumber,
