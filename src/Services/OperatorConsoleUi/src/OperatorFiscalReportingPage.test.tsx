@@ -445,11 +445,11 @@ describe("Operator Console fiscal reporting", () => {
     await userEvent.click(screen.getByRole("button", { name: "View Annex E-2" }));
 
     const table = await screen.findByRole("table", { name: "Annex E-2 qualifying Sales Invoices" });
-    expect(within(table).getAllByRole("columnheader")).toHaveLength(18);
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(17);
     expect(table).toHaveTextContent("Synthetic Senior");
-    expect(within(table).getByRole("columnheader", { name: "ADDITIONAL LGU PARKING-PRIVILEGE DETAIL" })).toHaveAttribute("colspan", "6");
+    expect(within(table).getByRole("columnheader", { name: "ADDITIONAL LGU PARKING-PRIVILEGE DETAIL" })).toHaveAttribute("colspan", "5");
     expect(within(table).getByRole("columnheader", { name: "LGU Privilege Type" })).toBeInTheDocument();
-    expect(within(table).getByRole("columnheader", { name: "LGU Policy Reference" })).toBeInTheDocument();
+    expect(within(table).queryByRole("columnheader", { name: "LGU Policy Reference" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Annex E-2 totals")).toHaveTextContent("20% Discount₱20.00");
     expect(screen.getByLabelText("Annex E-2 totals")).toHaveTextContent("Net Sales₱80.00");
     expect(screen.getByLabelText("Annex E-2 totals")).toHaveTextContent("LGU Waiver (VAT incl.)₱0.00");
@@ -505,6 +505,7 @@ describe("Operator Console fiscal reporting", () => {
     const table = await screen.findByRole("table", { name: `Annex ${annex} qualifying Sales Invoices` });
     expect(table).toHaveTextContent("FULL_FEE_EXEMPTION");
     expect(table).toHaveTextContent("₱50.00");
+    expect(table).not.toHaveTextContent("PH_PARANAQUE_");
     expect(screen.getByLabelText(`Annex ${annex} totals`)).toHaveTextContent("LGU Waiver (VAT incl.)₱50.00");
   });
 
