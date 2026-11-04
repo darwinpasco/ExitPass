@@ -11,9 +11,18 @@ Terminal serial numbers identify the persistent terminal installation. They are 
 
 ## Logical WebPay terminal
 
-- Assign an administrative logical serial using `EP-{SITE}-WEB-{NNNN}`.
-- The PITX assignment is `EP-PITX-L3-WEB-0001`.
+- Use the approved registered terminal serial assigned to the logical WebPay installation.
+- The PITX Level 3 Terminal ID is `PITX-WEBPAY-01` and its approved serial is `0026-B738-43B5-E605`.
 - Store the value on the existing POS `channel_terminals` registration.
 - Do not derive the serial from a browser or customer session.
+
+## PITX Level 3 registered identities
+
+- Site POS Server code: `PITX-L3-POS-01`
+- POS Server serial number: `0026_B728_3B2F_8505`
+- APT Terminal ID: `PITX-APT-01`
+- APT terminal serial number: `ACE4_2E00_653A_D952`
+- WebPay Terminal ID: `PITX-WEBPAY-01`
+- WebPay terminal serial number: `0026-B738-43B5-E605`
 
 Serial values are unique among active terminals for a Site POS Server. New Sales Invoices copy the registered value into the immutable header snapshot; historical fiscal documents are not backfilled.

@@ -180,6 +180,7 @@ foreach ($requiredName in @(
         'CentralPms__VendorPms__AdapterSecretMountRoot',
         'FiscalIssuance__PosServerIntegration__Endpoints__0__SiteId',
         'FiscalIssuance__PosServerIntegration__Endpoints__0__SitePosServerId',
+        'FiscalIssuance__PosServerIntegration__Endpoints__0__SitePosServerRef',
         'FiscalIssuance__PosServerIntegration__Endpoints__0__BaseUrl',
         'FiscalIssuance__PosServerIntegration__Endpoints__0__WebPayTerminalIdentifier',
         'FiscalIssuance__PosServerIntegration__Endpoints__0__ChannelTerminals__0__ChannelTerminalId',
@@ -193,10 +194,23 @@ foreach ($requiredName in @(
     Assert-PrivateEnvironmentValue $requiredName
 }
 $webPayTerminalIdentifier = Get-PrivateEnvironmentValue $environmentFile 'FiscalIssuance__PosServerIntegration__Endpoints__0__WebPayTerminalIdentifier'
+$sitePosServerIdText = Get-PrivateEnvironmentValue $environmentFile 'FiscalIssuance__PosServerIntegration__Endpoints__0__SitePosServerId'
+$sitePosServerRef = Get-PrivateEnvironmentValue $environmentFile 'FiscalIssuance__PosServerIntegration__Endpoints__0__SitePosServerRef'
 $siteIdText = Get-PrivateEnvironmentValue $environmentFile 'FiscalIssuance__PosServerIntegration__Endpoints__0__SiteId'
 $siteId = [guid]::Empty
 if (-not [guid]::TryParse($siteIdText, [ref]$siteId) -or $siteId -eq [guid]::Empty) {
     throw "The private Central PMS Site ID '$siteIdText' is invalid."
+}
+$sitePosServerId = [guid]::Empty
+if (-not [guid]::TryParse($sitePosServerIdText, [ref]$sitePosServerId) -or
+    $sitePosServerId -ne [guid]'3a138565-1b88-55f8-c83d-5380db6edccc') {
+    throw "The private Central PMS Site POS Server ID must preserve the approved PITX Level 3 registration."
+}
+if ($sitePosServerRef -cne 'PITX-L3-POS-01') {
+    throw "The private Central PMS Site POS Server reference must be 'PITX-L3-POS-01'."
+}
+if ($webPayTerminalIdentifier -cne 'PITX-WEBPAY-01') {
+    throw "The private Central PMS WebPay terminal identifier must be 'PITX-WEBPAY-01'."
 }
 $terminalMappings = foreach ($index in 0, 1) {
     $terminalIdName = "FiscalIssuance__PosServerIntegration__Endpoints__0__ChannelTerminals__${index}__ChannelTerminalId"
@@ -218,6 +232,18 @@ if (($terminalMappings.ChannelTerminalId | Sort-Object -Unique).Count -ne $termi
 }
 if ($terminalMappings[0].TerminalIdentifier -cne $webPayTerminalIdentifier) {
     throw 'The private Central PMS WebPay terminal selection does not match its configured channel terminal mapping.'
+}
+if (-not ($terminalMappings | Where-Object {
+        $_.ChannelTerminalId -eq [guid]'b71f74f7-8e56-5fda-b257-5d9823ab8520' -and
+        $_.TerminalIdentifier -ceq 'PITX-WEBPAY-01'
+    })) {
+    throw 'The private Central PMS WebPay mapping does not preserve the approved channel terminal UUID and identifier.'
+}
+if (-not ($terminalMappings | Where-Object {
+        $_.ChannelTerminalId -eq [guid]'37bf9170-d797-475b-93b4-75ccca447784' -and
+        $_.TerminalIdentifier -ceq 'PITX-APT-01'
+    })) {
+    throw 'The private Central PMS APT mapping does not preserve the approved channel terminal UUID and identifier.'
 }
 $aptTerminalMappings = @($terminalMappings | Where-Object {
         $_.TerminalIdentifier -cne $webPayTerminalIdentifier

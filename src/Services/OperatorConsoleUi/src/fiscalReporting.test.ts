@@ -527,7 +527,7 @@ function statutorySalesBookPayload(type: unknown) {
     code: "statutory_sales_book_read",
     report: {
       header: {
-        serialNumber: "EP-PITX-L3-POS-0001",
+        serialNumber: "0026_B728_3B2F_8505",
         machineIdentificationNumber: "MIN-PITX-L3-01",
         posServerCode: "PITX-L3-POS-01"
       },
