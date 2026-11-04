@@ -29,6 +29,13 @@ SELECT json_build_object(
   'unused_draft_device', (SELECT to_jsonb(d) FROM identity.devices d WHERE d.device_id='$unusedDraftDeviceId'),
   'draft_current_credentials', (SELECT count(*) FROM identity.device_credential_history WHERE device_id='$unusedDraftDeviceId' AND credential_status='ACTIVE'),
   'draft_issued_provisioning', (SELECT count(*) FROM identity.device_provisioning_credentials WHERE device_id='$unusedDraftDeviceId' AND provisioning_status='ISSUED'),
+  'draft_assignment_site', (
+    SELECT json_build_object('site_id',a.site_id,'site_group_id',s.site_group_id)
+    FROM identity.devices d
+    JOIN sites.device_assignments a ON a.service_identity_id=d.service_identity_id AND a.unassigned_at IS NULL
+    JOIN sites.sites s ON s.site_id=a.site_id
+    WHERE d.device_id='$unusedDraftDeviceId'
+  ),
   'target_identifier_conflicts', (SELECT count(*) FROM identity.devices WHERE device_id NOT IN ('$activeDeviceId','$unusedDraftDeviceId') AND lifecycle_status NOT IN ('REVOKED','REPLACED') AND btrim(terminal_identifier)='$terminalId'),
   'target_serial_conflicts', (SELECT count(*) FROM identity.devices WHERE device_id NOT IN ('$activeDeviceId','$unusedDraftDeviceId') AND lifecycle_status NOT IN ('REVOKED','REPLACED') AND btrim(terminal_serial_number)='$terminalSerial')
 )::text;
@@ -58,15 +65,17 @@ BEGIN
     WHERE device_id='$activeDeviceId' AND device_type='ASSISTED_PAYMENT_TERMINAL'
       AND lifecycle_status='ACTIVE' FOR UPDATE;
   IF active_service IS NULL THEN RAISE EXCEPTION 'active APT precondition failed'; END IF;
-  SELECT d.service_identity_id,a.device_assignment_id,a.site_id,a.site_group_id
+  SELECT d.service_identity_id,a.device_assignment_id,a.site_id,site.site_group_id
     INTO draft_service,draft_assignment,active_site,active_group
     FROM identity.devices d
     JOIN sites.device_assignments a ON a.service_identity_id=d.service_identity_id AND a.unassigned_at IS NULL
+    JOIN sites.sites site ON site.site_id=a.site_id
     JOIN identity.service_identities s ON s.service_identity_id=d.service_identity_id
     WHERE d.device_id='$unusedDraftDeviceId' AND d.device_type='ASSISTED_PAYMENT_TERMINAL'
       AND d.lifecycle_status='REGISTERED' AND s.identity_status='DRAFT'
       AND a.assignment_status='SUSPENDED' FOR UPDATE OF d,a,s;
   IF draft_service IS NULL THEN RAISE EXCEPTION 'unused draft APT precondition failed'; END IF;
+  IF active_site IS NULL OR active_group IS NULL THEN RAISE EXCEPTION 'unused draft APT Site or Site Group authority is unavailable'; END IF;
   IF EXISTS (SELECT 1 FROM identity.device_credential_history WHERE device_id='$unusedDraftDeviceId') OR
      EXISTS (SELECT 1 FROM identity.device_provisioning_credentials WHERE device_id='$unusedDraftDeviceId') THEN
     RAISE EXCEPTION 'unused draft APT has provisioning or credential evidence';
