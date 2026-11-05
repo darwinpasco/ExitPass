@@ -71,10 +71,7 @@ public sealed record FiscalReportingGatewayRequest(
     Guid? SupersedesWorkbookId = null,
     string? CorrectionApprovalReference = null,
     string? ResetReason = null,
-    string? AnnexType = null,
-    bool EarlyClose = false,
-    string? EarlyCloseReason = null,
-    bool ConfirmEarlyClose = false);
+    string? AnnexType = null);
 
 public sealed record FiscalReportingGatewayResponse(
     int HttpStatusCode,

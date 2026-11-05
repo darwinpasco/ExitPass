@@ -259,30 +259,6 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
     }
 
     [Fact]
-    public async Task CloseOneEarly_RequiresReasonAndConfirmationThenDelegatesToPosAuthority()
-    {
-        var periodId = Guid.Parse("88000000-0000-0000-0000-000000000025");
-        var gateway = new FakeGateway(_ => Response(201, "{\"succeeded\":true}"));
-        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
-        using var client = factory.CreateClient();
-
-        using var rejected = await client.PostAsJsonAsync(
-            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/z-readings/closeable-periods/{periodId:D}/close",
-            new { operationKey = "early-invalid", expectedStateVersion = 24, confirmClose = true, earlyClose = true });
-        rejected.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        gateway.Requests.Should().BeEmpty();
-
-        using var accepted = await client.PostAsJsonAsync(
-            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/z-readings/closeable-periods/{periodId:D}/close",
-            new { operationKey = "early-valid", expectedStateVersion = 24, confirmClose = true, earlyClose = true, earlyCloseReason = "Authorized maintenance", confirmEarlyClose = true });
-        accepted.StatusCode.Should().Be(HttpStatusCode.Created);
-        var request = gateway.Requests.Should().ContainSingle().Subject;
-        request.EarlyClose.Should().BeTrue();
-        request.EarlyCloseReason.Should().Be("Authorized maintenance");
-        request.ConfirmEarlyClose.Should().BeTrue();
-    }
-
-    [Fact]
     public async Task CloseOne_PlainTextUpstreamException_ReturnsControlledJsonWithoutDiagnostics()
     {
         var periodId = Guid.Parse("88000000-0000-0000-0000-000000000022");

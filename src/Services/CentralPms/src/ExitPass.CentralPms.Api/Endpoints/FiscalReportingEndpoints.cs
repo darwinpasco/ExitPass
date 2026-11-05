@@ -350,17 +350,6 @@ public static class FiscalReportingEndpoints
     {
         var authorization = await AuthorizeCloseAsync(siteId, body.ConfirmClose, request, rbacRepository, cancellationToken).ConfigureAwait(false);
         if (authorization.Denial is not null) return authorization.Denial;
-        if ((body.EarlyClose && (!body.ConfirmEarlyClose || !ValidReference(body.EarlyCloseReason, 500))) ||
-            (!body.EarlyClose && (body.ConfirmEarlyClose || body.EarlyCloseReason is not null)))
-        {
-            return Results.BadRequest(new
-            {
-                succeeded = false,
-                code = "fiscal_early_close_invalid",
-                correlationId = authorization.CorrelationId,
-                message = "An early fiscal close requires an explicit confirmation and reason."
-            });
-        }
 
         var result = await gateway.SendAsync(new(
             siteId,
@@ -369,10 +358,7 @@ public static class FiscalReportingEndpoints
             authorization.Actor,
             OperationKey: body.OperationKey,
             FiscalReportingPeriodId: fiscalReportingPeriodId,
-            ExpectedStateVersion: body.ExpectedStateVersion,
-            EarlyClose: body.EarlyClose,
-            EarlyCloseReason: body.EarlyCloseReason?.Trim(),
-            ConfirmEarlyClose: body.ConfirmEarlyClose), cancellationToken).ConfigureAwait(false);
+            ExpectedStateVersion: body.ExpectedStateVersion), cancellationToken).ConfigureAwait(false);
         loggerFactory.CreateLogger("ExitPass.CentralPms.FiscalReporting").Log(
             result.HttpStatusCode < 400 ? LogLevel.Information : LogLevel.Warning,
             "Site-scoped fiscal business date close completed. actor={Actor} site={Site} period={Period} result={Result} correlation_id={Correlation}",
@@ -838,9 +824,7 @@ public sealed record AttestAnnexE1KnownZeroRequest(
     long? AmountMinorUnits,long? SourceDocumentCount,string? FirstSourceReference,
     string? LastSourceReference,string? SourceEventReference,string? ApprovalReference,
     Guid? SupersedesFactId=null,string? CorrectionReason=null);
-public sealed record CloseFiscalBusinessDateRequest(
-    string? OperationKey,long ExpectedStateVersion,bool ConfirmClose,
-    bool EarlyClose=false,string? EarlyCloseReason=null,bool ConfirmEarlyClose=false);
+public sealed record CloseFiscalBusinessDateRequest(string? OperationKey,long ExpectedStateVersion,bool ConfirmClose);
 public sealed record CloseAllFiscalBusinessDatesRequest(string OperationKey,bool ConfirmClose);
 public sealed record ResetFiscalZCounterRequest(string? OperationKey,long ExpectedStateVersion,string? Reason,bool ConfirmReset);
 public sealed record FiscalReportingAuthorizedSiteResponse(Guid SiteId,string SiteCode,string SiteName);

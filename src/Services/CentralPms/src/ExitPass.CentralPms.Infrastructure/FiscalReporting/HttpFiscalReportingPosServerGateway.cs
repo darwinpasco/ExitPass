@@ -96,10 +96,7 @@ public sealed class HttpFiscalReportingPosServerGateway(
                 fiscalIdentityId = endpoint.FiscalIdentityId,
                 currencyCode = endpoint.CurrencyCode,
                 fiscalReportingPeriodId = RequirePeriodId(request),
-                expectedStateVersion = RequireExpectedStateVersion(request),
-                earlyClose = request.EarlyClose,
-                earlyCloseReason = request.EarlyCloseReason,
-                confirmEarlyClose = request.ConfirmEarlyClose
+                expectedStateVersion = RequireExpectedStateVersion(request)
             }),
             FiscalReportingGatewayAction.ZDownload => (HttpMethod.Get, $"/v1/fiscal-reports/z-readings/{Uri.EscapeDataString(RequireReference(request))}/exports/{RequireReadingExportFormat(request)}", "fiscal_z_reading.export", null),
             FiscalReportingGatewayAction.ZCounterState => (HttpMethod.Get, $"/v1/admin/fiscal-z-counter/?{scope}", "fiscal_z_counter.read", null),

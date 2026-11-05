@@ -233,49 +233,6 @@ describe("Operator Console fiscal reporting", () => {
     expect(await screen.findByText("Fiscal Business Date 2026-09-10 closed for PITX Test Site.")).toBeInTheDocument();
   });
 
-  it("requires a reason and deliberate confirmation before closing the active date early", async () => {
-    const client = createOperatorFiscalReportingFixture();
-    const initial = await client.readCloseablePeriods("SITE-PITX");
-    const active = {
-      ...initial.fiscalBusinessDates[0],
-      fiscalReportingPeriodId: "91000000-0000-4000-8000-000000000099",
-      status: "OPEN",
-      closeReadiness: "EARLY_CLOSE_READY",
-      canCloseEarly: true,
-    };
-    client.readCloseablePeriods = vi.fn()
-      .mockResolvedValueOnce({ fiscalBusinessDates: [], activeFiscalBusinessDate: active })
-      .mockResolvedValue({ fiscalBusinessDates: [] });
-    const history = await client.readZ("SITE-PITX");
-    client.readZ = vi.fn(async () => ({
-      ...history,
-      readings: [{ ...history.readings[0], fiscalReportingPeriodId: active.fiscalReportingPeriodId, reportReference: "Z-EARLY-001" }],
-    }));
-    client.closeBusinessDate = vi.fn(async () => ({
-      zReading: { fiscalReportReference: "Z-EARLY-001", closedAt: "2026-09-10T10:30:00Z", isEarlyClosure: true },
-      birSalesSummaryCompletion: { status: "COMMITTED" as const, summaryId: "summary-early", code: "bir_sales_summary_committed", retryable: false },
-    }));
-
-    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
-    await userEvent.click(await screen.findByRole("tab", { name: "Z Reading" }));
-    expect(await screen.findByText("EARLY_CLOSE_READY")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Close Business Date Now" }));
-    const dialog = screen.getByRole("alertdialog", { name: "Confirm Fiscal Business Date close" });
-    const commit = within(dialog).getByRole("button", { name: "Close Business Date Now" });
-    expect(commit).toBeDisabled();
-    await userEvent.type(within(dialog).getByLabelText("Reason for early close"), "Authorized maintenance");
-    expect(commit).toBeDisabled();
-    await userEvent.click(within(dialog).getByRole("checkbox"));
-    await userEvent.click(commit);
-
-    await waitFor(() => expect(client.closeBusinessDate).toHaveBeenCalledWith(
-      "SITE-PITX",
-      expect.objectContaining({ fiscalReportingPeriodId: active.fiscalReportingPeriodId }),
-      { reason: "Authorized maintenance", confirmed: true },
-    ));
-    expect(await screen.findByText(/Z Reading Z-EARLY-001 committed/)).toBeInTheDocument();
-  });
-
   it("reports BIR Summary pending without reporting the committed Z close as failed", async () => {
     const client = createOperatorFiscalReportingFixture();
     const initialCloseable = await client.readCloseablePeriods("SITE-PITX");

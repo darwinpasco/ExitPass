@@ -407,45 +407,6 @@ describe("Operator fiscal-reporting HTTP client", () => {
     });
   });
 
-  it("forwards explicit early-close semantics and parses authoritative closure evidence", async () => {
-    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body));
-      expect(body).toMatchObject({
-        earlyClose: true,
-        earlyCloseReason: "Authorized maintenance",
-        confirmEarlyClose: true,
-        confirmClose: true,
-      });
-      return new Response(JSON.stringify({
-        succeeded: true,
-        zReading: {
-          fiscalReportReference: "Z-EARLY-001",
-          closedAt: "2026-09-10T10:30:00Z",
-          isEarlyClosure: true,
-        },
-      }), { status: 201, headers: { "Content-Type": "application/json" } });
-    });
-    const client = createOperatorFiscalReportingClient(fetchImpl as typeof fetch, () => "csrf-token");
-    const period = {
-      fiscalReportingPeriodId: "period-active",
-      fiscalBusinessDate: "2026-09-10",
-      periodStart: "2026-09-09T23:00:00Z",
-      periodEnd: "2026-09-10T23:00:00Z",
-      status: "OPEN",
-      transactionCount: 2,
-      expectedStateVersion: 4,
-      closeReadiness: "EARLY_CLOSE_READY",
-      canCloseEarly: true,
-    };
-
-    const result = await client.closeBusinessDate("SITE-PITX", period, { reason: "Authorized maintenance", confirmed: true });
-    expect(result.zReading).toEqual({
-      fiscalReportReference: "Z-EARLY-001",
-      closedAt: "2026-09-10T10:30:00Z",
-      isEarlyClosure: true,
-    });
-  });
-
   it("maps malformed JSON without leaking a JSON parser exception", async () => {
     const client = createOperatorFiscalReportingClient(
       vi.fn(async () => new Response("ExitPass.P", { status: 502, headers: { "Content-Type": "application/json" } })) as typeof fetch

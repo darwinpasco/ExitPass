@@ -307,12 +307,9 @@ export interface CloseableFiscalBusinessDate {
     status: string;
     transactionCount: number;
     expectedStateVersion: number;
-    closeReadiness?: string;
-    canCloseEarly?: boolean;
 }
 export interface CloseableFiscalBusinessDatesSnapshot {
     fiscalBusinessDates: CloseableFiscalBusinessDate[];
-    activeFiscalBusinessDate?: CloseableFiscalBusinessDate;
 }
 export interface CloseAllFiscalBusinessDatesResult {
     succeeded: boolean;
@@ -330,11 +327,6 @@ export interface BirSalesSummaryCompletion {
 }
 export interface CloseFiscalBusinessDateResult {
     birSalesSummaryCompletion?: BirSalesSummaryCompletion;
-    zReading?: {
-        fiscalReportReference: string;
-        closedAt: string;
-        isEarlyClosure: boolean;
-    };
 }
 export interface OperatorFiscalReportingClient {
     listAuthorizedSites?(): Promise<FiscalReportingSite[]>;
@@ -356,7 +348,6 @@ export interface OperatorFiscalReportingClient {
     closeBusinessDate(
         site: string,
         period: CloseableFiscalBusinessDate,
-        earlyClose?: { reason: string; confirmed: boolean },
     ): Promise<CloseFiscalBusinessDateResult>;
     closeAllBusinessDates(
         site: string,
@@ -504,7 +495,7 @@ export function createOperatorFiscalReportingClient(
         async readCloseablePeriods(s) {
             return closeable(await json(p(s, "/z-readings/closeable-periods")));
         },
-        async closeBusinessDate(s, period, earlyClose) {
+        async closeBusinessDate(s, period) {
             const value = await json(
                 p(
                     s,
@@ -514,22 +505,12 @@ export function createOperatorFiscalReportingClient(
                     operationKey: crypto.randomUUID(),
                     expectedStateVersion: period.expectedStateVersion,
                     confirmClose: true,
-                    earlyClose: earlyClose !== undefined,
-                    earlyCloseReason: earlyClose?.reason,
-                    confirmEarlyClose: earlyClose?.confirmed ?? false,
                 }),
             );
             return {
                 birSalesSummaryCompletion: birCompletion(
                     value.birSalesSummaryCompletion,
                 ),
-                zReading: value.zReading && typeof value.zReading === "object"
-                    ? {
-                        fiscalReportReference: str(rec(value.zReading).fiscalReportReference),
-                        closedAt: str(rec(value.zReading).closedAt),
-                        isEarlyClosure: rec(value.zReading).isEarlyClosure === true,
-                    }
-                    : undefined,
             };
         },
         async closeAllBusinessDates(s) {
@@ -1227,7 +1208,8 @@ function closeable(
     value: Record<string, unknown>,
 ): CloseableFiscalBusinessDatesSnapshot {
     if (!Array.isArray(value.fiscalBusinessDates)) throw bad();
-    const parsePeriod = (item: unknown): CloseableFiscalBusinessDate => {
+    return {
+        fiscalBusinessDates: value.fiscalBusinessDates.map((item) => {
             const period = rec(item);
             return {
                 fiscalReportingPeriodId: str(period.fiscalReportingPeriodId),
@@ -1237,17 +1219,8 @@ function closeable(
                 status: str(period.status),
                 transactionCount: num(period.transactionCount),
                 expectedStateVersion: num(period.expectedStateVersion),
-                closeReadiness: typeof period.closeReadiness === "string"
-                    ? str(period.closeReadiness)
-                    : "NORMAL_CLOSE_READY",
-                canCloseEarly: period.canCloseEarly === true,
             };
-    };
-    return {
-        fiscalBusinessDates: value.fiscalBusinessDates.map(parsePeriod),
-        activeFiscalBusinessDate: value.activeFiscalBusinessDate == null
-            ? undefined
-            : parsePeriod(value.activeFiscalBusinessDate),
+        }),
     };
 }
 function per(o: Record<string, unknown>): FiscalPeriod {
