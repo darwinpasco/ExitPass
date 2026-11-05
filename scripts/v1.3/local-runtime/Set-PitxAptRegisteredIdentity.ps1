@@ -100,8 +100,10 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'active APT identity update did not affect exactly one record'; END IF;
 
   INSERT INTO identity.device_lifecycle_history(device_lifecycle_history_id,device_id,action_code,previous_status,resulting_status,
-    site_id,site_group_id,actor_user_id,reason_code,correlation_id,occurred_at)
-  VALUES (gen_random_uuid(),'$unusedDraftDeviceId','REVOKE','REGISTERED','REVOKED',active_site,active_group,'$ActorUserId','UNUSED_DRAFT_REGISTRATION','$CorrelationId',clock_timestamp());
+    site_id,site_group_id,previous_credential_version,resulting_credential_version,
+    actor_user_id,reason_code,correlation_id,occurred_at)
+  VALUES (gen_random_uuid(),'$unusedDraftDeviceId','REVOKE','REGISTERED','REVOKED',active_site,active_group,0,0,
+    '$ActorUserId','UNUSED_DRAFT_REGISTRATION','$CorrelationId',clock_timestamp());
   INSERT INTO audit.audit_events(audit_event_id,event_type,event_category,event_result,event_reason_code,target_entity_type,target_entity_id,
     source_schema,source_service_name,source_channel,actor_user_id,summary,occurred_at,recorded_at,correlation_id,created_at)
   VALUES
