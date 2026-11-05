@@ -556,9 +556,13 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         var result = await fixture.Sut.SubmitAsync(command, CancellationToken.None);
 
         result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
-        fixture.Repository.LastDecisionCommand.Should().NotBeNull();
-        fixture.Repository.LastDecisionCommand!.BirthDate.Should().BeNull();
-        fixture.Repository.LastDecisionCommand.IdControlReference.Should().BeNull();
+        await fixture.ServiceChannelReviewRepository.Received(1).UpsertIntakeAsync(
+            Arg.Is<StatutoryDiscountServiceChannelReviewIntakeCommand>(record =>
+                record.StatutoryDiscountDecisionCommandId == result.StatutoryDiscountDecisionCommandId &&
+                record.SourceChannel == StatutoryDiscountSourceChannels.WebPay &&
+                record.BirthDate == null &&
+                record.IdControlReference == null),
+            Arg.Any<CancellationToken>());
         fixture.Repository.ApplicationCount.Should().Be(0);
     }
 
