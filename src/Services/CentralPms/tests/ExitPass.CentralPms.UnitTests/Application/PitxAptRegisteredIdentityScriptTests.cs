@@ -31,6 +31,8 @@ public sealed class PitxAptRegisteredIdentityScriptTests
         Assert.Contains("874a7af5-add6-4736-9372-0f2a0886ba67", Script, StringComparison.Ordinal);
         Assert.Contains("PITX-APT-01", Script, StringComparison.Ordinal);
         Assert.Contains("ACE4_2E00_653A_D952", Script, StringComparison.Ordinal);
+        Assert.Contains("previous_credential_version,resulting_credential_version", Script, StringComparison.Ordinal);
+        Assert.Contains("active_site,active_group,0,0", Script, StringComparison.Ordinal);
         Assert.DoesNotContain("UPDATE identity.device_credential_history", Script, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("UPDATE identity.device_provisioning_credentials", Script, StringComparison.OrdinalIgnoreCase);
     }
