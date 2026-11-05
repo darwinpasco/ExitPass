@@ -35,6 +35,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
   const [x, setX] = useState<History>();
   const [z, setZ] = useState<History>();
   const [closeablePeriods, setCloseablePeriods] = useState<CloseableFiscalBusinessDate[]>([]);
+  const [activeFiscalBusinessDate, setActiveFiscalBusinessDate] = useState<CloseableFiscalBusinessDate>();
   const [selectedZReference, setSelectedZReference] = useState("");
   const [summaryId, setSummaryId] = useState("");
   const [summary, setSummary] = useState<BirSalesSummary>();
@@ -62,7 +63,9 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
   const [batchCloseError, setBatchCloseError] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [birCompletionWarning, setBirCompletionWarning] = useState<string>();
-  const [closeConfirmation, setCloseConfirmation] = useState<{ kind: "single"; period: CloseableFiscalBusinessDate } | { kind: "all" }>();
+  const [closeConfirmation, setCloseConfirmation] = useState<{ kind: "single" | "early"; period: CloseableFiscalBusinessDate } | { kind: "all" }>();
+  const [earlyCloseReason, setEarlyCloseReason] = useState("");
+  const [earlyCloseConfirmed, setEarlyCloseConfirmed] = useState(false);
   const has = (permission: string) => permissions.includes(permission);
   const siteScopeKey = siteReferences.join("|");
 
@@ -123,7 +126,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
         ? client.readZ(siteId).then((value) => { nextZ = value; setZ(value); }).catch((cause) => { setZ(undefined); setZHistoryError(operationMessage(cause, "Z Reading history could not be loaded.")); })
         : Promise.resolve(),
       has(fiscalReportingPermissions.zRead)
-        ? client.readCloseablePeriods(siteId).then((value) => setCloseablePeriods(value.fiscalBusinessDates)).catch((cause) => { setCloseablePeriods([]); setCloseableError(operationMessage(cause, "Open Fiscal Business Dates could not be loaded.")); })
+        ? client.readCloseablePeriods(siteId).then((value) => { setCloseablePeriods(value.fiscalBusinessDates); setActiveFiscalBusinessDate(value.activeFiscalBusinessDate); }).catch((cause) => { setCloseablePeriods([]); setActiveFiscalBusinessDate(undefined); setCloseableError(operationMessage(cause, "Open Fiscal Business Dates could not be loaded.")); })
         : Promise.resolve()
     ]);
 
@@ -217,6 +220,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     setX(undefined);
     setZ(undefined);
     setCloseablePeriods([]);
+    setActiveFiscalBusinessDate(undefined);
     setSelectedZReference("");
     setSummaryId("");
     setSummary(undefined);
@@ -238,6 +242,8 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     setBatchCloseError(undefined);
     setBirCompletionWarning(undefined);
     setCloseConfirmation(undefined);
+    setEarlyCloseReason("");
+    setEarlyCloseConfirmed(false);
     setSiteId(nextSiteId);
   }
 
@@ -262,17 +268,23 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     setMessage(undefined);
     setBirCompletionWarning(undefined);
     try {
-      if (closeConfirmation.kind === "single") {
+      if (closeConfirmation.kind === "single" || closeConfirmation.kind === "early") {
         const closingPeriod = closeConfirmation.period;
-        const closeResult = await client.closeBusinessDate(siteId, closingPeriod);
+        const isEarlyClose = closeConfirmation.kind === "early";
+        const closeResult = isEarlyClose
+          ? await client.closeBusinessDate(siteId, closingPeriod, { reason: earlyCloseReason.trim(), confirmed: earlyCloseConfirmed })
+          : await client.closeBusinessDate(siteId, closingPeriod);
         const [nextCloseable, nextHistory] = await Promise.all([client.readCloseablePeriods(siteId), client.readZ(siteId)]);
         if (nextCloseable.fiscalBusinessDates.some((period) => period.fiscalReportingPeriodId === closingPeriod.fiscalReportingPeriodId) ||
             nextHistory.readings.filter((reading) => reading.fiscalReportingPeriodId === closingPeriod.fiscalReportingPeriodId).length !== 1) {
           throw new Error("The authoritative fiscal close transition could not be confirmed.");
         }
         setCloseablePeriods(nextCloseable.fiscalBusinessDates);
+        setActiveFiscalBusinessDate(nextCloseable.activeFiscalBusinessDate);
         setZ(nextHistory);
-        setMessage(`Fiscal Business Date ${closingPeriod.fiscalBusinessDate} closed for ${selectedSiteName}.`);
+        setMessage(isEarlyClose && closeResult.zReading
+          ? `Fiscal Business Date ${closingPeriod.fiscalBusinessDate} closed early at ${formatPhtInstant(closeResult.zReading.closedAt)} PHT. Z Reading ${closeResult.zReading.fiscalReportReference} committed; Daily BIR Sales Summary ${closeResult.birSalesSummaryCompletion?.status ?? "PENDING"}.`
+          : `Fiscal Business Date ${closingPeriod.fiscalBusinessDate} closed for ${selectedSiteName}.`);
         if (closeResult.birSalesSummaryCompletion?.status === "PENDING") {
           setBirCompletionWarning("Fiscal Business Date closed and Z Reading committed. Daily BIR Sales Summary is pending and can be retried from Daily BIR Sales Summary.");
         }
@@ -286,6 +298,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
           throw new Error("The authoritative batch fiscal close transitions could not be confirmed.");
         }
         setCloseablePeriods(nextCloseable.fiscalBusinessDates);
+        setActiveFiscalBusinessDate(nextCloseable.activeFiscalBusinessDate);
         setZ(nextHistory);
         setMessage(result.message ?? `${result.closedCount} Fiscal Business Dates closed for ${selectedSiteName}.`);
         if (result.birSalesSummaryPendingCount > 0) {
@@ -293,9 +306,13 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
         }
       }
       setCloseConfirmation(undefined);
+      setEarlyCloseReason("");
+      setEarlyCloseConfirmed(false);
     } catch (cause) {
       try {
-        setCloseablePeriods((await client.readCloseablePeriods(siteId)).fiscalBusinessDates);
+        const refreshed = await client.readCloseablePeriods(siteId);
+        setCloseablePeriods(refreshed.fiscalBusinessDates);
+        setActiveFiscalBusinessDate(refreshed.activeFiscalBusinessDate);
       } catch {
         // Preserve the primary close error; the next page refresh retries authoritative state.
       }
@@ -441,16 +458,19 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
     {tab === "x" && <ReadingPanel kind="X" history={x} error={xHistoryError} actionError={xGenerateError} canRead={has(fiscalReportingPermissions.xRead)} canGenerate={has(fiscalReportingPermissions.xGenerate)} onGenerate={generateX} download={(reference, format) => client.readingUrl(siteId, "x", reference, format)} />}
     {tab === "z" && <>
       {has(fiscalReportingPermissions.zRead) && <section className="fiscalPane" aria-labelledby="open-fiscal-business-dates-title">
-        <div className="readingTitle"><div><h3 id="open-fiscal-business-dates-title">Open Fiscal Business Dates</h3><p>Authoritative closeable periods for {selectedSiteName}. The active pre-cutoff period is excluded by POS authority.</p></div>{has(fiscalReportingPermissions.zGenerate) && closeablePeriods.length > 1 && <button className="dangerButton" type="button" onClick={() => setCloseConfirmation({ kind: "all" })}>Close All Open Business Dates</button>}</div>
+        <div className="readingTitle"><div><h3 id="open-fiscal-business-dates-title">Active Fiscal Business Date</h3><p>Authoritative current period for {selectedSiteName}.</p></div></div>
         {closeableError && <p className="errorMessage" role="alert">{closeableError}</p>}
         {closeError && <p className="errorMessage" role="alert">{closeError}</p>}
         {batchCloseError && <p className="errorMessage" role="alert">{batchCloseError}</p>}
+        {activeFiscalBusinessDate ? <div className="tableViewport"><table><thead><tr><th>Fiscal Business Date</th><th>Period Start</th><th>Scheduled End</th><th>Status</th><th>Transaction Count</th><th>Z-close Readiness</th><th>Action</th></tr></thead><tbody><tr><td>{activeFiscalBusinessDate.fiscalBusinessDate}</td><td>{formatPhtInstant(activeFiscalBusinessDate.periodStart)} PHT</td><td>{formatPhtInstant(activeFiscalBusinessDate.periodEnd)} PHT</td><td>{activeFiscalBusinessDate.status}</td><td>{activeFiscalBusinessDate.transactionCount}</td><td>{activeFiscalBusinessDate.closeReadiness}</td><td>{has(fiscalReportingPermissions.zGenerate) && activeFiscalBusinessDate.canCloseEarly ? <button className="dangerButton" type="button" onClick={() => { setEarlyCloseReason(""); setEarlyCloseConfirmed(false); setCloseConfirmation({ kind: "early", period: activeFiscalBusinessDate }); }}>Close Business Date Now</button> : "Not ready"}</td></tr></tbody></table></div> : <p role="status">No active Fiscal Business Date is currently available for this Site.</p>}
+        <div className="readingTitle"><div><h3>Open Fiscal Business Dates</h3><p>Historical periods whose scheduled end has passed and remain eligible for normal Z close.</p></div>{has(fiscalReportingPermissions.zGenerate) && closeablePeriods.length > 1 && <button className="dangerButton" type="button" onClick={() => setCloseConfirmation({ kind: "all" })}>Close All Open Business Dates</button>}</div>
         {closeablePeriods.length === 0 ? <p role="status">No historical Fiscal Business Dates are currently closeable for this Site.</p> : <div className="tableViewport"><table><thead><tr><th>Fiscal Business Date</th><th>Period Start</th><th>Period End</th><th>Status</th><th>Transaction Count</th><th>Z Reading</th><th>Action</th></tr></thead><tbody>{closeablePeriods.map((period) => <tr key={period.fiscalReportingPeriodId}><td>{period.fiscalBusinessDate}</td><td>{formatPhtInstant(period.periodStart)} PHT</td><td>{formatPhtInstant(period.periodEnd)} PHT</td><td>{period.status}</td><td>{period.transactionCount}</td><td>Pending close</td><td>{has(fiscalReportingPermissions.zGenerate) ? <button type="button" onClick={() => setCloseConfirmation({ kind: "single", period })}>Close Business Date</button> : "Not authorized"}</td></tr>)}</tbody></table></div>}
       </section>}
       {closeConfirmation && <div className="zConfirmation" role="alertdialog" aria-label="Confirm Fiscal Business Date close">
-        <h3>{closeConfirmation.kind === "single" ? `Close Fiscal Business Date ${closeConfirmation.period.fiscalBusinessDate} for ${selectedSiteName} and generate its Z Reading?` : `Close ${closeablePeriods.length} open Fiscal Business Dates for ${selectedSiteName} from ${closeablePeriods[0]?.fiscalBusinessDate} through ${closeablePeriods[closeablePeriods.length - 1]?.fiscalBusinessDate}?`}</h3>
+        <h3>{closeConfirmation.kind === "early" ? `Close active Fiscal Business Date ${closeConfirmation.period.fiscalBusinessDate} now?` : closeConfirmation.kind === "single" ? `Close Fiscal Business Date ${closeConfirmation.period.fiscalBusinessDate} for ${selectedSiteName} and generate its Z Reading?` : `Close ${closeablePeriods.length} open Fiscal Business Dates for ${selectedSiteName} from ${closeablePeriods[0]?.fiscalBusinessDate} through ${closeablePeriods[closeablePeriods.length - 1]?.fiscalBusinessDate}?`}</h3>
         {closeConfirmation.kind === "all" && <p>Each business date will generate its own Z Reading and advance the Site's Z counter once. Processing stops at the first failure.</p>}
-        <button className="dangerButton" type="button" onClick={() => void closeBusinessDates()} disabled={busy}>{closeConfirmation.kind === "single" ? "Close Business Date" : "Close All Open Business Dates"}</button><button type="button" onClick={() => setCloseConfirmation(undefined)} disabled={busy}>Cancel</button>
+        {closeConfirmation.kind === "early" && <><p>This immediately commits the Z Reading and advances the Z counter. Fiscal issuance will stop until the next scheduled business-date boundary. This operation cannot be undone.</p><label>Reason for early close<textarea aria-label="Reason for early close" value={earlyCloseReason} maxLength={500} onChange={(event) => setEarlyCloseReason(event.target.value)} /></label><label><input type="checkbox" checked={earlyCloseConfirmed} onChange={(event) => setEarlyCloseConfirmed(event.target.checked)} /> I understand and confirm the early fiscal close.</label></>}
+        <button className="dangerButton" type="button" onClick={() => void closeBusinessDates()} disabled={busy || (closeConfirmation.kind === "early" && (!earlyCloseReason.trim() || !earlyCloseConfirmed))}>{closeConfirmation.kind === "early" ? "Close Business Date Now" : closeConfirmation.kind === "single" ? "Close Business Date" : "Close All Open Business Dates"}</button><button type="button" onClick={() => { setCloseConfirmation(undefined); setEarlyCloseReason(""); setEarlyCloseConfirmed(false); }} disabled={busy}>Cancel</button>
       </div>}
       <ReadingPanel kind="Z" history={z} error={zHistoryError} canRead={has(fiscalReportingPermissions.zRead)} canGenerate={false} download={(reference, format) => client.readingUrl(siteId, "z", reference, format)} />
     </>}

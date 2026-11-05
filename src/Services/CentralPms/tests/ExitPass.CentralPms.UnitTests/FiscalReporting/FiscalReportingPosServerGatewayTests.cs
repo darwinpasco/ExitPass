@@ -121,6 +121,29 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
     }
 
     [Fact]
+    public async Task EarlyCloseAddsOnlyExplicitGovernedSemanticsToTheExistingPosContract()
+    {
+        var periodId = Guid.Parse("40000000-0000-4000-8000-000000000042");
+        var handler = new CaptureHandler(_ => Json("{\"succeeded\":true}", HttpStatusCode.Created));
+
+        await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
+            Request(FiscalReportingGatewayAction.ZClosePeriod) with
+            {
+                OperationKey = "early-close",
+                FiscalReportingPeriodId = periodId,
+                ExpectedStateVersion = 18,
+                EarlyClose = true,
+                EarlyCloseReason = "Authorized maintenance",
+                ConfirmEarlyClose = true
+            });
+
+        var body = handler.Bodies.Single();
+        Assert.Contains("\"earlyClose\":true", body);
+        Assert.Contains("\"earlyCloseReason\":\"Authorized maintenance\"", body);
+        Assert.Contains("\"confirmEarlyClose\":true", body);
+    }
+
+    [Fact]
     public async Task ZCounterResetUsesDedicatedPermissionScopeAndDelegatedAdministrator()
     {
         var handler = new CaptureHandler(_ => Json("{\"succeeded\":true,\"reset\":{}}", HttpStatusCode.Created));
