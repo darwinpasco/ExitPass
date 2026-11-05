@@ -89,7 +89,7 @@ describe("Operator Console fiscal reporting", () => {
 
     await userEvent.click(await screen.findByRole("tab", { name: `${kind} Reading` }));
 
-    expect(await screen.findByText("Fiscal Business Date", { selector: "dt" })).toBeInTheDocument();
+    expect((await screen.findAllByText("Fiscal Business Date", { selector: "dt" })).length).toBeGreaterThan(0);
     expect(screen.getByText("2026-09-14", { selector: "dd" })).toBeInTheDocument();
     expect(screen.getByText("Period start (PHT)")).toBeInTheDocument();
     expect(screen.getByText("2026-09-14 07:00:00")).toBeInTheDocument();
@@ -189,7 +189,7 @@ describe("Operator Console fiscal reporting", () => {
 
     await userEvent.click(screen.getByRole("tab", { name: "Z Reading" }));
     expect(await screen.findByText("Z-20260910-001")).toBeInTheDocument();
-    expect(screen.getByText("Open Fiscal Business Dates")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Fiscal Business Date" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close Business Date" })).toBeInTheDocument();
     expect(screen.queryByText("Fiscal reporting unavailable")).not.toBeInTheDocument();
   });
@@ -213,11 +213,11 @@ describe("Operator Console fiscal reporting", () => {
 
   it("requires explicit confirmation before closing one POS-returned Fiscal Business Date", async () => {
     const client = createOperatorFiscalReportingFixture();
-    const initialCloseable = await client.readCloseablePeriods("SITE-PITX");
-    client.readCloseablePeriods = vi.fn()
-      .mockResolvedValueOnce(initialCloseable)
-      .mockResolvedValue({ fiscalBusinessDates: [] });
-    client.closeBusinessDate = vi.fn(async () => ({ birSalesSummaryCompletion: { status: "COMMITTED" as const, summaryId: "summary-1", code: "bir_sales_summary_committed", retryable: false } }));
+    const initialLifecycle = await client.readBusinessDateLifecycle("SITE-PITX");
+    client.readBusinessDateLifecycle = vi.fn()
+      .mockResolvedValueOnce(initialLifecycle)
+      .mockResolvedValue({ ...initialLifecycle, state: "CLOSED", activePeriod: undefined, lastClosedPeriod: initialLifecycle.activePeriod });
+    client.closeBusinessDate = vi.fn(async () => ({ zReadingReference: "Z-20260910-001", actualClosedAt: "2026-09-10T12:34:56Z", birSalesSummaryCompletion: { status: "COMMITTED" as const, summaryId: "summary-1", code: "bir_sales_summary_committed", retryable: false } }));
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
     await userEvent.click(await screen.findByRole("tab", { name: "Z Reading" }));
     await userEvent.click(screen.getByRole("button", { name: "Close Business Date" }));
@@ -229,61 +229,32 @@ describe("Operator Console fiscal reporting", () => {
     expect(screen.queryByRole("alertdialog", { name: "Confirm Fiscal Business Date close" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Close Business Date" }));
     await userEvent.click(screen.getByRole("alertdialog", { name: "Confirm Fiscal Business Date close" }).querySelector("button.dangerButton")!);
-    await waitFor(() => expect(client.closeBusinessDate).toHaveBeenCalledWith("SITE-PITX", expect.objectContaining({ fiscalBusinessDate: "2026-09-10", expectedStateVersion: 14 })));
-    expect(await screen.findByText("Fiscal Business Date 2026-09-10 closed for PITX Test Site.")).toBeInTheDocument();
+    await waitFor(() => expect(client.closeBusinessDate).toHaveBeenCalledWith("SITE-PITX", expect.objectContaining({ businessDateLabel: "2026-09-10", expectedStateVersion: 14 })));
+    expect(await screen.findByText("Fiscal Business Date 2026-09-10 closed for PITX Test Site at 2026-09-10 20:34:56 PHT. Z Reading Z-20260910-001 committed.")).toBeInTheDocument();
   });
 
   it("reports BIR Summary pending without reporting the committed Z close as failed", async () => {
     const client = createOperatorFiscalReportingFixture();
-    const initialCloseable = await client.readCloseablePeriods("SITE-PITX");
-    client.readCloseablePeriods = vi.fn()
-      .mockResolvedValueOnce(initialCloseable)
-      .mockResolvedValue({ fiscalBusinessDates: [] });
-    client.closeBusinessDate = vi.fn(async () => ({ birSalesSummaryCompletion: { status: "PENDING" as const, code: "bir_sales_summary_persistence_failed", retryable: true } }));
+    const initialLifecycle = await client.readBusinessDateLifecycle("SITE-PITX");
+    client.readBusinessDateLifecycle = vi.fn()
+      .mockResolvedValueOnce(initialLifecycle)
+      .mockResolvedValue({ ...initialLifecycle, state: "CLOSED", activePeriod: undefined, lastClosedPeriod: initialLifecycle.activePeriod });
+    client.closeBusinessDate = vi.fn(async () => ({ zReadingReference: "Z-20260910-001", actualClosedAt: "2026-09-10T12:34:56Z", birSalesSummaryCompletion: { status: "PENDING" as const, code: "bir_sales_summary_persistence_failed", retryable: true } }));
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
 
     await userEvent.click(await screen.findByRole("tab", { name: "Z Reading" }));
     await userEvent.click(screen.getByRole("button", { name: "Close Business Date" }));
     await userEvent.click(screen.getByRole("alertdialog", { name: "Confirm Fiscal Business Date close" }).querySelector("button.dangerButton")!);
 
-    expect(await screen.findByText("Fiscal Business Date 2026-09-10 closed for PITX Test Site.")).toBeInTheDocument();
+    expect(await screen.findByText("Fiscal Business Date 2026-09-10 closed for PITX Test Site at 2026-09-10 20:34:56 PHT. Z Reading Z-20260910-001 committed.")).toBeInTheDocument();
     expect(screen.getByText("Fiscal Business Date closed and Z Reading committed. Daily BIR Sales Summary is pending and can be retried from Daily BIR Sales Summary.")).toBeInTheDocument();
     expect(screen.queryByText(/Z Reading.*failed/i)).not.toBeInTheDocument();
   });
 
-  it("confirms and closes all POS-returned periods for only the current Site", async () => {
-    const client = createOperatorFiscalReportingFixture();
-    const initial = await client.readCloseablePeriods("SITE-PITX");
-    const threePeriods = [
-      { ...initial.fiscalBusinessDates[0], fiscalReportingPeriodId: "91000000-0000-4000-8000-000000000010", fiscalBusinessDate: "2026-09-08" },
-      { ...initial.fiscalBusinessDates[0], fiscalReportingPeriodId: "91000000-0000-4000-8000-000000000011", fiscalBusinessDate: "2026-09-09" },
-      { ...initial.fiscalBusinessDates[0], fiscalReportingPeriodId: "91000000-0000-4000-8000-000000000012", fiscalBusinessDate: "2026-09-10" }
-    ];
-    client.readCloseablePeriods = vi.fn()
-      .mockResolvedValueOnce({ fiscalBusinessDates: threePeriods })
-      .mockResolvedValue({ fiscalBusinessDates: [] });
-    const initialHistory = await client.readZ("SITE-PITX");
-    client.readZ = vi.fn(async () => ({
-      currentPeriod: initialHistory.currentPeriod,
-      readings: threePeriods.map((period, index) => ({
-        ...initialHistory.readings[0],
-        fiscalReportingPeriodId: period.fiscalReportingPeriodId,
-        businessDayDate: period.fiscalBusinessDate,
-        reportReference: `Z-BATCH-${index + 1}`
-      }))
-    }));
-    client.closeAllBusinessDates = vi.fn(async () => ({ succeeded: true, closedCount: 3, birSalesSummaryPendingCount: 0 }));
-    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
-
+  it("does not expose the superseded bulk-close operation", async () => {
+    render(<OperatorFiscalReportingPage client={createOperatorFiscalReportingFixture()} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
     await userEvent.click(await screen.findByRole("tab", { name: "Z Reading" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Close All Open Business Dates" }));
-
-    const confirmation = screen.getByRole("alertdialog", { name: "Confirm Fiscal Business Date close" });
-    expect(confirmation).toHaveTextContent("Close 3 open Fiscal Business Dates for PITX Test Site");
-    expect(confirmation).toHaveTextContent("2026-09-08 through 2026-09-10");
-    await userEvent.click(within(confirmation).getByRole("button", { name: "Close All Open Business Dates" }));
-    await waitFor(() => expect(client.closeAllBusinessDates).toHaveBeenCalledWith("SITE-PITX"));
-    expect(await screen.findByText("3 Fiscal Business Dates closed for PITX Test Site.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close All Open Business Dates" })).not.toBeInTheDocument();
   });
 
   it("does not infer Z generation from Z read permission", async () => {

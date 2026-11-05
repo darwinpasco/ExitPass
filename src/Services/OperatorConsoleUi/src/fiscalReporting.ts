@@ -66,7 +66,7 @@ export interface FiscalPeriod {
     fiscalReportingPeriodId: string;
     businessDayDate: string;
     periodStartAt: string;
-    periodEndAt: string;
+    periodEndAt?: string;
     currencyCode: string;
     periodSequence: number;
     status: string;
@@ -299,24 +299,23 @@ export interface FiscalReportingSite {
     siteCode: string;
     siteName: string;
 }
-export interface CloseableFiscalBusinessDate {
+export interface FiscalBusinessDateLifecyclePeriod {
     fiscalReportingPeriodId: string;
-    fiscalBusinessDate: string;
-    periodStart: string;
-    periodEnd: string;
+    businessDateLabel: string;
     status: string;
+    openedAt: string;
+    closedAt?: string;
     transactionCount: number;
     expectedStateVersion: number;
+    zReadingReference?: string;
 }
-export interface CloseableFiscalBusinessDatesSnapshot {
-    fiscalBusinessDates: CloseableFiscalBusinessDate[];
-}
-export interface CloseAllFiscalBusinessDatesResult {
-    succeeded: boolean;
-    closedCount: number;
-    birSalesSummaryPendingCount: number;
-    message?: string;
-    stoppedAt?: string;
+export interface FiscalBusinessDateLifecycleSnapshot {
+    state: "NO_OPEN_PERIOD" | "OPEN" | "CLOSING" | "CLOSED";
+    proposedNextBusinessDateLabel: string;
+    databaseNow: string;
+    reportingTimezoneName: string;
+    activePeriod?: FiscalBusinessDateLifecyclePeriod;
+    lastClosedPeriod?: FiscalBusinessDateLifecyclePeriod;
 }
 export interface BirSalesSummaryCompletion {
     status: "COMMITTED" | "PENDING";
@@ -326,6 +325,8 @@ export interface BirSalesSummaryCompletion {
     message?: string;
 }
 export interface CloseFiscalBusinessDateResult {
+    zReadingReference: string;
+    actualClosedAt: string;
     birSalesSummaryCompletion?: BirSalesSummaryCompletion;
 }
 export interface OperatorFiscalReportingClient {
@@ -342,16 +343,12 @@ export interface OperatorFiscalReportingClient {
     readX(site: string): Promise<History>;
     generateX(site: string): Promise<void>;
     readZ(site: string): Promise<History>;
-    readCloseablePeriods(
-        site: string,
-    ): Promise<CloseableFiscalBusinessDatesSnapshot>;
+    readBusinessDateLifecycle(site: string): Promise<FiscalBusinessDateLifecycleSnapshot>;
+    openBusinessDate(site: string, snapshot: FiscalBusinessDateLifecycleSnapshot): Promise<FiscalBusinessDateLifecycleSnapshot>;
     closeBusinessDate(
         site: string,
-        period: CloseableFiscalBusinessDate,
+        period: FiscalBusinessDateLifecyclePeriod,
     ): Promise<CloseFiscalBusinessDateResult>;
-    closeAllBusinessDates(
-        site: string,
-    ): Promise<CloseAllFiscalBusinessDatesResult>;
     readingUrl(site: string, kind: "x" | "z", reference: string, format: "pdf" | "json"): string;
     generateBirSalesSummary(site: string, reading: Reading): Promise<BirSalesSummary>;
     readBirSalesSummary(site: string, summaryId: string): Promise<BirSalesSummary>;
@@ -492,50 +489,36 @@ export function createOperatorFiscalReportingClient(
         async readZ(s) {
             return hist(await json(p(s, "/z-readings")), "Z_READING");
         },
-        async readCloseablePeriods(s) {
-            return closeable(await json(p(s, "/z-readings/closeable-periods")));
+        async readBusinessDateLifecycle(s) {
+            return lifecycle(rec((await json(p(s, "/business-date"))).lifecycle));
+        },
+        async openBusinessDate(s, snapshot) {
+            return lifecycle(rec((await json(
+                p(s, "/business-date/open"),
+                mutation({
+                    operationKey: crypto.randomUUID(),
+                    businessDateLabel: snapshot.proposedNextBusinessDateLabel,
+                    confirmOpen: true,
+                }),
+            )).lifecycle));
         },
         async closeBusinessDate(s, period) {
             const value = await json(
-                p(
-                    s,
-                    `/z-readings/closeable-periods/${encodeURIComponent(period.fiscalReportingPeriodId)}/close`,
-                ),
+                p(s, "/business-date/close"),
                 mutation({
                     operationKey: crypto.randomUUID(),
+                    fiscalReportingPeriodId: period.fiscalReportingPeriodId,
                     expectedStateVersion: period.expectedStateVersion,
                     confirmClose: true,
                 }),
             );
+            const zReading = rec(value.zReading);
             return {
+                zReadingReference: str(zReading.fiscalReportReference),
+                actualClosedAt: str(zReading.closedAt),
                 birSalesSummaryCompletion: birCompletion(
                     value.birSalesSummaryCompletion,
                 ),
-            };
-        },
-        async closeAllBusinessDates(s) {
-            const value = await json(
-                p(s, "/z-readings/closeable-periods/close-all"),
-                mutation({
-                    operationKey: crypto.randomUUID(),
-                    confirmClose: true,
-                }),
-            );
-            return {
-                succeeded: value.succeeded === true,
-                closedCount: num(value.closedCount),
-                birSalesSummaryPendingCount:
-                    typeof value.birSalesSummaryPendingCount === "number"
-                        ? num(value.birSalesSummaryPendingCount)
-                        : 0,
-                message:
-                    typeof value.message === "string"
-                        ? value.message
-                        : undefined,
-                stoppedAt:
-                    typeof value.stoppedAt === "string"
-                        ? value.stoppedAt
-                        : undefined,
             };
         },
         readingUrl(s, k, r, format) {
@@ -660,7 +643,7 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
         fiscalReportingPeriodId: period.fiscalReportingPeriodId,
         businessDayDate: period.businessDayDate,
         periodStartAt: period.periodStartAt,
-        periodEndAt: period.periodEndAt,
+        periodEndAt: period.periodEndAt!,
         generatedAt: "2026-09-10T08:15:00Z",
         transactionCount: 1,
         amounts,
@@ -840,31 +823,33 @@ export function createOperatorFiscalReportingFixture(): OperatorFiscalReportingC
             currentPeriod: period,
             readings: [r("Z_READING")],
         }),
-        readCloseablePeriods: async () => ({
-            fiscalBusinessDates: [
-                {
-                    fiscalReportingPeriodId: period.fiscalReportingPeriodId,
-                    fiscalBusinessDate: period.businessDayDate,
-                    periodStart: period.periodStartAt,
-                    periodEnd: period.periodEndAt,
-                    status: "CLOSEABLE",
-                    transactionCount: 1,
-                    expectedStateVersion: period.expectedZStateVersion,
-                },
-            ],
+        readBusinessDateLifecycle: async () => ({
+            state: "OPEN",
+            proposedNextBusinessDateLabel: "2026-11-06",
+            databaseNow: "2026-11-05T12:00:00Z",
+            reportingTimezoneName: "Asia/Manila",
+            activePeriod: {
+                fiscalReportingPeriodId: period.fiscalReportingPeriodId,
+                businessDateLabel: period.businessDayDate,
+                openedAt: period.periodStartAt,
+                status: "OPEN",
+                transactionCount: 1,
+                expectedStateVersion: period.expectedZStateVersion,
+            },
+        }),
+        openBusinessDate: async (_site, snapshot) => ({
+            ...snapshot,
+            state: "OPEN",
         }),
         closeBusinessDate: async () => ({
+            zReadingReference: "Z-20260910-001",
+            actualClosedAt: "2026-09-10T08:15:00Z",
             birSalesSummaryCompletion: {
                 status: "COMMITTED",
                 summaryId: "95000000-0000-4000-8000-000000000001",
                 code: "bir_sales_summary_committed",
                 retryable: false,
             },
-        }),
-        closeAllBusinessDates: async () => ({
-            succeeded: true,
-            closedCount: 1,
-            birSalesSummaryPendingCount: 0,
         }),
         readingUrl: (s, k, x, format) =>
             `/v1/ops/operator-console/fiscal-reporting/sites/${s}/${k}-readings/${x}/download?format=${format}`,
@@ -1204,23 +1189,30 @@ function birCompletion(value: unknown): BirSalesSummaryCompletion | undefined {
     };
 }
 
-function closeable(
-    value: Record<string, unknown>,
-): CloseableFiscalBusinessDatesSnapshot {
-    if (!Array.isArray(value.fiscalBusinessDates)) throw bad();
+function lifecyclePeriod(value: unknown): FiscalBusinessDateLifecyclePeriod | undefined {
+    if (value === undefined || value === null) return undefined;
+    const period = rec(value);
     return {
-        fiscalBusinessDates: value.fiscalBusinessDates.map((item) => {
-            const period = rec(item);
-            return {
-                fiscalReportingPeriodId: str(period.fiscalReportingPeriodId),
-                fiscalBusinessDate: str(period.fiscalBusinessDate),
-                periodStart: str(period.periodStart),
-                periodEnd: str(period.periodEnd),
-                status: str(period.status),
-                transactionCount: num(period.transactionCount),
-                expectedStateVersion: num(period.expectedStateVersion),
-            };
-        }),
+        fiscalReportingPeriodId: str(period.fiscalReportingPeriodId),
+        businessDateLabel: str(period.businessDateLabel),
+        status: str(period.status),
+        openedAt: str(period.openedAt),
+        closedAt: typeof period.closedAt === "string" ? period.closedAt : undefined,
+        transactionCount: num(period.transactionCount),
+        expectedStateVersion: num(period.expectedZStateVersion),
+        zReadingReference: typeof period.zReadingReference === "string" ? period.zReadingReference : undefined,
+    };
+}
+function lifecycle(value: Record<string, unknown>): FiscalBusinessDateLifecycleSnapshot {
+    const state = str(value.state);
+    if (state !== "NO_OPEN_PERIOD" && state !== "OPEN" && state !== "CLOSING" && state !== "CLOSED") throw bad();
+    return {
+        state,
+        proposedNextBusinessDateLabel: str(value.proposedNextBusinessDateLabel),
+        databaseNow: str(value.databaseNow),
+        reportingTimezoneName: str(value.reportingTimezoneName),
+        activePeriod: lifecyclePeriod(value.activePeriod),
+        lastClosedPeriod: lifecyclePeriod(value.lastClosedPeriod),
     };
 }
 function per(o: Record<string, unknown>): FiscalPeriod {
@@ -1228,7 +1220,7 @@ function per(o: Record<string, unknown>): FiscalPeriod {
         fiscalReportingPeriodId: str(o.fiscalReportingPeriodId),
         businessDayDate: str(o.businessDayDate),
         periodStartAt: str(o.periodStartAt),
-        periodEndAt: str(o.periodEndAt),
+        periodEndAt: typeof o.periodEndAt === "string" ? o.periodEndAt : undefined,
         currencyCode: str(o.currencyCode),
         periodSequence: num(o.periodSequence),
         status: str(o.status),

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
+using ExitPass.CentralPms.Application.FiscalReporting;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.TerminalCashPayments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
@@ -139,6 +140,16 @@ public static class TerminalCashPaymentEndpoints
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
             return Results.Conflict(BuildError(ex.ErrorCode, ex.Message, correlationId));
+        }
+        catch (FiscalBusinessDateAdmissionException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            return Results.Json(
+                BuildError(ex.Code, ex.Message, correlationId),
+                statusCode: ex.Code == FiscalBusinessDateAdmissionCodes.Unavailable
+                    ? StatusCodes.Status503ServiceUnavailable
+                    : StatusCodes.Status409Conflict);
         }
     }
 

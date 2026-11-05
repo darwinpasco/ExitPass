@@ -68,7 +68,8 @@ public sealed class HttpFiscalReportingPosServerGateway(
             fiscalIdentityId = endpoint.FiscalIdentityId,
             currencyCode = endpoint.CurrencyCode,
             fiscalReportingPeriodId = periodId.GetString(),
-            expectedStateVersion = stateVersion.GetInt64()
+            expectedStateVersion = stateVersion.GetInt64(),
+            confirmClose = true
         });
         using var response = await httpClient.SendAsync(outbound, ct).ConfigureAwait(false);
         var bytes = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
@@ -88,7 +89,16 @@ public sealed class HttpFiscalReportingPosServerGateway(
             FiscalReportingGatewayAction.XGenerate => (HttpMethod.Post, "/v1/fiscal-reports/x-readings", "fiscal_x_reading.generate", new { operationKey=request.OperationKey, sitePosServerId=endpoint.SitePosServerId, fiscalIdentityId=endpoint.FiscalIdentityId, observedAt=DateTimeOffset.UtcNow }),
             FiscalReportingGatewayAction.XDownload => (HttpMethod.Get, $"/v1/fiscal-reports/x-readings/{Uri.EscapeDataString(RequireReference(request))}/exports/{RequireReadingExportFormat(request)}", "fiscal_x_reading.export", null),
             FiscalReportingGatewayAction.ZHistory => (HttpMethod.Get, $"/v1/fiscal-reports/z-readings/history?{scope}", "fiscal_z_reading.read", null),
-            FiscalReportingGatewayAction.ZCloseablePeriods => (HttpMethod.Get, $"/v1/fiscal-reports/z-readings/closeable-periods?{scope}", "fiscal_z_reading.read", null),
+            FiscalReportingGatewayAction.BusinessDateLifecycleRead => (HttpMethod.Get, $"/v1/fiscal-reports/business-dates/current?{scope}", "fiscal_z_reading.read", null),
+            FiscalReportingGatewayAction.BusinessDateOpen => (HttpMethod.Post, "/v1/fiscal-reports/business-dates/open", "fiscal_z_reading.close", new
+            {
+                operationKey = request.OperationKey,
+                sitePosServerId = endpoint.SitePosServerId,
+                fiscalIdentityId = endpoint.FiscalIdentityId,
+                currencyCode = endpoint.CurrencyCode,
+                businessDateLabel = RequireBusinessDateLabel(request),
+                confirmOpen = request.ConfirmOpen
+            }),
             FiscalReportingGatewayAction.ZClosePeriod => (HttpMethod.Post, "/v1/fiscal-reports/z-readings", "fiscal_z_reading.close", new
             {
                 operationKey = request.OperationKey,
@@ -96,7 +106,8 @@ public sealed class HttpFiscalReportingPosServerGateway(
                 fiscalIdentityId = endpoint.FiscalIdentityId,
                 currencyCode = endpoint.CurrencyCode,
                 fiscalReportingPeriodId = RequirePeriodId(request),
-                expectedStateVersion = RequireExpectedStateVersion(request)
+                expectedStateVersion = RequireExpectedStateVersion(request),
+                confirmClose = request.ConfirmClose
             }),
             FiscalReportingGatewayAction.ZDownload => (HttpMethod.Get, $"/v1/fiscal-reports/z-readings/{Uri.EscapeDataString(RequireReference(request))}/exports/{RequireReadingExportFormat(request)}", "fiscal_z_reading.export", null),
             FiscalReportingGatewayAction.ZCounterState => (HttpMethod.Get, $"/v1/admin/fiscal-z-counter/?{scope}", "fiscal_z_counter.read", null),
@@ -283,6 +294,7 @@ public sealed class HttpFiscalReportingPosServerGateway(
     }
     private static Guid RequirePeriodId(FiscalReportingGatewayRequest r)=>r.FiscalReportingPeriodId is { } value&&value!=Guid.Empty?value:throw new ArgumentException("Fiscal reporting period is required.");
     private static long RequireExpectedStateVersion(FiscalReportingGatewayRequest r)=>r.ExpectedStateVersion is >0? r.ExpectedStateVersion.Value:throw new ArgumentException("Expected fiscal-period state version is required.");
+    private static DateOnly RequireBusinessDateLabel(FiscalReportingGatewayRequest r)=>r.BusinessDateLabel is { } value&&value!=default?value:throw new ArgumentException("Fiscal business-date label is required.");
     private static Guid RequireGuid(Guid? value,string name)=>value is { } id&&id!=Guid.Empty?id:throw new ArgumentException($"A valid {name} identifier is required.");
     private static string RequireGoverningZReference(FiscalReportingGatewayRequest r)=>!string.IsNullOrWhiteSpace(r.GoverningZReadingReference)?r.GoverningZReadingReference.Trim():throw new ArgumentException("The governing Z Reading reference is required.");
     private static int RequireCalendarPart(int? value,int minimum,int maximum,string name)=>value.HasValue&&value.Value>=minimum&&value.Value<=maximum?value.Value:throw new ArgumentException($"A valid calendar {name} is required.");

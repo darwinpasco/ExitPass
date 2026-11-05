@@ -8,7 +8,8 @@ public enum FiscalReportingGatewayAction
     XGenerate,
     XDownload,
     ZHistory,
-    ZCloseablePeriods,
+    BusinessDateLifecycleRead,
+    BusinessDateOpen,
     ZClosePeriod,
     ZGenerate,
     ZDownload,
@@ -71,7 +72,10 @@ public sealed record FiscalReportingGatewayRequest(
     Guid? SupersedesWorkbookId = null,
     string? CorrectionApprovalReference = null,
     string? ResetReason = null,
-    string? AnnexType = null);
+    string? AnnexType = null,
+    DateOnly? BusinessDateLabel = null,
+    bool ConfirmOpen = false,
+    bool ConfirmClose = false);
 
 public sealed record FiscalReportingGatewayResponse(
     int HttpStatusCode,

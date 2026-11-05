@@ -1,5 +1,6 @@
 using System.Data;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
+using ExitPass.CentralPms.Application.FiscalReporting;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -12,12 +13,16 @@ public sealed class TerminalCashPayableBasisEligibilityReader : ITerminalCashPay
 {
     private const string SupportedCurrency = "PHP";
     private readonly string _connectionString;
+    private readonly IFiscalBusinessDateAdmissionGate? _fiscalAdmissionGate;
 
-    public TerminalCashPayableBasisEligibilityReader(string connectionString)
+    public TerminalCashPayableBasisEligibilityReader(
+        string connectionString,
+        IFiscalBusinessDateAdmissionGate? fiscalAdmissionGate = null)
     {
         _connectionString = !string.IsNullOrWhiteSpace(connectionString)
             ? connectionString
             : throw new ArgumentException("Connection string is required.", nameof(connectionString));
+        _fiscalAdmissionGate = fiscalAdmissionGate;
     }
 
     public async Task<TerminalCashPayableBasisEligibility> EvaluateAsync(
@@ -141,6 +146,22 @@ public sealed class TerminalCashPayableBasisEligibilityReader : ITerminalCashPay
                 "CASH_PAYMENT_RAIL_NOT_CONFIGURED",
                 "Active CASH payment rail is not configured.",
                 retryable: false);
+        }
+
+        if (_fiscalAdmissionGate is not null)
+        {
+            try
+            {
+                await using var admission = await _fiscalAdmissionGate.AcquireOpenAsync(
+                    request.SiteId,
+                    Guid.NewGuid(),
+                    $"apt:{request.TerminalId}",
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (FiscalBusinessDateAdmissionException exception)
+            {
+                return Blocked(exception.Code, exception.Message, exception.Retryable);
+            }
         }
 
         return new TerminalCashPayableBasisEligibility(

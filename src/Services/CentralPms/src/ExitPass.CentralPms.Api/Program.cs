@@ -727,7 +727,8 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IFiscalIssuancePosServerLiveIntegrationService>(),
             serviceProvider.GetRequiredService<IStatutoryBeneficiaryIdentityRepository>(),
             serviceProvider.GetRequiredService<FiscalIssuancePosServerIntegrationOptions>(),
-            projectionServiceIdentityId));
+            projectionServiceIdentityId,
+            serviceProvider.GetRequiredService<IFiscalBusinessDateAdmissionGate>()));
 
     builder.Services.AddScoped<IReportVerifiedPaymentOutcomeUseCase, ReportVerifiedPaymentOutcomeHandler>();
 
@@ -983,6 +984,10 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IOptions<ManagementFiscalExceptionReportingOptions>>().Value,
             serviceProvider.GetRequiredService<TimeProvider>()));
     builder.Services.AddHttpClient<IFiscalReportingPosServerGateway, HttpFiscalReportingPosServerGateway>();
+    builder.Services.AddScoped<IFiscalBusinessDateAdmissionGate>(serviceProvider =>
+        new PostgresFiscalBusinessDateAdmissionGate(
+            mainDatabaseConnectionString,
+            serviceProvider.GetRequiredService<IFiscalReportingPosServerGateway>()));
     builder.Services.AddScoped<IManagementPlatformIdentityAdministrationRepository>(_ =>
         new PostgresManagementPlatformIdentityAdministrationRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IHumanAuthenticationAdministrationGateway, HumanAuthenticationAdministrationGateway>();
@@ -1035,7 +1040,9 @@ static void ConfigureApplicationServices(
         new TerminalCashPaymentRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<ITerminalCashPaymentService, TerminalCashPaymentService>();
     builder.Services.AddScoped<ITerminalCashPayableBasisEligibilityReader>(_ =>
-        new TerminalCashPayableBasisEligibilityReader(mainDatabaseConnectionString));
+        new TerminalCashPayableBasisEligibilityReader(
+            mainDatabaseConnectionString,
+            _.GetRequiredService<IFiscalBusinessDateAdmissionGate>()));
     builder.Services.AddScoped<IAptPayableBasisReadinessService, AptPayableBasisReadinessService>();
     builder.Services.AddScoped<ITerminalCashStatutoryFiscalLinkageReader>(serviceProvider =>
         new PostgresTerminalCashStatutoryFiscalLinkageReader(

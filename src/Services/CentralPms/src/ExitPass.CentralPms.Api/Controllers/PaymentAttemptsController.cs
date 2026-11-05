@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using ExitPass.CentralPms.Api.Validation;
 using ExitPass.CentralPms.Application.PaymentAttempts;
+using ExitPass.CentralPms.Application.FiscalReporting;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.Public.PaymentAttempts;
@@ -306,6 +307,16 @@ public sealed class PaymentAttemptsController : ControllerBase
 
             _logger.LogWarning(ex, "CreatePaymentAttempt failed because idempotency conflict was detected.");
             return Conflict(BuildError("IDEMPOTENCY_CONFLICT", ex.Message, correlationIdRaw));
+        }
+        catch (FiscalBusinessDateAdmissionException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            _logger.LogWarning("Payment attempt admission rejected. code={Code}", ex.Code);
+            var error = BuildError(ex.Code, ex.Message, correlationIdRaw, retryable: ex.Retryable);
+            return ex.Code == FiscalBusinessDateAdmissionCodes.Unavailable
+                ? StatusCode(StatusCodes.Status503ServiceUnavailable, error)
+                : Conflict(error);
         }
     }
 

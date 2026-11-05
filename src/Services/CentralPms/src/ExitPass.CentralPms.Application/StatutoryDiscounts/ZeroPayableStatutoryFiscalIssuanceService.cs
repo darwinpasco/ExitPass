@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.FiscalReporting;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 
@@ -24,6 +25,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
     private readonly IStatutoryBeneficiaryIdentityRepository _beneficiaryIdentities;
     private readonly FiscalIssuancePosServerIntegrationOptions _options;
     private readonly Guid _centralPmsServiceIdentityId;
+    private readonly IFiscalBusinessDateAdmissionGate? _fiscalAdmissionGate;
 
     public ZeroPayableStatutoryFiscalIssuanceService(
         IFiscalIssuanceReferenceRepository references,
@@ -31,7 +33,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
         IFiscalIssuancePosServerLiveIntegrationService posServer,
         IStatutoryBeneficiaryIdentityRepository beneficiaryIdentities,
         FiscalIssuancePosServerIntegrationOptions options,
-        Guid centralPmsServiceIdentityId)
+        Guid centralPmsServiceIdentityId,
+        IFiscalBusinessDateAdmissionGate? fiscalAdmissionGate = null)
     {
         if (centralPmsServiceIdentityId == Guid.Empty)
         {
@@ -44,6 +47,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
         _beneficiaryIdentities = beneficiaryIdentities;
         _options = options;
         _centralPmsServiceIdentityId = centralPmsServiceIdentityId;
+        _fiscalAdmissionGate = fiscalAdmissionGate;
     }
 
     public async Task<ZeroPayableStatutoryFiscalIssuanceResult?> ReadAsync(
@@ -81,6 +85,14 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 return ToResult(existing, false, existing.LatestErrorCode);
             }
         }
+
+        await using var fiscalAdmission = _fiscalAdmissionGate is null
+            ? null
+            : await _fiscalAdmissionGate.AcquireOpenAsync(
+                finality.SiteId,
+                finality.CorrelationId,
+                "zero-payable-statutory-finality",
+                cancellationToken).ConfigureAwait(false);
 
         var beneficiaryIdentity = await ReadBeneficiaryIdentityAsync(finality, cancellationToken)
             .ConfigureAwait(false);

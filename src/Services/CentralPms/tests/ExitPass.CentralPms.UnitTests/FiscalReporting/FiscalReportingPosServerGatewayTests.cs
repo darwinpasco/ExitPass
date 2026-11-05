@@ -79,17 +79,17 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
     }
 
     [Fact]
-    public async Task CloseablePeriodsUsesTheMergedSiteScopedPosReadContract()
+    public async Task BusinessDateLifecycleUsesTheSiteScopedPosReadContract()
     {
         var handler = new CaptureHandler(_ => Json("{\"fiscalBusinessDates\":[]}"));
 
         var result = await Gateway(handler, OptionsFor(Endpoint(Site, "https://site-a.example/"))).SendAsync(
-            Request(FiscalReportingGatewayAction.ZCloseablePeriods));
+            Request(FiscalReportingGatewayAction.BusinessDateLifecycleRead));
 
         Assert.Equal(200, result.HttpStatusCode);
         var outbound = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Get, outbound.Method);
-        Assert.Equal("/v1/fiscal-reports/z-readings/closeable-periods", outbound.RequestUri!.AbsolutePath);
+        Assert.Equal("/v1/fiscal-reports/business-dates/current", outbound.RequestUri!.AbsolutePath);
         Assert.Contains($"sitePosServerId={Pos:D}", outbound.RequestUri.Query);
         Assert.Contains($"fiscalIdentityId={Identity:D}", outbound.RequestUri.Query);
         Assert.Contains("currencyCode=PHP", outbound.RequestUri.Query);
@@ -107,7 +107,8 @@ public sealed class FiscalReportingPosServerGatewayTests : IDisposable
             {
                 OperationKey = "site-close-20260920",
                 FiscalReportingPeriodId = periodId,
-                ExpectedStateVersion = 17
+                ExpectedStateVersion = 17,
+                ConfirmClose = true
             });
 
         Assert.Equal(201, result.HttpStatusCode);
