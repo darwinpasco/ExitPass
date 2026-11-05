@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
+using ExitPass.CentralPms.Application.FiscalReporting;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
@@ -44,6 +45,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     private static readonly Guid AlternateTariffSnapshotId = Guid.Parse("22222222-2222-2222-2222-222222222223");
     private static readonly Guid PaymentAttemptId = Guid.Parse("33333333-3333-3333-3333-333333333333");
     private static readonly Guid CorrelationId = Guid.Parse("44444444-4444-4444-4444-444444444444");
+    private static readonly Guid SiteId = Guid.Parse("55555555-5555-5555-5555-555555555555");
     private static readonly DateTimeOffset Now = new(2026, 3, 31, 5, 0, 0, TimeSpan.Zero);
 
     /// <summary>
@@ -785,6 +787,29 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
         await act.Should().ThrowAsync<TariffSnapshotNotEligibleException>();
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenFiscalBusinessDateIsNotOpen_RejectsBeforeAttemptOrProviderHandoff()
+    {
+        var fixture = CreateFixture(withAdmissionGate: true);
+        fixture.ParkingSessionReadRepository
+            .GetByIdAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(CreateParkingSession(ParkingSessionStatus.PaymentRequired, SiteId.ToString()));
+        fixture.FiscalAdmissionGate!
+            .AcquireOpenAsync(SiteId, CorrelationId, "unit-test", Arg.Any<CancellationToken>())
+            .Returns<Task<IFiscalBusinessDateAdmissionLease>>(_ => throw new FiscalBusinessDateAdmissionException(
+                FiscalBusinessDateAdmissionCodes.NotOpen,
+                "Payment acceptance is unavailable because no fiscal business date is OPEN."));
+
+        var act = () => fixture.CreateSut().ExecuteAsync(CreateCommand("idem-closed"), CancellationToken.None);
+
+        await act.Should().ThrowAsync<FiscalBusinessDateAdmissionException>()
+            .Where(exception => exception.Code == FiscalBusinessDateAdmissionCodes.NotOpen);
+        await fixture.PaymentAttemptDbRoutineGateway.DidNotReceiveWithAnyArgs()
+            .CreateOrReusePaymentAttemptAsync(default!, default);
+        fixture.ProviderHandoffFactory.DidNotReceiveWithAnyArgs()
+            .CreatePlaceholder(default!, default);
+    }
+
     /// <summary>
     /// Creates a canonical command for create-or-reuse payment attempt tests.
     /// </summary>
@@ -809,12 +834,12 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     /// </summary>
     /// <param name="status">The parking session status to assign.</param>
     /// <returns>A rehydrated <see cref="ParkingSession"/> instance.</returns>
-    private static ParkingSession CreateParkingSession(ParkingSessionStatus status)
+    private static ParkingSession CreateParkingSession(ParkingSessionStatus status, string siteId = "SITE-TEST-001")
     {
         return ParkingSession.Rehydrate(
             parkingSessionId: ParkingSessionId,
             siteGroupId: "SG-TEST-001",
-            siteId: "SITE-TEST-001",
+            siteId: siteId,
             vendorSystemCode: "VENDOR-TEST-001",
             vendorSessionRef: "VSESSION-001",
             identifierType: "PLATE",
@@ -877,10 +902,19 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     /// Creates a fully substituted fixture for create-or-reuse payment attempt handler tests.
     /// </summary>
     /// <returns>A populated <see cref="Fixture"/> record.</returns>
-    private static Fixture CreateFixture()
+    private static Fixture CreateFixture(bool withAdmissionGate = false)
     {
         var clock = Substitute.For<ISystemClock>();
         clock.UtcNow.Returns(Now);
+        var fiscalAdmissionGate = withAdmissionGate
+            ? Substitute.For<IFiscalBusinessDateAdmissionGate>()
+            : null;
+        fiscalAdmissionGate?.AcquireOpenAsync(
+                Arg.Any<Guid>(),
+                Arg.Any<Guid>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IFiscalBusinessDateAdmissionLease>(new NoopAdmissionLease()));
 
         return new Fixture(
             Substitute.For<IParkingSessionReadRepository>(),
@@ -891,7 +925,8 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
             Substitute.For<IProviderHandoffFactory>(),
             new RecordingIntegrationEventPublisher(),
             clock,
-            new CentralPmsMetrics());
+            new CentralPmsMetrics(),
+            fiscalAdmissionGate);
     }
 
     /// <summary>
@@ -965,7 +1000,8 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
         IProviderHandoffFactory ProviderHandoffFactory,
         RecordingIntegrationEventPublisher EventPublisher,
         ISystemClock SystemClock,
-        CentralPmsMetrics Metrics)
+        CentralPmsMetrics Metrics,
+        IFiscalBusinessDateAdmissionGate? FiscalAdmissionGate)
     {
         /// <summary>
         /// Creates the system under test using substituted dependencies, shared metrics, and no-op logging.
@@ -983,7 +1019,8 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
                 EventPublisher,
                 SystemClock,
                 Metrics,
-                NullLogger<CreateOrReusePaymentAttemptHandler>.Instance);
+                NullLogger<CreateOrReusePaymentAttemptHandler>.Instance,
+                FiscalAdmissionGate);
         }
     }
 
@@ -996,5 +1033,12 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
             Published.Add(envelope);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class NoopAdmissionLease : IFiscalBusinessDateAdmissionLease
+    {
+        public Task EnsureSafeToCloseAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

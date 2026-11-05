@@ -92,12 +92,12 @@ public static class FiscalReportingEndpoints
             .WithMetadata(new ReconciliationPolicyMetadata(ZReadPolicy));
         if (operatorScoped)
         {
-            group.MapGet("/z-readings/closeable-periods", (Guid siteId,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
-                Execute(siteId,true,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.ZCloseablePeriods,null,null,null,null,null,false,ct))
+            group.MapGet("/business-date", (Guid siteId,HttpRequest request,IFiscalReportingPosServerGateway gateway,IFiscalIssuanceReferenceRepository references,ICentralPmsRbacRepository rbac,ILoggerFactory logs,CancellationToken ct)=>
+                Execute(siteId,true,request,gateway,references,rbac,logs,FiscalReportingGatewayAction.BusinessDateLifecycleRead,null,null,null,null,null,false,ct))
                 .WithMetadata(new ReconciliationPolicyMetadata(ZReadPolicy));
-            group.MapPost("/z-readings/closeable-periods/{fiscalReportingPeriodId:guid}/close", ClosePeriodAsync)
+            group.MapPost("/business-date/open", OpenBusinessDateAsync)
                 .WithMetadata(new ReconciliationPolicyMetadata(ZGeneratePolicy));
-            group.MapPost("/z-readings/closeable-periods/close-all", CloseAllPeriodsAsync)
+            group.MapPost("/business-date/close", ClosePeriodAsync)
                 .WithMetadata(new ReconciliationPolicyMetadata(ZGeneratePolicy));
         }
         if (!operatorScoped)
@@ -340,10 +340,10 @@ public static class FiscalReportingEndpoints
 
     private static async Task<IResult> ClosePeriodAsync(
         Guid siteId,
-        Guid fiscalReportingPeriodId,
         CloseFiscalBusinessDateRequest body,
         HttpRequest request,
         IFiscalReportingPosServerGateway gateway,
+        IFiscalBusinessDateAdmissionGate admissionGate,
         ICentralPmsRbacRepository rbacRepository,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
@@ -351,19 +351,78 @@ public static class FiscalReportingEndpoints
         var authorization = await AuthorizeCloseAsync(siteId, body.ConfirmClose, request, rbacRepository, cancellationToken).ConfigureAwait(false);
         if (authorization.Denial is not null) return authorization.Denial;
 
+        try
+        {
+        await using var transition = await admissionGate.AcquireTransitionAsync(siteId, cancellationToken).ConfigureAwait(false);
+        await transition.EnsureSafeToCloseAsync(cancellationToken).ConfigureAwait(false);
         var result = await gateway.SendAsync(new(
             siteId,
             FiscalReportingGatewayAction.ZClosePeriod,
             authorization.CorrelationId,
             authorization.Actor,
+            request.HttpContext.User.FindFirstValue("display_name") ?? request.HttpContext.User.FindFirstValue(ClaimTypes.Name),
             OperationKey: body.OperationKey,
-            FiscalReportingPeriodId: fiscalReportingPeriodId,
-            ExpectedStateVersion: body.ExpectedStateVersion), cancellationToken).ConfigureAwait(false);
+            FiscalReportingPeriodId: body.FiscalReportingPeriodId,
+            ExpectedStateVersion: body.ExpectedStateVersion,
+            ConfirmClose: body.ConfirmClose), cancellationToken).ConfigureAwait(false);
         loggerFactory.CreateLogger("ExitPass.CentralPms.FiscalReporting").Log(
             result.HttpStatusCode < 400 ? LogLevel.Information : LogLevel.Warning,
             "Site-scoped fiscal business date close completed. actor={Actor} site={Site} period={Period} result={Result} correlation_id={Correlation}",
-            authorization.Actor, siteId, fiscalReportingPeriodId, result.Code, authorization.CorrelationId);
+            authorization.Actor, siteId, body.FiscalReportingPeriodId, result.Code, authorization.CorrelationId);
         return GatewayResult(result);
+        }
+        catch (FiscalBusinessDateAdmissionException exception)
+        {
+            return Results.Json(new { succeeded=false,code=exception.Code,message=exception.Message,correlationId=authorization.CorrelationId },
+                statusCode: exception.Code == FiscalBusinessDateAdmissionCodes.Unavailable ? 503 : 409);
+        }
+    }
+
+    private static async Task<IResult> OpenBusinessDateAsync(
+        Guid siteId,
+        OpenFiscalBusinessDateRequest body,
+        HttpRequest request,
+        IFiscalReportingPosServerGateway gateway,
+        IFiscalBusinessDateAdmissionGate admissionGate,
+        ICentralPmsRbacRepository rbacRepository,
+        ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken)
+    {
+        var authorization = await AuthorizeCloseAsync(
+            siteId,
+            body.ConfirmOpen,
+            request,
+            rbacRepository,
+            cancellationToken,
+            "fiscal_business_date_open_confirmation_required",
+            "Explicit confirmation is required before opening a fiscal business date.").ConfigureAwait(false);
+        if (authorization.Denial is not null) return authorization.Denial;
+        if (!ValidReference(body.OperationKey, 200) || body.BusinessDateLabel == default)
+            return Results.BadRequest(new { succeeded=false,code="fiscal_business_date_open_invalid",message="A valid operation key and fiscal business-date label are required." });
+
+        try
+        {
+        await using var transition = await admissionGate.AcquireTransitionAsync(siteId, cancellationToken).ConfigureAwait(false);
+        var result = await gateway.SendAsync(new(
+            siteId,
+            FiscalReportingGatewayAction.BusinessDateOpen,
+            authorization.CorrelationId,
+            authorization.Actor,
+            request.HttpContext.User.FindFirstValue("display_name") ?? request.HttpContext.User.FindFirstValue(ClaimTypes.Name),
+            OperationKey: body.OperationKey,
+            BusinessDateLabel: body.BusinessDateLabel,
+            ConfirmOpen: body.ConfirmOpen), cancellationToken).ConfigureAwait(false);
+        loggerFactory.CreateLogger("ExitPass.CentralPms.FiscalReporting").Log(
+            result.HttpStatusCode < 400 ? LogLevel.Information : LogLevel.Warning,
+            "Site-scoped fiscal business date open completed. actor={Actor} site={Site} label={Label} result={Result} correlation_id={Correlation}",
+            authorization.Actor, siteId, body.BusinessDateLabel, result.Code, authorization.CorrelationId);
+        return GatewayResult(result);
+        }
+        catch (FiscalBusinessDateAdmissionException exception)
+        {
+            return Results.Json(new { succeeded=false,code=exception.Code,message=exception.Message,correlationId=authorization.CorrelationId },
+                statusCode: exception.Code == FiscalBusinessDateAdmissionCodes.Unavailable ? 503 : 409);
+        }
     }
 
     private static async Task<IResult> ResetZCounterAsync(
@@ -395,106 +454,6 @@ public static class FiscalReportingEndpoints
             "Manual Z Counter reset completed. actor={Actor} site={Site} result={Result} correlation_id={Correlation}",
             authorization.Actor, siteId, result.Code, authorization.CorrelationId);
         return GatewayResult(result);
-    }
-
-    private static async Task<IResult> CloseAllPeriodsAsync(
-        Guid siteId,
-        CloseAllFiscalBusinessDatesRequest body,
-        HttpRequest request,
-        IFiscalReportingPosServerGateway gateway,
-        ICentralPmsRbacRepository rbacRepository,
-        ILoggerFactory loggerFactory,
-        CancellationToken cancellationToken)
-    {
-        var authorization = await AuthorizeCloseAsync(siteId, body.ConfirmClose, request, rbacRepository, cancellationToken).ConfigureAwait(false);
-        if (authorization.Denial is not null) return authorization.Denial;
-
-        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.FiscalReporting");
-        var snapshot = await gateway.SendAsync(new(
-            siteId,
-            FiscalReportingGatewayAction.ZCloseablePeriods,
-            authorization.CorrelationId,
-            authorization.Actor), cancellationToken).ConfigureAwait(false);
-        if (snapshot.HttpStatusCode is < 200 or >= 300) return GatewayResult(snapshot);
-
-        if (!TryReadCloseablePeriods(snapshot.Body, out var periods))
-        {
-            return Results.Json(new
-            {
-                succeeded = false,
-                code = "fiscal_reporting_closeable_periods_response_invalid",
-                message = "The authoritative closeable-period response was invalid.",
-                correlationId = authorization.CorrelationId
-            }, statusCode: StatusCodes.Status502BadGateway);
-        }
-
-        var closedCount = 0;
-        var birSalesSummaryPendingCount = 0;
-        foreach (var period in periods)
-        {
-            var close = await gateway.SendAsync(new(
-                siteId,
-                FiscalReportingGatewayAction.ZClosePeriod,
-                authorization.CorrelationId,
-                authorization.Actor,
-                OperationKey: $"{body.OperationKey}:{period.FiscalReportingPeriodId:D}",
-                FiscalReportingPeriodId: period.FiscalReportingPeriodId,
-                ExpectedStateVersion: period.ExpectedStateVersion), cancellationToken).ConfigureAwait(false);
-            if (close.HttpStatusCode is < 200 or >= 300)
-            {
-                _ = await gateway.SendAsync(new(
-                    siteId,
-                    FiscalReportingGatewayAction.ZCloseablePeriods,
-                    authorization.CorrelationId,
-                    authorization.Actor), cancellationToken).ConfigureAwait(false);
-                logger.LogWarning(
-                    "Site-scoped batch fiscal close stopped. actor={Actor} site={Site} closed_count={ClosedCount} stopped_period={Period} result={Result} correlation_id={Correlation}",
-                    authorization.Actor, siteId, closedCount, period.FiscalBusinessDate, close.Code, authorization.CorrelationId);
-                return Results.Json(new
-                {
-                    succeeded = false,
-                    code = "fiscal_business_date_batch_close_stopped",
-                    closedCount,
-                    stoppedAt = period.FiscalBusinessDate,
-                    message = $"{closedCount} business dates closed. Closing stopped at {period.FiscalBusinessDate}.",
-                    correlationId = authorization.CorrelationId
-                }, statusCode: close.HttpStatusCode >= 500 ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status409Conflict);
-            }
-
-            closedCount++;
-            if (HasPendingBirSalesSummary(close.Body)) birSalesSummaryPendingCount++;
-        }
-
-        logger.LogInformation(
-            "Site-scoped batch fiscal close completed. actor={Actor} site={Site} closed_count={ClosedCount} correlation_id={Correlation}",
-            authorization.Actor, siteId, closedCount, authorization.CorrelationId);
-        return Results.Ok(new
-        {
-            succeeded = true,
-            code = "fiscal_business_dates_closed",
-            closedCount,
-            birSalesSummaryPendingCount,
-            message = birSalesSummaryPendingCount > 0
-                ? $"{closedCount} Fiscal Business Dates closed. {birSalesSummaryPendingCount} Daily BIR Sales Summary operation(s) are pending and can be retried from Daily BIR Sales Summary."
-                : null,
-            correlationId = authorization.CorrelationId
-        });
-    }
-
-    private static bool HasPendingBirSalesSummary(byte[] body)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(body);
-            return document.RootElement.TryGetProperty("birSalesSummaryCompletion", out var completion) &&
-                   completion.ValueKind == JsonValueKind.Object &&
-                   completion.TryGetProperty("status", out var status) &&
-                   string.Equals(status.GetString(), "PENDING", StringComparison.Ordinal);
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
     }
 
     private static async Task<CloseAuthorization> AuthorizeCloseAsync(
@@ -536,36 +495,6 @@ public static class FiscalReportingEndpoints
             }));
         }
         return new(actor, correlation, null);
-    }
-
-    private static bool TryReadCloseablePeriods(byte[] body, out IReadOnlyList<CloseablePeriod> periods)
-    {
-        periods = [];
-        try
-        {
-            using var document = JsonDocument.Parse(body);
-            if (!document.RootElement.TryGetProperty("fiscalBusinessDates", out var items) || items.ValueKind != JsonValueKind.Array) return false;
-            var parsed = new List<CloseablePeriod>();
-            foreach (var item in items.EnumerateArray())
-            {
-                if (!item.TryGetProperty("fiscalReportingPeriodId", out var periodIdValue) ||
-                    !Guid.TryParse(periodIdValue.GetString(), out var periodId) || periodId == Guid.Empty ||
-                    !item.TryGetProperty("fiscalBusinessDate", out var businessDateValue) ||
-                    !DateOnly.TryParse(businessDateValue.GetString(), out var businessDate) ||
-                    !item.TryGetProperty("expectedStateVersion", out var versionValue) ||
-                    !versionValue.TryGetInt64(out var version) || version <= 0)
-                {
-                    return false;
-                }
-                parsed.Add(new(periodId, businessDate, version));
-            }
-            periods = parsed;
-            return true;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
     }
 
     private static IResult GatewayResult(FiscalReportingGatewayResponse result)
@@ -824,9 +753,8 @@ public sealed record AttestAnnexE1KnownZeroRequest(
     long? AmountMinorUnits,long? SourceDocumentCount,string? FirstSourceReference,
     string? LastSourceReference,string? SourceEventReference,string? ApprovalReference,
     Guid? SupersedesFactId=null,string? CorrectionReason=null);
-public sealed record CloseFiscalBusinessDateRequest(string? OperationKey,long ExpectedStateVersion,bool ConfirmClose);
-public sealed record CloseAllFiscalBusinessDatesRequest(string OperationKey,bool ConfirmClose);
+public sealed record OpenFiscalBusinessDateRequest(string? OperationKey,DateOnly BusinessDateLabel,bool ConfirmOpen);
+public sealed record CloseFiscalBusinessDateRequest(string? OperationKey,Guid FiscalReportingPeriodId,long ExpectedStateVersion,bool ConfirmClose);
 public sealed record ResetFiscalZCounterRequest(string? OperationKey,long ExpectedStateVersion,string? Reason,bool ConfirmReset);
 public sealed record FiscalReportingAuthorizedSiteResponse(Guid SiteId,string SiteCode,string SiteName);
 internal sealed record CloseAuthorization(string Actor,Guid CorrelationId,IResult? Denial);
-internal sealed record CloseablePeriod(Guid FiscalReportingPeriodId,DateOnly FiscalBusinessDate,long ExpectedStateVersion);

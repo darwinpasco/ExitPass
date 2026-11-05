@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
+using ExitPass.CentralPms.Application.FiscalReporting;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
 using ExitPass.CentralPms.Application.PaymentAttempts.Results;
@@ -55,6 +56,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
     private readonly ISystemClock _systemClock;
     private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<CreateOrReusePaymentAttemptHandler> _logger;
+    private readonly IFiscalBusinessDateAdmissionGate? _fiscalAdmissionGate;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CreateOrReusePaymentAttemptHandler"/> class.
@@ -79,7 +81,8 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         IIntegrationEventPublisher eventPublisher,
         ISystemClock systemClock,
         CentralPmsMetrics metrics,
-        ILogger<CreateOrReusePaymentAttemptHandler> logger)
+        ILogger<CreateOrReusePaymentAttemptHandler> logger,
+        IFiscalBusinessDateAdmissionGate? fiscalAdmissionGate = null)
     {
         _parkingSessionReadRepository = parkingSessionReadRepository;
         _tariffSnapshotReadRepository = tariffSnapshotReadRepository;
@@ -91,6 +94,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         _systemClock = systemClock;
         _metrics = metrics;
         _logger = logger;
+        _fiscalAdmissionGate = fiscalAdmissionGate;
     }
 
     /// <summary>
@@ -155,6 +159,14 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
                 throw new InvalidOperationException(
                     $"Parking session '{command.ParkingSessionId}' is not eligible for payment attempt creation.");
             }
+
+            await using var fiscalAdmission = _fiscalAdmissionGate is null
+                ? null
+                : await _fiscalAdmissionGate.AcquireOpenAsync(
+                    Guid.Parse(parkingSession.SiteId),
+                    command.CorrelationId,
+                    command.RequestedBy,
+                    cancellationToken).ConfigureAwait(false);
 
             var tariffSnapshot = await _tariffSnapshotReadRepository.GetByIdAsync(
                 command.TariffSnapshotId,

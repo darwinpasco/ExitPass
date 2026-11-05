@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.FiscalReporting;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Application.VendorParking;
@@ -48,6 +49,7 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
     private readonly ILogger<ReportVerifiedPaymentOutcomeHandler> _logger;
     private readonly CentralPmsMetrics _metrics;
     private readonly IContinuityTariffProvenanceReader? _continuityTariffProvenance;
+    private readonly IFiscalBusinessDateAdmissionGate? _fiscalAdmissionGate;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ReportVerifiedPaymentOutcomeHandler"/> class.
@@ -72,7 +74,8 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
         IDigitalPaymentFiscalIssuanceService? digitalPaymentFiscalIssuanceService = null,
         FiscalIssuancePosServerIntegrationOptions? posServerOptions = null,
         IDigitalPaymentFiscalRecoveryContextReader? digitalPaymentFiscalRecoveryContextReader = null,
-        IContinuityTariffProvenanceReader? continuityTariffProvenance = null)
+        IContinuityTariffProvenanceReader? continuityTariffProvenance = null,
+        IFiscalBusinessDateAdmissionGate? fiscalAdmissionGate = null)
     {
         _recordPaymentConfirmationGateway = recordPaymentConfirmationGateway;
         _finalizePaymentAttemptUseCase = finalizePaymentAttemptUseCase;
@@ -86,6 +89,7 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
         _logger = logger;
         _metrics = metrics ?? new CentralPmsMetrics();
         _continuityTariffProvenance = continuityTariffProvenance;
+        _fiscalAdmissionGate = fiscalAdmissionGate;
     }
 
     /// <summary>
@@ -114,6 +118,11 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
         activity?.SetTag("requested_by_user_id", command.RequestedByUserId);
 
         ValidateCommand(command);
+        await using var settlementAdmission = _fiscalAdmissionGate is null
+            ? null
+            : await _fiscalAdmissionGate.AcquirePaymentSettlementAsync(
+                command.PaymentAttemptId,
+                cancellationToken).ConfigureAwait(false);
         _metrics.VerifiedPaymentOutcomeReceived(command.ProviderStatus, command.FinalAttemptStatus);
 
         _logger.LogInformation(

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using ExitPass.CentralPms.Domain.Common;
+using ExitPass.CentralPms.Application.FiscalReporting;
 
 namespace ExitPass.CentralPms.Application.TerminalCashPayments;
 
@@ -19,16 +20,19 @@ public sealed class TerminalCashPaymentService : ITerminalCashPaymentService
 
     private readonly ITerminalCashPaymentRepository _repository;
     private readonly ISystemClock _clock;
+    private readonly IFiscalBusinessDateAdmissionGate? _fiscalAdmissionGate;
 
     /// <summary>
     /// Creates a terminal cash payment service.
     /// </summary>
     public TerminalCashPaymentService(
         ITerminalCashPaymentRepository repository,
-        ISystemClock clock)
+        ISystemClock clock,
+        IFiscalBusinessDateAdmissionGate? fiscalAdmissionGate = null)
     {
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _fiscalAdmissionGate = fiscalAdmissionGate;
     }
 
     /// <inheritdoc />
@@ -40,6 +44,13 @@ public sealed class TerminalCashPaymentService : ITerminalCashPaymentService
         Validate(command);
 
         var normalized = Normalize(command);
+        await using var fiscalAdmission = _fiscalAdmissionGate is null
+            ? null
+            : await _fiscalAdmissionGate.AcquireOpenAsync(
+                normalized.SiteId,
+                normalized.CorrelationId,
+                normalized.CashierId,
+                cancellationToken).ConfigureAwait(false);
         var repositoryCommand = new TerminalCashPaymentRepositoryCommand(
             normalized,
             IdempotencyScope: BuildIdempotencyScope(normalized),

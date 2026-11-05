@@ -366,10 +366,9 @@ describe("Operator fiscal-reporting HTTP client", () => {
     await expect(client.readZ("SITE-PITX")).rejects.toThrow("The fiscal reporting operation failed safely.");
     await expect(client.closeBusinessDate("SITE-PITX", {
       fiscalReportingPeriodId: "period-1",
-      fiscalBusinessDate: "2026-09-20",
-      periodStart: "2026-09-19T23:00:00Z",
-      periodEnd: "2026-09-20T23:00:00Z",
-      status: "CLOSEABLE",
+      businessDateLabel: "2026-09-20",
+      openedAt: "2026-09-19T23:00:00Z",
+      status: "OPEN",
       transactionCount: 1,
       expectedStateVersion: 4
     })).rejects.toThrow("The fiscal reporting operation failed safely.");
@@ -380,6 +379,10 @@ describe("Operator fiscal-reporting HTTP client", () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
       succeeded: true,
       code: "fiscal_z_reading_closed",
+      zReading: {
+        fiscalReportReference: "Z-20260910-001",
+        closedAt: "2026-09-10T12:34:56Z",
+      },
       birSalesSummaryCompletion: {
         status: "PENDING",
         code: "bir_sales_summary_persistence_failed",
@@ -390,14 +393,15 @@ describe("Operator fiscal-reporting HTTP client", () => {
 
     const result = await client.closeBusinessDate("SITE-PITX", {
       fiscalReportingPeriodId: "period-1",
-      fiscalBusinessDate: "2026-09-20",
-      periodStart: "2026-09-19T23:00:00Z",
-      periodEnd: "2026-09-20T23:00:00Z",
-      status: "CLOSEABLE",
+      businessDateLabel: "2026-09-20",
+      openedAt: "2026-09-19T23:00:00Z",
+      status: "OPEN",
       transactionCount: 1,
       expectedStateVersion: 4
     });
 
+    expect(result.zReadingReference).toBe("Z-20260910-001");
+    expect(result.actualClosedAt).toBe("2026-09-10T12:34:56Z");
     expect(result.birSalesSummaryCompletion).toEqual({
       status: "PENDING",
       summaryId: undefined,

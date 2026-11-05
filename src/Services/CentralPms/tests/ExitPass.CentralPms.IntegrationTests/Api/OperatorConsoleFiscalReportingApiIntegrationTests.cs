@@ -220,33 +220,51 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
     }
 
     [Fact]
-    public async Task CloseablePeriods_UsesExactlyTheAuthenticatedSiteScope()
+    public async Task BusinessDateLifecycle_UsesExactlyTheAuthenticatedSiteScope()
     {
-        var gateway = new FakeGateway(request => Response(200, CloseablePeriodsJson(
-            Period("2026-09-20", 10),
-            Period("2026-09-21", 11))));
+        var gateway = new FakeGateway(_ => Response(200, LifecycleJson("OPEN")));
         using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
         using var client = factory.CreateClient();
 
-        using var response = await client.GetAsync($"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/z-readings/closeable-periods");
+        using var response = await client.GetAsync($"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/business-date");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         gateway.Requests.Should().ContainSingle();
         gateway.Requests[0].SiteId.Should().Be(SiteId);
-        gateway.Requests[0].Action.Should().Be(FiscalReportingGatewayAction.ZCloseablePeriods);
+        gateway.Requests[0].Action.Should().Be(FiscalReportingGatewayAction.BusinessDateLifecycleRead);
     }
 
     [Fact]
-    public async Task CloseOne_UsesThePosPeriodAndExpectedVersionWithoutEnumeratingAnotherSite()
+    public async Task OpenBusinessDate_ForwardsTheConfirmedImmutableLabel()
     {
-        var periodId = Guid.Parse("88000000-0000-0000-0000-000000000021");
-        var gateway = new FakeGateway(_ => Response(201, "{\"succeeded\":true,\"birSalesSummaryCompletion\":{\"status\":\"PENDING\",\"code\":\"bir_sales_summary_persistence_failed\",\"retryable\":true}}"));
+        var gateway = new FakeGateway(_ => Response(201, LifecycleJson("OPEN")));
         using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
         using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", TestAntiforgery.ValidToken);
 
         using var response = await client.PostAsJsonAsync(
-            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/z-readings/closeable-periods/{periodId:D}/close",
-            new { operationKey = "close-one", expectedStateVersion = 23, confirmClose = true });
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/business-date/open",
+            new { operationKey = "open-one", businessDateLabel = "2026-11-05", confirmOpen = true });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var request = gateway.Requests.Should().ContainSingle().Subject;
+        request.Action.Should().Be(FiscalReportingGatewayAction.BusinessDateOpen);
+        request.BusinessDateLabel.Should().Be(new DateOnly(2026, 11, 5));
+        request.ConfirmOpen.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CloseBusinessDate_UsesThePosPeriodAndExpectedVersionWithoutEnumeratingAnotherSite()
+    {
+        var periodId = Guid.Parse("88000000-0000-0000-0000-000000000021");
+        var gateway = new FakeGateway(_ => Response(201, "{\"succeeded\":true,\"zReading\":{\"fiscalReportReference\":\"Z-20261105-001\",\"closedAt\":\"2026-11-05T12:00:00Z\"},\"birSalesSummaryCompletion\":{\"status\":\"PENDING\",\"code\":\"bir_sales_summary_persistence_failed\",\"retryable\":true}}"));
+        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", TestAntiforgery.ValidToken);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/business-date/close",
+            new { operationKey = "close-one", fiscalReportingPeriodId = periodId, expectedStateVersion = 23, confirmClose = true });
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         (await response.Content.ReadAsStringAsync()).Should().Contain("\"status\":\"PENDING\"");
@@ -259,7 +277,7 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
     }
 
     [Fact]
-    public async Task CloseOne_PlainTextUpstreamException_ReturnsControlledJsonWithoutDiagnostics()
+    public async Task CloseBusinessDate_PlainTextUpstreamException_ReturnsControlledJsonWithoutDiagnostics()
     {
         var periodId = Guid.Parse("88000000-0000-0000-0000-000000000022");
         var gateway = new FakeGateway(_ => new FiscalReportingGatewayResponse(
@@ -269,10 +287,11 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
             "upstream_failure"));
         using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
         using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", TestAntiforgery.ValidToken);
 
         using var response = await client.PostAsJsonAsync(
-            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/z-readings/closeable-periods/{periodId:D}/close",
-            new { operationKey = "controlled-error", expectedStateVersion = 7, confirmClose = true });
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/business-date/close",
+            new { operationKey = "controlled-error", fiscalReportingPeriodId = periodId, expectedStateVersion = 7, confirmClose = true });
 
         response.StatusCode.Should().Be(HttpStatusCode.BadGateway);
         response.Content.Headers.ContentType!.MediaType.Should().Be("application/json");
@@ -284,80 +303,15 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
     }
 
     [Fact]
-    public async Task CloseAll_ProcessesOldestFirstAndStopsAtTheFirstFailure()
-    {
-        var periods = new[]
-        {
-            Period("2026-09-20", 10),
-            Period("2026-09-21", 11),
-            Period("2026-09-22", 12)
-        };
-        var closeCalls = 0;
-        var gateway = new FakeGateway(request => request.Action switch
-        {
-            FiscalReportingGatewayAction.ZCloseablePeriods => Response(200, CloseablePeriodsJson(periods)),
-            FiscalReportingGatewayAction.ZClosePeriod when ++closeCalls == 1 => Response(201, "{\"succeeded\":true}"),
-            FiscalReportingGatewayAction.ZClosePeriod => Response(409, "{\"succeeded\":false,\"code\":\"stale_state_version\"}"),
-            _ => throw new InvalidOperationException("Unexpected gateway action.")
-        });
-        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
-        using var client = factory.CreateClient();
-
-        using var response = await client.PostAsJsonAsync(
-            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/z-readings/closeable-periods/close-all",
-            new { operationKey = "close-all", confirmClose = true });
-
-        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
-        var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("\"closedCount\":1");
-        body.Should().Contain("2026-09-21");
-        gateway.Requests.Select(item => item.Action).Should().Equal(
-            FiscalReportingGatewayAction.ZCloseablePeriods,
-            FiscalReportingGatewayAction.ZClosePeriod,
-            FiscalReportingGatewayAction.ZClosePeriod,
-            FiscalReportingGatewayAction.ZCloseablePeriods);
-        gateway.Requests.Where(item => item.Action == FiscalReportingGatewayAction.ZClosePeriod)
-            .Select(item => item.FiscalReportingPeriodId)
-            .Should().Equal(periods[0].FiscalReportingPeriodId, periods[1].FiscalReportingPeriodId);
-        gateway.Requests.Should().OnlyContain(item => item.SiteId == SiteId);
-    }
-
-    [Fact]
-    public async Task CloseAll_PreservesSuccessfulZResultsAndReportsPendingBirCompletions()
-    {
-        var periods = new[] { Period("2026-09-20", 10), Period("2026-09-21", 11) };
-        var closeCalls = 0;
-        var gateway = new FakeGateway(request => request.Action switch
-        {
-            FiscalReportingGatewayAction.ZCloseablePeriods => Response(200, CloseablePeriodsJson(periods)),
-            FiscalReportingGatewayAction.ZClosePeriod when ++closeCalls == 1 => Response(201, "{\"succeeded\":true,\"birSalesSummaryCompletion\":{\"status\":\"COMMITTED\",\"summaryId\":\"88000000-0000-0000-0000-000000000099\",\"code\":\"bir_sales_summary_committed\",\"retryable\":false}}"),
-            FiscalReportingGatewayAction.ZClosePeriod => Response(201, "{\"succeeded\":true,\"birSalesSummaryCompletion\":{\"status\":\"PENDING\",\"code\":\"bir_sales_summary_persistence_failed\",\"retryable\":true}}"),
-            _ => throw new InvalidOperationException("Unexpected gateway action.")
-        });
-        using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
-        using var client = factory.CreateClient();
-
-        using var response = await client.PostAsJsonAsync(
-            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/z-readings/closeable-periods/close-all",
-            new { operationKey = "close-all-pending-bir", confirmClose = true });
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("\"closedCount\":2");
-        body.Should().Contain("\"birSalesSummaryPendingCount\":1");
-        body.Should().Contain("Daily BIR Sales Summary operation(s) are pending");
-    }
-
-    [Fact]
-    public async Task CloseAll_OutsideAuthenticatedSiteScope_IsConcealedBeforePosIsCalled()
+    public async Task SupersededBulkCloseEndpoint_IsNotExposed()
     {
         var gateway = new FakeGateway();
         using var factory = CreateFactory(gateway, new FakeReferenceRepository(), role: "OPERATIONS_SUPERVISOR");
         using var client = factory.CreateClient();
 
         using var response = await client.PostAsJsonAsync(
-            $"/v1/ops/operator-console/fiscal-reporting/sites/{OtherSiteId:D}/z-readings/closeable-periods/close-all",
-            new { operationKey = "wrong-site", confirmClose = true });
+            $"/v1/ops/operator-console/fiscal-reporting/sites/{SiteId:D}/z-readings/closeable-periods/close-all",
+            new { operationKey = "close-all", confirmClose = true });
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
         gateway.Requests.Should().BeEmpty();
@@ -1070,23 +1024,17 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         $"/v1/ops/operator-console/fiscal-reporting/sites/{siteId:D}/electronic-journal" +
         $"?periodStart=2026-09-23T00%3A00%3A00Z&periodEnd=2026-09-25T00%3A00%3A00Z&search={Uri.EscapeDataString(identifier)}";
 
-    private static CloseableTestPeriod Period(string businessDate, long version) =>
-        new(Guid.Parse($"88000000-0000-0000-0000-{version:000000000000}"), businessDate, version);
-
-    private static string CloseablePeriodsJson(params CloseableTestPeriod[] periods) =>
+    private static string LifecycleJson(string state) =>
         System.Text.Json.JsonSerializer.Serialize(new
         {
             succeeded = true,
-            fiscalBusinessDates = periods.Select(period => new
+            lifecycle = new
             {
-                fiscalReportingPeriodId = period.FiscalReportingPeriodId,
-                fiscalBusinessDate = period.FiscalBusinessDate,
-                periodStart = $"{period.FiscalBusinessDate}T00:00:00Z",
-                periodEnd = $"{period.FiscalBusinessDate}T23:59:59Z",
-                status = "CLOSEABLE",
-                transactionCount = 1,
-                expectedStateVersion = period.Version
-            })
+                state,
+                proposedNextBusinessDateLabel = "2026-11-05",
+                databaseNow = "2026-11-05T12:00:00Z",
+                reportingTimezoneName = "Asia/Manila"
+            }
         });
 
     private static FiscalReportingGatewayResponse Response(int status, string body) =>
@@ -1118,6 +1066,8 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
                 services.AddSingleton<IFiscalReportingPosServerGateway>(gateway);
                 services.RemoveAll<IFiscalIssuanceReferenceRepository>();
                 services.AddSingleton<IFiscalIssuanceReferenceRepository>(references);
+                services.RemoveAll<IFiscalBusinessDateAdmissionGate>();
+                services.AddSingleton<IFiscalBusinessDateAdmissionGate, FakeFiscalBusinessDateAdmissionGate>();
                 services.RemoveAll<ICentralPmsRbacRepository>();
                 services.AddSingleton<ICentralPmsRbacRepository>(new FakeRbacRepository(role));
                 services.RemoveAll<ISiteVendorAdapterRouteRegistry>();
@@ -1322,5 +1272,21 @@ public sealed class OperatorConsoleFiscalReportingApiIntegrationTests
         }
     }
 
-    private sealed record CloseableTestPeriod(Guid FiscalReportingPeriodId, string FiscalBusinessDate, long Version);
+    private sealed class FakeFiscalBusinessDateAdmissionGate : IFiscalBusinessDateAdmissionGate
+    {
+        public Task<IFiscalBusinessDateAdmissionLease> AcquireOpenAsync(Guid siteId, Guid correlationId, string actorReference, CancellationToken cancellationToken) =>
+            Task.FromResult<IFiscalBusinessDateAdmissionLease>(new Lease());
+
+        public Task<IFiscalBusinessDateAdmissionLease> AcquireTransitionAsync(Guid siteId, CancellationToken cancellationToken) =>
+            Task.FromResult<IFiscalBusinessDateAdmissionLease>(new Lease());
+
+        public Task<IFiscalBusinessDateAdmissionLease> AcquirePaymentSettlementAsync(Guid paymentAttemptId, CancellationToken cancellationToken) =>
+            Task.FromResult<IFiscalBusinessDateAdmissionLease>(new Lease());
+
+        private sealed class Lease : IFiscalBusinessDateAdmissionLease
+        {
+            public Task EnsureSafeToCloseAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
 }
