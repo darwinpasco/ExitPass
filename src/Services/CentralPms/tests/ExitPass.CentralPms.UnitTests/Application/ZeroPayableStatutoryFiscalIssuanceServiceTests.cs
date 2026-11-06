@@ -114,6 +114,9 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         string statutoryIdType,
         string? beneficiaryTin)
     {
+        var beneficiaryName = new string(
+            'A',
+            StatutoryBeneficiaryIdentityNormalizer.BeneficiaryFullNameMaximumLength);
         var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
         var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
         var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
@@ -123,7 +126,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         references.FindByStatutoryApplicationCommandIdAsync(ApplicationId, Arg.Any<CancellationToken>())
             .Returns((FiscalIssuanceReferenceRecord?)null);
         beneficiaryIdentities.GetAsync(DecisionId, Arg.Any<CancellationToken>())
-            .Returns(Identity(entitlementType, statutoryIdType, beneficiaryTin));
+            .Returns(Identity(entitlementType, statutoryIdType, beneficiaryTin, beneficiaryName));
         orchestration.PreparePendingAsync(
                 Arg.Do<PrepareFiscalIssuanceCommand>(value => prepared = value),
                 Arg.Any<CancellationToken>())
@@ -149,7 +152,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
 
         var beneficiary = Assert.IsType<CentralPmsStatutoryBeneficiaryIdentityContext>(
             mapped?.AppliedStatutoryFiscalFacts?.BeneficiaryIdentity);
-        Assert.Equal("Synthetic Beneficiary", beneficiary.BeneficiaryFullName);
+        Assert.Equal(beneficiaryName, beneficiary.BeneficiaryFullName);
         Assert.Equal(statutoryIdType, beneficiary.StatutoryIdType);
         Assert.Equal("TEST-0001", beneficiary.StatutoryIdNumber);
         Assert.Equal(beneficiaryTin, beneficiary.BeneficiaryTin);
@@ -158,7 +161,7 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal(PolicyId, policy.PolicyVersionId);
         Assert.Equal(entitlementType == "PWD" ? PwdPolicyCode : SeniorPolicyCode, policy.PolicyCode);
         Assert.Equal(entitlementType == "PWD" ? "City Ordinance No. 48" : null, policy.OrdinanceReference);
-        Assert.Equal("Synthetic Beneficiary", prepared?.DefaultInvoiceCustomerName);
+        Assert.Equal(beneficiaryName, prepared?.DefaultInvoiceCustomerName);
         Assert.Equal("Juan Dela Cruz", mapped?.InvoiceCustomerInformation?.CustomerName);
     }
 
@@ -516,14 +519,15 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
     private static StatutoryBeneficiaryIdentityRecord Identity(
         string entitlementType,
         string statutoryIdType,
-        string? beneficiaryTin)
+        string? beneficiaryTin,
+        string beneficiaryFullName = "Synthetic Beneficiary")
     {
         var actorId = Guid.Parse("a1000000-0000-4000-8000-000000000022");
         return new(
             DecisionId,
             SiteId,
             entitlementType,
-            "Synthetic Beneficiary",
+            beneficiaryFullName,
             statutoryIdType,
             "TEST-0001",
             beneficiaryTin,

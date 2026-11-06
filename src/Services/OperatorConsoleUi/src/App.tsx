@@ -2824,7 +2824,7 @@ function SessionLookupPage({
               </label>
               <label>
                 Beneficiary Full Name
-                <input required aria-required="true" autoComplete="off" maxLength={256} value={beneficiaryFullName} onChange={(event) => setBeneficiaryFullName(event.target.value)} />
+                <input required aria-required="true" autoComplete="off" maxLength={160} value={beneficiaryFullName} onChange={(event) => setBeneficiaryFullName(event.target.value)} />
               </label>
               <label>
                 ID document type

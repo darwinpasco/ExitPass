@@ -121,7 +121,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
                 "SESSION_NOT_ELIGIBLE_FOR_OPERATOR_WORKFLOW");
         }
 
-        var effectiveDate = DateOnly.FromDateTime(_clock.UtcNow.UtcDateTime);
+        var effectiveDate = ResolveSiteCalendarDate(_clock.UtcNow, session.SiteTimeZoneName);
+        ValidateEntitlementDates(command, entitlementType, effectiveDate);
         var reusableDraft = await _draftWriter.FindReusableAsync(
             command.ParkingSessionId,
             entitlementType,
@@ -341,9 +342,21 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
 
         ValidateIdControlReference(command.IdControlReference);
 
-        var today = DateOnly.FromDateTime(_clock.UtcNow.UtcDateTime);
+        if (!command.OperatorAttestation)
+        {
+            throw new ArgumentException("OperatorAttestation must be true.", nameof(command.OperatorAttestation));
+        }
+
+        return entitlementType;
+    }
+
+    private static void ValidateEntitlementDates(
+        OperatorConsoleStatutoryDiscountDraftCommand command,
+        string entitlementType,
+        DateOnly siteCalendarDate)
+    {
         if (entitlementType == "SENIOR_CITIZEN" &&
-            (!command.BirthDate.HasValue || command.BirthDate.Value >= today))
+            (!command.BirthDate.HasValue || command.BirthDate.Value >= siteCalendarDate))
         {
             throw new ArgumentException("Birth date must be a past date.", nameof(command.BirthDate));
         }
@@ -359,17 +372,32 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
         }
 
         if (entitlementType == "PWD" &&
-            (!command.ExpiryDate.HasValue || command.ExpiryDate.Value < today))
+            (!command.ExpiryDate.HasValue || command.ExpiryDate.Value < siteCalendarDate))
         {
             throw new ArgumentException("PWD ID expiry date must be today or a future date.", nameof(command.ExpiryDate));
         }
+    }
 
-        if (!command.OperatorAttestation)
+    private static DateOnly ResolveSiteCalendarDate(DateTimeOffset instant, string? siteTimeZoneName)
+    {
+        if (string.IsNullOrWhiteSpace(siteTimeZoneName))
         {
-            throw new ArgumentException("OperatorAttestation must be true.", nameof(command.OperatorAttestation));
+            throw new InvalidOperationException("OPERATOR_CONSOLE_SITE_TIMEZONE_REQUIRED");
         }
 
-        return entitlementType;
+        try
+        {
+            var siteTimeZone = TimeZoneInfo.FindSystemTimeZoneById(siteTimeZoneName.Trim());
+            return DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant, siteTimeZone).DateTime);
+        }
+        catch (TimeZoneNotFoundException exception)
+        {
+            throw new InvalidOperationException("OPERATOR_CONSOLE_SITE_TIMEZONE_INVALID", exception);
+        }
+        catch (InvalidTimeZoneException exception)
+        {
+            throw new InvalidOperationException("OPERATOR_CONSOLE_SITE_TIMEZONE_INVALID", exception);
+        }
     }
 
     private static void ValidateIdControlReference(string? value)

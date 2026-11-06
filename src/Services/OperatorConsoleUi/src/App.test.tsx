@@ -1610,6 +1610,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByText("ID reference will be masked when displayed.")).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText(/Operator confirms the entitlement information and captured ID photo/i));
     expect(submit).toBeDisabled();
+    expect(screen.getByLabelText("Beneficiary Full Name")).toHaveAttribute("maxlength", "160");
     await userEvent.type(screen.getByLabelText("Beneficiary Full Name"), "Maria Santos");
     expect(submit).toBeEnabled();
     await userEvent.click(submit);

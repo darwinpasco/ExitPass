@@ -39,9 +39,11 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixtureTests
             "ExitPass_MultiSiteVendorAdapterRouting_v1.3.sql",
             "ExitPass_Core_PaymentAttemptPaymentMethod_v1.3.sql",
             "ExitPass_CentralPms_WebPayInvoiceCustomerInformation_v1.2.sql",
+            "ExitPass_DeviceAdministration_v1.3.sql",
             "ExitPass_OperatorConsoleOperatingContext_v1.3.sql",
             "ExitPass_OperatorConsoleDeferShiftControl_v1.3.sql",
             "ExitPass_IdentityRbacApprovedRoleCatalog_v1.3.sql",
+            "ExitPass_CentralPms_AptCashCustodyMovementAuthorization_v1.3.sql",
             "ExitPass_CentralPms_OperatorConsoleFiscalReportingOperationsSupervisorRoleRepair_v1.3.sql",
             "ExitPass_IdentityRbacStatutoryDiscountProcessor_v1.3.sql",
             "ExitPass_CentralPms_StatutoryIdControlReference_v1.3.sql",
@@ -54,14 +56,17 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixtureTests
             "ExitPass_VendorAcknowledgmentCompletionAuthority_v1.3.sql",
             "20260925210000_operator_console_assisted_customer_intake.sql",
             "20261106113000_operator_console_statutory_entitlement_dates.sql",
-            "ExitPass_CentralPms_FiscalInvoiceCustomerInformationSnapshot_v1.3.sql");
+            "ExitPass_CentralPms_FiscalInvoiceCustomerInformationSnapshot_v1.3.sql",
+            "20261106120000_statutory_beneficiary_invoice_customer_snapshot.sql");
         options.ApplicationSchemaSources.Where(source => source.ValidatorPath is not null)
             .Select(source => Path.GetFileName(source.ValidatorPath)).Should().Equal(
             "Validate_HikCentralProjectionSafety_v1.3.sql",
             "Validate_MultiSiteVendorAdapterRouting_v1.3.sql",
+            "Validate_DeviceAdministration_v1.3.sql",
             "Validate_OperatorConsoleOperatingContext_v1.3.sql",
             "Validate_OperatorConsoleDeferShiftControl_v1.3.sql",
             "Validate_IdentityRbacApprovedRoleCatalog_v1.3.sql",
+            "Validate_CentralPmsAptCashCustodyMovementAuthorization_v1.3.sql",
             "Validate_CentralPmsOperatorConsoleFiscalReportingOperationsSupervisorRoleRepair_v1.3.sql",
             "Validate_IdentityRbacStatutoryDiscountProcessor_v1.3.sql",
             "Validate_CentralPmsStatutoryIdControlReference_v1.3.sql",
@@ -72,7 +77,8 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixtureTests
             "Validate_VendorAcknowledgmentCompletionAuthority_v1.3.sql",
             "Validate-OperatorConsoleAssistedCustomerIntake.sql",
             "Validate_OperatorConsoleStatutoryEntitlementDates_v1.3.sql",
-            "Validate_CentralPmsFiscalInvoiceCustomerInformationSnapshot_v1.3.sql");
+            "Validate_CentralPmsFiscalInvoiceCustomerInformationSnapshot_v1.3.sql",
+            "Validate_StatutoryBeneficiaryInvoiceCustomerSnapshot_v1.3.sql");
         options.ApplicationSchemaSources.Should().OnlyContain(source => File.Exists(source.PatchPath));
         options.ApplicationSchemaSources.Where(source => source.ValidatorPath is not null).Should().OnlyContain(source =>
             File.Exists(source.ValidatorPath));

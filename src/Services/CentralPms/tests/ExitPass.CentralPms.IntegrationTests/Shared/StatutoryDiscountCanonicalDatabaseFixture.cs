@@ -615,7 +615,11 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                 new ApplicationSchemaSource(
                     "fiscal invoice customer-information snapshot",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_FiscalInvoiceCustomerInformationSnapshot_v1.3.sql"),
-                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPmsFiscalInvoiceCustomerInformationSnapshot_v1.3.sql"))
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPmsFiscalInvoiceCustomerInformationSnapshot_v1.3.sql")),
+                new ApplicationSchemaSource(
+                    "statutory beneficiary invoice customer snapshot",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "20261106120000_statutory_beneficiary_invoice_customer_snapshot.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_StatutoryBeneficiaryInvoiceCustomerSnapshot_v1.3.sql"))
             };
 
             var container = RequireEnvironmentValue(DockerContainerEnvVar);

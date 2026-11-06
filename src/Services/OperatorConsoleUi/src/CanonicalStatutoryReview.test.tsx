@@ -257,6 +257,7 @@ describe("canonical Central PMS statutory review", () => {
     render(<CanonicalStatutoryReviewDetailPage client={client} decisionId={decisionId} onBack={() => undefined} />);
 
     expect(await screen.findByText("BIR statutory beneficiary identity")).toBeInTheDocument();
+    expect(screen.getByLabelText("Full Name")).toHaveAttribute("maxlength", "160");
     await user.type(screen.getByLabelText("Full Name"), "Maria Santos");
     await user.selectOptions(screen.getByLabelText("ID Type"), "PWD_ID");
     await user.type(screen.getByLabelText("PWD ID Number"), "PWD-2026-001");

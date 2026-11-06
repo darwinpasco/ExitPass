@@ -182,18 +182,21 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
     [InlineData("PWD")]
     public async Task ApprovedAdjustment_ForwardsFinalizedBeneficiaryAsCustomerNameDefault(string entitlementType)
     {
+        var beneficiaryName = new string(
+            'A',
+            StatutoryBeneficiaryIdentityNormalizer.BeneficiaryFullNameMaximumLength);
         var context = Context() with
         {
             AppliedStatutoryFiscalContext = Statutory() with
             {
                 EntitlementType = entitlementType,
-                BeneficiaryIdentity = BeneficiaryIdentity(entitlementType)
+                BeneficiaryIdentity = BeneficiaryIdentity(entitlementType, beneficiaryName)
             }
         };
         var prepared = Reference(context) with
         {
             InvoiceCustomerInformationSnapshot = new FiscalInvoiceCustomerInformationSnapshot(
-                "Approved Beneficiary",
+                beneficiaryName,
                 null,
                 null,
                 null,
@@ -206,9 +209,9 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
 
         await fixture.Orchestration.Received(1).PreparePendingAsync(
             Arg.Is<PrepareFiscalIssuanceCommand>(command =>
-                command.DefaultInvoiceCustomerName == "Approved Beneficiary"),
+                command.DefaultInvoiceCustomerName == beneficiaryName),
             Arg.Any<CancellationToken>());
-        Assert.Equal("Approved Beneficiary", fixture.CapturedMapping?.InvoiceCustomerInformation?.CustomerName);
+        Assert.Equal(beneficiaryName, fixture.CapturedMapping?.InvoiceCustomerInformation?.CustomerName);
     }
 
     [Fact]
@@ -487,14 +490,16 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
             DateTimeOffset.Parse("2026-08-24T01:45:00Z"),
             "OSCA-12345");
 
-    private static StatutoryBeneficiaryIdentityRecord BeneficiaryIdentity(string entitlementType)
+    private static StatutoryBeneficiaryIdentityRecord BeneficiaryIdentity(
+        string entitlementType,
+        string beneficiaryFullName = "Approved Beneficiary")
     {
         var actor = Guid.Parse("76000000-0000-4000-8000-000000000017");
         return new StatutoryBeneficiaryIdentityRecord(
             DecisionId,
             SiteAId,
             entitlementType,
-            "Approved Beneficiary",
+            beneficiaryFullName,
             entitlementType == "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID",
             "OSCA-12345",
             null,

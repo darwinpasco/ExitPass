@@ -69,6 +69,7 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                 ps.site_id,
                 ps.site_group_id,
                 site.site_name,
+                site.timezone_name AS site_timezone_name,
                 ps.ticket_number_masked AS ticket_reference,
                 ps.plate_number_masked,
                 COALESCE(ps.entry_at, ps.created_at) AS entry_time,
@@ -216,7 +217,8 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
             TariffSource: GetNullableString(reader, "tariff_version_reference")?.StartsWith("EXITPASS-CONTINUITY:", StringComparison.Ordinal) == true
                 ? "EXITPASS_CONTINUITY"
                 : "LIVE_VENDOR",
-            ExitHandlingStatus: GetNullableString(reader, "exit_handling_status"));
+            ExitHandlingStatus: GetNullableString(reader, "exit_handling_status"),
+            SiteTimeZoneName: reader.GetString("site_timezone_name"));
 
         if (await reader.ReadAsync(cancellationToken))
         {
@@ -238,6 +240,7 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
                 projection.site_id,
                 projection.site_group_id,
                 MAX(site.site_name) AS site_name,
+                MAX(site.timezone_name) AS site_timezone_name,
                 MAX(COALESCE(projection.enter_time, projection.first_seen_at)) AS entry_time,
                 'ACTIVE'::text AS projection_status,
                 MAX(vendor.vendor_code) AS vendor_system_code,
@@ -310,7 +313,8 @@ public sealed class OperatorConsoleSessionLookupReadRepository : IOperatorConsol
             VendorSystemId: reader.GetGuid("vendor_system_id"),
             ProjectionStatus: reader.GetString("projection_status"),
             ProjectionSourceEventAt: GetNullableTimestamp(reader, "source_event_at"),
-            ProjectionLastRefreshedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("last_refreshed_at")));
+            ProjectionLastRefreshedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("last_refreshed_at")),
+            SiteTimeZoneName: reader.GetString("site_timezone_name"));
 
         if (await reader.ReadAsync(cancellationToken))
         {

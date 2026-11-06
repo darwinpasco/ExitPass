@@ -345,7 +345,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
     [Fact]
     public async Task DraftAsync_SeniorCitizenRequiresBirthDateAndRejectsExpiryDate()
     {
-        var sut = CreateSut(AccessResult(allowed: true, []));
+        var repository = ActiveSessionRepository();
+        var sut = CreateSut(AccessResult(allowed: true, []), repository);
 
         var missingBirth = () => sut.DraftAsync(
             Command() with { BirthDate = null }, CancellationToken.None);
@@ -361,7 +362,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
     [Fact]
     public async Task DraftAsync_PwdRequiresCurrentExpiryDateAndRejectsBirthDate()
     {
-        var sut = CreateSut(AccessResult(allowed: true, []));
+        var repository = ActiveSessionRepository();
+        var sut = CreateSut(AccessResult(allowed: true, []), repository);
         var valid = Command(entitlementType: "PWD");
 
         var missingExpiry = () => sut.DraftAsync(valid with { ExpiryDate = null }, CancellationToken.None);
@@ -372,6 +374,59 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             .WithMessage("*PWD ID expiry date must be today or a future date*");
         await inapplicableBirth.Should().ThrowAsync<ArgumentException>()
             .WithMessage("*Birth date is not applicable*");
+    }
+
+    [Theory]
+    [InlineData("2026-05-29T15:59:59Z", true)]
+    [InlineData("2026-05-29T16:00:00Z", false)]
+    public async Task DraftAsync_PwdExpiryUsesAuthoritativeSiteCalendarDate(
+        string utcNow,
+        bool accepted)
+    {
+        var repository = ActiveSessionRepository();
+        var writer = AcceptedDraftWriter();
+        var sut = CreateSut(
+            AccessResult(allowed: true, []),
+            repository,
+            writer,
+            utcNow: DateTimeOffset.Parse(utcNow));
+        var command = Command(entitlementType: "PWD") with
+        {
+            ExpiryDate = new DateOnly(2026, 5, 29)
+        };
+
+        if (accepted)
+        {
+            var result = await sut.DraftAsync(command, CancellationToken.None);
+
+            result.DraftAccepted.Should().BeTrue();
+            await writer.Received(1).PersistAsync(
+                Arg.Is<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(request =>
+                    request.ExpiryDate == new DateOnly(2026, 5, 29)),
+                Arg.Any<CancellationToken>());
+            return;
+        }
+
+        var action = () => sut.DraftAsync(command, CancellationToken.None);
+        await action.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*PWD ID expiry date must be today or a future date*");
+        await writer.DidNotReceiveWithAnyArgs().PersistAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task DraftAsync_WhenSiteTimeZoneMissing_FailsClosedBeforeDraftPersistence()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE") with { SiteTimeZoneName = null });
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
+
+        var action = () => sut.DraftAsync(Command(entitlementType: "PWD"), CancellationToken.None);
+
+        await action.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("OPERATOR_CONSOLE_SITE_TIMEZONE_REQUIRED");
+        await writer.DidNotReceiveWithAnyArgs().PersistAsync(default!, default);
     }
 
     /// <summary>
@@ -720,7 +775,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         IOperatorConsoleSessionLookupReadRepository? sessionRepository = null,
         IOperatorConsoleStatutoryDiscountDraftWriter? draftWriter = null,
         IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository? policyRepository = null,
-        string environmentName = "Development")
+        string environmentName = "Development",
+        DateTimeOffset? utcNow = null)
     {
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
@@ -746,7 +802,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
                     ErrorCode: null));
         }
         var clock = Substitute.For<ISystemClock>();
-        clock.UtcNow.Returns(DateTimeOffset.Parse("2026-05-29T08:00:00Z"));
+        clock.UtcNow.Returns(utcNow ?? DateTimeOffset.Parse("2026-05-29T08:00:00Z"));
 
         return new OperatorConsoleStatutoryDiscountDraftService(
             accessService,
@@ -756,6 +812,30 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             draftWriter,
             clock,
             new OperatorConsolePolicyReadinessEnvironment(environmentName));
+    }
+
+    private static IOperatorConsoleSessionLookupReadRepository ActiveSessionRepository()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE"));
+        return repository;
+    }
+
+    private static IOperatorConsoleStatutoryDiscountDraftWriter AcceptedDraftWriter()
+    {
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
+                DraftId,
+                "REQUESTED",
+                Persisted: true,
+                ReusedExistingDraft: false,
+                EvidenceRequired: true,
+                EvidenceReferenceCreated: true,
+                EvidenceReferenceId,
+                Policy(requiresEvidence: true)));
+        return writer;
     }
 
     private static OperatorConsoleStatutoryDiscountDraftCommand Command(
@@ -832,7 +912,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             CurrencyCode: "PHP",
             PaymentStatus: null,
             DiscountStatus: "NOT_APPLIED",
-            ExitAuthorizationStatus: null);
+            ExitAuthorizationStatus: null,
+            SiteTimeZoneName: "Asia/Manila");
 
     private static OperatorConsoleResolvedStatutoryDiscountPolicy Policy(
         bool requiresEvidence = true,
