@@ -233,6 +233,28 @@ describe("Operator Console fiscal reporting", () => {
     expect(await screen.findByText("Fiscal Business Date 2026-09-10 closed for PITX Test Site at 2026-09-10 20:34:56 PHT. Z Reading Z-20260910-001 committed.")).toBeInTheDocument();
   });
 
+  it("warns without blocking close when the OPEN period has no committed X Reading", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    const history = await client.readX("SITE-PITX");
+    client.readX = vi.fn(async () => ({ currentPeriod: history.currentPeriod, readings: [] }));
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Z Reading" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close Business Date" }));
+
+    expect(screen.getByText("No X Reading has been generated for this fiscal business date. After closing, an X Reading can no longer be generated for this period.")).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", { name: "Confirm Fiscal Business Date close" }).querySelector("button.dangerButton")).toBeEnabled();
+  });
+
+  it("does not warn before close when the OPEN period already has a committed X Reading", async () => {
+    render(<OperatorFiscalReportingPage client={createOperatorFiscalReportingFixture()} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Z Reading" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close Business Date" }));
+
+    expect(screen.queryByText(/No X Reading has been generated/)).not.toBeInTheDocument();
+  });
+
   it("reports BIR Summary pending without reporting the committed Z close as failed", async () => {
     const client = createOperatorFiscalReportingFixture();
     const initialLifecycle = await client.readBusinessDateLifecycle("SITE-PITX");
@@ -303,20 +325,58 @@ describe("Operator Console fiscal reporting", () => {
     expect(client.generateBirSalesSummary).not.toHaveBeenCalled();
   });
 
-  it("loads the current POS Annex E-1 without generating another revision", async () => {
+  it("keeps the current Annex E-1 available and permits governed successor generation", async () => {
     const client = createOperatorFiscalReportingFixture();
+    const current = await client.readCurrentAnnexE1("SITE-PITX", 2026, 9);
     client.readCurrentAnnexE1 = vi.fn(client.readCurrentAnnexE1);
-    client.generateAnnexE1 = vi.fn(client.generateAnnexE1);
+    client.generateAnnexE1 = vi.fn(async () => ({
+      ...current!,
+      workbookId: "713af721-3b65-4bc4-9ce3-d2a032c26ab4",
+      annexEReference: "AE1-202609-UPDATED-R002",
+      revision: 2,
+    }));
     render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
 
     await userEvent.click(await screen.findByRole("tab", { name: "Daily BIR Sales Summary" }));
     expect(screen.queryByRole("button", { name: "Generate Annex E-1" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Generate / View Summary" }));
-
-    await waitFor(() => expect(client.readCurrentAnnexE1).toHaveBeenCalledWith("SITE-PITX", 2026, 9));
-    expect(await screen.findByRole("link", { name: "Download XLSX" })).toHaveAttribute("href", expect.stringContaining("/annex-e/e1/workbooks/"));
+    const update = await screen.findByRole("button", { name: "Generate Updated Annex E-1" });
     expect(screen.getByText(/Current Annex E-1:/)).toHaveTextContent("revision 1");
-    expect(client.generateAnnexE1).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "Download XLSX" })).toHaveAttribute("href", expect.stringContaining(current!.workbookId));
+
+    await userEvent.click(update);
+
+    await waitFor(() => expect(client.generateAnnexE1).toHaveBeenCalledWith("SITE-PITX", 2026, 9));
+    expect(screen.getByText(/Current Annex E-1:/)).toHaveTextContent("revision 2");
+    expect(screen.getByRole("link", { name: "Download XLSX" })).toHaveAttribute("href", expect.stringContaining("713af721-3b65-4bc4-9ce3-d2a032c26ab4"));
+  });
+
+  it("keeps the existing Annex E-1 revision when unchanged governed sources replay", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    const current = await client.readCurrentAnnexE1("SITE-PITX", 2026, 9);
+    client.generateAnnexE1 = vi.fn(async () => current!);
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Daily BIR Sales Summary" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Generate Updated Annex E-1" }));
+
+    await waitFor(() => expect(client.generateAnnexE1).toHaveBeenCalledWith("SITE-PITX", 2026, 9));
+    expect(screen.getByText(/Current Annex E-1:/)).toHaveTextContent("revision 1");
+    expect(screen.getByRole("link", { name: "Download XLSX" })).toHaveAttribute("href", expect.stringContaining(current!.workbookId));
+  });
+
+  it("keeps current Annex E-1 downloads available when successor generation fails", async () => {
+    const client = createOperatorFiscalReportingFixture();
+    const current = await client.readCurrentAnnexE1("SITE-PITX", 2026, 9);
+    client.generateAnnexE1 = vi.fn(async () => { throw new Error("No newly closed fiscal period is available."); });
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Daily BIR Sales Summary" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Generate Updated Annex E-1" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("No newly closed fiscal period is available.");
+    expect(screen.getByText(/Current Annex E-1:/)).toHaveTextContent("revision 1");
+    expect(screen.getByRole("link", { name: "Download XLSX" })).toHaveAttribute("href", expect.stringContaining(current!.workbookId));
+    expect(screen.getByRole("button", { name: "Generate Updated Annex E-1" })).toBeEnabled();
   });
 
   it("clears the prior workbook when the month changes and treats no current workbook as a normal state", async () => {
