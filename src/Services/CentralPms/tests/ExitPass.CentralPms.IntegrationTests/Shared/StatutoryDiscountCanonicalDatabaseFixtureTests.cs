@@ -53,6 +53,7 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixtureTests
             "ExitPass_CentralPms_ZeroPayableFiscalCompletion_v1.3.sql",
             "ExitPass_VendorAcknowledgmentCompletionAuthority_v1.3.sql",
             "20260925210000_operator_console_assisted_customer_intake.sql",
+            "20261106113000_operator_console_statutory_entitlement_dates.sql",
             "ExitPass_CentralPms_FiscalInvoiceCustomerInformationSnapshot_v1.3.sql");
         options.ApplicationSchemaSources.Where(source => source.ValidatorPath is not null)
             .Select(source => Path.GetFileName(source.ValidatorPath)).Should().Equal(
@@ -70,6 +71,7 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixtureTests
             "Validate_CentralPmsZeroPayableFiscalCompletion_v1.3.sql",
             "Validate_VendorAcknowledgmentCompletionAuthority_v1.3.sql",
             "Validate-OperatorConsoleAssistedCustomerIntake.sql",
+            "Validate_OperatorConsoleStatutoryEntitlementDates_v1.3.sql",
             "Validate_CentralPmsFiscalInvoiceCustomerInformationSnapshot_v1.3.sql");
         options.ApplicationSchemaSources.Should().OnlyContain(source => File.Exists(source.PatchPath));
         options.ApplicationSchemaSources.Where(source => source.ValidatorPath is not null).Should().OnlyContain(source =>

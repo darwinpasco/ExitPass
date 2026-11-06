@@ -228,7 +228,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         {
             EntitlementType = "PWD",
             IdDocumentType = "PWD",
-            IssuingAuthority = "NCDA"
+            IssuingAuthority = "NCDA",
+            ExpiryDate = new DateOnly(2030, 1, 1),
+            BirthDate = null
         };
         var result = AcceptedResult() with { EntitlementType = "PWD" };
         var beneficiaryIdentities = new FakeBeneficiaryIdentityRepository();
@@ -834,7 +836,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             entitlementType,
             entitlementType == "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID",
             entitlementType == "PWD" ? "NCDA" : "OSCA",
-            ExpiryDate: null,
+            ExpiryDate: entitlementType == "PWD" ? new DateOnly(2030, 1, 1) : null,
             entitlementType == "PWD" ? "PWD-UAT-****-0001" : "SC-UAT-****-0001",
             EntitlementFingerprint: null,
             EvidenceCaptureRequested: true,
@@ -849,7 +851,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             BeneficiaryFullName = "Maria Santos",
             BeneficiaryTin = null,
             IdControlReference = entitlementType == "PWD" ? "PWD12345678" : "SC12345678",
-            BirthDate = new DateOnly(1950, 1, 1)
+            BirthDate = entitlementType == "PWD" ? null : new DateOnly(1950, 1, 1)
         };
 
     private static OperatorConsoleStatutoryDiscountDraftCommand ToDirectDraftCommand(

@@ -609,6 +609,10 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                     Path.Combine(patchRoot, "infra", "db", "patches", "20260925210000_operator_console_assisted_customer_intake.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate-OperatorConsoleAssistedCustomerIntake.sql")),
                 new ApplicationSchemaSource(
+                    "operator-console statutory entitlement dates",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "20261106113000_operator_console_statutory_entitlement_dates.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_OperatorConsoleStatutoryEntitlementDates_v1.3.sql")),
+                new ApplicationSchemaSource(
                     "fiscal invoice customer-information snapshot",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_CentralPms_FiscalInvoiceCustomerInformationSnapshot_v1.3.sql"),
                     Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_CentralPmsFiscalInvoiceCustomerInformationSnapshot_v1.3.sql"))

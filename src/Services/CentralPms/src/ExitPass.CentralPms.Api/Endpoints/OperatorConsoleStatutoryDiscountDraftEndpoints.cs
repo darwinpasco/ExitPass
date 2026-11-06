@@ -955,7 +955,9 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.StatutoryDiscountDecisionCommandId,
             result.StatutoryDiscountPayableBasisApplicationCommandId)
         {
-            BeneficiaryFullName = result.BeneficiaryFullName
+            BeneficiaryFullName = result.BeneficiaryFullName,
+            BirthDate = result.BirthDate,
+            ExpiryDate = result.ExpiryDate
         };
 
     private static async Task<OperatorConsoleStatutoryDiscountDraftDetailResult> WithBeneficiaryNameAsync(
@@ -1394,7 +1396,8 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.PayableBasisApplicationStatus,
             result.CorrelationId)
         {
-            BeneficiaryFullName = result.BeneficiaryFullName
+            BeneficiaryFullName = result.BeneficiaryFullName,
+            BirthDate = result.BirthDate
         };
 
     private static OperatorConsoleStatutoryDiscountDecisionResponse ToContract(

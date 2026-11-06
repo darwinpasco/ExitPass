@@ -174,6 +174,8 @@ interface DetailDto extends QueueItemDto {
   idDocumentType?: string | null;
   beneficiaryFullName?: string | null;
   issuingAuthority?: string | null;
+  birthDate?: string | null;
+  expiryDate?: string | null;
   maskedIdReference?: string | null;
   evidenceCaptured: boolean;
   requiredEvidenceTypes?: string[] | null;
@@ -956,7 +958,8 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
           beneficiaryTin: input.beneficiaryTin ?? null,
           idDocumentType: input.idDocumentType,
           issuingAuthority: input.issuingAuthority,
-          birthDate: input.birthDate,
+          ...(input.birthDate ? { birthDate: input.birthDate } : {}),
+          ...(input.expiryDate ? { expiryDate: input.expiryDate } : {}),
           idControlReference: input.idControlReference,
           maskedIdReference: input.maskedIdReference,
           entitlementFingerprint: null,
@@ -2547,6 +2550,8 @@ function toDraftDetail(item: DetailDto): StatutoryDiscountDraftDetail {
     beneficiaryFullName: item.beneficiaryFullName?.trim() || undefined,
     maskedIdReference: item.maskedIdReference?.trim() || "Not available",
     issuingAuthority: item.issuingAuthority?.trim() || "Not available",
+    birthDate: item.birthDate ?? undefined,
+    expiryDate: item.expiryDate ?? undefined,
     evidenceCaptured: item.evidenceCaptured,
     evidenceRequiredSatisfied: item.evidenceRequiredSatisfied ?? item.evidenceCaptured,
     evidenceCount: item.evidenceCount ?? 0,

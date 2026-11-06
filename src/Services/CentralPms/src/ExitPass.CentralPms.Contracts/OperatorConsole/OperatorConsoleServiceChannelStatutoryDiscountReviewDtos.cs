@@ -76,6 +76,7 @@ public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewDetailR
     Guid CorrelationId)
 {
     public string? BeneficiaryFullName { get; init; }
+    public DateOnly? BirthDate { get; init; }
 }
 
 /// <summary>
