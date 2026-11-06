@@ -117,7 +117,11 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceService : IZeroPayableStat
                 StatutoryDiscountDecisionCommandId: finality.StatutoryDiscountDecisionCommandId,
                 StatutoryDiscountPayableBasisApplicationCommandId: finality.StatutoryDiscountPayableBasisApplicationCommandId,
                 StatutoryDiscountValidationId: finality.StatutoryDiscountValidationId,
-                AppliedPolicyReferenceId: finality.AppliedPolicyReferenceId),
+                AppliedPolicyReferenceId: finality.AppliedPolicyReferenceId,
+                DefaultInvoiceCustomerName: beneficiaryIdentity is { IsFinal: true } &&
+                    !string.IsNullOrWhiteSpace(beneficiaryIdentity.BeneficiaryFullName)
+                        ? beneficiaryIdentity.BeneficiaryFullName.Trim()
+                        : null),
             cancellationToken).ConfigureAwait(false);
 
         if (existing is not null && reference.InvoiceCustomerInformationSnapshot is null)

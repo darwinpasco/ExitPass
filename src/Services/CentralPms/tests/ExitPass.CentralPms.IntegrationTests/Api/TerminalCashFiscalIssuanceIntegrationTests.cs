@@ -217,6 +217,7 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal(expectedStatutoryIdType, beneficiary.StatutoryIdType);
         Assert.Equal("TEST-0001", beneficiary.StatutoryIdNumber);
         Assert.Equal("000-000-000-000", beneficiary.BeneficiaryTin);
+        Assert.Equal("Synthetic Beneficiary", request.InvoiceCustomerInformation?.CustomerName);
     }
 
     [Fact]
@@ -1549,10 +1550,23 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
                 request.FiscalDocumentTypeCodeKey)
             {
                 InvoiceCustomerInformationSnapshot = CustomerInformationForNewReferences
+                    ?? CreateBeneficiaryCustomerSnapshot(request.DefaultInvoiceCustomerName, now)
             };
             _records.Add(record);
             return Task.FromResult(record);
         }
+
+        private static FiscalInvoiceCustomerInformationSnapshot? CreateBeneficiaryCustomerSnapshot(
+            string? customerName,
+            DateTimeOffset capturedAt) => string.IsNullOrWhiteSpace(customerName)
+                ? null
+                : new FiscalInvoiceCustomerInformationSnapshot(
+                    customerName.Trim(),
+                    null,
+                    null,
+                    null,
+                    null,
+                    capturedAt);
 
         public FiscalIssuanceReferenceRecord MarkRecorded(
             Guid fiscalIssuanceReferenceId,

@@ -937,7 +937,8 @@ public sealed record PrepareFiscalIssuanceCommand(
     Guid? StatutoryDiscountDecisionCommandId = null,
     Guid? StatutoryDiscountPayableBasisApplicationCommandId = null,
     Guid? StatutoryDiscountValidationId = null,
-    Guid? AppliedPolicyReferenceId = null)
+    Guid? AppliedPolicyReferenceId = null,
+    string? DefaultInvoiceCustomerName = null)
 {
     public IReadOnlyList<string> Validate()
     {
@@ -993,6 +994,13 @@ public sealed record PrepareFiscalIssuanceCommand(
             errors.Add("fiscal_document_type_required");
         }
 
+        if (DefaultInvoiceCustomerName is not null &&
+            (string.IsNullOrWhiteSpace(DefaultInvoiceCustomerName) ||
+             DefaultInvoiceCustomerName.Trim().Length > 160))
+        {
+            errors.Add("default_invoice_customer_name_invalid");
+        }
+
         return errors;
     }
 
@@ -1035,7 +1043,8 @@ public sealed record PrepareFiscalIssuanceCommand(
             StatutoryDiscountDecisionCommandId: StatutoryDiscountDecisionCommandId,
             StatutoryDiscountPayableBasisApplicationCommandId: StatutoryDiscountPayableBasisApplicationCommandId,
             StatutoryDiscountValidationId: StatutoryDiscountValidationId,
-            AppliedPolicyReferenceId: AppliedPolicyReferenceId);
+            AppliedPolicyReferenceId: AppliedPolicyReferenceId,
+            DefaultInvoiceCustomerName: DefaultInvoiceCustomerName);
 }
 
 public sealed record FiscalIssuanceTransitionContext(

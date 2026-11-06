@@ -2,6 +2,7 @@ using System.Text.Json;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.PaymentAttempts;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using NSubstitute;
@@ -174,6 +175,40 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
         Assert.Equal(10000, facts.FinalPayableAmountMinorUnits);
         Assert.Equal("Juan Dela Cruz", request.InvoiceCustomerInformation?.CustomerName);
         Assert.Equal("OSCA-12345", request.InvoiceCustomerInformation?.StatutoryIdNumber);
+    }
+
+    [Theory]
+    [InlineData("SENIOR_CITIZEN")]
+    [InlineData("PWD")]
+    public async Task ApprovedAdjustment_ForwardsFinalizedBeneficiaryAsCustomerNameDefault(string entitlementType)
+    {
+        var context = Context() with
+        {
+            AppliedStatutoryFiscalContext = Statutory() with
+            {
+                EntitlementType = entitlementType,
+                BeneficiaryIdentity = BeneficiaryIdentity(entitlementType)
+            }
+        };
+        var prepared = Reference(context) with
+        {
+            InvoiceCustomerInformationSnapshot = new FiscalInvoiceCustomerInformationSnapshot(
+                "Approved Beneficiary",
+                null,
+                null,
+                null,
+                null,
+                DateTimeOffset.Parse("2026-08-24T01:59:00Z"))
+        };
+        var fixture = CreateFixture(context, prepared);
+
+        await fixture.Sut.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        await fixture.Orchestration.Received(1).PreparePendingAsync(
+            Arg.Is<PrepareFiscalIssuanceCommand>(command =>
+                command.DefaultInvoiceCustomerName == "Approved Beneficiary"),
+            Arg.Any<CancellationToken>());
+        Assert.Equal("Approved Beneficiary", fixture.CapturedMapping?.InvoiceCustomerInformation?.CustomerName);
     }
 
     [Fact]
@@ -395,7 +430,7 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
                 Arg.Any<CancellationToken>())
             .Returns(FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(["test_stop_after_mapping"]));
         var sut = new DigitalPaymentFiscalIssuanceService(contextReader, references, orchestration, posServer);
-        return new Fixture(sut, posServer, () => captured);
+        return new Fixture(sut, orchestration, posServer, () => captured);
     }
 
     private static DigitalPaymentFiscalIssuanceCommand Command() =>
@@ -452,6 +487,30 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
             DateTimeOffset.Parse("2026-08-24T01:45:00Z"),
             "OSCA-12345");
 
+    private static StatutoryBeneficiaryIdentityRecord BeneficiaryIdentity(string entitlementType)
+    {
+        var actor = Guid.Parse("76000000-0000-4000-8000-000000000017");
+        return new StatutoryBeneficiaryIdentityRecord(
+            DecisionId,
+            SiteAId,
+            entitlementType,
+            "Approved Beneficiary",
+            entitlementType == "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID",
+            "OSCA-12345",
+            null,
+            actor,
+            StatutoryBeneficiaryIdentityCaptureChannels.OperatorConsole,
+            DateTimeOffset.Parse("2026-08-24T01:20:00Z"),
+            actor,
+            StatutoryBeneficiaryIdentityCaptureChannels.OperatorConsole,
+            DateTimeOffset.Parse("2026-08-24T01:25:00Z"),
+            actor,
+            DateTimeOffset.Parse("2026-08-24T01:30:00Z"),
+            "APPROVE",
+            Guid.Parse("76000000-0000-4000-8000-000000000018"),
+            true);
+    }
+
     private static FiscalIssuanceReferenceRecord Reference(DigitalPaymentFiscalContext context) =>
         new(
             FiscalIssuanceReferenceId: FiscalReferenceId,
@@ -499,6 +558,7 @@ public sealed class DigitalPaymentStatutoryFiscalIssuanceTests
 
     private sealed record Fixture(
         DigitalPaymentFiscalIssuanceService Sut,
+        IFiscalIssuanceOrchestrationService Orchestration,
         IFiscalIssuancePosServerLiveIntegrationService PosServer,
         Func<CentralPmsFiscalDocumentMappingContext?> Capture)
     {
