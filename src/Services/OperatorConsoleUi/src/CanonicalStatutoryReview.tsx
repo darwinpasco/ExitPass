@@ -261,6 +261,8 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
       <section className="panel canonicalReviewSummary" aria-labelledby="review-request-facts"><h3 id="review-request-facts">Request facts</h3><dl>
         <dt>Request reference</dt><dd>{detail.requestReference}</dd><dt>Site</dt><dd>{siteLabel(detail.siteId)}</dd><dt>Originating channel</dt><dd>{originLabel(detail.sourceChannel)}</dd><dt>Session identifier</dt><dd>{parkingSessionIdentity(detail)}</dd><dt>Canonical parking session</dt><dd>{detail.parkingSessionId}</dd><dt>Benefit</dt><dd>{benefitLabel(detail.entitlementType)}</dd><dt>Submitted</dt><dd>{formatDate(detail.submittedAt)}</dd><dt>Workflow status</dt><dd>{statusLabel(detail.reviewStatus)}</dd>
         {detail.beneficiaryFullName && <><dt>Beneficiary name</dt><dd>{detail.beneficiaryFullName}</dd></>}
+        {detail.entitlementType === "SENIOR_CITIZEN" && detail.birthDate && <><dt>Birth Date</dt><dd>{detail.birthDate}</dd></>}
+        {detail.entitlementType === "PWD" && detail.expiryDate && <><dt>Expiry Date</dt><dd>{detail.expiryDate}</dd></>}
         {detail.reviewedAt && <><dt>Decided</dt><dd>{formatDate(detail.reviewedAt)}</dd></>}{detail.reviewerUserId && <><dt>Reviewer</dt><dd>{detail.reviewerUserId}</dd></>}{terminal && <><dt>Decision</dt><dd>{statusLabel(detail.reviewStatus)}</dd></>}{detail.reviewerReasonCode && <><dt>Reason</dt><dd>{detail.reviewerReasonCode}</dd></>}
         <dt>Session eligibility</dt><dd>{statusLabel(detail.sessionEligibilityStatus)}</dd>
         <dt>Payable basis</dt><dd>{detail.payableBasisStatus === "NOT_YET_CREATED" ? "Not yet created" : statusLabel(detail.payableBasisStatus)}</dd>

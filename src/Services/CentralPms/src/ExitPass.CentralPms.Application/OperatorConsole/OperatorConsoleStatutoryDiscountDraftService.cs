@@ -307,7 +307,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             readiness?.IneligibilityReason ?? ineligibilityReason,
             operatorMessage ?? readiness?.OperatorMessage ?? "The statutory discount draft request was not accepted.");
 
-    private static string Validate(OperatorConsoleStatutoryDiscountDraftCommand command)
+    private string Validate(OperatorConsoleStatutoryDiscountDraftCommand command)
     {
         ValidateGuid(command.UserId, nameof(command.UserId));
         ValidateGuid(command.CorrelationId, nameof(command.CorrelationId));
@@ -341,9 +341,27 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
 
         ValidateIdControlReference(command.IdControlReference);
 
-        if (!command.BirthDate.HasValue || command.BirthDate.Value >= DateOnly.FromDateTime(DateTime.UtcNow))
+        var today = DateOnly.FromDateTime(_clock.UtcNow.UtcDateTime);
+        if (entitlementType == "SENIOR_CITIZEN" &&
+            (!command.BirthDate.HasValue || command.BirthDate.Value >= today))
         {
             throw new ArgumentException("Birth date must be a past date.", nameof(command.BirthDate));
+        }
+
+        if (entitlementType == "SENIOR_CITIZEN" && command.ExpiryDate.HasValue)
+        {
+            throw new ArgumentException("Expiry date is not applicable to Senior Citizen requests.", nameof(command.ExpiryDate));
+        }
+
+        if (entitlementType == "PWD" && command.BirthDate.HasValue)
+        {
+            throw new ArgumentException("Birth date is not applicable to PWD requests.", nameof(command.BirthDate));
+        }
+
+        if (entitlementType == "PWD" &&
+            (!command.ExpiryDate.HasValue || command.ExpiryDate.Value < today))
+        {
+            throw new ArgumentException("PWD ID expiry date must be today or a future date.", nameof(command.ExpiryDate));
         }
 
         if (!command.OperatorAttestation)

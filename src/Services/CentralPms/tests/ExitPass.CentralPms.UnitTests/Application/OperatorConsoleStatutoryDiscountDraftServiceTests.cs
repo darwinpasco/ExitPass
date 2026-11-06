@@ -342,6 +342,38 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             .WithMessage("*EntitlementType must be SENIOR_CITIZEN or PWD*");
     }
 
+    [Fact]
+    public async Task DraftAsync_SeniorCitizenRequiresBirthDateAndRejectsExpiryDate()
+    {
+        var sut = CreateSut(AccessResult(allowed: true, []));
+
+        var missingBirth = () => sut.DraftAsync(
+            Command() with { BirthDate = null }, CancellationToken.None);
+        var inapplicableExpiry = () => sut.DraftAsync(
+            Command() with { ExpiryDate = new DateOnly(2099, 1, 1) }, CancellationToken.None);
+
+        await missingBirth.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*Birth date must be a past date*");
+        await inapplicableExpiry.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*Expiry date is not applicable*");
+    }
+
+    [Fact]
+    public async Task DraftAsync_PwdRequiresCurrentExpiryDateAndRejectsBirthDate()
+    {
+        var sut = CreateSut(AccessResult(allowed: true, []));
+        var valid = Command(entitlementType: "PWD");
+
+        var missingExpiry = () => sut.DraftAsync(valid with { ExpiryDate = null }, CancellationToken.None);
+        var inapplicableBirth = () => sut.DraftAsync(
+            valid with { BirthDate = new DateOnly(1980, 1, 1) }, CancellationToken.None);
+
+        await missingExpiry.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*PWD ID expiry date must be today or a future date*");
+        await inapplicableBirth.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*Birth date is not applicable*");
+    }
+
     /// <summary>
     /// Verifies the authoritative ID reference is required.
     /// </summary>
@@ -744,7 +776,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             entitlementType,
             "OSCA_ID",
             "OSCA",
-            ExpiryDate: null,
+            ExpiryDate: entitlementType == "PWD" ? new DateOnly(2099, 1, 1) : null,
             MaskedIdReference: string.Empty,
             EntitlementFingerprint: null,
             EvidenceCaptureRequested: evidenceCaptureRequested,
@@ -756,7 +788,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             CorrelationId)
         {
             IdControlReference = idControlReference,
-            BirthDate = new DateOnly(1950, 1, 1)
+            BirthDate = entitlementType == "SENIOR_CITIZEN" ? new DateOnly(1950, 1, 1) : null
         };
 
     private static OperatorConsoleAccessEvaluationResult AccessResult(

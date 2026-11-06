@@ -1596,7 +1596,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     await userEvent.type(screen.getByLabelText("TIN (optional)"), "123-456-789-000");
     await userEvent.type(screen.getByLabelText("Issuing authority"), "OSCA");
     expect(screen.queryByLabelText("Masked ID reference")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Expiry date")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Expiry Date")).not.toBeInTheDocument();
     const idReferenceInput = screen.getByLabelText("ID reference");
     await userEvent.type(idReferenceInput, "123467");
     expect(idReferenceInput).toHaveValue("123467");
@@ -1604,8 +1604,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(idReferenceInput).toHaveValue("**3467");
     await userEvent.click(idReferenceInput);
     expect(idReferenceInput).toHaveValue("123467");
-    await userEvent.click(screen.getByLabelText("Birth date"));
-    await userEvent.type(screen.getByLabelText("Birth date"), "1990-01-01");
+    await userEvent.click(screen.getByLabelText("Birth Date"));
+    await userEvent.type(screen.getByLabelText("Birth Date"), "1990-01-01");
     expect(idReferenceInput).toHaveValue("**3467");
     expect(screen.getByText("ID reference will be masked when displayed.")).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText(/Operator confirms the entitlement information and captured ID photo/i));
@@ -1667,7 +1667,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     await userEvent.type(screen.getByLabelText("Issuing authority"), "OSCA");
     const idReferenceInput = screen.getByLabelText("ID reference");
     await userEvent.type(idReferenceInput, "123467");
-    await userEvent.type(screen.getByLabelText("Birth date"), "1990-01-01");
+    await userEvent.type(screen.getByLabelText("Birth Date"), "1990-01-01");
     await userEvent.click(screen.getByLabelText(/Operator confirms the entitlement information and captured ID photo/i));
     await userEvent.click(screen.getByRole("button", { name: "Submit Request" }));
 
@@ -1851,11 +1851,13 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(screen.getByLabelText("ID document type")).toHaveValue("PWD");
     expect(screen.getByLabelText("ID document type")).toHaveAttribute("readonly");
+    expect(screen.queryByLabelText("Birth Date")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Expiry Date")).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText("Beneficiary Full Name"), "Maria Santos");
     await userEvent.type(screen.getByLabelText("Issuing authority"), "NCDA");
     await userEvent.type(screen.getByLabelText("ID reference"), "PWD123456");
-    await userEvent.type(screen.getByLabelText("Birth date"), "1980-01-01");
+    await userEvent.type(screen.getByLabelText("Expiry Date"), "2030-01-01");
     await userEvent.click(screen.getByRole("button", { name: "Take ID Photo" }));
     const livePreview = await screen.findByLabelText("Live rear camera preview");
     setVideoDimensions(livePreview);
@@ -1867,7 +1869,9 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       entitlementType: "PWD",
       idDocumentType: "PWD_ID",
       beneficiaryFullName: "Maria Santos",
-      beneficiaryTin: undefined
+      beneficiaryTin: undefined,
+      birthDate: undefined,
+      expiryDate: "2030-01-01"
     })));
   });
 
@@ -2658,6 +2662,58 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       evidenceUploadReceipt: "protected-photo-receipt"
     }));
     expect(requestBody).not.toHaveProperty("expiryDate");
+  });
+
+  it("OperatorConsoleApi_CreatesPwdDraftWithExpiryDateOnly", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        accepted: true,
+        uploadReceipt: "protected-photo-receipt",
+        expiresAt: "2026-09-26T09:15:00Z",
+        message: "ID photo uploaded to restricted evidence storage.",
+        retryable: false,
+        correlationId: "0c000000-0000-0000-0000-000000000002"
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        accessAllowed: true,
+        accessDecision: "ALLOWED",
+        accessDenialReasons: [],
+        draftAccepted: true,
+        draftPersisted: true,
+        draftId: firstDraftId,
+        parkingSessionId: "23100000-0000-0000-0000-000000000004",
+        entitlementType: "PWD",
+        validationStatus: "REQUESTED",
+        evidenceCaptureRequired: true,
+        evidenceRequired: true,
+        evidenceReferenceCreated: true,
+        reusedExistingDraft: false,
+        correlationId: "0c000000-0000-0000-0000-000000000002"
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    await client.createStatutoryDiscountDraft({
+      parkingSessionId: "23100000-0000-0000-0000-000000000004",
+      ticketReference: "PWD-SESSION-001",
+      entitlementType: "PWD",
+      beneficiaryFullName: "Maria Santos",
+      idDocumentType: "PWD",
+      issuingAuthority: "NCDA",
+      idControlReference: "PWD123456",
+      maskedIdReference: "****3456",
+      expiryDate: "2030-01-01",
+      idPhoto: new File(["photo"], "pwd-id.jpg", { type: "image/jpeg" }),
+      evidenceCaptureRequested: true,
+      operatorAttestation: true
+    });
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string);
+    expect(requestBody).toEqual(expect.objectContaining({
+      entitlementType: "PWD",
+      expiryDate: "2030-01-01"
+    }));
+    expect(requestBody).not.toHaveProperty("birthDate");
   });
 
   it("OperatorConsoleApi_GetsFiscalStatusThroughFacadeUsingGetHeadersAndEncodedReference", async () => {

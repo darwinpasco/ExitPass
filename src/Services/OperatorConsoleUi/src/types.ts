@@ -74,6 +74,8 @@ export interface StatutoryDiscountDraftDetail extends StatutoryDiscountQueueItem
   beneficiaryFullName?: string;
   maskedIdReference: string;
   issuingAuthority: string;
+  birthDate?: string;
+  expiryDate?: string;
   evidenceCaptured: boolean;
   evidenceRequiredSatisfied: boolean;
   evidenceCount: number;
@@ -187,6 +189,7 @@ export interface CanonicalStatutoryReviewDetail extends CanonicalStatutoryReview
   idDocumentType?: string;
   issuingAuthority?: string;
   expiryDate?: string;
+  birthDate?: string;
   maskedIdReference?: string;
   evidenceReferences: CanonicalStatutoryReviewEvidenceReference[];
   requesterAttestation: boolean;
@@ -389,7 +392,8 @@ export interface StatutoryDiscountDraftCreateInput {
   issuingAuthority: string;
   idControlReference: string;
   maskedIdReference: string;
-  birthDate: string;
+  birthDate?: string;
+  expiryDate?: string;
   idPhoto: File;
   evidenceCaptureRequested: boolean;
   operatorAttestation: boolean;

@@ -128,6 +128,7 @@ public sealed record OperatorConsoleStatutoryDiscountDraftDetailResult(
     IReadOnlyList<string> Activity)
 {
     public string? BeneficiaryFullName { get; init; }
+    public DateOnly? BirthDate { get; init; }
 }
 
 /// <summary>

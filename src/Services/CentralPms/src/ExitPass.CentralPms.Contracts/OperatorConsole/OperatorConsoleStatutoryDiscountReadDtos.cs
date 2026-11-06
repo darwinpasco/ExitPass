@@ -101,6 +101,8 @@ public sealed record OperatorConsoleStatutoryDiscountDraftDetailResponse(
     Guid? StatutoryDiscountPayableBasisApplicationCommandId = null)
 {
     public string? BeneficiaryFullName { get; init; }
+    public DateOnly? BirthDate { get; init; }
+    public DateOnly? ExpiryDate { get; init; }
 }
 
 /// <summary>

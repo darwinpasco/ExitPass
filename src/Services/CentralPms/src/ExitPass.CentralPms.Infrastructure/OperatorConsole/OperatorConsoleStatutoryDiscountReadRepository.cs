@@ -166,6 +166,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 sdv.id_document_type,
                 sdv.issuing_authority,
                 sdv.id_expiry_date,
+                sdv.birth_date,
                 sdv.masked_id_reference,
                 sdv.requester_attestation,
                 sdv.attestation_notes,
@@ -663,7 +664,10 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             GetNullableLong(reader, "payable_amount_minor_units"),
             GetNullableLong(reader, "final_payable_amount_minor_units"),
             GetNullableString(reader, "currency_code"),
-            BuildActivity(status, evidenceRequired, evidenceCaptured, requestedAt, validatedAt, applicationStatus));
+            BuildActivity(status, evidenceRequired, evidenceCaptured, requestedAt, validatedAt, applicationStatus))
+        {
+            BirthDate = GetNullableDateOnly(reader, "birth_date")
+        };
     }
 
     private static IReadOnlyList<string> BuildActivity(

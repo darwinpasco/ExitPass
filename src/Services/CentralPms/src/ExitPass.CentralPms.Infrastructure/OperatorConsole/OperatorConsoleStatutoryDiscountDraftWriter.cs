@@ -328,7 +328,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         npgsqlCommand.Parameters.Add("id_document_type", NpgsqlDbType.Varchar).Value = command.IdDocumentType;
         npgsqlCommand.Parameters.Add("issuing_authority", NpgsqlDbType.Varchar).Value = command.IssuingAuthority;
         npgsqlCommand.Parameters.Add("id_expiry_date", NpgsqlDbType.Date).Value = DbValue(command.ExpiryDate);
-        npgsqlCommand.Parameters.Add("birth_date", NpgsqlDbType.Date).Value = command.BirthDate!.Value;
+        npgsqlCommand.Parameters.Add("birth_date", NpgsqlDbType.Date).Value = DbValue(command.BirthDate);
         npgsqlCommand.Parameters.Add("masked_id_reference", NpgsqlDbType.Varchar).Value = command.MaskedIdReference;
         npgsqlCommand.Parameters.Add("id_control_reference", NpgsqlDbType.Varchar).Value = command.IdControlReference!;
         npgsqlCommand.Parameters.Add("policy_resolution_basis", NpgsqlDbType.Text).Value =

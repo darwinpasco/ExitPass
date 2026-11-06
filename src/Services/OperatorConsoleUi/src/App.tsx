@@ -2434,6 +2434,7 @@ function SessionLookupPage({
   const [idReference, setIdReference] = useState("");
   const [idReferenceEditing, setIdReferenceEditing] = useState(false);
   const [birthDate, setBirthDate] = useState("");
+  const [expiryDate, setExpiryDate] = useState("");
   const [operatorAttestation, setOperatorAttestation] = useState(false);
   const [idPhoto, setIdPhoto] = useState<File | null>(null);
   function replaceIdPhoto(file: File | null) {
@@ -2502,6 +2503,7 @@ function SessionLookupPage({
     setIdReference("");
     setIdReferenceEditing(false);
     setBirthDate("");
+    setExpiryDate("");
     replaceIdPhoto(null);
     setOperatorAttestation(false);
     try {
@@ -2594,7 +2596,8 @@ function SessionLookupPage({
         issuingAuthority,
         idControlReference: normalizedIdReference,
         maskedIdReference,
-        birthDate,
+        birthDate: entitlementType === "SENIOR_CITIZEN" ? birthDate : undefined,
+        expiryDate: entitlementType === "PWD" ? expiryDate : undefined,
         idPhoto,
         evidenceCaptureRequested: true,
         operatorAttestation,
@@ -2810,6 +2813,8 @@ function SessionLookupPage({
                     setIssuingAuthority("");
                     setIdReference("");
                     setIdReferenceEditing(false);
+                    setBirthDate("");
+                    setExpiryDate("");
                     replaceIdPhoto(null);
                   }}
                 >
@@ -2845,10 +2850,17 @@ function SessionLookupPage({
                   autoComplete="off"
                 />
               </label>
-              <label>
-                Birth date
-                <input type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} />
-              </label>
+              {entitlementType === "SENIOR_CITIZEN" ? (
+                <label>
+                  Birth Date
+                  <input required type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} />
+                </label>
+              ) : (
+                <label>
+                  Expiry Date
+                  <input required type="date" value={expiryDate} onChange={(event) => setExpiryDate(event.target.value)} />
+                </label>
+              )}
               {maskStatutoryIdReference(idReference) && (
                 <p className="fieldHint" role="status">ID reference will be masked when displayed.</p>
               )}
@@ -2869,7 +2881,7 @@ function SessionLookupPage({
                     !beneficiaryFullName.trim() ||
                     !issuingAuthority.trim() ||
                     !idReference.trim() ||
-                    !birthDate ||
+                    (entitlementType === "SENIOR_CITIZEN" ? !birthDate : !expiryDate) ||
                     !operatorAttestation ||
                     !idPhoto
                   }
@@ -2968,6 +2980,8 @@ function SubmittedStatutoryRequestSummary({
         <dt>Beneficiary name</dt><dd>{displayValue(detail.beneficiaryFullName)}</dd>
         <dt>ID document type</dt><dd>{statutoryDocumentTypeLabel(detail.idDocumentType, detail.entitlementType)}</dd>
         <dt>Issuing authority</dt><dd>{displayValue(detail.issuingAuthority)}</dd>
+        {detail.entitlementType === "Senior Citizen" && <><dt>Birth Date</dt><dd>{displayValue(detail.birthDate)}</dd></>}
+        {detail.entitlementType === "PWD" && <><dt>Expiry Date</dt><dd>{displayValue(detail.expiryDate)}</dd></>}
         <dt>ID reference</dt><dd>{displayValue(detail.maskedIdReference)}</dd>
         <dt>Submitted by</dt><dd>{displayValue(detail.requestedBy)}</dd>
         <dt>Submitted at</dt><dd>{formatDateTime(detail.requestedAt)}</dd>

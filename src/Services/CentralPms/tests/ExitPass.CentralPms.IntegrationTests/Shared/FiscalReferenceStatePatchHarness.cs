@@ -70,6 +70,12 @@ public static class FiscalReferenceStatePatchHarness
                 ResolveRepoPath("infra", "db", "patches", "validation", "Validate-OperatorConsoleAssistedCustomerIntake.sql"));
             await ExecuteSqlFileAsync(
                 connectionString,
+                ResolveRepoPath("infra", "db", "patches", "20261106113000_operator_console_statutory_entitlement_dates.sql"));
+            await ExecuteSqlFileAsync(
+                connectionString,
+                ResolveRepoPath("infra", "db", "patches", "validation", "Validate_OperatorConsoleStatutoryEntitlementDates_v1.3.sql"));
+            await ExecuteSqlFileAsync(
+                connectionString,
                 ResolveRepoPath("infra", "db", "patches", "ExitPass_CentralPms_FiscalInvoiceCustomerInformationSnapshot_v1.3.sql"));
             await ExecuteSqlFileAsync(
                 connectionString,
