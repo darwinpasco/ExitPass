@@ -339,7 +339,6 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
       setAnnexWorkbook(await client.generateAnnexE1(siteId, Number(match[1]), Number(match[2])));
       setAnnexLookupComplete(true);
     } catch (cause) {
-      setAnnexWorkbook(undefined);
       setAnnexError(operationMessage(cause, "Annex E-1 is unavailable because its governed accounting prerequisites are incomplete."));
     } finally {
       setBusy(false);
@@ -409,6 +408,11 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
 
   const downloadRange = phtRangeToUtc(start, end);
   const selectedSiteName = sites.find((site) => site.siteId === siteId)?.siteName ?? "the selected Site";
+  const activePeriodHasCommittedXReading = businessDateLifecycle?.activePeriod !== undefined && x !== undefined
+    ? x.readings.some((reading) =>
+        reading.fiscalReportingPeriodId === businessDateLifecycle.activePeriod?.fiscalReportingPeriodId &&
+        reading.reportStatus === "COMMITTED")
+    : undefined;
 
   return <section className="panel fiscalReporting" aria-labelledby="operator-fiscal-reporting-title">
     <div className="pageTitle"><div><p className="eyebrow">Site POS authority</p><h2 id="operator-fiscal-reporting-title">Fiscal Reporting</h2><p>Electronic Journal, Audit Trail, X Reading, Z Reading, Daily BIR Sales Summary, and Monthly eSales are retrieved through Central PMS from the bound Site POS Server.</p></div><span className="statusPill">Site scoped</span></div>
@@ -440,6 +444,7 @@ export function OperatorFiscalReportingPage({ client, siteReferences, permission
       {lifecycleConfirmation && businessDateLifecycle && <div className="zConfirmation" role="alertdialog" aria-label={`Confirm Fiscal Business Date ${lifecycleConfirmation}`}>
         <h3>{lifecycleConfirmation === "open" ? `Open Fiscal Business Date ${businessDateLifecycle.proposedNextBusinessDateLabel} for ${selectedSiteName}?` : `Close Fiscal Business Date ${businessDateLifecycle.activePeriod?.businessDateLabel} for ${selectedSiteName}?`}</h3>
         <p>{lifecycleConfirmation === "open" ? "Payment acceptance resumes only after the POS Server confirms the new date is OPEN." : "Payment acceptance stops immediately. One Z Reading will be committed, the Z counter will advance, and the operation cannot be undone. Payment remains unavailable until a new business date is manually opened."}</p>
+        {lifecycleConfirmation === "close" && activePeriodHasCommittedXReading === false && <p className="stateMessage warning" role="status">No X Reading has been generated for this fiscal business date. After closing, an X Reading can no longer be generated for this period.</p>}
         <button className={lifecycleConfirmation === "close" ? "dangerButton" : undefined} type="button" onClick={() => void changeBusinessDateLifecycle()} disabled={busy}>{lifecycleConfirmation === "open" ? "Open Business Date" : "Close Business Date"}</button><button type="button" onClick={() => setLifecycleConfirmation(undefined)} disabled={busy}>Cancel</button>
       </div>}
       <ReadingPanel kind="Z" history={z} error={zHistoryError} canRead={has(fiscalReportingPermissions.zRead)} canGenerate={false} download={(reference, format) => client.readingUrl(siteId, "z", reference, format)} />
@@ -649,7 +654,7 @@ function BirSalesSummaryPanel({ zHistory, selectedZReference, onSelectZ, summary
       <div className="reportFilters"><a className="primaryButton" href={summaryUrl("pdf")}>Download PDF</a><a className="primaryButton" href={summaryUrl("csv")}>Download CSV</a><a className="primaryButton" href={summaryUrl("json")}>Download JSON</a></div>
     </>}
     <div className="reportFilters"><label>Annex reporting month<input type="month" aria-label="Annex reporting month" value={annexMonth} onChange={(event) => onAnnexMonthChange(event.target.value)} /></label></div>
-    <section className="annexReportSection" aria-labelledby="annex-e1-title"><h4 id="annex-e1-title">Annex E-1 - BIR Sales Summary Report</h4><div className="reportFilters">{annexLookupComplete && !annexWorkbook && !annexError && <button type="button" onClick={onGenerateAnnex} disabled={!canGenerate || busy || annexLoading || !annexMonth}>Generate Annex E-1</button>}{annexWorkbook && <><a className="primaryButton" href={annexPdfUrl}>Download PDF</a><a className="primaryButton" href={annexXlsxUrl}>Download XLSX</a></>}</div>{annexLoading && <p role="status">Loading current Annex E-1 workbook...</p>}{annexError && <p className="errorMessage" role="alert">{annexError}</p>}{annexLookupComplete && !annexWorkbook && !annexError && <p role="status">No Annex E-1 workbook has been generated for this month.</p>}{annexWorkbook && <p role="status">Current Annex E-1: {annexWorkbook.annexEReference}, revision {annexWorkbook.revision}, generated {formatPhtInstant(annexWorkbook.generatedAt)} PHT ({annexWorkbook.fileName}).</p>}</section>
+    <section className="annexReportSection" aria-labelledby="annex-e1-title"><h4 id="annex-e1-title">Annex E-1 - BIR Sales Summary Report</h4><div className="reportFilters">{annexLookupComplete && (annexWorkbook || !annexError) && <button type="button" onClick={onGenerateAnnex} disabled={!canGenerate || busy || annexLoading || !annexMonth}>{annexWorkbook ? "Generate Updated Annex E-1" : "Generate Annex E-1"}</button>}{annexWorkbook && <><a className="primaryButton" href={annexPdfUrl}>Download PDF</a><a className="primaryButton" href={annexXlsxUrl}>Download XLSX</a></>}</div>{annexLoading && <p role="status">Loading current Annex E-1 workbook...</p>}{annexError && <p className="errorMessage" role="alert">{annexError}</p>}{annexLookupComplete && !annexWorkbook && !annexError && <p role="status">No Annex E-1 workbook has been generated for this month.</p>}{annexWorkbook && <p role="status">Current Annex E-1: {annexWorkbook.annexEReference}, revision {annexWorkbook.revision}, generated {formatPhtInstant(annexWorkbook.generatedAt)} PHT ({annexWorkbook.fileName}).</p>}</section>
     <StatutorySalesBookPanel type="e2" report={statutoryBooks.e2} error={statutoryBookErrors.e2} loading={statutoryBookLoading === "e2"} month={annexMonth} busy={busy} onRead={() => onReadStatutoryBook("e2")} downloadUrl={(format) => statutoryBookUrl("e2", format)} />
     <StatutorySalesBookPanel type="e3" report={statutoryBooks.e3} error={statutoryBookErrors.e3} loading={statutoryBookLoading === "e3"} month={annexMonth} busy={busy} onRead={() => onReadStatutoryBook("e3")} downloadUrl={(format) => statutoryBookUrl("e3", format)} />
   </div>;
