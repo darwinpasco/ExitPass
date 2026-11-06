@@ -154,6 +154,34 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
     }
 
     [Fact]
+    public async Task CreateAsync_UsesFinalizedBeneficiaryNameWhenExplicitCustomerNameIsAbsent()
+    {
+        await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);
+        var context = PaymentTestContext.Create(nameof(CreateAsync_UsesFinalizedBeneficiaryNameWhenExplicitCustomerNameIsAbsent));
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed statutory customer-name snapshot test data.");
+
+        try
+        {
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var request = CreatePendingRequest(context, attempt, confirmation) with
+            {
+                DefaultInvoiceCustomerName = "Approved Beneficiary"
+            };
+
+            var created = await CreateRepository().CreateAsync(request, CancellationToken.None);
+
+            Assert.Equal("Approved Beneficiary", created.InvoiceCustomerInformationSnapshot?.CustomerName);
+            Assert.Null(created.InvoiceCustomerInformationSnapshot?.SourceRowVersion);
+            Assert.NotNull(created.InvoiceCustomerInformationSnapshot?.CapturedAt);
+        }
+        finally
+        {
+            await CleanupFiscalReferenceRowsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
     public async Task CreateAsync_WhenFailureStateIncludesReason_PersistsExceptionReasonAndErrorPosture()
     {
         await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);

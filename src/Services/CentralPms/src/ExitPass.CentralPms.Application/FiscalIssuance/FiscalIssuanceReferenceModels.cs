@@ -100,7 +100,8 @@ public sealed record CreateFiscalIssuanceReferenceRequest(
     Guid? StatutoryDiscountDecisionCommandId = null,
     Guid? StatutoryDiscountPayableBasisApplicationCommandId = null,
     Guid? StatutoryDiscountValidationId = null,
-    Guid? AppliedPolicyReferenceId = null)
+    Guid? AppliedPolicyReferenceId = null,
+    string? DefaultInvoiceCustomerName = null)
 {
     public IReadOnlyList<string> Validate()
     {
@@ -151,6 +152,13 @@ public sealed record CreateFiscalIssuanceReferenceRequest(
         if (string.IsNullOrWhiteSpace(UpstreamFinalityReference))
         {
             errors.Add("upstream_finality_reference_required");
+        }
+
+        if (DefaultInvoiceCustomerName is not null &&
+            (string.IsNullOrWhiteSpace(DefaultInvoiceCustomerName) ||
+             DefaultInvoiceCustomerName.Trim().Length > 160))
+        {
+            errors.Add("default_invoice_customer_name_invalid");
         }
 
         if (RequiresCompleteFiscalEvidence(FiscalIssuanceState))

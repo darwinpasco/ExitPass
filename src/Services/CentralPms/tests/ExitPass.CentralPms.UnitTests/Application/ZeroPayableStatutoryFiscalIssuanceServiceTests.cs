@@ -119,11 +119,14 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
         var beneficiaryIdentities = Substitute.For<IStatutoryBeneficiaryIdentityRepository>();
         CentralPmsFiscalDocumentMappingContext? mapped = null;
+        PrepareFiscalIssuanceCommand? prepared = null;
         references.FindByStatutoryApplicationCommandIdAsync(ApplicationId, Arg.Any<CancellationToken>())
             .Returns((FiscalIssuanceReferenceRecord?)null);
         beneficiaryIdentities.GetAsync(DecisionId, Arg.Any<CancellationToken>())
             .Returns(Identity(entitlementType, statutoryIdType, beneficiaryTin));
-        orchestration.PreparePendingAsync(Arg.Any<PrepareFiscalIssuanceCommand>(), Arg.Any<CancellationToken>())
+        orchestration.PreparePendingAsync(
+                Arg.Do<PrepareFiscalIssuanceCommand>(value => prepared = value),
+                Arg.Any<CancellationToken>())
             .Returns(Reference(FiscalIssuanceIntegrationState.PendingFiscalIssuance));
         posServer.TryIssueFiscalDocumentViaPosServerAsync(
                 FiscalReferenceId,
@@ -155,6 +158,8 @@ public sealed class ZeroPayableStatutoryFiscalIssuanceServiceTests
         Assert.Equal(PolicyId, policy.PolicyVersionId);
         Assert.Equal(entitlementType == "PWD" ? PwdPolicyCode : SeniorPolicyCode, policy.PolicyCode);
         Assert.Equal(entitlementType == "PWD" ? "City Ordinance No. 48" : null, policy.OrdinanceReference);
+        Assert.Equal("Synthetic Beneficiary", prepared?.DefaultInvoiceCustomerName);
+        Assert.Equal("Juan Dela Cruz", mapped?.InvoiceCustomerInformation?.CustomerName);
     }
 
     [Fact]

@@ -202,6 +202,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             transaction,
             request.ParkingSessionId,
             request.PaymentAttemptId,
+            request.DefaultInvoiceCustomerName,
             cancellationToken);
 
         await using var command = new NpgsqlCommand(sql, connection, transaction)
@@ -951,6 +952,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
         NpgsqlTransaction transaction,
         Guid parkingSessionId,
         Guid? paymentAttemptId,
+        string? defaultCustomerName,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -986,7 +988,7 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
         command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
         AddNullable(command, "payment_attempt_id", paymentAttemptId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken)
+        var explicitCustomer = await reader.ReadAsync(cancellationToken)
             ? new AuthoritativeInvoiceCustomerInformation(
                 GetNullableString(reader, "customer_name"),
                 GetNullableString(reader, "customer_address"),
@@ -994,6 +996,22 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 GetNullableString(reader, "business_style"),
                 GetNullableLong(reader, "row_version"))
             : null;
+        var fallbackName = string.IsNullOrWhiteSpace(defaultCustomerName)
+            ? null
+            : defaultCustomerName.Trim();
+        if (explicitCustomer is null && fallbackName is null)
+        {
+            return null;
+        }
+
+        return new AuthoritativeInvoiceCustomerInformation(
+            string.IsNullOrWhiteSpace(explicitCustomer?.CustomerName)
+                ? fallbackName
+                : explicitCustomer.CustomerName,
+            explicitCustomer?.Address,
+            explicitCustomer?.Tin,
+            explicitCustomer?.BusinessStyle,
+            explicitCustomer?.RowVersion);
     }
 
     private static void AddInvoiceCustomerInformationParameters(

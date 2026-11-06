@@ -160,7 +160,12 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             .ConfigureAwait(false);
 
         var prepared = await _orchestrationService.PreparePendingAsync(
-                BuildPrepareCommand(cashPayment, posServerEndpoint, upstreamFinalityReference, command.CorrelationId),
+                BuildPrepareCommand(
+                    cashPayment,
+                    posServerEndpoint,
+                    upstreamFinalityReference,
+                    command.CorrelationId,
+                    statutoryFiscalLinkage.Context?.BeneficiaryIdentity),
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -632,7 +637,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         TerminalCashPaymentReadback cashPayment,
         SitePosServerEndpointOptions posServerEndpoint,
         string upstreamFinalityReference,
-        Guid correlationId) =>
+        Guid correlationId,
+        StatutoryBeneficiaryIdentityRecord? beneficiaryIdentity) =>
         new(
             PaymentConfirmationId: cashPayment.PaymentConfirmationId,
             PaymentAttemptId: cashPayment.PaymentAttemptId,
@@ -646,7 +652,11 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             PayableBasisRef: cashPayment.TariffSnapshotId.ToString("D"),
             UpstreamFinalityReference: upstreamFinalityReference,
             CorrelationId: correlationId,
-            ServiceIdentityId: null);
+            ServiceIdentityId: null,
+            DefaultInvoiceCustomerName: beneficiaryIdentity is { IsFinal: true } &&
+                !string.IsNullOrWhiteSpace(beneficiaryIdentity.BeneficiaryFullName)
+                    ? beneficiaryIdentity.BeneficiaryFullName.Trim()
+                    : null);
 
     private SitePosServerEndpointOptions ResolvePosServerEndpoint(TerminalCashPaymentReadback cashPayment)
     {

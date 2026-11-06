@@ -48,6 +48,18 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task PreparePendingAsync_WhenDefaultCustomerNameIsBlank_FailsValidation()
+    {
+        var sut = new FiscalIssuanceOrchestrationService(new InMemoryFiscalIssuanceReferenceRepository());
+        var command = ValidPrepareCommand() with { DefaultInvoiceCustomerName = " " };
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            sut.PreparePendingAsync(command, CancellationToken.None));
+
+        ex.Message.Should().Contain("default_invoice_customer_name_invalid");
+    }
+
+    [Fact]
     public async Task MarkRequestedAsync_WhenPendingExists_TransitionsToRequested()
     {
         var (sut, reference) = await CreatePreparedServiceAsync();

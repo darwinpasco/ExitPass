@@ -87,7 +87,9 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
                     context.TariffSnapshotId.ToString("D"),
                     upstreamReference,
                     command.CorrelationId,
-                    command.ServiceIdentityId),
+                    command.ServiceIdentityId,
+                    DefaultInvoiceCustomerName: FinalizedBeneficiaryName(
+                        context.AppliedStatutoryFiscalContext?.BeneficiaryIdentity)),
                 cancellationToken);
         }
         else
@@ -267,6 +269,11 @@ public sealed class DigitalPaymentFiscalIssuanceService : IDigitalPaymentFiscalI
         string.IsNullOrWhiteSpace(snapshot?.Tin) &&
         string.IsNullOrWhiteSpace(snapshot?.BusinessStyle) &&
         string.IsNullOrWhiteSpace(statutoryIdNumber);
+
+    private static string? FinalizedBeneficiaryName(StatutoryBeneficiaryIdentityRecord? identity) =>
+        identity is { IsFinal: true } && !string.IsNullOrWhiteSpace(identity.BeneficiaryFullName)
+            ? identity.BeneficiaryFullName.Trim()
+            : null;
 
     private static void EnsureStatutoryContextMatches(
         DigitalPaymentFiscalContext context,
