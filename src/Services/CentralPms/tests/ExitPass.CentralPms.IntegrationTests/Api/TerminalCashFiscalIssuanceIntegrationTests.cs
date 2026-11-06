@@ -199,6 +199,9 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         string entitlementType,
         string expectedStatutoryIdType)
     {
+        var beneficiaryName = new string(
+            'A',
+            StatutoryBeneficiaryIdentityNormalizer.BeneficiaryFullNameMaximumLength);
         var repo = new InMemoryFiscalReferenceRepository();
         var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
         var service = CreateService(
@@ -206,18 +209,21 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             repo,
             posIntegration,
             new FakeStatutoryFiscalLinkageReader(TerminalCashStatutoryFiscalLinkageResult.Complete(
-                StatutoryContext(entitlementType, includeBeneficiaryIdentity: true))));
+                StatutoryContext(
+                    entitlementType,
+                    includeBeneficiaryIdentity: true,
+                    beneficiaryFullName: beneficiaryName))));
 
         await service.IssueOrReadAsync(Command(), CancellationToken.None);
 
         var request = new PosServerFiscalDocumentRequestMapper().Map(posIntegration.LastFiscalContext!);
         Assert.NotNull(request.AppliedStatutoryFiscalFacts?.BeneficiaryIdentity);
         var beneficiary = request.AppliedStatutoryFiscalFacts!.BeneficiaryIdentity!;
-        Assert.Equal("Synthetic Beneficiary", beneficiary.BeneficiaryFullName);
+        Assert.Equal(beneficiaryName, beneficiary.BeneficiaryFullName);
         Assert.Equal(expectedStatutoryIdType, beneficiary.StatutoryIdType);
         Assert.Equal("TEST-0001", beneficiary.StatutoryIdNumber);
         Assert.Equal("000-000-000-000", beneficiary.BeneficiaryTin);
-        Assert.Equal("Synthetic Beneficiary", request.InvoiceCustomerInformation?.CustomerName);
+        Assert.Equal(beneficiaryName, request.InvoiceCustomerInformation?.CustomerName);
     }
 
     [Fact]
@@ -1098,7 +1104,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
 
     private static TerminalCashStatutoryFiscalLinkageContext StatutoryContext(
         string entitlementType = "SENIOR_CITIZEN",
-        bool includeBeneficiaryIdentity = false) =>
+        bool includeBeneficiaryIdentity = false,
+        string beneficiaryFullName = "Synthetic Beneficiary") =>
         new(
             StatutoryDecisionCommandId,
             StatutoryApplicationCommandId,
@@ -1124,17 +1131,19 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             AppliedAt: DateTimeOffset.Parse("2026-07-28T01:21:00Z"),
             IdControlReference: "SC-1234",
             BeneficiaryIdentity: includeBeneficiaryIdentity
-                ? FinalizedBeneficiaryIdentity(entitlementType)
+                ? FinalizedBeneficiaryIdentity(entitlementType, beneficiaryFullName)
                 : null);
 
-    private static StatutoryBeneficiaryIdentityRecord FinalizedBeneficiaryIdentity(string entitlementType)
+    private static StatutoryBeneficiaryIdentityRecord FinalizedBeneficiaryIdentity(
+        string entitlementType,
+        string beneficiaryFullName)
     {
         var capturedAt = DateTimeOffset.Parse("2026-07-28T01:18:00Z");
         return new StatutoryBeneficiaryIdentityRecord(
             StatutoryDecisionCommandId,
             CashPayment().SiteId,
             entitlementType,
-            "Synthetic Beneficiary",
+            beneficiaryFullName,
             entitlementType == "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID",
             "TEST-0001",
             BeneficiaryTin: "000-000-000-000",

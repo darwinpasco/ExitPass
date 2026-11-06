@@ -62,6 +62,7 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
             projected!.ParkingSessionId.Should().BeNull();
             projected.SessionSource.Should().Be("VENDOR_SESSION_PROJECTION");
             projected.SiteName.Should().Be("Projection Test Site");
+            projected.SiteTimeZoneName.Should().Be("Asia/Manila");
             projected.PlateNumber.Should().Be("ABC****");
             projected.CurrentPayableAmountMinorUnits.Should().BeNull();
             projected.CurrencyCode.Should().BeNull();
@@ -93,6 +94,7 @@ public sealed class OperatorConsoleSessionLookupReadRepositoryIntegrationTests
             core!.ParkingSessionId.Should().Be(fixture.ParkingSessionId);
             core.SessionSource.Should().Be("CORE_PARKING_SESSION");
             core.PlateNumber.Should().Be("ABC****");
+            core.SiteTimeZoneName.Should().Be("Asia/Manila");
         }
         finally
         {

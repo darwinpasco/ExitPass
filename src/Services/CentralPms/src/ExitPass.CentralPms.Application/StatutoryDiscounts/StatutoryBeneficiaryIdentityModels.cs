@@ -1,3 +1,5 @@
+using ExitPass.CentralPms.Application.SalesInvoiceCustomerInformation;
+
 namespace ExitPass.CentralPms.Application.StatutoryDiscounts;
 
 public static class StatutoryBeneficiaryIdentityCaptureChannels
@@ -99,6 +101,8 @@ public interface IStatutoryBeneficiaryIdentityRepository
 
 public static class StatutoryBeneficiaryIdentityNormalizer
 {
+    public const int BeneficiaryFullNameMaximumLength =
+        ParkingSessionInvoiceCustomerInformationRules.CustomerNameMaximumLength;
     public const string IdentityRequiredClassification = "STATUTORY_BENEFICIARY_IDENTITY_REQUIRED";
     public const string InvalidDocumentTypeClassification = "STATUTORY_BENEFICIARY_IDENTITY_INVALID_DOCUMENT_TYPE";
     public const string DocumentTypeMismatchClassification = "STATUTORY_BENEFICIARY_IDENTITY_DOCUMENT_TYPE_MISMATCH";
@@ -151,7 +155,10 @@ public static class StatutoryBeneficiaryIdentityNormalizer
         normalized = null;
         if (input is null) return false;
 
-        var name = NormalizeText(input.BeneficiaryFullName, 256, collapseWhitespace: true);
+        var name = NormalizeText(
+            input.BeneficiaryFullName,
+            BeneficiaryFullNameMaximumLength,
+            collapseWhitespace: true);
         var idType = NormalizeCode(input.StatutoryIdType, 64);
         var idNumber = NormalizeText(input.StatutoryIdNumber, 128, collapseWhitespace: false);
         var tin = NormalizeText(input.BeneficiaryTin, 32, collapseWhitespace: false);

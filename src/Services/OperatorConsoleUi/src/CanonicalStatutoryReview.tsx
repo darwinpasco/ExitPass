@@ -276,7 +276,7 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
         {terminal ? <p>The Central PMS decision is final and cannot be changed in Operator Console.</p> : <>
           {requiresBeneficiaryIdentity && !hasStoredBeneficiaryIdentity && <fieldset className="canonicalReviewFilters"><legend>BIR statutory beneficiary identity</legend>
             <p className="fieldHint">Restricted values are used only for the approved fiscal snapshot and Annex E-2/E-3 exports.</p>
-            <label>Full Name<input autoComplete="off" value={beneficiaryFullName} onChange={(event)=>setBeneficiaryFullName(event.target.value)} /></label>
+            <label>Full Name<input autoComplete="off" maxLength={160} value={beneficiaryFullName} onChange={(event)=>setBeneficiaryFullName(event.target.value)} /></label>
             <label>ID Type<select value={statutoryIdType} onChange={(event)=>setStatutoryIdType(event.target.value)}><option value="">Select ID type</option>{detail.entitlementType === "SENIOR_CITIZEN" ? <><option value="OSCA_ID">OSCA ID</option><option value="SENIOR_CITIZEN_ID">Senior Citizen ID</option></> : <option value="PWD_ID">PWD ID</option>}</select></label>
             <label>{detail.entitlementType === "SENIOR_CITIZEN" ? "OSCA / Senior Citizen ID Number" : "PWD ID Number"}<input autoComplete="off" value={statutoryIdNumber} onChange={(event)=>setStatutoryIdNumber(event.target.value)} /></label>
             <label>TIN (optional)<input autoComplete="off" value={beneficiaryTin} onChange={(event)=>setBeneficiaryTin(event.target.value)} /></label>

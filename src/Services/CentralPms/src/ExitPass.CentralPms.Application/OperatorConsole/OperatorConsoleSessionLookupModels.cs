@@ -72,4 +72,5 @@ public sealed record OperatorConsoleSessionReadModel(
     string? PaymentMethod = null,
     Guid? VendorSystemId = null,
     string? TariffSource = null,
-    string? ExitHandlingStatus = null);
+    string? ExitHandlingStatus = null,
+    string? SiteTimeZoneName = null);
