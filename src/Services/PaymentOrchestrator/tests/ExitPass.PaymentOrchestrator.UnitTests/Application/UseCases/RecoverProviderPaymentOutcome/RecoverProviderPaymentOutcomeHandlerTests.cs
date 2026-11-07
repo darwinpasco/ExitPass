@@ -156,7 +156,7 @@ public sealed class RecoverProviderPaymentOutcomeHandlerTests
               "id": "{{CheckoutSessionId}}",
               "type": "checkout_session",
               "attributes": {
-                "status": "paid",
+                "status": "active",
                 "updated_at": 1794028244,
                 "payments": [
                   {
