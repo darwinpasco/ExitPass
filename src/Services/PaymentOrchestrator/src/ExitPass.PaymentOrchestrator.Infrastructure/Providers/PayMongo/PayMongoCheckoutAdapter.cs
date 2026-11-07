@@ -303,8 +303,15 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter, IProvider
                 command.CorrelationId);
         }
 
-        if (!string.IsNullOrWhiteSpace(command.ProviderReference) &&
-            !string.Equals(command.ProviderReference.Trim(), response.ProviderReference, StringComparison.Ordinal))
+        var persistedProviderReference = command.ProviderReference?.Trim();
+        var persistedReferenceIsCheckoutSession = string.Equals(
+            persistedProviderReference,
+            response.CheckoutSessionId,
+            StringComparison.Ordinal);
+
+        if (!string.IsNullOrWhiteSpace(persistedProviderReference) &&
+            !persistedReferenceIsCheckoutSession &&
+            !string.Equals(persistedProviderReference, response.ProviderReference, StringComparison.Ordinal))
         {
             return CreateStatusQueryFailure(
                 response.CheckoutSessionId,
@@ -374,6 +381,23 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter, IProvider
                 retryable: false,
                 "PAYMONGO_STATUS_QUERY_UNKNOWN_STATUS",
                 "PayMongo status query returned an unknown provider status.",
+                command.CorrelationId,
+                CreateSafeStatusDiagnostics(response));
+        }
+
+        if (normalized.IsTerminal &&
+            normalized.IsSuccess &&
+            (string.IsNullOrWhiteSpace(response.ProviderReference) ||
+             string.Equals(response.ProviderReference, response.CheckoutSessionId, StringComparison.Ordinal)))
+        {
+            return CreateStatusQueryFailure(
+                response.CheckoutSessionId,
+                null,
+                response.SourceStatus,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: false,
+                "PAYMONGO_STATUS_QUERY_MISSING_PROVIDER_REFERENCE",
+                "PayMongo terminal success did not include a distinct authoritative payment reference.",
                 command.CorrelationId,
                 CreateSafeStatusDiagnostics(response));
         }

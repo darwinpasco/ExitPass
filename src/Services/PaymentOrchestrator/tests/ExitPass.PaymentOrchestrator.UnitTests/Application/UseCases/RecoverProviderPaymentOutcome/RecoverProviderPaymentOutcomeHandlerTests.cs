@@ -1,10 +1,13 @@
+using System.Net;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Application.UseCases.QueryProviderSessionStatus;
 using ExitPass.PaymentOrchestrator.Application.UseCases.RecoverProviderPaymentOutcome;
 using ExitPass.PaymentOrchestrator.Contracts.Payments;
+using ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
 
@@ -25,7 +28,8 @@ public sealed class RecoverProviderPaymentOutcomeHandlerTests
     public async Task HandleAsync_WhenPersistedCheckoutIsPaid_ReportsOneGovernedOutcomeKey()
     {
         var repository = Substitute.For<IProviderSessionRepository>();
-        var adapter = Substitute.For<IProviderStatusQueryAdapter>();
+        var providerHandler = new StubHttpMessageHandler(PaidCheckoutStatusResponse());
+        var adapter = CreatePayMongoAdapter(providerHandler);
         var reporter = new DeduplicatingOutcomeReporter();
 
         repository
@@ -34,12 +38,6 @@ public sealed class RecoverProviderPaymentOutcomeHandlerTests
         repository
             .FindByProviderSessionIdAsync("PAYMONGO", CheckoutSessionId, Arg.Any<CancellationToken>())
             .Returns(CreateProviderSession());
-
-        adapter.ProviderCode.Returns("PAYMONGO");
-        adapter.ProviderProduct.Returns("PAYMONGO_CHECKOUT_SESSION");
-        adapter
-            .QueryProviderSessionStatusAsync(Arg.Any<ProviderStatusQueryCommand>(), Arg.Any<CancellationToken>())
-            .Returns(CreatePaidResult());
 
         var handler = CreateHandler(repository, adapter, reporter);
 
@@ -62,20 +60,15 @@ public sealed class RecoverProviderPaymentOutcomeHandlerTests
             $"status-query:PAYMONGO:{CheckoutSessionId}:{PaymentId}:{CanonicalPaymentOutcomeStatus.Succeeded}",
             report.EventId);
 
-        await adapter.Received(1).QueryProviderSessionStatusAsync(
-            Arg.Is<ProviderStatusQueryCommand>(command =>
-                command.ProviderSessionId == CheckoutSessionId &&
-                command.ProviderReference == CheckoutSessionId &&
-                command.ExpectedAmountMinor == 5000 &&
-                command.ExpectedCurrencyCode == "PHP"),
-            Arg.Any<CancellationToken>());
+        Assert.Equal(1, providerHandler.RequestCount);
     }
 
     [Fact]
     public async Task HandleAsync_WhenPaidRecoveryIsReplayed_ReusesGovernedOutcomeKey()
     {
         var repository = Substitute.For<IProviderSessionRepository>();
-        var adapter = Substitute.For<IProviderStatusQueryAdapter>();
+        var providerHandler = new StubHttpMessageHandler(PaidCheckoutStatusResponse());
+        var adapter = CreatePayMongoAdapter(providerHandler);
         var reporter = new DeduplicatingOutcomeReporter();
 
         repository
@@ -84,12 +77,6 @@ public sealed class RecoverProviderPaymentOutcomeHandlerTests
         repository
             .FindByProviderSessionIdAsync("PAYMONGO", CheckoutSessionId, Arg.Any<CancellationToken>())
             .Returns(CreateProviderSession());
-
-        adapter.ProviderCode.Returns("PAYMONGO");
-        adapter.ProviderProduct.Returns("PAYMONGO_CHECKOUT_SESSION");
-        adapter
-            .QueryProviderSessionStatusAsync(Arg.Any<ProviderStatusQueryCommand>(), Arg.Any<CancellationToken>())
-            .Returns(CreatePaidResult());
 
         var handler = CreateHandler(repository, adapter, reporter);
 
@@ -102,9 +89,24 @@ public sealed class RecoverProviderPaymentOutcomeHandlerTests
         Assert.Single(reporter.UniqueReports);
         Assert.Single(reporter.EventIds);
 
-        await adapter.Received(2).QueryProviderSessionStatusAsync(
-            Arg.Any<ProviderStatusQueryCommand>(),
-            Arg.Any<CancellationToken>());
+        Assert.Equal(2, providerHandler.RequestCount);
+    }
+
+    private static PayMongoCheckoutAdapter CreatePayMongoAdapter(HttpMessageHandler handler)
+    {
+        var options = Options.Create(new PayMongoOptions
+        {
+            BaseUrl = "https://api.paymongo.test",
+            SecretKey = "sk_test_unit",
+            PublicKey = "pk_test_unit",
+            WebhookSecretKey = "whsec_unit",
+            IsLiveMode = false,
+            AllowedPaymentMethodTypes = new[] { "qrph" }
+        });
+
+        return new PayMongoCheckoutAdapter(
+            new PayMongoClient(new HttpClient(handler), options),
+            options);
     }
 
     private static RecoverProviderPaymentOutcomeHandler CreateHandler(
@@ -147,25 +149,54 @@ public sealed class RecoverProviderPaymentOutcomeHandlerTests
             5000,
             "PHP");
 
-    private static ProviderStatusQueryResult CreatePaidResult() =>
-        new(
-            "PAYMONGO",
-            "PAYMONGO_CHECKOUT_SESSION",
-            CheckoutSessionId,
-            PaymentId,
-            "paid",
-            CanonicalPaymentOutcomeStatus.Succeeded,
-            IsTerminal: true,
-            IsSuccess: true,
-            Retryable: false,
-            ReportableToCentralPms: true,
-            AmountMinor: 5000,
-            CurrencyCode: "PHP",
-            ProviderObservedAtUtc: DateTimeOffset.Parse("2026-11-07T05:10:44Z"),
-            CorrelationId,
-            ErrorCode: null,
-            ErrorMessage: null,
-            Diagnostics: new Dictionary<string, string>());
+    private static string PaidCheckoutStatusResponse() =>
+        $$"""
+          {
+            "data": {
+              "id": "{{CheckoutSessionId}}",
+              "type": "checkout_session",
+              "attributes": {
+                "status": "paid",
+                "updated_at": 1794028244,
+                "payments": [
+                  {
+                    "id": "{{PaymentId}}",
+                    "type": "payment",
+                    "attributes": {
+                      "amount": 5000,
+                      "currency": "PHP",
+                      "status": "paid",
+                      "paid_at": 1794028244
+                    }
+                  }
+                ]
+              }
+            }
+          }
+          """;
+
+    private sealed class StubHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly string _responseJson;
+
+        public StubHttpMessageHandler(string responseJson)
+        {
+            _responseJson = responseJson;
+        }
+
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(_responseJson)
+            });
+        }
+    }
 
     private sealed class DeduplicatingOutcomeReporter : ICentralPmsPaymentOutcomeReporter
     {

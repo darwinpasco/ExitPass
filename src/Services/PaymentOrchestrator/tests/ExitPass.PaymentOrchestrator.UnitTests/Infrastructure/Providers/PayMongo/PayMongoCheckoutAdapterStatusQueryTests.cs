@@ -34,6 +34,38 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
         Assert.Equal("PHP", result.CurrencyCode);
     }
 
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenCheckoutReferenceTransitionsToPaymentReference_AcceptsTerminalPayment()
+    {
+        var adapter = CreateAdapter(StatusResponse());
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
+
+        Assert.True(result.IsTerminal);
+        Assert.True(result.IsSuccess);
+        Assert.True(result.ReportableToCentralPms);
+        Assert.Equal("pay_status_001", result.ProviderReference);
+        Assert.Null(result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenPersistedPaymentReferenceMatches_AcceptsTerminalPayment()
+    {
+        var adapter = CreateAdapter(StatusResponse());
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            DefaultCommand(),
+            CancellationToken.None);
+
+        Assert.True(result.IsTerminal);
+        Assert.True(result.IsSuccess);
+        Assert.True(result.ReportableToCentralPms);
+        Assert.Equal("pay_status_001", result.ProviderReference);
+        Assert.Null(result.ErrorCode);
+    }
+
     [Theory]
     [InlineData("paid", CanonicalPaymentOutcomeStatus.Succeeded, true, true, false, true)]
     [InlineData("succeeded", CanonicalPaymentOutcomeStatus.Succeeded, true, true, false, true)]
@@ -54,7 +86,9 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
     {
         var adapter = CreateAdapter(StatusResponse(status: sourceStatus));
 
-        var result = await adapter.QueryProviderSessionStatusAsync(DefaultCommand(), CancellationToken.None);
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
 
         Assert.Equal("PAYMONGO", result.ProviderCode);
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", result.ProviderProduct);
@@ -76,7 +110,9 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
     {
         var adapter = CreateAdapter(StatusResponse(status: "surprising_provider_state"));
 
-        var result = await adapter.QueryProviderSessionStatusAsync(DefaultCommand(), CancellationToken.None);
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
 
         Assert.Equal(CanonicalPaymentOutcomeStatus.PendingProvider, result.NormalizedStatus);
         Assert.False(result.IsTerminal);
@@ -124,7 +160,9 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
     {
         var adapter = CreateAdapter(StatusResponse(amountMinor: 9999));
 
-        var result = await adapter.QueryProviderSessionStatusAsync(DefaultCommand(), CancellationToken.None);
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
 
         Assert.False(result.ReportableToCentralPms);
         Assert.False(result.IsSuccess);
@@ -137,7 +175,9 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
     {
         var adapter = CreateAdapter(StatusResponse(currencyCode: "USD"));
 
-        var result = await adapter.QueryProviderSessionStatusAsync(DefaultCommand(), CancellationToken.None);
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
 
         Assert.False(result.ReportableToCentralPms);
         Assert.False(result.IsSuccess);
@@ -146,7 +186,7 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
     }
 
     [Fact]
-    public async Task QueryProviderSessionStatusAsync_WhenProviderReferenceDiffers_ReturnsMismatchWithoutReportableFinality()
+    public async Task QueryProviderSessionStatusAsync_WhenPersistedPaymentReferenceDiffers_ReturnsMismatchWithoutReportableFinality()
     {
         var adapter = CreateAdapter(StatusResponse(providerReference: "pay_different_001"));
 
@@ -156,6 +196,70 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
         Assert.False(result.IsSuccess);
         Assert.False(result.IsTerminal);
         Assert.Equal("PAYMONGO_STATUS_QUERY_PROVIDER_REFERENCE_MISMATCH", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenCheckoutSessionDiffers_ReturnsMismatchWithoutReportableFinality()
+    {
+        var adapter = CreateAdapter(StatusResponse(checkoutSessionId: "cs_different_001"));
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
+
+        Assert.False(result.ReportableToCentralPms);
+        Assert.False(result.IsSuccess);
+        Assert.False(result.IsTerminal);
+        Assert.Equal("PAYMONGO_STATUS_QUERY_PROVIDER_SESSION_MISMATCH", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenTerminalSuccessHasNoPaymentReference_FailsClosed()
+    {
+        var adapter = CreateAdapter(StatusResponseWithoutPaymentReference("paid"));
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
+
+        Assert.False(result.ReportableToCentralPms);
+        Assert.False(result.IsSuccess);
+        Assert.False(result.IsTerminal);
+        Assert.Null(result.ProviderReference);
+        Assert.Equal("PAYMONGO_STATUS_QUERY_MISSING_PROVIDER_REFERENCE", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenTerminalSuccessUsesCheckoutAsPaymentReference_FailsClosed()
+    {
+        var adapter = CreateAdapter(StatusResponse(providerReference: "cs_status_001"));
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
+
+        Assert.False(result.ReportableToCentralPms);
+        Assert.False(result.IsSuccess);
+        Assert.False(result.IsTerminal);
+        Assert.Null(result.ProviderReference);
+        Assert.Equal("PAYMONGO_STATUS_QUERY_MISSING_PROVIDER_REFERENCE", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenCheckoutIsPendingWithoutPaymentReference_RemainsNonterminal()
+    {
+        var adapter = CreateAdapter(StatusResponseWithoutPaymentReference("pending"));
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
+
+        Assert.False(result.ReportableToCentralPms);
+        Assert.False(result.IsSuccess);
+        Assert.False(result.IsTerminal);
+        Assert.True(result.Retryable);
+        Assert.Null(result.ProviderReference);
+        Assert.Null(result.ErrorCode);
     }
 
     [Fact]
@@ -282,6 +386,16 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
             CorrelationId);
     }
 
+    private static ProviderStatusQueryCommand CheckoutReferenceCommand()
+    {
+        return new ProviderStatusQueryCommand(
+            "cs_status_001",
+            "cs_status_001",
+            10000,
+            "PHP",
+            CorrelationId);
+    }
+
     private static HttpResponseMessage CreateJsonResponse(HttpStatusCode statusCode, string json)
     {
         return new HttpResponseMessage(statusCode)
@@ -331,6 +445,25 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
                       }
                     }
                   ]
+                }
+              }
+            }
+            """;
+    }
+
+    private static string StatusResponseWithoutPaymentReference(string status)
+    {
+        return $$"""
+            {
+              "data": {
+                "id": "cs_status_001",
+                "type": "checkout_session",
+                "attributes": {
+                  "status": "{{status}}",
+                  "amount": 10000,
+                  "currency": "PHP",
+                  "updated_at": 1775470400,
+                  "payments": []
                 }
               }
             }
