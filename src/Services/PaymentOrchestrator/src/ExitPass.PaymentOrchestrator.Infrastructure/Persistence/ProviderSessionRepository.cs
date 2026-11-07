@@ -343,22 +343,25 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
 
         const string sql = """
             select
-                provider_session_id,
-                payment_attempt_id,
-                provider_session_ref,
-                provider_transaction_ref,
-                idempotency_key,
-                session_status,
-                currency_code,
-                amount,
-                checkout_url,
-                qr_payload,
-                expires_at,
-                provider_expires_at,
-                correlation_id,
-                created_at
-            from payments.provider_sessions
-            where provider_session_id = @provider_session_id;
+                ps.provider_session_id,
+                ps.payment_attempt_id,
+                ps.provider_session_ref,
+                ps.provider_transaction_ref,
+                ps.idempotency_key,
+                ps.session_status,
+                ps.currency_code,
+                ps.amount,
+                ps.checkout_url,
+                ps.qr_payload,
+                ps.expires_at,
+                ps.provider_expires_at,
+                ps.correlation_id,
+                ps.created_at,
+                pr.provider_code,
+                pr.rail_code
+            from payments.provider_sessions ps
+            join payments.payment_rails pr on pr.payment_rail_id = ps.payment_rail_id
+            where ps.provider_session_id = @provider_session_id;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
@@ -371,7 +374,16 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
             return null;
         }
 
-        return ReadProviderSessionRecord(reader, providerCode);
+        var persistedProviderCode = reader.GetString(reader.GetOrdinal("provider_code"));
+        if (!string.Equals(persistedProviderCode, providerCode.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return ReadProviderSessionRecord(
+            reader,
+            persistedProviderCode,
+            reader.GetString(reader.GetOrdinal("rail_code")));
     }
 
     /// <inheritdoc />
