@@ -280,6 +280,17 @@ public sealed class ProviderSessionRepositorySqlContractTests
 
             Assert.NotNull(persisted);
             Assert.Equal(providerSessionRecordId, persisted!.ProviderSessionRecordId);
+            Assert.Equal(paymentAttemptId, persisted.PaymentAttemptId);
+            Assert.Equal("PAYMONGO", persisted.ProviderCode);
+            Assert.Equal("PAYMONGO_CHECKOUT_SESSION", persisted.ProviderProduct);
+            Assert.Equal(providerSessionRef, persisted.ProviderSessionId);
+
+            var wrongProvider = await repository.FindByProviderSessionIdAsync(
+                "AUB",
+                providerSessionRef,
+                CancellationToken.None);
+
+            Assert.Null(wrongProvider);
 
             await repository.MarkWebhookOutcomeAsync(
                 "PAYMONGO",
