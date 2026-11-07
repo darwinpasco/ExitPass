@@ -276,24 +276,29 @@ public sealed class PayMongoClient
             throw new InvalidOperationException("PayMongo status response did not contain a valid attributes object.");
         }
 
-        var sourceStatus = GetOptionalString(attributes, "status") ??
-            GetOptionalString(attributes, "payment_status") ??
-            GetFirstPaymentString(attributes, "status");
-        var providerReference = GetFirstPaymentId(attributes) ??
+        var checkoutStatus = GetOptionalString(attributes, "status");
+        var checkoutPaymentStatus = GetOptionalString(attributes, "payment_status");
+        var paymentEvidence = ReadPaymentStatusEvidence(attributes);
+        var authoritativePayment = ResolveAuthoritativePayment(
+            paymentEvidence,
+            checkoutStatus,
+            checkoutPaymentStatus);
+
+        var sourceStatus = authoritativePayment?.Status ??
+            checkoutStatus ??
+            checkoutPaymentStatus;
+        var providerReference = authoritativePayment?.PaymentId ??
             GetOptionalString(attributes, "payment_id") ??
             GetOptionalString(attributes, "provider_reference");
-        var amountMinor = GetOptionalInt64(attributes, "amount") ??
-            GetFirstPaymentInt64(attributes, "amount");
-        var currencyCode = GetOptionalString(attributes, "currency") ??
-            GetFirstPaymentString(attributes, "currency");
-        var observedAtUtc =
+        var amountMinor = authoritativePayment?.AmountMinor ??
+            GetOptionalInt64(attributes, "amount");
+        var currencyCode = authoritativePayment?.CurrencyCode ??
+            GetOptionalString(attributes, "currency");
+        var observedAtUtc = authoritativePayment?.ObservedAtUtc ??
             GetOptionalDateTimeOffset(attributes, "paid_at") ??
             GetOptionalDateTimeOffset(attributes, "completed_at") ??
             GetOptionalDateTimeOffset(attributes, "updated_at") ??
-            GetOptionalDateTimeOffset(attributes, "created_at") ??
-            GetFirstPaymentDateTimeOffset(attributes, "paid_at") ??
-            GetFirstPaymentDateTimeOffset(attributes, "updated_at") ??
-            GetFirstPaymentDateTimeOffset(attributes, "created_at");
+            GetOptionalDateTimeOffset(attributes, "created_at");
 
         return new PayMongoCheckoutSessionStatusResponse(
             checkoutSessionId,
@@ -345,79 +350,195 @@ public sealed class PayMongoClient
         return null;
     }
 
-    private static string? GetFirstPaymentId(JsonElement checkoutAttributes)
+    private static IReadOnlyList<PayMongoPaymentStatusEvidence> ReadPaymentStatusEvidence(
+        JsonElement checkoutAttributes)
     {
-        if (!TryGetFirstPayment(checkoutAttributes, out var payment))
+        if (!checkoutAttributes.TryGetProperty("payments", out var payments))
         {
-            return null;
+            return Array.Empty<PayMongoPaymentStatusEvidence>();
         }
 
-        return GetOptionalString(payment, "id");
-    }
-
-    private static string? GetFirstPaymentString(JsonElement checkoutAttributes, string propertyName)
-    {
-        if (!TryGetFirstPaymentAttributes(checkoutAttributes, out var paymentAttributes))
+        if (payments.ValueKind != JsonValueKind.Array)
         {
-            return null;
+            throw new InvalidOperationException("PayMongo status response payments must be an array.");
         }
 
-        return GetOptionalString(paymentAttributes, propertyName);
-    }
-
-    private static long? GetFirstPaymentInt64(JsonElement checkoutAttributes, string propertyName)
-    {
-        if (!TryGetFirstPaymentAttributes(checkoutAttributes, out var paymentAttributes))
+        var evidence = new List<PayMongoPaymentStatusEvidence>();
+        foreach (var payment in payments.EnumerateArray())
         {
-            return null;
-        }
-
-        return GetOptionalInt64(paymentAttributes, propertyName);
-    }
-
-    private static DateTimeOffset? GetFirstPaymentDateTimeOffset(JsonElement checkoutAttributes, string propertyName)
-    {
-        if (!TryGetFirstPaymentAttributes(checkoutAttributes, out var paymentAttributes))
-        {
-            return null;
-        }
-
-        return GetOptionalDateTimeOffset(paymentAttributes, propertyName);
-    }
-
-    private static bool TryGetFirstPaymentAttributes(JsonElement checkoutAttributes, out JsonElement paymentAttributes)
-    {
-        paymentAttributes = default;
-
-        if (!TryGetFirstPayment(checkoutAttributes, out var payment))
-        {
-            return false;
-        }
-
-        return payment.TryGetProperty("attributes", out paymentAttributes) &&
-            paymentAttributes.ValueKind == JsonValueKind.Object;
-    }
-
-    private static bool TryGetFirstPayment(JsonElement checkoutAttributes, out JsonElement payment)
-    {
-        payment = default;
-
-        if (!checkoutAttributes.TryGetProperty("payments", out var payments) ||
-            payments.ValueKind != JsonValueKind.Array)
-        {
-            return false;
-        }
-
-        foreach (var candidate in payments.EnumerateArray())
-        {
-            if (candidate.ValueKind == JsonValueKind.Object)
+            if (payment.ValueKind != JsonValueKind.Object)
             {
-                payment = candidate;
-                return true;
+                throw new InvalidOperationException("PayMongo status response contained a malformed payment object.");
+            }
+
+            var paymentId = GetOptionalString(payment, "id");
+            if (string.IsNullOrWhiteSpace(paymentId))
+            {
+                throw new InvalidOperationException("PayMongo status response payment did not contain an id.");
+            }
+
+            if (!payment.TryGetProperty("attributes", out var paymentAttributes) ||
+                paymentAttributes.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidOperationException("PayMongo status response payment did not contain valid attributes.");
+            }
+
+            var status = GetOptionalString(paymentAttributes, "status");
+            if (string.IsNullOrWhiteSpace(status))
+            {
+                throw new InvalidOperationException("PayMongo status response payment did not contain a status.");
+            }
+
+            evidence.Add(new PayMongoPaymentStatusEvidence(
+                paymentId,
+                status,
+                GetOptionalInt64(paymentAttributes, "amount"),
+                GetOptionalString(paymentAttributes, "currency"),
+                GetOptionalDateTimeOffset(paymentAttributes, "paid_at") ??
+                    GetOptionalDateTimeOffset(paymentAttributes, "updated_at") ??
+                    GetOptionalDateTimeOffset(paymentAttributes, "created_at")));
+        }
+
+        return evidence;
+    }
+
+    private static PayMongoPaymentStatusEvidence? ResolveAuthoritativePayment(
+        IReadOnlyList<PayMongoPaymentStatusEvidence> paymentEvidence,
+        string? checkoutStatus,
+        string? checkoutPaymentStatus)
+    {
+        var successfulPayments = paymentEvidence
+            .Where(payment => GetPaymentStatusCategory(payment.Status) == PaymentStatusCategory.Succeeded)
+            .ToArray();
+
+        if (successfulPayments.Length > 1)
+        {
+            throw new InvalidOperationException("PayMongo status response contained multiple successful payments.");
+        }
+
+        if (successfulPayments.Length == 1)
+        {
+            var successfulPayment = successfulPayments[0];
+            if (paymentEvidence.Any(payment =>
+                    !string.Equals(payment.PaymentId, successfulPayment.PaymentId, StringComparison.Ordinal) &&
+                    IsTerminalPaymentStatus(payment.Status)))
+            {
+                throw new InvalidOperationException(
+                    "PayMongo status response contained contradictory terminal payments.");
+            }
+
+            if (successfulPayment.AmountMinor is null ||
+                string.IsNullOrWhiteSpace(successfulPayment.CurrencyCode))
+            {
+                throw new InvalidOperationException(
+                    "PayMongo successful payment evidence did not contain amount and currency.");
+            }
+
+            EnsureNoTerminalStatusConflict(
+                successfulPayment.Status,
+                checkoutStatus,
+                checkoutPaymentStatus);
+            return successfulPayment;
+        }
+
+        var terminalPayments = paymentEvidence
+            .Where(payment => IsTerminalPaymentStatus(payment.Status))
+            .ToArray();
+        if (terminalPayments.Length > 1)
+        {
+            throw new InvalidOperationException("PayMongo status response contained ambiguous terminal payments.");
+        }
+
+        if (terminalPayments.Length == 1)
+        {
+            EnsureNoTerminalStatusConflict(
+                terminalPayments[0].Status,
+                checkoutStatus,
+                checkoutPaymentStatus);
+            return terminalPayments[0];
+        }
+
+        if (paymentEvidence.Count == 1)
+        {
+            EnsureNoTerminalStatusConflict(
+                paymentEvidence[0].Status,
+                checkoutStatus,
+                checkoutPaymentStatus);
+            return paymentEvidence[0];
+        }
+
+        if (paymentEvidence.Count > 1 &&
+            HasTerminalStatus(checkoutStatus, checkoutPaymentStatus))
+        {
+            throw new InvalidOperationException(
+                "PayMongo checkout terminal status conflicted with nonterminal payment evidence.");
+        }
+
+        return null;
+    }
+
+    private static void EnsureNoTerminalStatusConflict(
+        string paymentStatus,
+        params string?[] checkoutStatuses)
+    {
+        var paymentCategory = GetPaymentStatusCategory(paymentStatus);
+        foreach (var checkoutStatus in checkoutStatuses)
+        {
+            if (string.IsNullOrWhiteSpace(checkoutStatus))
+            {
+                continue;
+            }
+
+            var checkoutCategory = GetPaymentStatusCategory(checkoutStatus);
+            if (IsTerminalCategory(checkoutCategory) && checkoutCategory != paymentCategory)
+            {
+                throw new InvalidOperationException(
+                    "PayMongo checkout and payment contained contradictory terminal statuses.");
             }
         }
+    }
 
-        return false;
+    private static bool HasTerminalStatus(params string?[] statuses) =>
+        statuses.Any(status =>
+            !string.IsNullOrWhiteSpace(status) &&
+            IsTerminalCategory(GetPaymentStatusCategory(status)));
+
+    private static bool IsTerminalPaymentStatus(string status) =>
+        IsTerminalCategory(GetPaymentStatusCategory(status));
+
+    private static bool IsTerminalCategory(PaymentStatusCategory category) =>
+        category is PaymentStatusCategory.Succeeded or
+            PaymentStatusCategory.Failed or
+            PaymentStatusCategory.Expired or
+            PaymentStatusCategory.Cancelled;
+
+    private static PaymentStatusCategory GetPaymentStatusCategory(string status) =>
+        status.Trim().ToLowerInvariant() switch
+        {
+            "paid" or "succeeded" or "success" => PaymentStatusCategory.Succeeded,
+            "failed" or "declined" => PaymentStatusCategory.Failed,
+            "expired" => PaymentStatusCategory.Expired,
+            "cancelled" or "canceled" => PaymentStatusCategory.Cancelled,
+            "pending" or "awaiting_payment" or "processing" or "active" or "unpaid" =>
+                PaymentStatusCategory.Pending,
+            _ => PaymentStatusCategory.Unknown
+        };
+
+    private sealed record PayMongoPaymentStatusEvidence(
+        string PaymentId,
+        string Status,
+        long? AmountMinor,
+        string? CurrencyCode,
+        DateTimeOffset? ObservedAtUtc);
+
+    private enum PaymentStatusCategory
+    {
+        Unknown,
+        Pending,
+        Succeeded,
+        Failed,
+        Expired,
+        Cancelled
     }
 
     /// <summary>

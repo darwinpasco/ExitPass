@@ -18,7 +18,9 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
     [Fact]
     public async Task RetrieveCheckoutSessionStatusAsync_UsesGetWithProviderSessionReferenceAndBasicAuth()
     {
-        var handler = new StubHttpMessageHandler(_ => CreateJsonResponse(HttpStatusCode.OK, StatusResponse()));
+        var handler = new StubHttpMessageHandler(_ => CreateJsonResponse(
+            HttpStatusCode.OK,
+            CheckoutWithPaymentResponse("active", "paid")));
         var client = CreateClient(handler);
 
         var result = await client.RetrieveCheckoutSessionStatusAsync("cs_status_001", CancellationToken.None);
@@ -32,12 +34,13 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
         Assert.Equal("paid", result.SourceStatus);
         Assert.Equal(10000, result.AmountMinor);
         Assert.Equal("PHP", result.CurrencyCode);
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1775470400), result.ObservedAtUtc);
     }
 
     [Fact]
     public async Task QueryProviderSessionStatusAsync_WhenCheckoutReferenceTransitionsToPaymentReference_AcceptsTerminalPayment()
     {
-        var adapter = CreateAdapter(StatusResponse());
+        var adapter = CreateAdapter(CheckoutWithPaymentResponse("active", "paid"));
 
         var result = await adapter.QueryProviderSessionStatusAsync(
             CheckoutReferenceCommand(),
@@ -46,14 +49,17 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
         Assert.True(result.IsTerminal);
         Assert.True(result.IsSuccess);
         Assert.True(result.ReportableToCentralPms);
+        Assert.Equal("cs_status_001", result.ProviderSessionId);
         Assert.Equal("pay_status_001", result.ProviderReference);
+        Assert.Equal(10000, result.AmountMinor);
+        Assert.Equal("PHP", result.CurrencyCode);
         Assert.Null(result.ErrorCode);
     }
 
     [Fact]
     public async Task QueryProviderSessionStatusAsync_WhenPersistedPaymentReferenceMatches_AcceptsTerminalPayment()
     {
-        var adapter = CreateAdapter(StatusResponse());
+        var adapter = CreateAdapter(CheckoutWithPaymentResponse("active", "paid"));
 
         var result = await adapter.QueryProviderSessionStatusAsync(
             DefaultCommand(),
@@ -64,6 +70,56 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
         Assert.True(result.ReportableToCentralPms);
         Assert.Equal("pay_status_001", result.ProviderReference);
         Assert.Null(result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenCheckoutIsActiveAndPaymentIsPending_RemainsNonterminal()
+    {
+        var adapter = CreateAdapter(CheckoutWithPaymentResponse("active", "pending"));
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
+
+        Assert.Equal(CanonicalPaymentOutcomeStatus.PendingProvider, result.NormalizedStatus);
+        Assert.False(result.IsTerminal);
+        Assert.False(result.IsSuccess);
+        Assert.True(result.Retryable);
+        Assert.False(result.ReportableToCentralPms);
+        Assert.Equal("pay_status_001", result.ProviderReference);
+    }
+
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenCheckoutIsActiveWithoutPayment_RemainsNonterminal()
+    {
+        var adapter = CreateAdapter(StatusResponseWithoutPaymentReference("active"));
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
+
+        Assert.Equal(CanonicalPaymentOutcomeStatus.PendingProvider, result.NormalizedStatus);
+        Assert.False(result.IsTerminal);
+        Assert.False(result.IsSuccess);
+        Assert.True(result.Retryable);
+        Assert.False(result.ReportableToCentralPms);
+        Assert.Null(result.ProviderReference);
+    }
+
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenCheckoutIsActiveAndPaymentFailed_DoesNotReportSuccess()
+    {
+        var adapter = CreateAdapter(CheckoutWithPaymentResponse("active", "failed"));
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
+
+        Assert.Equal(CanonicalPaymentOutcomeStatus.Failed, result.NormalizedStatus);
+        Assert.True(result.IsTerminal);
+        Assert.False(result.IsSuccess);
+        Assert.False(result.ReportableToCentralPms);
+        Assert.Equal("pay_status_001", result.ProviderReference);
     }
 
     [Theory]
@@ -158,7 +214,7 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
     [Fact]
     public async Task QueryProviderSessionStatusAsync_WhenAmountDiffers_ReturnsMismatchWithoutReportableFinality()
     {
-        var adapter = CreateAdapter(StatusResponse(amountMinor: 9999));
+        var adapter = CreateAdapter(CheckoutWithPaymentResponse("active", "paid", amountMinor: 9999));
 
         var result = await adapter.QueryProviderSessionStatusAsync(
             CheckoutReferenceCommand(),
@@ -173,7 +229,7 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
     [Fact]
     public async Task QueryProviderSessionStatusAsync_WhenCurrencyDiffers_ReturnsMismatchWithoutReportableFinality()
     {
-        var adapter = CreateAdapter(StatusResponse(currencyCode: "USD"));
+        var adapter = CreateAdapter(CheckoutWithPaymentResponse("active", "paid", currencyCode: "USD"));
 
         var result = await adapter.QueryProviderSessionStatusAsync(
             CheckoutReferenceCommand(),
@@ -188,7 +244,10 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
     [Fact]
     public async Task QueryProviderSessionStatusAsync_WhenPersistedPaymentReferenceDiffers_ReturnsMismatchWithoutReportableFinality()
     {
-        var adapter = CreateAdapter(StatusResponse(providerReference: "pay_different_001"));
+        var adapter = CreateAdapter(CheckoutWithPaymentResponse(
+            "active",
+            "paid",
+            providerReference: "pay_different_001"));
 
         var result = await adapter.QueryProviderSessionStatusAsync(DefaultCommand(), CancellationToken.None);
 
@@ -196,6 +255,75 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
         Assert.False(result.IsSuccess);
         Assert.False(result.IsTerminal);
         Assert.Equal("PAYMONGO_STATUS_QUERY_PROVIDER_REFERENCE_MISMATCH", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenSuccessfulPaymentIdIsMissing_FailsClosed()
+    {
+        var adapter = CreateAdapter(CheckoutWithPaymentResponse(
+            "active",
+            "paid",
+            providerReference: null));
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
+
+        Assert.False(result.IsTerminal);
+        Assert.False(result.IsSuccess);
+        Assert.False(result.ReportableToCentralPms);
+        Assert.Equal("PAYMONGO_STATUS_QUERY_MALFORMED_RESPONSE", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenMultiplePaymentsAreSuccessful_FailsClosed()
+    {
+        var adapter = CreateAdapter(CheckoutWithPaymentsResponse(
+            "active",
+            PaymentJson("pay_status_001", "paid", 10000, "PHP"),
+            PaymentJson("pay_status_002", "paid", 10000, "PHP")));
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
+
+        Assert.False(result.IsTerminal);
+        Assert.False(result.IsSuccess);
+        Assert.False(result.ReportableToCentralPms);
+        Assert.Equal("PAYMONGO_STATUS_QUERY_MALFORMED_RESPONSE", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenNestedTerminalPaymentsConflict_FailsClosed()
+    {
+        var adapter = CreateAdapter(CheckoutWithPaymentsResponse(
+            "active",
+            PaymentJson("pay_status_001", "paid", 10000, "PHP"),
+            PaymentJson("pay_status_002", "failed", 10000, "PHP")));
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
+
+        Assert.False(result.IsTerminal);
+        Assert.False(result.IsSuccess);
+        Assert.False(result.ReportableToCentralPms);
+        Assert.Equal("PAYMONGO_STATUS_QUERY_MALFORMED_RESPONSE", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task QueryProviderSessionStatusAsync_WhenCheckoutAndPaymentTerminalEvidenceConflicts_FailsClosed()
+    {
+        var adapter = CreateAdapter(CheckoutWithPaymentResponse("failed", "paid"));
+
+        var result = await adapter.QueryProviderSessionStatusAsync(
+            CheckoutReferenceCommand(),
+            CancellationToken.None);
+
+        Assert.False(result.IsTerminal);
+        Assert.False(result.IsSuccess);
+        Assert.False(result.ReportableToCentralPms);
+        Assert.Equal("PAYMONGO_STATUS_QUERY_MALFORMED_RESPONSE", result.ErrorCode);
     }
 
     [Fact]
@@ -446,6 +574,57 @@ public sealed class PayMongoCheckoutAdapterStatusQueryTests
                     }
                   ]
                 }
+              }
+            }
+            """;
+    }
+
+    private static string CheckoutWithPaymentResponse(
+        string checkoutStatus,
+        string paymentStatus,
+        string? providerReference = "pay_status_001",
+        long amountMinor = 10000,
+        string currencyCode = "PHP") =>
+        CheckoutWithPaymentsResponse(
+            checkoutStatus,
+            PaymentJson(providerReference, paymentStatus, amountMinor, currencyCode));
+
+    private static string CheckoutWithPaymentsResponse(
+        string checkoutStatus,
+        params string[] payments)
+    {
+        var paymentJson = string.Join(",", payments);
+        return $$"""
+            {
+              "data": {
+                "id": "cs_status_001",
+                "type": "checkout_session",
+                "attributes": {
+                  "status": "{{checkoutStatus}}",
+                  "updated_at": 1775470300,
+                  "payments": [{{paymentJson}}]
+                }
+              }
+            }
+            """;
+    }
+
+    private static string PaymentJson(
+        string? paymentId,
+        string status,
+        long amountMinor,
+        string currencyCode)
+    {
+        var idProperty = paymentId is null ? string.Empty : $"\"id\": \"{paymentId}\",";
+        return $$"""
+            {
+              {{idProperty}}
+              "type": "payment",
+              "attributes": {
+                "amount": {{amountMinor}},
+                "currency": "{{currencyCode}}",
+                "status": "{{status}}",
+                "paid_at": 1775470400
               }
             }
             """;
