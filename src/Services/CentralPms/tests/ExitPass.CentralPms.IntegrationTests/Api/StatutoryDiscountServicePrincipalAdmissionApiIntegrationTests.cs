@@ -5,6 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.Application.VendorParking.Routing;
 using ExitPass.CentralPms.Application.WebPay;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
@@ -15,6 +16,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 using Xunit;
 
@@ -62,7 +64,7 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
     }
 
     [Fact]
-    public async Task Apt_cannot_originate_statutory_request()
+    public async Task Apt_service_principal_without_cashier_session_is_denied()
     {
         var scenario = await CreateScenarioAsync(
             StatutoryDiscountSourceChannels.AssistedPaymentTerminal,
@@ -82,9 +84,9 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
                 StatutoryDiscountSourceChannels.AssistedPaymentTerminal,
                 includeCertificate: true);
 
-            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
             (await response.Content.ReadFromJsonAsync<ErrorResponse>())!.ErrorCode
-                .Should().Be("STATUTORY_DISCOUNT_APT_REQUEST_ORIGIN_PROHIBITED");
+                .Should().Be("CENTRAL_PMS_APT_HUMAN_SESSION_REQUIRED");
             (await ReadIntakeCountAsync(scenario.Context.ParkingSessionId)).Should().Be(0);
         }
         finally
@@ -130,8 +132,8 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
     }
 
     [Theory]
-    [InlineData("/v1/webpay/statutory-discounts/evidence", "WebPayStatutoryEvidenceCapture", 5)]
-    [InlineData("/v1/apt/statutory-discounts/evidence", "AptStatutoryEvidenceCapture", 6)]
+    [InlineData("/v1/webpay/statutory-discounts/evidence", "WebPayStatutoryEvidenceCapture", 6)]
+    [InlineData("/v1/apt/statutory-discounts/evidence", "AptStatutoryEvidenceCapture", 7)]
     public void Statutory_evidence_channel_endpoints_accept_authenticated_service_principals_and_retain_rbac_metadata(
         string routePrefix,
         string policyName,
@@ -139,6 +141,7 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
     {
         using var factory = new CustomWebApplicationFactory()
             .WithConfigurationOverrides(ProductionOverrides())
+            .WithServiceOverrides(AddStatutoryTestDependencies)
             .WithEnvironment("IntegrationTest");
         using var client = factory.CreateClient();
 
@@ -152,10 +155,40 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
         foreach (var endpoint in endpoints)
         {
             endpoint.Metadata.GetMetadata<ServicePrincipalEndpointMetadata>().Should().NotBeNull();
+            if (routePrefix.StartsWith("/v1/apt/", StringComparison.Ordinal))
+            {
+                endpoint.Metadata.GetMetadata<GovernedAptDeviceEndpointMetadata>().Should().NotBeNull();
+            }
+            else
+            {
+                endpoint.Metadata.GetMetadata<GovernedAptDeviceEndpointMetadata>().Should().BeNull();
+            }
             var policy = endpoint.Metadata.GetMetadata<ReconciliationPolicyMetadata>();
             policy.Should().NotBeNull();
             policy!.PolicyName.Should().Be(policyName);
         }
+    }
+
+    [Fact]
+    public void Shared_decision_endpoints_admit_service_principals_and_governed_apt_devices()
+    {
+        using var factory = new CustomWebApplicationFactory()
+            .WithConfigurationOverrides(ProductionOverrides())
+            .WithServiceOverrides(AddStatutoryTestDependencies)
+            .WithEnvironment("IntegrationTest");
+        using var client = factory.CreateClient();
+
+        var endpoints = factory.Services.GetRequiredService<IEnumerable<EndpointDataSource>>()
+            .SelectMany(source => source.Endpoints)
+            .OfType<RouteEndpoint>()
+            .Where(endpoint => endpoint.RoutePattern.RawText?.StartsWith(
+                "/v1/statutory-discounts/decisions", StringComparison.Ordinal) == true)
+            .ToArray();
+
+        endpoints.Should().NotBeEmpty();
+        endpoints.Should().OnlyContain(endpoint =>
+            endpoint.Metadata.GetMetadata<ServicePrincipalEndpointMetadata>() != null &&
+            endpoint.Metadata.GetMetadata<GovernedAptDeviceEndpointMetadata>() != null);
     }
 
     [Theory]
@@ -563,7 +596,21 @@ public sealed class StatutoryDiscountServicePrincipalAdmissionApiIntegrationTest
         return new CustomWebApplicationFactory()
             .WithInternalMtls([scenario.Certificate.Thumbprint], accessor)
             .WithConfigurationOverrides(overrides)
+            .WithServiceOverrides(AddStatutoryTestDependencies)
             .WithEnvironment("IntegrationTest");
+    }
+
+    private static void AddStatutoryTestDependencies(IServiceCollection services) =>
+        services.TryAddSingleton<ISiteVendorAdapterRouteRegistry, MissingSiteVendorAdapterRouteRegistry>();
+
+    private sealed class MissingSiteVendorAdapterRouteRegistry : ISiteVendorAdapterRouteRegistry
+    {
+        public Task<SiteVendorAdapterRoute> ResolveAsync(
+            Guid siteId,
+            Guid siteGroupId,
+            Guid? vendorSystemId,
+            CancellationToken cancellationToken) =>
+            throw new SiteVendorAdapterRoutingException("SITE_VENDOR_ADAPTER_ROUTE_NOT_CONFIGURED");
     }
 
     private static Dictionary<string, string?> ProductionOverrides() => new()

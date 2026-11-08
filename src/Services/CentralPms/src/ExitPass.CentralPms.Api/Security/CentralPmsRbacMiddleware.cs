@@ -50,9 +50,13 @@ public sealed class CentralPmsRbacMiddleware
             "service_identity_id",
             "client_id");
 
-        var humanAudience = context.User.Identity?.IsAuthenticated == true
-            ? context.User.FindFirst("exitpass_audience")?.Value
-            : null;
+        var humanIdentity = context.User.Identities.SingleOrDefault(identity =>
+            identity.IsAuthenticated &&
+            string.Equals(
+                identity.AuthenticationType,
+                HumanSessionAuthenticationHandler.SchemeName,
+                StringComparison.Ordinal));
+        var humanAudience = humanIdentity?.FindFirst("exitpass_audience")?.Value;
         if (metadata is not null &&
             humanAudience is not null &&
             requiredPermissions.Any(permission =>
@@ -73,10 +77,10 @@ public sealed class CentralPmsRbacMiddleware
         }
 
         var restrictedHumanSession =
-            context.User.Identity?.IsAuthenticated == true &&
-            (string.Equals(context.User.FindFirst("password_change_required")?.Value, "true", StringComparison.OrdinalIgnoreCase) ||
-             (string.Equals(context.User.FindFirst("exitpass_audience")?.Value, "MANAGEMENT_PLATFORM", StringComparison.OrdinalIgnoreCase) &&
-              !string.Equals(context.User.FindFirst("mfa_satisfied")?.Value, "true", StringComparison.OrdinalIgnoreCase)));
+            humanIdentity is not null &&
+            (string.Equals(humanIdentity.FindFirst("password_change_required")?.Value, "true", StringComparison.OrdinalIgnoreCase) ||
+             (string.Equals(humanAudience, "MANAGEMENT_PLATFORM", StringComparison.OrdinalIgnoreCase) &&
+              !string.Equals(humanIdentity.FindFirst("mfa_satisfied")?.Value, "true", StringComparison.OrdinalIgnoreCase)));
 
         if (restrictedHumanSession && !IsHumanPasswordLifecyclePath(context.Request.Path))
         {

@@ -100,14 +100,33 @@ public sealed class InternalMtlsMiddleware
         var staticallyTrusted = IsTrusted(certificate, mtlsOptions.TrustedClientThumbprints);
         if (acceptsGovernedAptDevice)
         {
+            var humanIdentities = context.User.Identities.Where(identity =>
+                identity.IsAuthenticated &&
+                string.Equals(identity.AuthenticationType, HumanSessionAuthenticationHandler.SchemeName, StringComparison.Ordinal)).ToArray();
             if (await TryAuthenticateGovernedAptDeviceAsync(context, certificate, repository))
             {
+                if (!await TryAttachGovernedAptHumanIdentityAsync(context, humanIdentities))
+                {
+                    return;
+                }
+
                 await _next(context);
                 return;
             }
 
             if (staticallyTrusted)
             {
+                if (acceptsServicePrincipal)
+                {
+                    if (!await TryAuthenticateServicePrincipalAsync(context, certificate, mtlsOptions, repository))
+                    {
+                        return;
+                    }
+
+                    await _next(context);
+                    return;
+                }
+
                 var suppliedIdentity = HumanSessionAuthenticationHandler.ResolveGuid(
                     context.Request.Headers[CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName]);
                 var governedRequired = suppliedIdentity.HasValue
@@ -171,7 +190,9 @@ public sealed class InternalMtlsMiddleware
             new("exitpass_audience", "APT"),
             new("source_channel", StatutoryDiscountSourceChannels.AssistedPaymentTerminal),
             new("source_application", device.OwningServiceName),
-            new("credential_type", "MTLS")
+            new("credential_type", "MTLS"),
+            new(CentralPmsRbacPolicyCatalog.PermissionClaimType, "statutory-discounts.decision.submit.assisted-payment-terminal"),
+            new(CentralPmsRbacPolicyCatalog.PermissionClaimType, "statutory-discounts.evidence.capture.assisted-payment-terminal")
         };
         claims.AddRange(device.SiteIds.Select(siteId => new Claim("site_id", siteId.ToString("D"))));
         claims.AddRange(device.SiteGroupIds.Select(siteGroupId => new Claim("site_group_id", siteGroupId.ToString("D"))));
@@ -180,6 +201,45 @@ public sealed class InternalMtlsMiddleware
             authenticationType: "GovernedDeviceMtls",
             nameType: "service_identity_id",
             roleType: ClaimTypes.Role));
+        return true;
+    }
+
+    private static async Task<bool> TryAttachGovernedAptHumanIdentityAsync(
+        HttpContext context,
+        IReadOnlyCollection<ClaimsIdentity> humanIdentities)
+    {
+        if (humanIdentities.Count > 1)
+        {
+            await WriteErrorAsync(context, StatusCodes.Status403Forbidden,
+                "HUMAN_SESSION_IDENTITY_AMBIGUOUS",
+                "The authenticated human-session identity is ambiguous.");
+            return false;
+        }
+
+        var humanIdentity = humanIdentities.SingleOrDefault();
+        if (humanIdentity is null)
+        {
+            return true;
+        }
+
+        var deviceIdentity = context.User.Identities.Single(identity =>
+            string.Equals(identity.AuthenticationType, "GovernedDeviceMtls", StringComparison.Ordinal));
+        var humanAudience = humanIdentity.FindFirst("exitpass_audience")?.Value;
+        var humanDeviceServiceIdentityId = HumanSessionAuthenticationHandler.ResolveGuid(
+            humanIdentity.FindFirst("device_service_identity_id")?.Value);
+        var deviceServiceIdentityId = HumanSessionAuthenticationHandler.ResolveGuid(
+            deviceIdentity.FindFirst("service_identity_id")?.Value);
+        if (!string.Equals(humanAudience, "APT", StringComparison.Ordinal) ||
+            !deviceServiceIdentityId.HasValue ||
+            humanDeviceServiceIdentityId != deviceServiceIdentityId)
+        {
+            await WriteErrorAsync(context, StatusCodes.Status403Forbidden,
+                "APT_HUMAN_DEVICE_BINDING_MISMATCH",
+                "The authenticated APT human session is not bound to the authenticated terminal identity.");
+            return false;
+        }
+
+        context.User = new ClaimsPrincipal([deviceIdentity, humanIdentity]);
         return true;
     }
 

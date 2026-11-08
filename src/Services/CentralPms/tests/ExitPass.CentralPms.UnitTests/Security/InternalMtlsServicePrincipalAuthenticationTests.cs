@@ -291,6 +291,96 @@ public sealed class InternalMtlsServicePrincipalAuthenticationTests
         context.User.FindFirst("device_credential_version")!.Value.Should().Be("3");
         context.User.FindFirst("site_id")!.Value.Should().Be(siteId.ToString("D"));
         context.User.FindFirst("site_group_id")!.Value.Should().Be(siteGroupId.ToString("D"));
+        context.User.FindAll(CentralPmsRbacPolicyCatalog.PermissionClaimType).Select(claim => claim.Value)
+            .Should().BeEquivalentTo(
+                "statutory-discounts.decision.submit.assisted-payment-terminal",
+                "statutory-discounts.evidence.capture.assisted-payment-terminal");
+    }
+
+    [Fact]
+    public async Task Governed_apt_certificate_preserves_matching_cashier_session()
+    {
+        using var certificate = CreateCertificate();
+        var fingerprint = Convert.ToHexString(certificate.GetCertHash(HashAlgorithmName.SHA256)).ToLowerInvariant();
+        var serviceIdentityId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var siteId = Guid.NewGuid();
+        var siteGroupId = Guid.NewGuid();
+        var repository = Substitute.For<ICentralPmsRbacRepository>();
+        repository.GetGovernedDeviceAuthenticationAsync(
+                $"device-mtls-sha256:{fingerprint}", Arg.Any<CancellationToken>())
+            .Returns(new CentralPmsGovernedDeviceAuthenticationRecord(
+                serviceIdentityId, Guid.NewGuid(), "ASSISTED_PAYMENT_TERMINAL", 1,
+                "ASSISTED_PAYMENT_TERMINAL", [siteId], [siteGroupId]));
+        var nextCalled = false;
+        var middleware = new InternalMtlsMiddleware(_ => { nextCalled = true; return Task.CompletedTask; });
+        var context = ContextWithGovernedAptAndServiceMetadata();
+        context.User = AptHumanPrincipal(userId, serviceIdentityId, siteId, siteGroupId);
+
+        await middleware.InvokeAsync(context,
+            Options.Create(new InternalMtlsOptions { Enabled = true, RequireClientCertificate = true }),
+            new FixedCertificateAccessor(certificate), repository);
+
+        nextCalled.Should().BeTrue();
+        context.User.Identities.Select(identity => identity.AuthenticationType).Should().Equal(
+            "GovernedDeviceMtls",
+            HumanSessionAuthenticationHandler.SchemeName);
+        context.User.Identities.Single(identity => identity.AuthenticationType == HumanSessionAuthenticationHandler.SchemeName)
+            .FindFirst("user_id")!.Value.Should().Be(userId.ToString("D"));
+    }
+
+    [Fact]
+    public async Task Governed_apt_certificate_rejects_cashier_session_bound_to_another_device()
+    {
+        using var certificate = CreateCertificate();
+        var fingerprint = Convert.ToHexString(certificate.GetCertHash(HashAlgorithmName.SHA256)).ToLowerInvariant();
+        var serviceIdentityId = Guid.NewGuid();
+        var repository = Substitute.For<ICentralPmsRbacRepository>();
+        repository.GetGovernedDeviceAuthenticationAsync(
+                $"device-mtls-sha256:{fingerprint}", Arg.Any<CancellationToken>())
+            .Returns(new CentralPmsGovernedDeviceAuthenticationRecord(
+                serviceIdentityId, Guid.NewGuid(), "ASSISTED_PAYMENT_TERMINAL", 1,
+                "ASSISTED_PAYMENT_TERMINAL", [Guid.NewGuid()], [Guid.NewGuid()]));
+        var middleware = new InternalMtlsMiddleware(_ => throw new InvalidOperationException("next must not run"));
+        var context = ContextWithGovernedAptAndServiceMetadata();
+        context.User = AptHumanPrincipal(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+
+        await middleware.InvokeAsync(context,
+            Options.Create(new InternalMtlsOptions { Enabled = true, RequireClientCertificate = true }),
+            new FixedCertificateAccessor(certificate), repository);
+
+        context.Response.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        context.Response.Body.Position = 0;
+        (await new StreamReader(context.Response.Body).ReadToEndAsync())
+            .Should().Contain("APT_HUMAN_DEVICE_BINDING_MISMATCH");
+    }
+
+    [Fact]
+    public async Task Dual_admission_endpoint_preserves_existing_webpay_service_principal_path()
+    {
+        using var certificate = CreateCertificate();
+        var serviceIdentityId = Guid.NewGuid();
+        var repository = Substitute.For<ICentralPmsRbacRepository>();
+        repository.GetGovernedDeviceAuthenticationAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns((CentralPmsGovernedDeviceAuthenticationRecord?)null);
+        repository.GetServicePrincipalAuthenticationAsync("secret://webpay", Arg.Any<CancellationToken>())
+            .Returns(new CentralPmsServicePrincipalAuthenticationRecord(
+                serviceIdentityId, "INTERNAL_SERVICE", "ACTIVE", "PaymentOrchestrator",
+                "MTLS_CERTIFICATE_REFERENCE", true, true, [Guid.NewGuid()], [Guid.NewGuid()]));
+        var nextCalled = false;
+        var middleware = new InternalMtlsMiddleware(_ => { nextCalled = true; return Task.CompletedTask; });
+        var context = ContextWithGovernedAptAndServiceMetadata();
+
+        await middleware.InvokeAsync(
+            context,
+            Options.Create(OptionsFor(certificate, "PAYMENT_ORCHESTRATOR", "WEBPAY",
+                ["statutory-discounts.decision.submit.webpay"])),
+            new FixedCertificateAccessor(certificate),
+            repository);
+
+        nextCalled.Should().BeTrue();
+        context.User.Identity!.AuthenticationType.Should().Be("InternalMtlsServicePrincipal");
+        context.User.FindFirst("service_identity_id")!.Value.Should().Be(serviceIdentityId.ToString("D"));
     }
 
     [Fact]
@@ -351,6 +441,19 @@ public sealed class InternalMtlsServicePrincipalAuthenticationTests
             _ => Task.CompletedTask,
             new EndpointMetadataCollection(new InternalServiceEndpointMetadata(), new GovernedAptDeviceEndpointMetadata()),
             "governed apt endpoint"));
+        return context;
+    }
+
+    private static DefaultHttpContext ContextWithGovernedAptAndServiceMetadata()
+    {
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+        context.SetEndpoint(new Endpoint(
+            _ => Task.CompletedTask,
+            new EndpointMetadataCollection(
+                new ServicePrincipalEndpointMetadata(),
+                new GovernedAptDeviceEndpointMetadata()),
+            "shared governed apt statutory endpoint"));
         return context;
     }
 

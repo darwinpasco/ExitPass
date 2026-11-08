@@ -4,6 +4,7 @@ using ExitPass.CentralPms.Api.Endpoints;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.Application.VendorParking.Routing;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
 using FluentAssertions;
@@ -94,7 +95,10 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
         body.RecoveryClassification.Should().Be("NONE");
         body.Retryable.Should().BeFalse();
         fake.LastCommand!.SourceChannel.Should().Be(sourceChannel);
-        fake.LastCommand.ActorUserId.Should().Be(sourceChannel == "OPERATOR_CONSOLE" ? ActorUserId : ServiceIdentityId);
+        fake.LastCommand.ActorUserId.Should().Be(
+            sourceChannel is "OPERATOR_CONSOLE" or "ASSISTED_PAYMENT_TERMINAL"
+                ? ActorUserId
+                : ServiceIdentityId);
     }
 
     [Fact]
@@ -379,7 +383,18 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
                 services.AddSingleton<IStatutoryDiscountDecisionFacadeService>(fake);
                 services.RemoveAll<ICentralPmsRbacRepository>();
                 services.AddSingleton<ICentralPmsRbacRepository>(new FakeRbacRepository());
+                services.TryAddSingleton<ISiteVendorAdapterRouteRegistry, MissingSiteVendorAdapterRouteRegistry>();
             });
+
+    private sealed class MissingSiteVendorAdapterRouteRegistry : ISiteVendorAdapterRouteRegistry
+    {
+        public Task<SiteVendorAdapterRoute> ResolveAsync(
+            Guid siteId,
+            Guid siteGroupId,
+            Guid? vendorSystemId,
+            CancellationToken cancellationToken) =>
+            throw new SiteVendorAdapterRoutingException("SITE_VENDOR_ADAPTER_ROUTE_NOT_CONFIGURED");
+    }
 
     private static async Task<HttpResponseMessage> PostDecisionAsync(
         HttpClient client,
@@ -404,6 +419,10 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
     {
         client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName, ServiceIdentityId.ToString());
         client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, permissions);
+        if (permissions.Contains("assisted-payment-terminal", StringComparison.Ordinal))
+        {
+            client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.UserIdHeaderName, ActorUserId.ToString());
+        }
     }
 
     private static StatutoryDiscountDecisionRequest Request(
