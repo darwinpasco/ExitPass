@@ -25,7 +25,8 @@ public static class StatutoryDiscountDecisionEndpoints
     {
         var group = app.MapGroup("/v1/statutory-discounts/decisions")
             .WithTags("StatutoryDiscounts")
-            .AcceptAuthenticatedServicePrincipal();
+            .AcceptAuthenticatedServicePrincipal()
+            .AcceptGovernedAptDevicePrincipal();
 
         group.MapPost("", SubmitAsync)
             .WithName("SubmitStatutoryDiscountDecision")
@@ -131,18 +132,6 @@ public static class StatutoryDiscountDecisionEndpoints
                 correlationId));
         }
 
-        if (string.Equals(
-                requestedSourceChannel,
-                StatutoryDiscountSourceChannels.AssistedPaymentTerminal,
-                StringComparison.Ordinal))
-        {
-            activity?.SetStatus(ActivityStatusCode.Error, "APT cannot originate statutory-discount requests.");
-            return Results.BadRequest(BuildError(
-                "STATUTORY_DISCOUNT_APT_REQUEST_ORIGIN_PROHIBITED",
-                "Statutory-discount requests may originate only from WebPay or Operator Console.",
-                correlationId));
-        }
-
         if (!TryResolveAuthenticatedSourceChannel(
                 request.HttpContext,
                 rbacOptions.Value,
@@ -172,9 +161,13 @@ public static class StatutoryDiscountDecisionEndpoints
         var serviceIdentity = FindAuthenticatedIdentity(
             request.HttpContext.User,
             "InternalMtlsServicePrincipal");
+        var governedAptIdentity = FindAuthenticatedIdentity(
+            request.HttpContext.User,
+            "GovernedDeviceMtls");
+        var scopedServiceIdentity = serviceIdentity ?? governedAptIdentity;
         if ((effectiveSourceChannel is StatutoryDiscountSourceChannels.WebPay or StatutoryDiscountSourceChannels.AssistedPaymentTerminal) &&
-            serviceIdentity is not null &&
-            !IdentityHasRequestedScope(serviceIdentity, body.SiteId, body.SiteGroupId))
+            scopedServiceIdentity is not null &&
+            !IdentityHasRequestedScope(scopedServiceIdentity, body.SiteId, body.SiteGroupId))
         {
             activity?.SetStatus(ActivityStatusCode.Error, "Authenticated service principal is outside the requested Site scope.");
             return Results.Json(
@@ -588,17 +581,19 @@ public static class StatutoryDiscountDecisionEndpoints
             (environment.IsDevelopment() || environment.IsEnvironment("SecureDevelopment") || environment.IsEnvironment("Test")) &&
             options.AllowFixtureIdentityHeaders;
         var servicePrincipal = FindAuthenticatedIdentity(context.User, "InternalMtlsServicePrincipal");
+        var governedAptPrincipal = FindAuthenticatedIdentity(context.User, "GovernedDeviceMtls");
         var humanPrincipal = FindAuthenticatedIdentity(context.User, HumanSessionAuthenticationHandler.SchemeName);
+        var channelPrincipal = servicePrincipal ?? governedAptPrincipal;
         var permissions = fixtureAuthorityAllowed
             ? ReadPermissions(context, options, fixtureAuthorityAllowed)
-            : ReadPermissions(servicePrincipal ?? humanPrincipal);
+            : ReadPermissions(channelPrincipal ?? humanPrincipal);
         var channels = ChannelPermissions
             .Where(pair => permissions.Contains(pair.Value))
             .Select(pair => pair.Key)
             .ToArray();
 
         var userId = ResolveUserId(context, humanPrincipal, fixtureAuthorityAllowed);
-        serviceIdentityId = ResolveServiceIdentityId(context, servicePrincipal, fixtureAuthorityAllowed);
+        serviceIdentityId = ResolveServiceIdentityId(context, channelPrincipal, fixtureAuthorityAllowed);
         actorId = Guid.Empty;
 
         if (channels.Length == 0)
@@ -698,11 +693,15 @@ public static class StatutoryDiscountDecisionEndpoints
 
         if (serviceChannel && !fixtureAuthorityAllowed)
         {
-            var authenticatedAudience = servicePrincipal?.FindFirst("exitpass_audience")?.Value;
+            var authenticatedAudience = channelPrincipal?.FindFirst("exitpass_audience")?.Value;
             var authenticatedSourceChannel = StatutoryDiscountSourceChannels.Normalize(
-                servicePrincipal?.FindFirst("source_channel")?.Value ?? string.Empty);
-            if (servicePrincipal?.IsAuthenticated != true ||
-                !string.Equals(authenticatedAudience, "CENTRAL_PMS", StringComparison.Ordinal) ||
+                channelPrincipal?.FindFirst("source_channel")?.Value ?? string.Empty);
+            var acceptedAudience = string.Equals(resolvedChannel, StatutoryDiscountSourceChannels.AssistedPaymentTerminal, StringComparison.Ordinal) &&
+                                   string.Equals(channelPrincipal?.AuthenticationType, "GovernedDeviceMtls", StringComparison.Ordinal)
+                ? "APT"
+                : "CENTRAL_PMS";
+            if (channelPrincipal?.IsAuthenticated != true ||
+                !string.Equals(authenticatedAudience, acceptedAudience, StringComparison.Ordinal) ||
                 !string.Equals(authenticatedSourceChannel, resolvedChannel, StringComparison.Ordinal))
             {
                 sourceChannel = string.Empty;

@@ -126,7 +126,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
-    public async Task SubmitAsync_WhenAptPendingReviewCreated_PersistsAuthenticatedCashierAcrossReplay()
+    public async Task SubmitAsync_WhenAptPendingReviewCreated_DoesNotConflateCashierWithOperatorSubmitter()
     {
         var fixture = CreateFixture();
         var command = Command(
@@ -141,7 +141,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             Arg.Is<StatutoryDiscountServiceChannelReviewIntakeCommand>(record =>
                 record.StatutoryDiscountDecisionCommandId == first.StatutoryDiscountDecisionCommandId &&
                 record.SourceChannel == StatutoryDiscountSourceChannels.AssistedPaymentTerminal &&
-                record.SubmittedByUserId == ActorUserId),
+                record.SubmittedByUserId == null),
             Arg.Any<CancellationToken>());
     }
 

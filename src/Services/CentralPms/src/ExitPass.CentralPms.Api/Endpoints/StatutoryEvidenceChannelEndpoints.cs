@@ -24,7 +24,8 @@ public static class StatutoryEvidenceChannelEndpoints
         MapChannel(
             app.MapGroup("/v1/apt/statutory-discounts/evidence")
                 .WithTags("AssistedPaymentTerminal")
-                .AcceptAuthenticatedServicePrincipal(),
+                .AcceptAuthenticatedServicePrincipal()
+                .AcceptGovernedAptDevicePrincipal(),
             StatutoryEvidenceChannelConstants.AssistedPaymentTerminal,
             AptPolicy,
             "Apt");
@@ -290,30 +291,43 @@ public static class StatutoryEvidenceChannelEndpoints
         denied = null;
         actor = new StatutoryEvidenceActor(null, null, sourceChannel);
         var principal = request.HttpContext.User;
-        if (principal.FindFirst("user_id") is not null ||
+        if (string.Equals(sourceChannel, StatutoryEvidenceChannelConstants.WebPay, StringComparison.Ordinal) &&
+            (principal.FindFirst("user_id") is not null ||
             principal.FindFirst("sub") is not null ||
-            principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier) is not null)
+            principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier) is not null))
         {
             denied = Results.Json(BuildError("FORBIDDEN_HUMAN_ACTOR", "A service identity is required for statutory evidence channel operations.", correlationId, false), statusCode: StatusCodes.Status403Forbidden);
             return false;
         }
 
-        if (principal.Identity?.IsAuthenticated != true ||
-            !string.Equals(principal.Identity.AuthenticationType, "InternalMtlsServicePrincipal", StringComparison.Ordinal) ||
-            !string.Equals(principal.FindFirst("exitpass_audience")?.Value, "CENTRAL_PMS", StringComparison.Ordinal))
+        var serviceIdentity = principal.Identities.SingleOrDefault(identity =>
+            identity.IsAuthenticated &&
+            string.Equals(identity.AuthenticationType, "InternalMtlsServicePrincipal", StringComparison.Ordinal));
+        var governedAptIdentity = principal.Identities.SingleOrDefault(identity =>
+            identity.IsAuthenticated &&
+            string.Equals(identity.AuthenticationType, "GovernedDeviceMtls", StringComparison.Ordinal));
+        var channelIdentity = string.Equals(sourceChannel, StatutoryEvidenceChannelConstants.AssistedPaymentTerminal, StringComparison.Ordinal) &&
+                              governedAptIdentity is not null
+            ? governedAptIdentity
+            : serviceIdentity;
+        var requiredAudience = string.Equals(channelIdentity?.AuthenticationType, "GovernedDeviceMtls", StringComparison.Ordinal)
+            ? "APT"
+            : "CENTRAL_PMS";
+        if (channelIdentity is null ||
+            !string.Equals(channelIdentity.FindFirst("exitpass_audience")?.Value, requiredAudience, StringComparison.Ordinal))
         {
             denied = Results.Json(BuildError("CENTRAL_PMS_SERVICE_PRINCIPAL_ADMISSION_DENIED", "An authenticated service principal for this statutory evidence channel is required.", correlationId, false), statusCode: StatusCodes.Status403Forbidden);
             return false;
         }
 
-        if (!string.Equals(principal.FindFirst("source_channel")?.Value, sourceChannel, StringComparison.Ordinal))
+        if (!string.Equals(channelIdentity.FindFirst("source_channel")?.Value, sourceChannel, StringComparison.Ordinal))
         {
             denied = Results.Json(BuildError("CENTRAL_PMS_SOURCE_CHANNEL_MISMATCH", "The authenticated service principal does not match this statutory evidence channel.", correlationId, false), statusCode: StatusCodes.Status403Forbidden);
             return false;
         }
 
-        var rawServiceIdentity = principal.FindFirst("service_identity_id")?.Value ??
-                                 principal.FindFirst("client_id")?.Value;
+        var rawServiceIdentity = channelIdentity.FindFirst("service_identity_id")?.Value ??
+                                 channelIdentity.FindFirst("client_id")?.Value;
         if (!Guid.TryParse(rawServiceIdentity, out var serviceIdentityId) || serviceIdentityId == Guid.Empty)
         {
             denied = Results.Json(BuildError("SERVICE_IDENTITY_REQUIRED", "A service identity is required for statutory evidence channel operations.", correlationId, false), statusCode: StatusCodes.Status403Forbidden);

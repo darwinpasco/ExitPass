@@ -48,7 +48,7 @@ public sealed class CentralPmsRbacApplicationBoundaryTests
             new Claim("exitpass_audience", audience),
             new Claim("mfa_satisfied", "true"),
             new Claim(CentralPmsRbacPolicyCatalog.PermissionClaimType, "statutory-discounts.decision.approve")
-        ], "test"));
+        ], HumanSessionAuthenticationHandler.SchemeName));
 
         await middleware.InvokeAsync(
             context,
