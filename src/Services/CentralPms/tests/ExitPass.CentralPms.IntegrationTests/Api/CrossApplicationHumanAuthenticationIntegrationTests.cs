@@ -8,8 +8,12 @@ using ExitPass.CentralPms.Application.HumanAuthentication;
 using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Security;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.HumanAuthentication;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
+using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
+using ExitPass.CentralPms.Contracts.StatutoryEvidence;
 using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
@@ -176,6 +180,205 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         var refreshed = await apt.GetAsync($"/v1/apt/human-sessions/{login.Session.SessionReference:D}");
         refreshed.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
             "authorization-epoch changes revoke every affected H-006 audience without imposing Operator Console device/shift requirements");
+    }
+
+    [Fact]
+    public async Task Production_governed_apt_device_with_matching_cashier_admits_statutory_decision_and_evidence_capture()
+    {
+        var scenario = await SeedAptStatutoryScenarioAsync(includeEvidenceGrant: true);
+        try
+        {
+            await using var factory = ProductionFactory(scenario.Certificate);
+            using var apt = AptClient(factory, scenario.DeviceId);
+            var login = await LoginAptAsync(apt, scenario.User, scenario.DeviceId);
+            apt.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("ExitPass-HumanSession", login.AptSessionToken);
+
+            using var decisionResponse = await SendAptDecisionAsync(apt, scenario);
+            decisionResponse.StatusCode.Should().Be(HttpStatusCode.Created,
+                await decisionResponse.Content.ReadAsStringAsync());
+            var decision = await decisionResponse.Content.ReadFromJsonAsync<StatutoryDiscountDecisionResponse>();
+            decision!.SourceChannel.Should().Be(StatutoryDiscountSourceChannels.AssistedPaymentTerminal);
+            decision.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionV2CommandStates.AwaitingReview);
+            (await ScalarAsync<int>("""
+                SELECT count(*)::integer
+                FROM operator_console.statutory_discount_service_channel_reviews
+                WHERE statutory_discount_decision_command_id=@decision_id
+                  AND source_channel='ASSISTED_PAYMENT_TERMINAL'
+                  AND submitted_by_user_id IS NULL;
+                """, ("decision_id", decision.StatutoryDiscountDecisionCommandId))).Should().Be(1);
+
+            using var evidenceResponse = await SendAptEvidenceBootstrapAsync(
+                apt,
+                decision.StatutoryDiscountDecisionCommandId,
+                $"apt-evidence-{Guid.NewGuid():N}");
+            evidenceResponse.StatusCode.Should().Be(HttpStatusCode.OK,
+                await evidenceResponse.Content.ReadAsStringAsync());
+            var evidence = await evidenceResponse.Content.ReadFromJsonAsync<StatutoryEvidenceChannelResponseDto>();
+            evidence!.SourceChannel.Should().Be(StatutoryDiscountSourceChannels.AssistedPaymentTerminal);
+            evidence.EvidenceSetReference.Should().NotBeNull();
+            evidence.EvidenceItemReference.Should().NotBeNull();
+        }
+        finally
+        {
+            await CleanupAptStatutoryScenarioAsync(scenario);
+        }
+    }
+
+    [Fact]
+    public async Task Production_governed_apt_statutory_decision_rejects_mismatched_cashier_device_binding()
+    {
+        var scenario = await SeedAptStatutoryScenarioAsync(includeEvidenceGrant: true);
+        try
+        {
+            await using var factory = ProductionFactory(scenario.Certificate);
+            using var apt = AptClient(factory, scenario.DeviceId);
+            var login = await LoginAptAsync(apt, scenario.User, scenario.DeviceId);
+            apt.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("ExitPass-HumanSession", login.AptSessionToken);
+            apt.DefaultRequestHeaders.Remove("X-ExitPass-Service-Identity-Id");
+            apt.DefaultRequestHeaders.Add("X-ExitPass-Service-Identity-Id", Guid.NewGuid().ToString("D"));
+
+            using var response = await SendAptDecisionAsync(apt, scenario);
+
+            response.StatusCode.Should().BeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden);
+            (await CountDecisionCommandsAsync(scenario.Context.ParkingSessionId)).Should().Be(0);
+        }
+        finally
+        {
+            await CleanupAptStatutoryScenarioAsync(scenario);
+        }
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Production_governed_apt_statutory_decision_rejects_wrong_site_or_site_group(
+        bool wrongSite,
+        bool wrongSiteGroup)
+    {
+        var scenario = await SeedAptStatutoryScenarioAsync(includeEvidenceGrant: true);
+        try
+        {
+            await using var factory = ProductionFactory(scenario.Certificate);
+            using var apt = AptClient(factory, scenario.DeviceId);
+            var login = await LoginAptAsync(apt, scenario.User, scenario.DeviceId);
+            apt.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("ExitPass-HumanSession", login.AptSessionToken);
+
+            using var response = await SendAptDecisionAsync(
+                apt,
+                scenario,
+                wrongSite ? Guid.NewGuid() : scenario.Context.SiteId,
+                wrongSiteGroup ? Guid.NewGuid() : scenario.Context.SiteGroupId);
+
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden, await response.Content.ReadAsStringAsync());
+            (await CountDecisionCommandsAsync(scenario.Context.ParkingSessionId)).Should().Be(0);
+        }
+        finally
+        {
+            await CleanupAptStatutoryScenarioAsync(scenario);
+        }
+    }
+
+    [Fact]
+    public async Task Production_governed_apt_evidence_capture_requires_active_scope_grant()
+    {
+        var scenario = await SeedAptStatutoryScenarioAsync(includeEvidenceGrant: false);
+        try
+        {
+            await using var factory = ProductionFactory(scenario.Certificate);
+            using var apt = AptClient(factory, scenario.DeviceId);
+            var login = await LoginAptAsync(apt, scenario.User, scenario.DeviceId);
+            apt.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("ExitPass-HumanSession", login.AptSessionToken);
+            var decisionCommandId = await SeedAwaitingAptDecisionAsync(scenario.Context);
+
+            using var response = await SendAptEvidenceBootstrapAsync(
+                apt,
+                decisionCommandId,
+                $"apt-missing-grant-{Guid.NewGuid():N}");
+
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest, await response.Content.ReadAsStringAsync());
+            (await response.Content.ReadFromJsonAsync<StatutoryEvidenceChannelResponseDto>())!.ErrorCode
+                .Should().Be("SCOPE_DENIED");
+            (await CountEvidenceSetsAsync(decisionCommandId)).Should().Be(0);
+        }
+        finally
+        {
+            await CleanupAptStatutoryScenarioAsync(scenario);
+        }
+    }
+
+    [Theory]
+    [InlineData("SUSPENDED")]
+    [InlineData("REVOKED_CREDENTIAL")]
+    public async Task Production_governed_apt_statutory_decision_rejects_inactive_device_or_credential(string state)
+    {
+        var scenario = await SeedAptStatutoryScenarioAsync(includeEvidenceGrant: true);
+        try
+        {
+            await using var factory = ProductionFactory(scenario.Certificate);
+            using var apt = AptClient(factory, scenario.DeviceId);
+            var login = await LoginAptAsync(apt, scenario.User, scenario.DeviceId);
+            apt.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("ExitPass-HumanSession", login.AptSessionToken);
+            if (state == "SUSPENDED")
+            {
+                await ExecuteAsync(
+                    "UPDATE identity.service_identities SET identity_status='SUSPENDED', updated_at=now(), row_version=row_version+1 WHERE service_identity_id=@device_id;",
+                    ("device_id", scenario.DeviceId));
+            }
+            else
+            {
+                await ExecuteAsync(
+                    "UPDATE identity.device_credential_history SET credential_status='REVOKED', revoked_at=now() WHERE device_id=@device_id AND credential_status='ACTIVE';",
+                    ("device_id", scenario.DeviceId));
+            }
+
+            using var response = await SendAptDecisionAsync(apt, scenario);
+
+            response.StatusCode.Should().BeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden);
+            (await CountDecisionCommandsAsync(scenario.Context.ParkingSessionId)).Should().Be(0);
+        }
+        finally
+        {
+            await CleanupAptStatutoryScenarioAsync(scenario);
+        }
+    }
+
+    [Fact]
+    public async Task Production_governed_apt_statutory_decision_rejects_wrong_human_audience_and_human_only_authority()
+    {
+        var scenario = await SeedAptStatutoryScenarioAsync(includeEvidenceGrant: true,
+            roleCodes: [ApprovedIdentityRoleCatalog.OperationsSupervisor, ApprovedIdentityRoleCatalog.AptCashierOperator]);
+        try
+        {
+            await using var factory = ProductionFactory(scenario.Certificate);
+            using var management = WebClient(factory);
+            await LoginWebAsync(management, scenario.User, HumanSessionAudiences.ManagementPlatform);
+            management.DefaultRequestHeaders.Add(CertificateHeader, "trusted");
+            management.DefaultRequestHeaders.Add("X-ExitPass-Service-Identity-Id", scenario.DeviceId.ToString("D"));
+
+            using var wrongAudience = await SendAptDecisionAsync(management, scenario);
+            wrongAudience.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+
+            using var apt = AptClient(factory, scenario.DeviceId);
+            var login = await LoginAptAsync(apt, scenario.User, scenario.DeviceId);
+            apt.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("ExitPass-HumanSession", login.AptSessionToken);
+            apt.DefaultRequestHeaders.Remove(CertificateHeader);
+
+            using var humanOnly = await SendAptDecisionAsync(apt, scenario);
+            humanOnly.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            (await humanOnly.Content.ReadFromJsonAsync<ErrorResponse>())!.ErrorCode
+                .Should().Be("APPLICATION_PERMISSION_BOUNDARY_DENIED");
+            (await CountDecisionCommandsAsync(scenario.Context.ParkingSessionId)).Should().Be(0);
+        }
+        finally
+        {
+            await CleanupAptStatutoryScenarioAsync(scenario);
+        }
     }
 
     [Fact]
@@ -474,6 +677,218 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
             .StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    private async Task<AptStatutoryScenario> SeedAptStatutoryScenarioAsync(
+        bool includeEvidenceGrant,
+        IReadOnlyCollection<string>? roleCodes = null)
+    {
+        var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
+            $"governed-apt-statutory-{Guid.NewGuid():N}");
+        var user = await SeedScopedUserAsync(
+            roleCodes ?? [ApprovedIdentityRoleCatalog.AptCashierOperator],
+            siteId: context.SiteId,
+            siteGroupId: context.SiteGroupId,
+            includeSiteGroupScope: true);
+        var certificate = CreateCertificate($"governed-apt-statutory-{Guid.NewGuid():N}");
+        var deviceId = await SeedAptDeviceAsync(context.SiteId, certificate);
+        var retentionClassCode = $"IST_APT_AUTH_{Guid.NewGuid():N}";
+        const string retentionPolicyVersion = "1.0";
+        await SeedAptStatutoryGovernanceAsync(
+            context,
+            deviceId,
+            retentionClassCode,
+            retentionPolicyVersion,
+            includeEvidenceGrant);
+        return new AptStatutoryScenario(
+            context,
+            user,
+            deviceId,
+            certificate,
+            retentionClassCode,
+            retentionPolicyVersion);
+    }
+
+    private static HttpClient AptClient(CustomWebApplicationFactory factory, Guid deviceId)
+    {
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+            HandleCookies = false,
+            AllowAutoRedirect = false
+        });
+        client.DefaultRequestHeaders.Add(CertificateHeader, "trusted");
+        client.DefaultRequestHeaders.Add("X-ExitPass-Service-Identity-Id", deviceId.ToString("D"));
+        return client;
+    }
+
+    private static async Task<HumanAuthenticationResponse> LoginAptAsync(
+        HttpClient client,
+        Seed user,
+        Guid deviceId)
+    {
+        using var response = await client.PostAsJsonAsync(
+            "/v1/apt/human-sessions",
+            new AptHumanSessionCreateRequest(user.Username, Password, user.SiteId));
+        response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var login = await response.Content.ReadFromJsonAsync<HumanAuthenticationResponse>();
+        login!.Authenticated.Should().BeTrue();
+        login.Session!.Audience.Should().Be(HumanSessionAudiences.Apt);
+        login.Session.DeviceServiceIdentityReference.Should().Be(deviceId);
+        return login;
+    }
+
+    private static async Task<HttpResponseMessage> SendAptDecisionAsync(
+        HttpClient client,
+        AptStatutoryScenario scenario,
+        Guid? siteId = null,
+        Guid? siteGroupId = null)
+    {
+        var context = scenario.Context;
+        var body = new StatutoryDiscountDecisionRequest(
+            Guid.NewGuid(),
+            StatutoryDiscountSourceChannels.AssistedPaymentTerminal,
+            context.ParkingSessionId,
+            siteId ?? context.SiteId,
+            siteGroupId ?? context.SiteGroupId,
+            $"TICKET-{context.SiteCode}",
+            "ABC1234",
+            "SENIOR_CITIZEN",
+            "SENIOR_CITIZEN_ID",
+            "OSCA",
+            DateOnly.Parse("2030-01-01"),
+            "SC-****-1234",
+            EvidenceCaptureRequested: true,
+            EvidenceReferences:
+            [
+                new StatutoryDiscountEvidenceReferenceRequest(
+                    "SENIOR_CITIZEN_ID",
+                    "MANUAL_REFERENCE",
+                    null,
+                    null,
+                    null,
+                    "governed-apt-evidence",
+                    "SC-****-1234",
+                    "VERIFIED")
+            ],
+            ActorUserId: Guid.Empty,
+            OperatorDeviceBindingId: null,
+            OperatorShiftId: null,
+            RequesterAttestation: true,
+            AttestationNotes: "Authenticated governed APT statutory authorization proof.",
+            ReasonCode: "CUSTOMER_REQUEST",
+            Decision: null,
+            DecisionReasonCode: null,
+            ReviewerUserId: null,
+            ReviewerAttestation: false,
+            ApplyPayableBasis: false,
+            OriginalTariffSnapshotId: null);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/statutory-discounts/decisions")
+        {
+            Content = JsonContent.Create(body)
+        };
+        request.Headers.Add("Idempotency-Key", $"governed-apt-{Guid.NewGuid():N}");
+        request.Headers.Add("X-Correlation-Id", Guid.NewGuid().ToString("D"));
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> SendAptEvidenceBootstrapAsync(
+        HttpClient client,
+        Guid decisionCommandId,
+        string operationKey)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/apt/statutory-discounts/evidence/bootstrap")
+        {
+            Content = JsonContent.Create(new StatutoryEvidenceChannelBootstrapRequest(
+                decisionCommandId,
+                operationKey))
+        };
+        request.Headers.Add("X-Correlation-Id", Guid.NewGuid().ToString("D"));
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<Guid> SeedAwaitingAptDecisionAsync(PaymentTestContext context)
+    {
+        var review = await StatutoryDiscountReviewIntegrationTestSupport.SeedAwaitingReviewAsync(
+            context,
+            StatutoryDiscountSourceChannels.AssistedPaymentTerminal);
+        return review.Decision.StatutoryDiscountDecisionCommandId;
+    }
+
+    private async Task SeedAptStatutoryGovernanceAsync(
+        PaymentTestContext context,
+        Guid deviceId,
+        string retentionClassCode,
+        string retentionPolicyVersion,
+        bool includeEvidenceGrant)
+    {
+        await ExecuteAsync(
+            """
+            INSERT INTO discounts.statutory_evidence_retention_policies (
+                retention_class_code, retention_policy_version, policy_status, environment_scope,
+                purpose_code, effective_from, created_by_service_identity_id, updated_by_service_identity_id)
+            VALUES (
+                @retention_class_code, @retention_policy_version, 'APPROVED_ENABLED', 'LOCAL_TEST',
+                'GOVERNED_APT_AUTHORIZATION_TEST', now() - interval '1 second', @device_id, @device_id);
+            """,
+            ("retention_class_code", retentionClassCode),
+            ("retention_policy_version", retentionPolicyVersion),
+            ("device_id", deviceId));
+        if (!includeEvidenceGrant)
+        {
+            return;
+        }
+
+        await ExecuteAsync(
+            """
+            INSERT INTO discounts.statutory_evidence_principal_scope_grants (
+                actor_service_identity_id, source_channel, site_id, site_group_id,
+                capture_allowed, view_allowed, review_lock_allowed, hold_allowed,
+                deletion_request_allowed, grant_status, reason_code, effective_from,
+                created_by_service_identity_id, updated_by_service_identity_id)
+            VALUES (
+                @device_id, 'ASSISTED_PAYMENT_TERMINAL', @site_id, @site_group_id,
+                true, false, false, false, false, 'ACTIVE', 'GOVERNED_APT_AUTHORIZATION_TEST',
+                now() - interval '1 minute', @device_id, @device_id);
+            """,
+            ("device_id", deviceId),
+            ("site_id", context.SiteId),
+            ("site_group_id", context.SiteGroupId));
+    }
+
+    private async Task CleanupAptStatutoryScenarioAsync(AptStatutoryScenario scenario)
+    {
+        await ExecuteAsync(
+            """
+            DELETE FROM discounts.statutory_evidence_events
+            WHERE parking_session_id=@parking_session_id OR actor_service_identity_id=@device_id;
+            DELETE FROM discounts.statutory_evidence_operations
+            WHERE created_by_service_identity_id=@device_id;
+            DELETE FROM discounts.statutory_evidence_items
+            WHERE statutory_evidence_set_id IN (
+                SELECT statutory_evidence_set_id FROM discounts.statutory_evidence_sets
+                WHERE parking_session_id=@parking_session_id);
+            DELETE FROM discounts.statutory_evidence_sets
+            WHERE parking_session_id=@parking_session_id;
+            DELETE FROM discounts.statutory_evidence_principal_scope_grants
+            WHERE actor_service_identity_id=@device_id;
+            DELETE FROM discounts.statutory_evidence_retention_policies
+            WHERE retention_class_code=@retention_class_code
+              AND retention_policy_version=@retention_policy_version;
+            """,
+            ("parking_session_id", scenario.Context.ParkingSessionId),
+            ("device_id", scenario.DeviceId),
+            ("retention_class_code", scenario.RetentionClassCode),
+            ("retention_policy_version", scenario.RetentionPolicyVersion));
+        scenario.Certificate.Dispose();
+    }
+
+    private static async Task<int> CountDecisionCommandsAsync(Guid parkingSessionId) =>
+        await StatutoryDiscountReviewIntegrationTestSupport.DecisionRowCountAsync(parkingSessionId);
+
+    private async Task<int> CountEvidenceSetsAsync(Guid decisionCommandId) =>
+        await ScalarAsync<int>(
+            "SELECT count(*)::integer FROM discounts.statutory_evidence_sets WHERE statutory_discount_decision_command_id=@decision_id;",
+            ("decision_id", decisionCommandId));
+
     private CustomWebApplicationFactory ProductionFactory(X509Certificate2? certificate = null)
     {
         var factory = new CustomWebApplicationFactory()
@@ -597,7 +1012,9 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         IReadOnlyCollection<string> roleCodes,
         string userType = "SITE_OPERATOR",
         string displayName = "I-022 integration user",
-        Guid? siteId = null)
+        Guid? siteId = null,
+        Guid? siteGroupId = null,
+        bool includeSiteGroupScope = false)
     {
         var authenticationOptions = new HumanAuthenticationOptions
         {
@@ -617,12 +1034,12 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         var totpSecret = RandomNumberGenerator.GetBytes(20);
         var protector = new AesGcmTotpSecretProtector(configured);
         var protectedSecret = protector.Protect(userId, authenticatorId, totpSecret);
-        var siteGroupId = Guid.Parse("a6dbadf6-68b5-5bed-a7e0-a75faee70841");
+        var effectiveSiteGroupId = siteGroupId ?? Guid.Parse("a6dbadf6-68b5-5bed-a7e0-a75faee70841");
         var effectiveSiteId = siteId ?? Guid.Parse("2d1dcdf8-f563-537c-8542-0bde7cc9da97");
         await ExecuteAsync("""
             UPDATE sites.site_groups SET site_group_status='ACTIVE' WHERE site_group_id=@site_group_id;
             UPDATE sites.sites SET site_status='ACTIVE' WHERE site_id=@site_id AND site_group_id=@site_group_id;
-            """, ("site_group_id", siteGroupId), ("site_id", effectiveSiteId));
+            """, ("site_group_id", effectiveSiteGroupId), ("site_id", effectiveSiteId));
         var username = $"i022.{Guid.NewGuid():N}"[..24];
 
         const string sql = """
@@ -670,8 +1087,12 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
                 """, ("user_id", userId), ("role_id", roleId), ("user_role_id", userRoleId),
                 ("service_id", CentralPmsServiceIdentityId));
             await InsertScopeAsync(userRoleId, "SITE", effectiveSiteId, null);
+            if (includeSiteGroupScope)
+            {
+                await InsertScopeAsync(userRoleId, "SITE_GROUP", null, effectiveSiteGroupId);
+            }
         }
-        return new Seed(userId, username, firstRoleId!.Value, firstUserRoleId!.Value, effectiveSiteId, siteGroupId, totpSecret);
+        return new Seed(userId, username, firstRoleId!.Value, firstUserRoleId!.Value, effectiveSiteId, effectiveSiteGroupId, totpSecret);
     }
 
     private Task InsertScopeAsync(Guid userRoleId, string scopeType, Guid? siteId, Guid? siteGroupId) =>
@@ -820,5 +1241,12 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
         Guid SiteId,
         Guid SiteGroupId,
         byte[] TotpSecret);
+    private sealed record AptStatutoryScenario(
+        PaymentTestContext Context,
+        Seed User,
+        Guid DeviceId,
+        X509Certificate2 Certificate,
+        string RetentionClassCode,
+        string RetentionPolicyVersion);
     private sealed record OperatorDeviceSeed(Guid DeviceId);
 }

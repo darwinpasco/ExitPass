@@ -57,10 +57,20 @@ public sealed class CentralPmsRbacMiddleware
                 HumanSessionAuthenticationHandler.SchemeName,
                 StringComparison.Ordinal));
         var humanAudience = humanIdentity?.FindFirst("exitpass_audience")?.Value;
+        var channelAuthorityHasRequiredPermission = context.User.Identities
+            .Where(IsChannelAuthorityIdentity)
+            .Any(identity => HasAnyClaimPermission(identity, requiredPermissions));
+        var humanEligiblePermissions = humanIdentity is null
+            ? Array.Empty<string>()
+            : requiredPermissions
+                .Where(permission => ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(
+                    permission,
+                    humanAudience))
+                .ToArray();
         if (metadata is not null &&
-            humanAudience is not null &&
-            requiredPermissions.Any(permission =>
-                !ApprovedIdentityRoleCatalog.IsPermissionEligibleForApplication(permission, humanAudience)))
+            humanIdentity is not null &&
+            !channelAuthorityHasRequiredPermission &&
+            humanEligiblePermissions.Length == 0)
         {
             await DenyAsync(
                 context,
@@ -75,6 +85,10 @@ public sealed class CentralPmsRbacMiddleware
                 correlationId);
             return;
         }
+
+        var authorizationPermissions = humanIdentity is not null && !channelAuthorityHasRequiredPermission
+            ? humanEligiblePermissions
+            : requiredPermissions;
 
         var restrictedHumanSession =
             humanIdentity is not null &&
@@ -97,7 +111,7 @@ public sealed class CentralPmsRbacMiddleware
             return;
         }
 
-        if (userId is null && serviceIdentityId is null && !HasAnyPermissionHeader(context, requiredPermissions, fixtureHeadersAllowed && options.Value.AllowPermissionHeader))
+        if (userId is null && serviceIdentityId is null && !HasAnyPermissionHeader(context, authorizationPermissions, fixtureHeadersAllowed && options.Value.AllowPermissionHeader))
         {
             await DenyAsync(
                 context,
@@ -113,15 +127,17 @@ public sealed class CentralPmsRbacMiddleware
             return;
         }
 
-        if (HasAnyClaimPermission(context.User, requiredPermissions) ||
-            HasAnyPermissionHeader(context, requiredPermissions, fixtureHeadersAllowed && options.Value.AllowPermissionHeader))
+        if (channelAuthorityHasRequiredPermission ||
+            (humanIdentity is not null && HasAnyClaimPermission(humanIdentity, authorizationPermissions)) ||
+            (humanIdentity is null && HasAnyClaimPermission(context.User, authorizationPermissions)) ||
+            HasAnyPermissionHeader(context, authorizationPermissions, fixtureHeadersAllowed && options.Value.AllowPermissionHeader))
         {
             await _next(context);
             return;
         }
 
         if (userId.HasValue &&
-            await repository.UserHasAnyPermissionAsync(userId.Value, requiredPermissions, context.RequestAborted))
+            await repository.UserHasAnyPermissionAsync(userId.Value, authorizationPermissions, context.RequestAborted))
         {
             await _next(context);
             return;
@@ -217,7 +233,27 @@ public sealed class CentralPmsRbacMiddleware
             return false;
         }
 
-        var permissionClaims = principal.Claims
+        return HasAnyClaimPermission(principal.Claims, requiredPermissions);
+    }
+
+    private static bool HasAnyClaimPermission(ClaimsIdentity identity, IReadOnlyList<string> requiredPermissions)
+    {
+        if (!identity.IsAuthenticated)
+        {
+            return false;
+        }
+
+        return HasAnyClaimPermission(identity.Claims, requiredPermissions);
+    }
+
+    private static bool IsChannelAuthorityIdentity(ClaimsIdentity identity) =>
+        identity.IsAuthenticated &&
+        (string.Equals(identity.AuthenticationType, "InternalMtlsServicePrincipal", StringComparison.Ordinal) ||
+         string.Equals(identity.AuthenticationType, "GovernedDeviceMtls", StringComparison.Ordinal));
+
+    private static bool HasAnyClaimPermission(IEnumerable<Claim> claims, IReadOnlyList<string> requiredPermissions)
+    {
+        var permissionClaims = claims
             .Where(claim => string.Equals(claim.Type, CentralPmsRbacPolicyCatalog.PermissionClaimType, StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(claim.Type, "permission", StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(claim.Type, "scope", StringComparison.OrdinalIgnoreCase))

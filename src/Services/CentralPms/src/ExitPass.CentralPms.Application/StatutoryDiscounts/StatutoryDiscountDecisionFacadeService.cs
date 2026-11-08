@@ -1236,8 +1236,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             IdControlReference = command.IdControlReference,
             BirthDate = command.BirthDate,
             ExistingStatutoryDiscountValidationId = command.ExistingStatutoryDiscountValidationId,
-            SubmittedByUserId = command.SourceChannel is StatutoryDiscountSourceChannels.OperatorConsole
-                or StatutoryDiscountSourceChannels.AssistedPaymentTerminal
+            SubmittedByUserId = command.SourceChannel == StatutoryDiscountSourceChannels.OperatorConsole
                 ? command.ActorUserId
                 : null
         };
