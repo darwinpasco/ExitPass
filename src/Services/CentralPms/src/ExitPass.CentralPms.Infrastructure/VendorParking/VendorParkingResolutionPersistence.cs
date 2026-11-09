@@ -159,6 +159,16 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 {
                     existingTariff = latestExistingTariff;
                 }
+                else if (request.TariffOrigin == VendorParkingTariffOrigin.LiveVendor &&
+                         HasSameAuthoritativeBaseQuote(latestExistingTariff, request.TariffSnapshot) &&
+                         await HasRecoverableZeroPayableFiscalConfigurationFailureAsync(
+                             connection,
+                             transaction,
+                             latestExistingTariff.TariffSnapshotId,
+                             cancellationToken))
+                {
+                    existingTariff = latestExistingTariff;
+                }
                 else if (request.TariffOrigin == VendorParkingTariffOrigin.LiveVendor)
                 {
                     existingTariff = await RecalculateAppliedStatutoryPayableBasisAsync(
@@ -1655,6 +1665,55 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                       SELECT 1 FROM core.payment_attempts AS attempt
                       WHERE attempt.tariff_snapshot_id = tariff.tariff_snapshot_id)
                   AND exit_auth.exit_authorization_id IS NOT NULL
+            );
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = tariffSnapshotId;
+        return await command.ExecuteScalarAsync(cancellationToken) is true;
+    }
+
+    private static async Task<bool> HasRecoverableZeroPayableFiscalConfigurationFailureAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid tariffSnapshotId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM core.tariff_snapshots AS tariff
+                JOIN discounts.statutory_discount_payable_basis_application_commands AS application
+                  ON application.applied_tariff_snapshot_id = tariff.tariff_snapshot_id
+                 AND application.parking_session_id = tariff.parking_session_id
+                 AND application.command_status = 'APPLIED'
+                JOIN core.fiscal_issuance_references AS fiscal
+                  ON fiscal.statutory_discount_payable_basis_application_command_id =
+                     application.statutory_discount_payable_basis_application_command_id
+                 AND fiscal.parking_session_id = tariff.parking_session_id
+                 AND fiscal.tariff_snapshot_id = tariff.tariff_snapshot_id
+                 AND fiscal.completion_basis = 'ZERO_PAYABLE_STATUTORY_FINALITY'
+                 AND fiscal.fiscal_issuance_state = 'FISCAL_ISSUANCE_FAILED_CONFIGURATION'
+                 AND fiscal.latest_error_posture = 'RETRY_AFTER_CONFIGURATION_CORRECTION'
+                 AND fiscal.pos_server_fiscal_document_id IS NULL
+                 AND fiscal.electronic_journal_event_reference IS NULL
+                 AND fiscal.payment_attempt_id IS NULL
+                 AND fiscal.payment_confirmation_id IS NULL
+                 AND fiscal.is_active
+                 AND NOT fiscal.is_superseded
+                WHERE tariff.tariff_snapshot_id = @tariff_snapshot_id
+                  AND tariff.snapshot_status = 'ACTIVE'
+                  AND tariff.superseded_by_tariff_snapshot_id IS NULL
+                  AND tariff.net_amount = 0
+                  AND tariff.gross_amount > 0
+                  AND tariff.statutory_discount_validation_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM core.payment_attempts AS attempt
+                      WHERE attempt.tariff_snapshot_id = tariff.tariff_snapshot_id)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM core.exit_authorizations AS exit_auth
+                      WHERE exit_auth.parking_session_id = tariff.parking_session_id
+                        AND exit_auth.tariff_snapshot_id = tariff.tariff_snapshot_id)
             );
             """;
 
