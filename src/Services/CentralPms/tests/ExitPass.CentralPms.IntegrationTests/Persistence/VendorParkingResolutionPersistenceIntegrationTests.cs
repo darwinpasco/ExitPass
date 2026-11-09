@@ -236,6 +236,74 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
     }
 
     [Fact]
+    public async Task PersistLiveResolution_WhenZeroPayableFiscalConfigurationRetryExists_ReusesOnlyUnchangedAppliedBasis()
+    {
+        var persistence = CreatePersistence();
+        var fixture = CreateFixture(
+            "LIVE-STATUTORY-FISCAL-RETRY",
+            DateTimeOffset.UtcNow.AddMinutes(10),
+            plateOnly: true);
+        var initial = await persistence.PersistAsync(
+            Request(
+                fixture,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                tariffVersionReference: "1",
+                amount: 500m),
+            CancellationToken.None);
+        var appliedTariffSnapshotId = await InsertAppliedStatutoryPayableBasisAsync(
+            initial.ParkingSession.ParkingSessionId,
+            initial.TariffSnapshot.TariffSnapshotId,
+            Guid.NewGuid());
+        await InsertRecoverableZeroPayableFiscalConfigurationFailureAsync(
+            initial.ParkingSession.ParkingSessionId,
+            appliedTariffSnapshotId);
+        await ExpireTariffWithoutChangingLifecycleStateAsync(appliedTariffSnapshotId);
+
+        var replay = await persistence.PersistAsync(
+            Request(
+                fixture,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                tariffVersionReference: "1",
+                amount: 500m,
+                referencesAlreadyExist: true),
+            CancellationToken.None);
+
+        replay.ParkingSessionWasReused.Should().BeTrue();
+        replay.TariffSnapshotWasReused.Should().BeTrue();
+        replay.TariffSnapshot.TariffSnapshotId.Should().Be(appliedTariffSnapshotId);
+        replay.TariffSnapshot.NetPayable.Should().Be(0m);
+        replay.EffectivePayableBasis.Should().NotBeNull();
+        replay.EffectivePayableBasis!.FinalPayableAmountMinorUnits.Should().Be(0);
+
+        var changedQuote = () => persistence.PersistAsync(
+            Request(
+                fixture,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                DateTimeOffset.UtcNow.AddMinutes(10),
+                VendorParkingTariffOrigin.LiveVendor,
+                tariffVersionReference: "1",
+                amount: 530m,
+                referencesAlreadyExist: true),
+            CancellationToken.None);
+        var exception = await changedQuote.Should().ThrowAsync<VendorParkingResolutionPersistenceException>();
+        exception.Which.ErrorCode.Should().Be("EFFECTIVE_PAYABLE_BASIS_INVALID");
+
+        var state = await ReadAppliedStatutoryRevisionStateAsync(initial.ParkingSession.ParkingSessionId);
+        state.TotalTariffSnapshots.Should().Be(2);
+        state.FiscalReferences.Should().Be(1);
+        state.ExitAuthorizations.Should().Be(0);
+        state.PaymentAttempts.Should().Be(0);
+        state.RecalculationHistoryCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task PersistLiveResolution_WhenAppliedStatutoryGrossIncreases_RecalculatesOneZeroPayableRevision()
     {
         var persistence = CreatePersistence();
@@ -931,6 +999,143 @@ public sealed class VendorParkingResolutionPersistenceIntegrationTests
             connection);
         command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
         return (long)(await command.ExecuteScalarAsync() ?? 0L);
+    }
+
+    private static async Task InsertRecoverableZeroPayableFiscalConfigurationFailureAsync(
+        Guid parkingSessionId,
+        Guid appliedTariffSnapshotId)
+    {
+        await using var connection = new NpgsqlConnection(
+            CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString());
+        await connection.OpenAsync();
+        var policyReferenceId = Guid.NewGuid();
+        await using (var policyCommand = new NpgsqlCommand(
+            """
+            INSERT INTO discounts.discount_policy_references (
+                discount_policy_reference_id,
+                policy_code,
+                policy_name,
+                policy_description,
+                policy_type,
+                policy_level,
+                entitlement_type,
+                national_law_reference,
+                jurisdiction_name,
+                precedence_rank,
+                policy_version,
+                requires_operator_validation,
+                requires_evidence_capture,
+                policy_status,
+                effective_from,
+                created_by_service_identity_id,
+                updated_by_service_identity_id)
+            VALUES (
+                @policy_reference_id,
+                @policy_code,
+                'Vendor parking fiscal retry test policy',
+                'Test-owned policy reference for zero-payable fiscal retry ancestry.',
+                'LEGAL_REFERENCE',
+                'NATIONAL_LAW',
+                'SENIOR_CITIZEN',
+                'PH-STATUTORY-FISCAL-RETRY-TEST',
+                'Philippines',
+                100,
+                'vpfr-test-v1',
+                TRUE,
+                TRUE,
+                'ACTIVE',
+                NOW() - INTERVAL '1 day',
+                @service_identity_id,
+                @service_identity_id);
+            """,
+            connection))
+        {
+            policyCommand.Parameters.Add("policy_reference_id", NpgsqlDbType.Uuid).Value = policyReferenceId;
+            policyCommand.Parameters.Add("policy_code", NpgsqlDbType.Varchar).Value =
+                $"VPFR_{policyReferenceId:N}"[..29];
+            policyCommand.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value =
+                Guid.Parse("12000000-0000-0000-0000-000000000001");
+            (await policyCommand.ExecuteNonQueryAsync()).Should().Be(1);
+        }
+
+        await using var command = new NpgsqlCommand(
+            """
+            INSERT INTO core.fiscal_issuance_references (
+                fiscal_issuance_reference_id,
+                completion_basis,
+                completion_authority_reference_id,
+                statutory_discount_decision_command_id,
+                statutory_discount_payable_basis_application_command_id,
+                statutory_discount_validation_id,
+                applied_policy_reference_id,
+                parking_session_id,
+                tariff_snapshot_id,
+                site_id,
+                payable_basis_ref,
+                upstream_finality_reference,
+                fiscal_number_assignment_state,
+                fiscal_issuance_state,
+                latest_exception_reason,
+                latest_error_code,
+                latest_error_posture,
+                correlation_id,
+                first_recorded_at,
+                last_updated_at,
+                is_active,
+                is_superseded,
+                is_reconciled)
+            SELECT
+                gen_random_uuid(),
+                'ZERO_PAYABLE_STATUTORY_FINALITY',
+                application.statutory_discount_payable_basis_application_command_id,
+                application.statutory_discount_decision_command_id,
+                application.statutory_discount_payable_basis_application_command_id,
+                application.statutory_discount_validation_id,
+                @policy_reference_id,
+                application.parking_session_id,
+                application.applied_tariff_snapshot_id,
+                application.site_id,
+                application.applied_tariff_snapshot_id::text,
+                'ZERO_PAYABLE_STATUTORY_FINALITY:' ||
+                    application.statutory_discount_payable_basis_application_command_id::text,
+                'NOT_ASSIGNED',
+                'FISCAL_ISSUANCE_FAILED_CONFIGURATION',
+                'FISCAL_IDENTITY_NOT_FOUND',
+                'channel_terminal_mismatch',
+                'RETRY_AFTER_CONFIGURATION_CORRECTION',
+                gen_random_uuid(),
+                NOW(),
+                NOW(),
+                TRUE,
+                FALSE,
+                FALSE
+            FROM discounts.statutory_discount_payable_basis_application_commands AS application
+            WHERE application.parking_session_id = @parking_session_id
+              AND application.applied_tariff_snapshot_id = @applied_tariff_snapshot_id
+              AND application.command_status = 'APPLIED';
+            """,
+            connection);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+        command.Parameters.Add("applied_tariff_snapshot_id", NpgsqlDbType.Uuid).Value = appliedTariffSnapshotId;
+        command.Parameters.Add("policy_reference_id", NpgsqlDbType.Uuid).Value = policyReferenceId;
+        (await command.ExecuteNonQueryAsync()).Should().Be(1);
+    }
+
+    private static async Task ExpireTariffWithoutChangingLifecycleStateAsync(Guid tariffSnapshotId)
+    {
+        await using var connection = new NpgsqlConnection(
+            CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            UPDATE core.tariff_snapshots
+            SET calculated_at = NOW() - INTERVAL '2 hours',
+                expires_at = NOW() - INTERVAL '1 hour'
+            WHERE tariff_snapshot_id = @tariff_snapshot_id;
+            """,
+            connection);
+        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = tariffSnapshotId;
+        (await command.ExecuteNonQueryAsync()).Should().Be(1);
     }
 
     private static async Task InsertPaymentAttemptAsync(Guid parkingSessionId, Guid tariffSnapshotId)
