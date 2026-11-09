@@ -122,6 +122,35 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     }
 
     [Fact]
+    public async Task TerminalCashFiscalIssuance_AcceptsOpenManualPeriodWithoutEndTimestamp()
+    {
+        var confirmationTime = DateTimeOffset.Parse("2026-11-06T05:43:43Z");
+        var cashPayment = CashPayment(confirmedAt: confirmationTime);
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var posClient = new FakeBusinessDatePosClient(
+            new PosServerFiscalBusinessDateResolutionResult(
+                true,
+                200,
+                "fiscal_business_date_resolved",
+                "resolved",
+                new DateOnly(2026, 11, 6),
+                DateTimeOffset.Parse("2026-11-06T04:32:07Z"),
+                null,
+                "Asia/Manila",
+                new TimeOnly(7, 0),
+                false,
+                null,
+                null));
+        var service = CreateService(cashPayment, repo, posIntegration, posServerClient: posClient);
+
+        await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        Assert.Equal(new DateOnly(2026, 11, 6), posIntegration.LastFiscalContext?.BusinessDayDate);
+        Assert.Equal(1, posIntegration.IssueCallCount);
+    }
+
+    [Fact]
     public async Task TerminalCashFiscalIssuance_CashWithChange_MapsDurableTenderFacts()
     {
         var repo = new InMemoryFiscalReferenceRepository();

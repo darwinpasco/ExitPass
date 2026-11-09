@@ -726,11 +726,10 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
         if (!result.Succeeded ||
             result.BusinessDayDate is null ||
             result.PeriodStartAt is null ||
-            result.PeriodEndAt is null ||
             string.IsNullOrWhiteSpace(result.ReportingTimezoneName) ||
             result.BusinessDayCutoffLocalTime is null ||
             cashPayment.ConfirmedAt < result.PeriodStartAt.Value ||
-            cashPayment.ConfirmedAt >= result.PeriodEndAt.Value)
+            (result.PeriodEndAt is not null && cashPayment.ConfirmedAt >= result.PeriodEndAt.Value))
         {
             throw Rejected(
                 "TERMINAL_CASH_FISCAL_BUSINESS_DATE_UNAVAILABLE",
