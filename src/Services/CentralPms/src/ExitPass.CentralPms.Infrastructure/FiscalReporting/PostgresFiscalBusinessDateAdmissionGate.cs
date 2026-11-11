@@ -166,21 +166,15 @@ public sealed class PostgresFiscalBusinessDateAdmissionGate(
                      JOIN core.parking_sessions session ON session.parking_session_id=attempt.parking_session_id
                      WHERE session.site_id=@site_id
                        AND attempt.created_at >= @opened_at
-                       AND (
-                           attempt.attempt_status IN (
-                               'REQUESTED'::core.payment_attempt_status_enum,
-                               'PENDING_PROVIDER'::core.payment_attempt_status_enum,
-                               'PENDING_FINALIZATION'::core.payment_attempt_status_enum)
-                           OR (
-                               attempt.attempt_status='CONFIRMED'::core.payment_attempt_status_enum
-                               AND NOT EXISTS (
-                                   SELECT 1
-                                   FROM core.fiscal_issuance_references fiscal
-                                   WHERE fiscal.payment_attempt_id=attempt.payment_attempt_id
-                                     AND fiscal.fiscal_issuance_state IN (
-                                         'FISCAL_ISSUANCE_RECORDED',
-                                         'FISCAL_ISSUANCE_REPLAYED',
-                                         'FISCAL_ISSUANCE_RECONCILED')))))
+                       AND attempt.attempt_status='CONFIRMED'::core.payment_attempt_status_enum
+                       AND NOT EXISTS (
+                           SELECT 1
+                           FROM core.fiscal_issuance_references fiscal
+                           WHERE fiscal.payment_attempt_id=attempt.payment_attempt_id
+                             AND fiscal.fiscal_issuance_state IN (
+                                 'FISCAL_ISSUANCE_RECORDED',
+                                 'FISCAL_ISSUANCE_REPLAYED',
+                                 'FISCAL_ISSUANCE_RECONCILED')))
                   + (SELECT count(*)
                      FROM core.fiscal_issuance_references fiscal
                      WHERE fiscal.site_id=@site_id
