@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   formatPhtInstant,
   formatPhtInputValue,
@@ -10,6 +10,14 @@ import {
 import { createOperatorFiscalReportingFixture, fiscalReportingPermissions } from "./fiscalReporting";
 
 const allPermissions = Object.values(fiscalReportingPermissions);
+let restoreObjectUrlStubs: (() => void) | undefined;
+
+afterEach(() => {
+  restoreObjectUrlStubs?.();
+  restoreObjectUrlStubs = undefined;
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("Operator Console fiscal reporting", () => {
   it("converts explicit UTC instants to PHT without using the workstation timezone", () => {
@@ -99,14 +107,143 @@ describe("Operator Console fiscal reporting", () => {
     expect(screen.getByText("2026-09-14 07:30:00 PHT")).toBeInTheDocument();
   });
 
-  it.each(["X", "Z"] as const)("shows explicit PDF and JSON actions for %s Reading without the old ambiguous action", async (kind) => {
+  it.each(["X", "Z"] as const)("shows explicit Print, PDF, and JSON actions for %s Reading", async (kind) => {
     render(<OperatorFiscalReportingPage client={createPitxFiscalReportingClient()} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
 
     await userEvent.click(await screen.findByRole("tab", { name: `${kind} Reading` }));
 
+    expect(await screen.findByRole("button", { name: "Print" })).toBeEnabled();
     expect(await screen.findByRole("link", { name: "Download PDF" })).toHaveAttribute("href", expect.stringContaining("format=pdf"));
     expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute("href", expect.stringContaining("format=json"));
-    expect(screen.queryByRole("link", { name: "Print / download" })).not.toBeInTheDocument();
+  });
+
+  it.each(["X", "Z"] as const)("prints the saved %s Reading PDF without generating or closing fiscal state", async (kind) => {
+    const client = createPitxFiscalReportingClient();
+    client.generateX = vi.fn(client.generateX);
+    client.closeBusinessDate = vi.fn(client.closeBusinessDate);
+    const preview = createPrintPreview();
+    vi.spyOn(window, "open").mockReturnValue(preview.window);
+    const objectUrls = installObjectUrlStubs();
+    const fetchPdf = vi.fn(async () => new Response(
+      new Blob(["%PDF-1.4\n%%EOF"], { type: "application/pdf" }),
+      { status: 200, headers: { "Content-Type": "application/pdf" } }
+    ));
+    vi.stubGlobal("fetch", fetchPdf);
+    render(<OperatorFiscalReportingPage client={client} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: `${kind} Reading` }));
+    await userEvent.click(await screen.findByRole("button", { name: "Print" }));
+
+    await waitFor(() => expect(fetchPdf).toHaveBeenCalledWith(
+      expect.stringContaining(`/${kind.toLowerCase()}-readings/${kind}-20260910-001/download?format=pdf`),
+      expect.objectContaining({
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "application/pdf" }
+      })
+    ));
+    await waitFor(() => expect(preview.frame.src).toBe("blob:xz-reading-57mm"));
+    preview.dispatchFrame("load");
+    await waitFor(() => expect(preview.printTarget.print).toHaveBeenCalledOnce());
+    preview.dispatchPrint("afterprint");
+
+    expect(objectUrls.revokeObjectURL).toHaveBeenCalledWith("blob:xz-reading-57mm");
+    expect(preview.close).toHaveBeenCalledOnce();
+    expect(client.generateX).not.toHaveBeenCalled();
+    expect(client.closeBusinessDate).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "Download PDF" })).toHaveAttribute("href", expect.stringContaining("format=pdf"));
+    expect(screen.getByRole("link", { name: "Download JSON" })).toHaveAttribute("href", expect.stringContaining("format=json"));
+  });
+
+  it.each([
+    [401, "Your Operator Console session has expired. Sign in again before printing."],
+    [403, "You do not have permission to print this fiscal report."]
+  ] as const)("reports HTTP %s authorization failures and closes the temporary preview", async (status, message) => {
+    const preview = createPrintPreview();
+    vi.spyOn(window, "open").mockReturnValue(preview.window);
+    const objectUrls = installObjectUrlStubs();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status })));
+    render(<OperatorFiscalReportingPage client={createPitxFiscalReportingClient()} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "X Reading" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Print" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(preview.close).toHaveBeenCalledOnce();
+    expect(objectUrls.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("reports a PDF retrieval failure without exposing browser network details", async () => {
+    const preview = createPrintPreview();
+    vi.spyOn(window, "open").mockReturnValue(preview.window);
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("network internals"); }));
+    render(<OperatorFiscalReportingPage client={createPitxFiscalReportingClient()} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "X Reading" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Print" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The fiscal report PDF could not be retrieved for printing. Use Download PDF or try again.");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("network internals");
+    expect(preview.close).toHaveBeenCalledOnce();
+  });
+
+  it("reports a blocked print preview while preserving both download actions", async () => {
+    vi.spyOn(window, "open").mockReturnValue(null);
+    const fetchPdf = vi.fn();
+    vi.stubGlobal("fetch", fetchPdf);
+    render(<OperatorFiscalReportingPage client={createPitxFiscalReportingClient()} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Z Reading" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Print" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Allow pop-ups for ExitPass and try again.");
+    expect(fetchPdf).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "Download PDF" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Download JSON" })).toBeInTheDocument();
+  });
+
+  it("keeps the native PDF viewer available when automatic printing is unsupported and cleans up when it closes", async () => {
+    const preview = createPrintPreview({ printFailure: new Error("print is unavailable") });
+    vi.spyOn(window, "open").mockReturnValue(preview.window);
+    const objectUrls = installObjectUrlStubs();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      new Blob(["%PDF-1.4\n%%EOF"], { type: "application/pdf" }),
+      { status: 200, headers: { "Content-Type": "application/pdf" } }
+    )));
+    render(<OperatorFiscalReportingPage client={createPitxFiscalReportingClient()} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "X Reading" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Print" }));
+    await waitFor(() => expect(preview.frame.src).toBe("blob:xz-reading-57mm"));
+    preview.dispatchFrame("load");
+
+    await waitFor(() => expect(preview.printTarget.print).toHaveBeenCalledOnce());
+    expect(preview.close).not.toHaveBeenCalled();
+    expect(preview.body.replaceChildren).toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    preview.dispatchPreview("pagehide");
+    expect(objectUrls.revokeObjectURL).toHaveBeenCalledWith("blob:xz-reading-57mm");
+  });
+
+  it("reports a PDF viewer load failure and releases its Blob URL", async () => {
+    const preview = createPrintPreview();
+    vi.spyOn(window, "open").mockReturnValue(preview.window);
+    const objectUrls = installObjectUrlStubs();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      new Blob(["%PDF-1.4\n%%EOF"], { type: "application/pdf" }),
+      { status: 200, headers: { "Content-Type": "application/pdf" } }
+    )));
+    render(<OperatorFiscalReportingPage client={createPitxFiscalReportingClient()} siteReferences={["SITE-PITX"]} permissions={allPermissions} />);
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Z Reading" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Print" }));
+    await waitFor(() => expect(preview.frame.src).toBe("blob:xz-reading-57mm"));
+    preview.dispatchFrame("error");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The fiscal report PDF print preview could not be opened.");
+    expect(objectUrls.revokeObjectURL).toHaveBeenCalledWith("blob:xz-reading-57mm");
+    expect(preview.close).toHaveBeenCalledOnce();
   });
 
   it("renders the bounded Audit Trail, exact sample column order, filters, downloads, and action legend", async () => {
@@ -665,4 +802,76 @@ function withPitxPeriod(history: Awaited<ReturnType<ReturnType<typeof createOper
       generatedAt: "2026-09-13T23:30:00Z"
     }))
   };
+}
+
+function installObjectUrlStubs() {
+  const createDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  const revokeDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
+  const createObjectURL = vi.fn(() => "blob:xz-reading-57mm");
+  const revokeObjectURL = vi.fn();
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+  restoreObjectUrlStubs = () => {
+    if (createDescriptor) Object.defineProperty(URL, "createObjectURL", createDescriptor);
+    else delete (URL as unknown as Record<string, unknown>).createObjectURL;
+    if (revokeDescriptor) Object.defineProperty(URL, "revokeObjectURL", revokeDescriptor);
+    else delete (URL as unknown as Record<string, unknown>).revokeObjectURL;
+  };
+  return { createObjectURL, revokeObjectURL };
+}
+
+function createPrintPreview({ printFailure }: { printFailure?: Error } = {}) {
+  const frameListeners = new Map<string, EventListenerOrEventListenerObject>();
+  const previewListeners = new Map<string, EventListenerOrEventListenerObject>();
+  const printListeners = new Map<string, EventListenerOrEventListenerObject>();
+  const printTarget = {
+    addEventListener: vi.fn((type: string, listener: EventListenerOrEventListenerObject) => printListeners.set(type, listener)),
+    removeEventListener: vi.fn((type: string) => printListeners.delete(type)),
+    focus: vi.fn(),
+    print: printFailure ? vi.fn(() => { throw printFailure; }) : vi.fn()
+  } as unknown as Window;
+  const frame = {
+    title: "",
+    src: "",
+    style: { cssText: "" },
+    contentWindow: printTarget,
+    addEventListener: vi.fn((type: string, listener: EventListenerOrEventListenerObject) => frameListeners.set(type, listener))
+  } as unknown as HTMLIFrameElement;
+  const instruction = { textContent: "", style: { cssText: "" } } as unknown as HTMLParagraphElement;
+  const body = {
+    textContent: "",
+    style: { cssText: "" },
+    replaceChildren: vi.fn()
+  } as unknown as HTMLElement;
+  let closed = false;
+  const close = vi.fn(() => { closed = true; });
+  const preview = {
+    opener: window,
+    get closed() { return closed; },
+    document: {
+      title: "",
+      body,
+      createElement: vi.fn((tag: string) => tag === "iframe" ? frame : instruction)
+    },
+    addEventListener: vi.fn((type: string, listener: EventListenerOrEventListenerObject) => previewListeners.set(type, listener)),
+    removeEventListener: vi.fn((type: string) => previewListeners.delete(type)),
+    close
+  } as unknown as Window;
+  return {
+    window: preview,
+    body,
+    frame,
+    printTarget: printTarget as Window & { print: ReturnType<typeof vi.fn> },
+    close,
+    dispatchFrame: (type: string) => dispatch(frameListeners.get(type), type),
+    dispatchPreview: (type: string) => dispatch(previewListeners.get(type), type),
+    dispatchPrint: (type: string) => dispatch(printListeners.get(type), type)
+  };
+}
+
+function dispatch(listener: EventListenerOrEventListenerObject | undefined, type: string) {
+  if (!listener) throw new Error(`No ${type} listener was registered.`);
+  const event = new Event(type);
+  if (typeof listener === "function") listener(event);
+  else listener.handleEvent(event);
 }
