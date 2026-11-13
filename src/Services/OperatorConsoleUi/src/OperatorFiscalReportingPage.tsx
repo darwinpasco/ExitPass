@@ -713,9 +713,155 @@ function NoAuthorizedSite({ message }: { message: string }) {
   return <section className="stateMessage warning"><h2>No authorized fiscal Site</h2><p><strong>NO_AUTHORIZED_SITE</strong></p><p>{message}</p></section>;
 }
 
+const PRINT_PREVIEW_LOAD_TIMEOUT_MS = 15_000;
+const PRINT_RESOURCE_TTL_MS = 5 * 60_000;
+
+async function openReadingPdfForPrint(url: string) {
+  const preview = window.open("", "_blank");
+  if (!preview) throw new Error("The browser blocked the print preview. Allow pop-ups for ExitPass and try again.");
+
+  let objectUrl: string | undefined;
+  let releaseObjectUrl: (() => void) | undefined;
+  try {
+    preview.opener = null;
+    preview.document.title = "Preparing fiscal report print preview";
+    preview.document.body.textContent = "Preparing the authorized 57 mm fiscal report PDF...";
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "application/pdf" }
+      });
+    } catch {
+      throw new Error("The fiscal report PDF could not be retrieved for printing. Use Download PDF or try again.");
+    }
+    if (response.status === 401) throw new Error("Your Operator Console session has expired. Sign in again before printing.");
+    if (response.status === 403) throw new Error("You do not have permission to print this fiscal report.");
+    if (!response.ok) throw new Error("The fiscal report PDF could not be retrieved for printing. Use Download PDF or try again.");
+
+    const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+    if (contentType !== "application/pdf") {
+      throw new Error("The print request did not return a PDF. Your session may have expired; sign in and try again.");
+    }
+
+    let pdf: Blob;
+    try {
+      pdf = await response.blob();
+    } catch {
+      throw new Error("The fiscal report PDF response could not be read. Use Download PDF or try again.");
+    }
+    if (pdf.size === 0) throw new Error("The fiscal report PDF was empty and could not be printed.");
+    if (preview.closed) throw new Error("The print preview was closed before the fiscal report PDF loaded.");
+
+    try {
+      objectUrl = URL.createObjectURL(pdf);
+    } catch {
+      throw new Error("The browser could not prepare the fiscal report print preview. Use Download PDF instead.");
+    }
+    const instruction = preview.document.createElement("p");
+    instruction.textContent = "If the print dialog does not open automatically, use the PDF viewer Print command.";
+    instruction.style.cssText = "box-sizing:border-box;font:14px system-ui;margin:0;padding:10px 12px;";
+    const frame = preview.document.createElement("iframe");
+    frame.title = "57 mm fiscal report print preview";
+    frame.style.cssText = "border:0;display:block;flex:1;width:100%;";
+    preview.document.body.style.cssText = "display:flex;flex-direction:column;height:100vh;margin:0;";
+    preview.document.body.replaceChildren(instruction, frame);
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let printTarget: Window | null = null;
+      let resourceTimer: number | undefined;
+      let loadTimer: number | undefined;
+      let released = false;
+
+      const closePreview = () => {
+        if (!preview.closed) preview.close();
+      };
+      const afterPrint = () => {
+        releaseObjectUrl?.();
+        closePreview();
+      };
+      const release = () => {
+        if (released) return;
+        released = true;
+        if (resourceTimer !== undefined) window.clearTimeout(resourceTimer);
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        preview.removeEventListener("pagehide", previewClosed);
+        preview.removeEventListener("beforeunload", previewClosed);
+        printTarget?.removeEventListener("afterprint", afterPrint);
+      };
+      const fail = (message: string) => {
+        if (settled) return;
+        settled = true;
+        if (loadTimer !== undefined) window.clearTimeout(loadTimer);
+        release();
+        closePreview();
+        reject(new Error(message));
+      };
+      const previewClosed = () => {
+        if (!settled) {
+          fail("The print preview was closed before the fiscal report PDF loaded.");
+          return;
+        }
+        release();
+      };
+
+      releaseObjectUrl = release;
+      preview.addEventListener("pagehide", previewClosed, { once: true });
+      preview.addEventListener("beforeunload", previewClosed, { once: true });
+      loadTimer = window.setTimeout(
+        () => fail("The fiscal report PDF print preview did not load. Use Download PDF or try again."),
+        PRINT_PREVIEW_LOAD_TIMEOUT_MS
+      );
+      frame.addEventListener("error", () => fail("The fiscal report PDF print preview could not be opened."), { once: true });
+      frame.addEventListener("load", () => {
+        if (settled) return;
+        settled = true;
+        if (loadTimer !== undefined) window.clearTimeout(loadTimer);
+        resourceTimer = window.setTimeout(release, PRINT_RESOURCE_TTL_MS);
+        printTarget = frame.contentWindow;
+        if (printTarget) {
+          printTarget.addEventListener("afterprint", afterPrint, { once: true });
+          try {
+            printTarget.focus();
+            printTarget.print();
+          } catch {
+            // The embedded native PDF viewer remains available as the fallback.
+          }
+        }
+        resolve();
+      }, { once: true });
+      frame.src = objectUrl!;
+    });
+  } catch (cause) {
+    releaseObjectUrl?.();
+    if (objectUrl && !releaseObjectUrl) URL.revokeObjectURL(objectUrl);
+    if (!preview.closed) preview.close();
+    throw cause;
+  }
+}
+
 function ReadingPanel({ kind, history, error, actionError, canRead, canGenerate, onGenerate, download }: { kind: "X" | "Z"; history?: History; error?: string; actionError?: string; canRead: boolean; canGenerate: boolean; onGenerate?: () => void; download: (reference: string, format: "pdf" | "json") => string }) {
+  const [printError, setPrintError] = useState<string>();
+  const [printingReference, setPrintingReference] = useState<string>();
+
+  async function print(reference: string) {
+    setPrintError(undefined);
+    setPrintingReference(reference);
+    try {
+      await openReadingPdfForPrint(download(reference, "pdf"));
+    } catch (cause) {
+      setPrintError(operationMessage(cause, `The ${kind} Reading PDF could not be opened for printing.`));
+    } finally {
+      setPrintingReference(undefined);
+    }
+  }
+
   if (!canRead) return <p className="stateMessage warning">{kind} Reading permission is required.</p>;
-  return <div className="fiscalPane" role="tabpanel"><div className="readingTitle"><div><h3>{kind} Reading</h3><p>{kind === "X" ? "Non-closing observation of the current reporting period." : "Closing fiscal report history."}</p></div>{canGenerate && history?.currentPeriod && <button type="button" onClick={onGenerate}>Generate {kind} Reading</button>}</div>{error && <p className="errorMessage" role="alert">{error}</p>}{actionError && <p className="errorMessage" role="alert">{actionError}</p>}{history?.currentPeriod ? <dl className="periodCard"><div><dt>Fiscal Business Date</dt><dd>{history.currentPeriod.businessDayDate}</dd></div><div><dt>Period start (PHT)</dt><dd>{formatPhtInstant(history.currentPeriod.periodStartAt)}</dd></div><div><dt>Period end (PHT)</dt><dd>{history.currentPeriod.periodEndAt ? formatPhtInstant(history.currentPeriod.periodEndAt) : "OPEN"}</dd></div><div><dt>Status</dt><dd>{history.currentPeriod.status}</dd></div></dl> : <p role="status">{kind === "X" && canGenerate ? "No open fiscal reporting period is currently available for X generation." : "No open fiscal reporting period is available."}</p>}<div className="tableViewport"><table><thead><tr><th>Reference</th><th>Generated (PHT)</th><th>Transactions</th><th>Gross sales</th><th>VATable</th><th>VAT</th><th>VAT exempt</th><th>Zero rated</th><th>Discounts</th><th>Voids</th><th>Adjustments</th><th>Net sales</th><th>Tenders</th><th>Output</th></tr></thead><tbody>{history?.readings.map((reading) => <tr key={reading.reportReference}><td>{reading.reportReference}</td><td>{formatPhtInstant(reading.generatedAt)} PHT</td><td>{reading.transactionCount}</td><td>{money(reading.amounts.grossSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.vatableSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.vatAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.vatExemptSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.zeroRatedSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.discountAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.voidAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.adjustmentAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.netSalesAmountMinorUnits, reading.currencyCode)}</td><td>{reading.tenders.length ? reading.tenders.map((tender) => `${tender.classification}: ${money(tender.amountMinorUnits, tender.currencyCode)}`).join("; ") : "None"}</td><td><div className="reportFilters"><a href={download(reading.reportReference, "pdf")}>Download PDF</a><a href={download(reading.reportReference, "json")}>Download JSON</a></div></td></tr>)}</tbody></table></div></div>;
+  return <div className="fiscalPane" role="tabpanel"><div className="readingTitle"><div><h3>{kind} Reading</h3><p>{kind === "X" ? "Non-closing observation of the current reporting period." : "Closing fiscal report history."}</p></div>{canGenerate && history?.currentPeriod && <button type="button" onClick={onGenerate}>Generate {kind} Reading</button>}</div>{error && <p className="errorMessage" role="alert">{error}</p>}{actionError && <p className="errorMessage" role="alert">{actionError}</p>}{printError && <p className="errorMessage" role="alert">{printError}</p>}{history?.currentPeriod ? <dl className="periodCard"><div><dt>Fiscal Business Date</dt><dd>{history.currentPeriod.businessDayDate}</dd></div><div><dt>Period start (PHT)</dt><dd>{formatPhtInstant(history.currentPeriod.periodStartAt)}</dd></div><div><dt>Period end (PHT)</dt><dd>{history.currentPeriod.periodEndAt ? formatPhtInstant(history.currentPeriod.periodEndAt) : "OPEN"}</dd></div><div><dt>Status</dt><dd>{history.currentPeriod.status}</dd></div></dl> : <p role="status">{kind === "X" && canGenerate ? "No open fiscal reporting period is currently available for X generation." : "No open fiscal reporting period is available."}</p>}<div className="tableViewport"><table><thead><tr><th>Reference</th><th>Generated (PHT)</th><th>Transactions</th><th>Gross sales</th><th>VATable</th><th>VAT</th><th>VAT exempt</th><th>Zero rated</th><th>Discounts</th><th>Voids</th><th>Adjustments</th><th>Net sales</th><th>Tenders</th><th>Output</th></tr></thead><tbody>{history?.readings.map((reading) => <tr key={reading.reportReference}><td>{reading.reportReference}</td><td>{formatPhtInstant(reading.generatedAt)} PHT</td><td>{reading.transactionCount}</td><td>{money(reading.amounts.grossSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.vatableSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.vatAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.vatExemptSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.zeroRatedSalesAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.discountAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.voidAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.adjustmentAmountMinorUnits, reading.currencyCode)}</td><td>{money(reading.amounts.netSalesAmountMinorUnits, reading.currencyCode)}</td><td>{reading.tenders.length ? reading.tenders.map((tender) => `${tender.classification}: ${money(tender.amountMinorUnits, tender.currencyCode)}`).join("; ") : "None"}</td><td><div className="reportFilters"><button type="button" onClick={() => void print(reading.reportReference)} disabled={printingReference !== undefined}>{printingReference === reading.reportReference ? "Preparing print" : "Print"}</button><a href={download(reading.reportReference, "pdf")}>Download PDF</a><a href={download(reading.reportReference, "json")}>Download JSON</a></div></td></tr>)}</tbody></table></div></div>;
 }
 
 function operationMessage(cause: unknown, fallback: string) {
