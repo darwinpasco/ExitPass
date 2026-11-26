@@ -655,7 +655,7 @@ function Get-AptStatus {
         return [pscustomobject]@{ Environment=$Definition.Name; Component="AptDesktop"; State="blocked"; Identifier="PID $($processes[0].ProcessId)"; Url=$apt.UiUrl; Detail="Shared PITX-APT-01 is owned by $ownerName. Stop command: $stopCommand" }
     }
     if (-not (Test-Path -LiteralPath $apt.TrustState -PathType Leaf)) {
-        return [pscustomobject]@{ Environment=$Definition.Name; Component="AptDesktop"; State="blocked"; Identifier="-"; Url=$apt.UiUrl; Detail="Enrollment trust state is missing: $($apt.TrustState)" }
+        return [pscustomobject]@{ Environment=$Definition.Name; Component="AptDesktop"; State="stopped"; Identifier="-"; Url=$apt.UiUrl; Detail="Desktop is stopped. Enrollment trust state is missing, so Start will remain blocked until enrollment completes: $($apt.TrustState)" }
     }
     return [pscustomobject]@{ Environment=$Definition.Name; Component="AptDesktop"; State="stopped"; Identifier="-"; Url=$apt.UiUrl; Detail="Executable: $($apt.Executable)" }
 }
@@ -900,9 +900,12 @@ function Test-SharedResourceHeldByAnotherEnvironment {
     param([object]$Row)
 
     if ($Row.State -ne "blocked") { return $false }
-    if ($Row.Component -eq "AptDesktop" -and $Row.Detail -match '^Shared PITX-APT-01 is owned by (Dev|UAT|Demo)\.') { return $true }
-    if ($Row.Component -eq "Ngrok" -and $Row.Detail -match '^Shared ngrok admin port \d+ is owned by ExitPass environment (Dev|UAT|Demo) ') { return $true }
-    return $false
+    $owner = $null
+    if ($Row.Component -eq "AptDesktop" -and $Row.Detail -match '^Shared PITX-APT-01 is owned by (Dev|UAT|Demo)\.') { $owner = $Matches[1] }
+    if ($Row.Component -eq "Ngrok" -and $Row.Detail -match '^Shared ngrok admin port \d+ is owned by ExitPass environment (Dev|UAT|Demo) ') { $owner = $Matches[1] }
+    $selectedEnvironment = [string]$Row.Environment
+    if ([string]::IsNullOrWhiteSpace($owner) -or $selectedEnvironment -notin @("Dev", "UAT", "Demo")) { return $false }
+    return -not [string]::Equals($owner, $selectedEnvironment, [StringComparison]::OrdinalIgnoreCase)
 }
 
 function Get-EnvironmentStatus {

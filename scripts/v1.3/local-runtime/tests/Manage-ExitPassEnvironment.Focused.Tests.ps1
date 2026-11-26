@@ -141,6 +141,70 @@ Invoke-Case "operational APT shell produces ready" {
     Assert-Equal "ready" $readyState.State "The visible functional WebView shell must pass readiness."
 }
 
+$devDefinitionTemplate = Get-EnvironmentDefinition -Name "Dev"
+$missingTrustPath = Join-Path $env:TEMP "exitpass-lifecycle-missing-$([guid]::NewGuid().ToString('N')).bin"
+$missingTrustDefinition = [pscustomobject]@{
+    Name = "Dev"
+    Root = $devDefinitionTemplate.Root
+    Network = $devDefinitionTemplate.Network
+    Containers = $devDefinitionTemplate.Containers
+    Nodes = $devDefinitionTemplate.Nodes
+    Apt = [pscustomobject]@{
+        Executable = $target
+        FrontendConfig = $target
+        TrustState = $missingTrustPath
+        UiUrl = "http://127.0.0.1:5373"
+    }
+    Ngrok = $devDefinitionTemplate.Ngrok
+}
+$script:LaunchAttempted = $false
+function Get-AptProcesses { return @() }
+function Invoke-WithEnvironmentVariables {
+    param([hashtable]$Values, [scriptblock]$ActionBlock)
+    $script:LaunchAttempted = $true
+    throw "APT launch was unexpectedly reached."
+}
+function Test-DockerEngine { return $true }
+function Get-ContainerStatusRows {
+    param([object]$Definition)
+    return @($Definition.Containers | ForEach-Object {
+        [pscustomobject]@{ Environment=$Definition.Name; Component=$_.Component; State="stopped"; Identifier="test"; Url=$_.ReadyUri; Detail="Stopped" }
+    })
+}
+function Get-NodeStatus {
+    param([object]$Definition, [object]$Node)
+    return [pscustomobject]@{ Environment=$Definition.Name; Component=$Node.Component; State="stopped"; Identifier="-"; Url=$Node.ReadyUri; Detail="Stopped" }
+}
+function Get-NgrokStatus {
+    param([object]$Definition)
+    return [pscustomobject]@{ Environment=$Definition.Name; Component="Ngrok"; State="stopped"; Identifier="-"; Url=""; Detail="Stopped" }
+}
+function Stop-Ngrok { }
+function Stop-NodeComponent { }
+function Stop-OwnedContainer { }
+function Write-LifecycleLog { }
+function Write-EnvironmentStatus { }
+
+Invoke-Case "missing Dev enrollment reports stopped and repeated Stop succeeds" {
+    $aptStatus = Get-AptStatus -Definition $missingTrustDefinition
+    Assert-Equal "stopped" $aptStatus.State "A non-running APT with missing enrollment must still be stopped."
+    Assert-True ($aptStatus.Detail -like "*Enrollment trust state is missing*") "Stopped APT detail must retain the missing-enrollment explanation."
+    $status = Get-EnvironmentStatus -Definition $missingTrustDefinition
+    Assert-Equal "Stopped" $status.Overall "Every stopped Dev component must aggregate to Stopped despite missing APT enrollment."
+    Assert-Equal 3 $status.ExitCode "Stopped Status must retain exit code 3."
+    foreach ($attempt in 1..2) {
+        $script:ExitCode = -1
+        Stop-Environment -Definition $missingTrustDefinition
+        Assert-Equal 0 $script:ExitCode "Repeated Stop attempt $attempt must succeed."
+    }
+}
+
+Invoke-Case "Start still rejects missing Dev enrollment before launch" {
+    $script:LaunchAttempted = $false
+    Assert-Throws { Start-AptDesktop -Definition $missingTrustDefinition } "*enrollment is incomplete; trust state is missing*" "Start must enforce the trust-state prerequisite."
+    Assert-True (-not $script:LaunchAttempted) "Missing trust state must fail before process launch."
+}
+
 $script:ConfigurationChecked = $false
 function Get-AptProcesses {
     @(
@@ -166,12 +230,13 @@ function Get-NodeStatus { throw "No node rows are expected in focused aggregate 
 function Get-AptStatus { return $script:AptRow }
 function Get-NgrokStatus { return $script:NgrokRow }
 
-$script:AptRow = [pscustomobject]@{ Environment="Test"; Component="AptDesktop"; State="stopped"; Identifier="-"; Url=""; Detail="Stopped" }
-$script:NgrokRow = [pscustomobject]@{ Environment="Test"; Component="Ngrok"; State="stopped"; Identifier="-"; Url=""; Detail="Stopped" }
+$definition.Name = "Dev"
+$script:AptRow = [pscustomobject]@{ Environment="Dev"; Component="AptDesktop"; State="stopped"; Identifier="-"; Url=""; Detail="Stopped" }
+$script:NgrokRow = [pscustomobject]@{ Environment="Dev"; Component="Ngrok"; State="stopped"; Identifier="-"; Url=""; Detail="Stopped" }
 
 Invoke-Case "missing required container produces partial" {
     $script:DockerAvailable = $true
-    $script:ContainerRows = @([pscustomobject]@{ Environment="Test"; Component="CentralPms"; State="blocked"; Identifier="missing"; Url=""; Detail="Required container is missing." })
+    $script:ContainerRows = @([pscustomobject]@{ Environment="Dev"; Component="CentralPms"; State="blocked"; Identifier="missing"; Url=""; Detail="Required container is missing." })
     $status = Get-EnvironmentStatus -Definition $definition
     Assert-Equal "Partial" $status.Overall "A missing required container must not look stopped."
     Assert-Equal 2 $status.ExitCode "A missing required container must use the partial/blocked exit code."
@@ -184,18 +249,26 @@ Invoke-Case "unavailable Docker state produces partial" {
     Assert-Equal "blocked" $status.Rows[0].State "Unavailable Docker state must be explicit on required containers."
 }
 
-Invoke-Case "fully stopped target remains stopped with external shared owners" {
+Invoke-Case "same-environment shared-resource owner remains a conflict" {
     $script:DockerAvailable = $true
-    $script:ContainerRows = @([pscustomobject]@{ Environment="Test"; Component="CentralPms"; State="stopped"; Identifier="abc"; Url=""; Detail="Stopped" })
-    $script:AptRow = [pscustomobject]@{ Environment="Test"; Component="AptDesktop"; State="blocked"; Identifier="PID 11"; Url=""; Detail="Shared PITX-APT-01 is owned by UAT. Stop command: omitted" }
-    $script:NgrokRow = [pscustomobject]@{ Environment="Test"; Component="Ngrok"; State="blocked"; Identifier="PID 12"; Url=""; Detail="Shared ngrok admin port 4040 is owned by ExitPass environment UAT (PID 12). Log: test" }
+    $script:ContainerRows = @([pscustomobject]@{ Environment="Dev"; Component="CentralPms"; State="stopped"; Identifier="abc"; Url=""; Detail="Stopped" })
+    $script:AptRow = [pscustomobject]@{ Environment="Dev"; Component="AptDesktop"; State="blocked"; Identifier="PID 11"; Url=""; Detail="Shared PITX-APT-01 is owned by Dev. Stop command: omitted" }
+    $script:NgrokRow = [pscustomobject]@{ Environment="Dev"; Component="Ngrok"; State="blocked"; Identifier="PID 12"; Url=""; Detail="Shared ngrok admin port 4040 is owned by ExitPass environment Dev (PID 12). Log: test" }
+    $status = Get-EnvironmentStatus -Definition $definition
+    Assert-Equal "Partial" $status.Overall "Dev resources reported as owned by Dev must remain a conflict."
+    Assert-Equal 2 $status.ExitCode "Same-environment ownership conflict must use the partial/blocked exit code."
+}
+
+Invoke-Case "fully stopped Dev remains stopped with UAT shared owners" {
+    $script:AptRow = [pscustomobject]@{ Environment="Dev"; Component="AptDesktop"; State="blocked"; Identifier="PID 11"; Url=""; Detail="Shared PITX-APT-01 is owned by UAT. Stop command: omitted" }
+    $script:NgrokRow = [pscustomobject]@{ Environment="Dev"; Component="Ngrok"; State="blocked"; Identifier="PID 12"; Url=""; Detail="Shared ngrok admin port 4040 is owned by ExitPass environment UAT (PID 12). Log: test" }
     $status = Get-EnvironmentStatus -Definition $definition
     Assert-Equal "Stopped" $status.Overall "External shared APT/ngrok ownership must not make a stopped target partial."
     Assert-Equal 3 $status.ExitCode "A confirmed stopped target must retain the stopped status code."
 }
 
 Invoke-Case "unrelated ngrok admin-port owner remains partial" {
-    $script:NgrokRow = [pscustomobject]@{ Environment="Test"; Component="Ngrok"; State="blocked"; Identifier="PID 99"; Url=""; Detail="Admin port 4040 is owned by other.exe, but no other ExitPass environment ownership was verified. Log: test" }
+    $script:NgrokRow = [pscustomobject]@{ Environment="Dev"; Component="Ngrok"; State="blocked"; Identifier="PID 99"; Url=""; Detail="Admin port 4040 is owned by other.exe, but no other ExitPass environment ownership was verified. Log: test" }
     $status = Get-EnvironmentStatus -Definition $definition
     Assert-Equal "Partial" $status.Overall "An unrelated admin-port owner must not be treated as a valid shared ExitPass owner."
     Assert-Equal 2 $status.ExitCode "An unrelated admin-port owner must use the partial/blocked exit code."
