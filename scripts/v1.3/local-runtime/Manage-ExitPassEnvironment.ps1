@@ -18,6 +18,7 @@ $script:DockerDesktop = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 $script:ExpectedAptUser = "PPG-DAP25\darwi"
 $script:ExpectedPhysicalSerial = "PF6BJ1WA"
 $script:ExpectedDisplaySerial = "ACE4_2E00_653A_D952"
+$script:ContainerStopTimeoutSeconds = 45
 $script:ExitCode = 0
 
 function New-ContainerDefinition {
@@ -215,7 +216,7 @@ function Get-EnvironmentDefinition {
                 Database = Join-Path $root "apt\LocalOperations\cash-journal.db"
                 HumanSession = Join-Path $root "apt\HumanSession\credential.bin"
                 WebView = Join-Path $root "apt\launcher-rc1-demo\WebView2"
-                CentralUrl = "http://127.0.0.1:57265"
+                CentralUrl = "https://localhost:57264"
                 UiUrl = "http://127.0.0.1:57173"
                 SiteId = $commonSiteId
                 SiteGroupId = $commonSiteGroupId
@@ -376,6 +377,35 @@ function Wait-ContainerRunning {
     throw "$($Container.Name) did not reach running/healthy state. See: $($Container.Log)"
 }
 
+function Get-ContainerRuntimeState {
+    param([object]$Inspect)
+
+    if ($null -eq $Inspect -or $null -eq $Inspect.State) { return "unknown" }
+    if (($Inspect.State.PSObject.Properties.Name -contains "Paused") -and [bool]$Inspect.State.Paused) { return "paused" }
+    if (($Inspect.State.PSObject.Properties.Name -contains "Restarting") -and [bool]$Inspect.State.Restarting) { return "restarting" }
+    $state = ([string]$Inspect.State.Status).ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($state)) { return "unknown" }
+    return $state
+}
+
+function Wait-ContainerStopped {
+    param(
+        [object]$Definition,
+        [object]$Container,
+        [int]$TimeoutSeconds = $script:ContainerStopTimeoutSeconds
+    )
+
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $inspect = Assert-ContainerOwnership -Definition $Definition -Container $Container
+        $state = Get-ContainerRuntimeState -Inspect $inspect
+        if ($state -in @("created", "exited")) { return }
+        if ($state -eq "dead") { throw "$($Container.Name) entered the dead state during shutdown. See: $($Container.Log)" }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTimeOffset]::UtcNow -lt $deadline)
+    throw "$($Container.Name) did not reach an inactive state after shutdown; current state: $state. See: $($Container.Log)"
+}
+
 function Start-OwnedContainer {
     param([object]$Definition, [object]$Container)
 
@@ -392,12 +422,24 @@ function Stop-OwnedContainer {
     param([object]$Definition, [object]$Container)
 
     $inspect = Assert-ContainerOwnership -Definition $Definition -Container $Container
-    if ($inspect.State.Status -ne "running") {
-        Write-Host "$($Container.Component) is already stopped."
-        return
+    $state = Get-ContainerRuntimeState -Inspect $inspect
+    switch ($state) {
+        { $_ -in @("created", "exited") } {
+            Write-Host "$($Container.Component) is already stopped."
+            return
+        }
+        "paused" {
+            Write-Host "Unpausing $($Container.Component) ($($Container.Name)) for graceful shutdown..."
+            [void](Invoke-Docker -Arguments @("unpause", $Container.Name))
+        }
+        { $_ -in @("running", "restarting") } { }
+        default {
+            throw "$($Container.Component) cannot be stopped safely from Docker state '$state'. See: $($Container.Log)"
+        }
     }
     Write-Host "Stopping $($Container.Component) ($($Container.Name))..."
     [void](Invoke-Docker -Arguments @("stop", "--time", "30", $Container.Name))
+    Wait-ContainerStopped -Definition $Definition -Container $Container
 }
 
 function Invoke-WithEnvironmentVariables {
@@ -517,17 +559,95 @@ function Assert-AptConfiguration {
     }
 }
 
+function Resolve-AptDesktopWindowState {
+    param(
+        [bool]$Responding,
+        [string[]]$TopLevelTitles,
+        [bool]$HasStartupErrorControls,
+        [bool]$HasOperationalShell
+    )
+
+    if (-not $Responding) {
+        return [pscustomobject]@{ State="unhealthy"; Detail="APT desktop is not responding." }
+    }
+    $startupDialog = @($TopLevelTitles | Where-Object { $_ -match '^ExitPass Assisted Payment Terminal startup (failure|refused)$' })
+    if ($startupDialog.Count -gt 0) {
+        return [pscustomobject]@{ State="unhealthy"; Detail="APT startup-error dialog is displayed: $($startupDialog[0])." }
+    }
+    if ($HasStartupErrorControls) {
+        return [pscustomobject]@{ State="unhealthy"; Detail="APT terminal shell displays its Retry/Close startup-error controls." }
+    }
+    if ($HasOperationalShell) {
+        return [pscustomobject]@{ State="ready"; Detail="Functional terminal WebView shell is visible." }
+    }
+    return [pscustomobject]@{ State="starting"; Detail="APT process is running, but the functional terminal shell is not yet visible." }
+}
+
+function Get-AptDesktopWindowState {
+    param([object]$Process)
+
+    try {
+        Add-Type -AssemblyName UIAutomationClient
+        Add-Type -AssemblyName UIAutomationTypes
+        $nativeProcess = Get-Process -Id $Process.ProcessId -ErrorAction Stop
+        $condition = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+            [int]$Process.ProcessId)
+        $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+            [System.Windows.Automation.TreeScope]::Children,
+            $condition)
+        $titles = [System.Collections.Generic.List[string]]::new()
+        $hasStartupErrorControls = $false
+        $hasOperationalShell = $false
+
+        foreach ($window in $windows) {
+            if (-not $window.Current.IsOffscreen -and -not [string]::IsNullOrWhiteSpace($window.Current.Name)) {
+                $titles.Add([string]$window.Current.Name)
+            }
+            $controls = $window.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition)
+            $hasRetry = $false
+            $hasClose = $false
+            foreach ($control in $controls) {
+                if ($control.Current.IsOffscreen) { continue }
+                $name = [string]$control.Current.Name
+                $controlType = [string]$control.Current.ControlType.ProgrammaticName
+                if ($controlType -eq "ControlType.Button" -and $name -eq "Retry") { $hasRetry = $true }
+                if ($controlType -eq "ControlType.Button" -and $name -eq "Close") { $hasClose = $true }
+                if ($controlType -eq "ControlType.Pane" -and $name -eq "ExitPass Assisted Payment Terminal - Web content") {
+                    $hasOperationalShell = $true
+                }
+            }
+            if ($hasRetry -and $hasClose) { $hasStartupErrorControls = $true }
+        }
+
+        return Resolve-AptDesktopWindowState -Responding $nativeProcess.Responding -TopLevelTitles $titles.ToArray() -HasStartupErrorControls $hasStartupErrorControls -HasOperationalShell $hasOperationalShell
+    }
+    catch {
+        return [pscustomobject]@{ State="blocked"; Detail="APT window readiness could not be established: $($_.Exception.Message)" }
+    }
+}
+
 function Get-AptStatus {
     param([object]$Definition)
 
     $apt = $Definition.Apt
     $processes = @(Get-AptProcesses)
     $owned = @($processes | Where-Object { ([string]$_.CommandLine).IndexOf($apt.Executable, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
-    if ($owned.Count -eq 1) {
-        return [pscustomobject]@{ Environment=$Definition.Name; Component="AptDesktop"; State="ready"; Identifier="PID $($owned[0].ProcessId)"; Url=$apt.UiUrl; Detail="Desktop executable verified; display serial $script:ExpectedDisplaySerial; BIOS $script:ExpectedPhysicalSerial." }
-    }
     if ($owned.Count -gt 1) {
-        return [pscustomobject]@{ Environment=$Definition.Name; Component="AptDesktop"; State="unhealthy"; Identifier="PIDs $($owned.ProcessId -join ',')"; Url=$apt.UiUrl; Detail="Multiple desktop instances use the same environment." }
+        return [pscustomobject]@{ Environment=$Definition.Name; Component="AptDesktop"; State="blocked"; Identifier="PIDs $($owned.ProcessId -join ',')"; Url=$apt.UiUrl; Detail="Multiple owned desktop instances use the same environment; no additional instance will be launched." }
+    }
+    if ($owned.Count -eq 1 -and $processes.Count -gt 1) {
+        return [pscustomobject]@{ Environment=$Definition.Name; Component="AptDesktop"; State="blocked"; Identifier="PIDs $($processes.ProcessId -join ',')"; Url=$apt.UiUrl; Detail="Multiple APT desktop processes are active across environments; no additional instance will be launched." }
+    }
+    if ($owned.Count -eq 1) {
+        $window = Get-AptDesktopWindowState -Process $owned[0]
+        $detail = $window.Detail
+        if ($window.State -eq "ready") {
+            $detail = "$detail Display serial $script:ExpectedDisplaySerial; BIOS $script:ExpectedPhysicalSerial."
+        }
+        return [pscustomobject]@{ Environment=$Definition.Name; Component="AptDesktop"; State=$window.State; Identifier="PID $($owned[0].ProcessId)"; Url=$apt.UiUrl; Detail=$detail }
     }
     if ($processes.Count -gt 0) {
         $ownerName = Get-AptOwnerName -Process $processes[0]
@@ -545,7 +665,7 @@ function Start-AptDesktop {
 
     $status = Get-AptStatus -Definition $Definition
     if ($status.State -eq "ready") { Write-Host "AptDesktop is already ready ($($status.Identifier))."; return }
-    if ($status.State -eq "blocked" -and $status.Detail -like "Shared PITX-APT-01*") { throw $status.Detail }
+    if ($status.State -ne "stopped") { throw "AptDesktop cannot start: $($status.Detail)" }
     Assert-AptConfiguration -Definition $Definition
     $apt = $Definition.Apt
     $central = Test-HttpReady -Uri "$($apt.CentralUrl.TrimEnd('/'))/health/ready"
@@ -582,9 +702,21 @@ function Start-AptDesktop {
     $process = Invoke-WithEnvironmentVariables -Values $values -ActionBlock {
         Start-Process -FilePath $apt.Executable -WorkingDirectory $apt.Release -PassThru
     }
-    Start-Sleep -Seconds 3
-    if ($process.HasExited) { throw "APT desktop exited during startup with code $($process.ExitCode)." }
-    Write-Host "AptDesktop started (PID $($process.Id)) under $script:ExpectedAptUser."
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(45)
+    do {
+        Start-Sleep -Milliseconds 500
+        $process.Refresh()
+        if ($process.HasExited) { throw "APT desktop exited during startup with code $($process.ExitCode)." }
+        $current = Get-AptStatus -Definition $Definition
+        if ($current.State -eq "ready") {
+            Write-Host "AptDesktop started and its functional shell is ready (PID $($process.Id)) under $script:ExpectedAptUser."
+            return
+        }
+        if ($current.State -in @("blocked", "unhealthy")) {
+            throw "APT desktop startup did not become operational: $($current.Detail)"
+        }
+    } while ([DateTimeOffset]::UtcNow -lt $deadline)
+    throw "APT desktop remained in an unresolved loading state for 45 seconds. Review: $($apt.Log)"
 }
 
 function Stop-AptDesktop {
@@ -620,6 +752,17 @@ function Get-NgrokProcesses {
     })
 }
 
+function Get-NgrokOwnerName {
+    param([object]$Process)
+
+    $command = [string]$Process.CommandLine
+    if ($command.IndexOf("D:\SourceCodes\ExitPass.dev\config\ngrok.yml", [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $command.IndexOf("dev-webpay.ngrok.dev", [StringComparison]::OrdinalIgnoreCase) -ge 0) { return "Dev" }
+    if ($command.IndexOf("ngrok-clean-november-uat.yml", [StringComparison]::OrdinalIgnoreCase) -ge 0) { return "UAT" }
+    if ($command.IndexOf("ngrok-demo-rc1.yml", [StringComparison]::OrdinalIgnoreCase) -ge 0) { return "Demo" }
+    return $null
+}
+
 function Get-NgrokStatus {
     param([object]$Definition)
 
@@ -627,7 +770,14 @@ function Get-NgrokStatus {
     if ($processes.Count -eq 0) {
         $owner = Get-PortOwner -Port $Definition.Ngrok.AdminPort
         if ($null -ne $owner) {
-            return [pscustomobject]@{ Environment=$Definition.Name; Component="Ngrok"; State="blocked"; Identifier="PID $($owner.Id)"; Url=($Definition.Ngrok.PublicUrls -join ", "); Detail="Admin port $($Definition.Ngrok.AdminPort) is owned by $($owner.Name). Log: $($Definition.Ngrok.Log)" }
+            $ownerName = Get-NgrokOwnerName -Process $owner
+            $detail = if (-not [string]::IsNullOrWhiteSpace($ownerName) -and $ownerName -ne $Definition.Name) {
+                "Shared ngrok admin port $($Definition.Ngrok.AdminPort) is owned by ExitPass environment $ownerName (PID $($owner.Id)). Log: $($Definition.Ngrok.Log)"
+            }
+            else {
+                "Admin port $($Definition.Ngrok.AdminPort) is owned by $($owner.Name), but no other ExitPass environment ownership was verified. Log: $($Definition.Ngrok.Log)"
+            }
+            return [pscustomobject]@{ Environment=$Definition.Name; Component="Ngrok"; State="blocked"; Identifier="PID $($owner.Id)"; Url=($Definition.Ngrok.PublicUrls -join ", "); Detail=$detail }
         }
         return [pscustomobject]@{ Environment=$Definition.Name; Component="Ngrok"; State="stopped"; Identifier="-"; Url=($Definition.Ngrok.PublicUrls -join ", "); Detail="Log: $($Definition.Ngrok.Log)" }
     }
@@ -686,11 +836,11 @@ function Get-ContainerStatusRows {
     param([object]$Definition)
 
     $inspects = @{}
-    $anyRunning = $false
+    $anyActive = $false
     foreach ($container in $Definition.Containers) {
         $inspect = Get-ContainerInspect -Name $container.Name
         $inspects[$container.Name] = $inspect
-        if ($null -ne $inspect -and $inspect.State.Status -eq "running") { $anyRunning = $true }
+        if ($null -ne $inspect -and (Get-ContainerRuntimeState -Inspect $inspect) -in @("running", "paused", "restarting")) { $anyActive = $true }
     }
     $rows = @()
     foreach ($container in $Definition.Containers | Sort-Object Order) {
@@ -700,7 +850,7 @@ function Get-ContainerStatusRows {
             }
             continue
         }
-        $state = [string]$inspect.State.Status
+        $state = Get-ContainerRuntimeState -Inspect $inspect
         $detail = "Image $($inspect.Image.Substring(0,19)); log: $($container.Log)"
         if ($state -eq "running") {
             $hasHealth = $inspect.State.PSObject.Properties.Name -contains "Health"
@@ -716,14 +866,43 @@ function Get-ContainerStatusRows {
                 else { $detail = "$($http.Detail); image $($inspect.Image.Substring(0,19))" }
             }
         }
-        elseif ($state -eq "exited" -and $anyRunning -and [int]$inspect.State.ExitCode -ne 0) {
+        elseif ($state -eq "paused") {
+            $state = "unhealthy"
+            $detail = "Container is paused; log: $($container.Log)"
+        }
+        elseif ($state -eq "restarting") {
+            $state = "starting"
+            $detail = "Container is restarting; log: $($container.Log)"
+        }
+        elseif ($state -eq "exited" -and $anyActive -and [int]$inspect.State.ExitCode -ne 0) {
             $state = "unhealthy"
             $detail = "Exited with code $($inspect.State.ExitCode); log: $($container.Log)"
         }
-        else { $state = "stopped" }
+        elseif ($state -in @("created", "exited")) { $state = "stopped" }
+        elseif ($state -eq "removing") {
+            $state = "starting"
+            $detail = "Container removal is in progress; log: $($container.Log)"
+        }
+        elseif ($state -eq "dead") {
+            $state = "unhealthy"
+            $detail = "Container is in the dead state; log: $($container.Log)"
+        }
+        else {
+            $detail = "Container state could not be established; log: $($container.Log)"
+            $state = "blocked"
+        }
         $rows += [pscustomobject]@{ Environment=$Definition.Name; Component=$container.Component; State=$state; Identifier=$inspect.Id.Substring(0,12); Url=$container.ReadyUri; Detail=$detail }
     }
     return $rows
+}
+
+function Test-SharedResourceHeldByAnotherEnvironment {
+    param([object]$Row)
+
+    if ($Row.State -ne "blocked") { return $false }
+    if ($Row.Component -eq "AptDesktop" -and $Row.Detail -match '^Shared PITX-APT-01 is owned by (Dev|UAT|Demo)\.') { return $true }
+    if ($Row.Component -eq "Ngrok" -and $Row.Detail -match '^Shared ngrok admin port \d+ is owned by ExitPass environment (Dev|UAT|Demo) ') { return $true }
+    return $false
 }
 
 function Get-EnvironmentStatus {
@@ -740,12 +919,16 @@ function Get-EnvironmentStatus {
     $rows += Get-AptStatus -Definition $Definition
     $rows += Get-NgrokStatus -Definition $Definition
 
-    $ready = @($rows | Where-Object { $_.State -eq "ready" }).Count
-    $active = @($rows | Where-Object { $_.State -in @("ready", "starting", "unhealthy") }).Count
-    $problem = @($rows | Where-Object { $_.State -in @("blocked", "unhealthy", "starting") }).Count
-    if ($active -eq 0) { $overall = "Stopped"; $code = 3 }
-    elseif ($ready -eq $rows.Count) { $overall = "Ready"; $code = 0 }
-    elseif ($problem -gt 0) { $overall = "Partial"; $code = 2 }
+    $allReady = $rows.Count -gt 0 -and @($rows | Where-Object { $_.State -ne "ready" }).Count -eq 0
+    $ownedRows = @($rows | Where-Object { $_.Component -notin @("AptDesktop", "Ngrok") })
+    $sharedRows = @($rows | Where-Object { $_.Component -in @("AptDesktop", "Ngrok") })
+    $ownedExplicitlyStopped = $ownedRows.Count -gt 0 -and @($ownedRows | Where-Object { $_.State -ne "stopped" }).Count -eq 0
+    $sharedQuiescentOrExternal = @($sharedRows | Where-Object {
+        $_.State -ne "stopped" -and -not (Test-SharedResourceHeldByAnotherEnvironment -Row $_)
+    }).Count -eq 0
+
+    if ($allReady) { $overall = "Ready"; $code = 0 }
+    elseif ($ownedExplicitlyStopped -and $sharedQuiescentOrExternal) { $overall = "Stopped"; $code = 3 }
     else { $overall = "Partial"; $code = 2 }
     [pscustomobject]@{ Overall=$overall; ExitCode=$code; Rows=$rows }
 }
