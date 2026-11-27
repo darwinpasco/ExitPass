@@ -736,7 +736,20 @@ function Stop-AptDesktop {
     param([object]$Definition)
 
     $apt = $Definition.Apt
-    $owned = @(Get-AptProcesses | Where-Object { ([string]$_.CommandLine).IndexOf($apt.Executable, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    $processes = @(Get-AptProcesses)
+    $owned = @($processes | Where-Object { ([string]$_.CommandLine).IndexOf($apt.Executable, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    $staleOwned = @($processes | Where-Object {
+        ([string]$_.CommandLine).IndexOf($apt.Executable, [StringComparison]::OrdinalIgnoreCase) -lt 0 -and
+        (Get-AptOwnerName -Process $_) -eq $Definition.Name
+    })
+    if ($staleOwned.Count -gt 0) {
+        $details = @($staleOwned | ForEach-Object {
+            $executablePath = [string]$_.ExecutablePath
+            $commandLine = [string]$_.CommandLine
+            "PID $($_.ProcessId): executable='$executablePath'; command='$commandLine'"
+        }) -join "; "
+        throw "APT shutdown is blocked for $($Definition.Name). A verified $($Definition.Name) desktop is running from an unrecognized release path: $details. Close the existing desktop gracefully through its window, verify each listed PID exits, then rerun this Stop command. Dependent frontends and infrastructure were not stopped."
+    }
     if ($owned.Count -eq 0) { Write-Host "AptDesktop is already stopped."; return }
     foreach ($entry in $owned) {
         $process = Get-Process -Id $entry.ProcessId -ErrorAction Stop

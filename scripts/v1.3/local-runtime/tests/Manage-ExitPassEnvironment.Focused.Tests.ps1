@@ -205,6 +205,93 @@ Invoke-Case "Start still rejects missing Dev enrollment before launch" {
     Assert-True (-not $script:LaunchAttempted) "Missing trust state must fail before process launch."
 }
 
+$acceptedAptPath = "D:\SourceCodes\ExitPass.dev\apt\release-hardware-current\AssistedPaymentTerminal.Desktop.exe"
+$staleAptPath = "D:\SourceCodes\ExitPass.dev\apt\release-hardware-previous\AssistedPaymentTerminal.Desktop.exe"
+$uatAptPath = "D:\SourceCodes\ExitPass.local\clean-november-uat-20261106-222543\apt\governed-previous\release\AssistedPaymentTerminal.Desktop.exe"
+$staleAptDefinition = [pscustomobject]@{
+    Name = "Dev"
+    Apt = [pscustomobject]@{ Executable=$acceptedAptPath; UiUrl="http://127.0.0.1:5373" }
+}
+$script:AptProcesses = @()
+$script:NativeProcessLookupCount = 0
+function Get-AptProcesses { return @($script:AptProcesses) }
+function Get-Process {
+    param([int]$Id, [object]$ErrorAction)
+    $script:NativeProcessLookupCount++
+    throw "Native process lookup was not expected."
+}
+
+Invoke-Case "stale selected-environment APT blocks shutdown even beside current release" {
+    $stale = [pscustomobject]@{ ProcessId=301; ExecutablePath=$staleAptPath; CommandLine="`"$staleAptPath`"" }
+    $current = [pscustomobject]@{ ProcessId=302; ExecutablePath=$acceptedAptPath; CommandLine="`"$acceptedAptPath`"" }
+    $script:AptProcesses = @($stale)
+    Assert-Throws { Stop-AptDesktop -Definition $staleAptDefinition } "*PID 301*release-hardware-previous*Close the existing desktop gracefully*" "A stale selected-environment desktop must not be classified already stopped."
+    $script:AptProcesses = @($current, $stale)
+    $script:NativeProcessLookupCount = 0
+    Assert-Throws { Stop-AptDesktop -Definition $staleAptDefinition } "*PID 301*release-hardware-previous*" "A stale desktop must block before closing a concurrent accepted desktop."
+    Assert-Equal 0 $script:NativeProcessLookupCount "The accepted desktop must remain untouched while stale ownership is unresolved."
+}
+
+$staleStopDefinition = [pscustomobject]@{
+    Name = "Dev"
+    Containers = @([pscustomobject]@{ Component="CentralPms"; Name="test-central"; Order=1; ReadyUri=$null; Log="test" })
+    Nodes = @([pscustomobject]@{ Component="AptUi"; Port=5373; ReadyUri="http://127.0.0.1:5373/" })
+    Apt = $staleAptDefinition.Apt
+    Ngrok = [pscustomobject]@{}
+}
+$script:NodeStopCalls = 0
+$script:ContainerStopCalls = 0
+function Test-DockerEngine { return $true }
+function Stop-Ngrok { }
+function Stop-NodeComponent { $script:NodeStopCalls++ }
+function Stop-OwnedContainer { $script:ContainerStopCalls++ }
+function Write-LifecycleLog { }
+function Write-EnvironmentStatus { }
+
+Invoke-Case "stale APT retains selected frontends and containers" {
+    $script:AptProcesses = @([pscustomobject]@{ ProcessId=303; ExecutablePath=$staleAptPath; CommandLine="`"$staleAptPath`"" })
+    $script:NodeStopCalls = 0
+    $script:ContainerStopCalls = 0
+    $script:ExitCode = -1
+    Stop-Environment -Definition $staleStopDefinition
+    Assert-Equal 0 $script:NodeStopCalls "Frontend shutdown must not run after a stale APT blocker."
+    Assert-Equal 0 $script:ContainerStopCalls "Container shutdown must not run after a stale APT blocker."
+    Assert-Equal 1 $script:ExitCode "A stale APT blocker must make Stop fail closed."
+}
+
+Invoke-Case "another verified environment APT does not block stopped target" {
+    $script:AptProcesses = @([pscustomobject]@{ ProcessId=304; ExecutablePath=$uatAptPath; CommandLine="`"$uatAptPath`"" })
+    $script:NativeProcessLookupCount = 0
+    Stop-AptDesktop -Definition $staleAptDefinition
+    Assert-Equal 0 $script:NativeProcessLookupCount "Another environment's shared APT must not be closed by the selected environment."
+}
+
+$script:AcceptedProcessRunning = $true
+$script:CloseMainWindowCalls = 0
+function Get-Process {
+    param([int]$Id, [object]$ErrorAction)
+    if (-not $script:AcceptedProcessRunning) { return $null }
+    $process = [pscustomobject]@{ Id=$Id }
+    $process | Add-Member -MemberType ScriptMethod -Name CloseMainWindow -Value {
+        $script:CloseMainWindowCalls++
+        return $true
+    }
+    return $process
+}
+function Wait-Process {
+    param([int]$Id, [int]$Timeout, [object]$ErrorAction)
+    $script:AcceptedProcessRunning = $false
+}
+
+Invoke-Case "accepted APT desktop still closes gracefully" {
+    $script:AptProcesses = @([pscustomobject]@{ ProcessId=305; ExecutablePath=$acceptedAptPath; CommandLine="`"$acceptedAptPath`"" })
+    $script:AcceptedProcessRunning = $true
+    $script:CloseMainWindowCalls = 0
+    Stop-AptDesktop -Definition $staleAptDefinition
+    Assert-Equal 1 $script:CloseMainWindowCalls "The accepted desktop must retain graceful window shutdown."
+    Assert-True (-not $script:AcceptedProcessRunning) "The accepted desktop shutdown must verify process exit."
+}
+
 $script:ConfigurationChecked = $false
 function Get-AptProcesses {
     @(
