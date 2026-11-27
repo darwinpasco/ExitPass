@@ -18,6 +18,7 @@ $script:DockerDesktop = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
 $script:ExpectedAptUser = "PPG-DAP25\darwi"
 $script:ExpectedPhysicalSerial = "PF6BJ1WA"
 $script:ExpectedDisplaySerial = "ACE4_2E00_653A_D952"
+$script:ExpectedPhysicalDiskUniqueId = "eui.ACE42E00653AD952"
 $script:ContainerStopTimeoutSeconds = 45
 $script:ExitCode = 0
 
@@ -106,8 +107,8 @@ function Get-EnvironmentDefinition {
             )
             $aptRoot = Join-Path $root "apt"
             $apt = [pscustomobject]@{
-                Executable = Join-Path $aptRoot "release\AssistedPaymentTerminal.Desktop.exe"
-                Release = Join-Path $aptRoot "release"
+                Executable = Join-Path $aptRoot "release-hardware-316927fb\AssistedPaymentTerminal.Desktop.exe"
+                Release = Join-Path $aptRoot "release-hardware-316927fb"
                 FrontendConfig = Join-Path $aptRoot "frontend-wwwroot\apt-config.json"
                 TrustState = Join-Path $aptRoot "DeviceTrust\state.bin"
                 Database = Join-Path $aptRoot "LocalOperations\cash-journal.db"
@@ -156,8 +157,8 @@ function Get-EnvironmentDefinition {
                 (New-NodeDefinition "ManagementPlatform" 5276 "http://127.0.0.1:5276/management-platform/" $managementVite $managementSource @("preview", "--config", (Join-Path $config "management-platform-clean-november-vite.config.mjs"), "--host", "127.0.0.1", "--port", "5276", "--strictPort", "--outDir", (Join-Path $managementSource "dist")) @((Join-Path $config "management-platform-clean-november-vite.config.mjs"), "--port 5276") @{} $logs)
             )
             $apt = [pscustomobject]@{
-                Executable = Join-Path $aptDeployment "release\AssistedPaymentTerminal.Desktop.exe"
-                Release = Join-Path $aptDeployment "release"
+                Executable = Join-Path $aptDeployment "release-hardware-316927fb\AssistedPaymentTerminal.Desktop.exe"
+                Release = Join-Path $aptDeployment "release-hardware-316927fb"
                 FrontendConfig = Join-Path $aptDeployment "frontend-wwwroot\apt-config.json"
                 TrustState = Join-Path $root "apt\DeviceTrust\state.bin"
                 Database = Join-Path $root "apt\cp4-fresh\LocalOperations\cash-journal.db"
@@ -209,8 +210,8 @@ function Get-EnvironmentDefinition {
                 (New-NodeDefinition "ManagementPlatform" 57178 "http://127.0.0.1:57178/management-platform/" $managementVite $managementSource @("preview", "--config", (Join-Path $config "management-vite.config.mjs"), "--host", "127.0.0.1", "--port", "57178", "--strictPort", "--outDir", (Join-Path $root "runtime\management-dist")) @((Join-Path $config "management-vite.config.mjs"), "--port 57178") @{} $logs)
             )
             $apt = [pscustomobject]@{
-                Executable = Join-Path $aptDeployment "release\AssistedPaymentTerminal.Desktop.exe"
-                Release = Join-Path $aptDeployment "release"
+                Executable = Join-Path $aptDeployment "release-hardware-316927fb\AssistedPaymentTerminal.Desktop.exe"
+                Release = Join-Path $aptDeployment "release-hardware-316927fb"
                 FrontendConfig = Join-Path $aptDeployment "frontend-wwwroot\apt-config.json"
                 TrustState = Join-Path $root "apt\DeviceTrust\state.bin"
                 Database = Join-Path $root "apt\LocalOperations\cash-journal.db"
@@ -541,6 +542,16 @@ function Assert-AptConfiguration {
     if ($bios -cne $script:ExpectedPhysicalSerial) {
         throw "APT physical BIOS serial mismatch. Expected $script:ExpectedPhysicalSerial; found $bios."
     }
+    $selectedDisks = @(Get-PhysicalDisk | Where-Object {
+        ([string]$_.UniqueId).Trim() -ieq $script:ExpectedPhysicalDiskUniqueId
+    })
+    if ($selectedDisks.Count -ne 1) {
+        throw "APT physical SSD selection must resolve exactly one disk for unique ID $script:ExpectedPhysicalDiskUniqueId; found $($selectedDisks.Count)."
+    }
+    $ssdSerial = ([string]$selectedDisks[0].SerialNumber).Trim().TrimEnd('.')
+    if ($ssdSerial -cne $script:ExpectedDisplaySerial) {
+        throw "APT physical SSD serial mismatch. Expected $script:ExpectedDisplaySerial; found $ssdSerial."
+    }
     $config = Get-Content -LiteralPath $apt.FrontendConfig -Raw | ConvertFrom-Json
     $checks = @{
         APT_TERMINAL_ID = $apt.TerminalId
@@ -678,6 +689,8 @@ function Start-AptDesktop {
         APT_TERMINAL_ID = $apt.TerminalId
         APT_TERMINAL_DISPLAY_NAME = $apt.DisplayName
         APT_TERMINAL_SERIAL_NUMBER = $script:ExpectedDisplaySerial
+        APT_EXPECTED_PHYSICAL_BIOS_SERIAL = $script:ExpectedPhysicalSerial
+        APT_PHYSICAL_DISK_UNIQUE_ID = $script:ExpectedPhysicalDiskUniqueId
         APT_SITE_ID = $apt.SiteId
         APT_SITE_NAME = "PITX Level 3"
         APT_SITE_GROUP_ID = $apt.SiteGroupId
@@ -723,7 +736,20 @@ function Stop-AptDesktop {
     param([object]$Definition)
 
     $apt = $Definition.Apt
-    $owned = @(Get-AptProcesses | Where-Object { ([string]$_.CommandLine).IndexOf($apt.Executable, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    $processes = @(Get-AptProcesses)
+    $owned = @($processes | Where-Object { ([string]$_.CommandLine).IndexOf($apt.Executable, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    $staleOwned = @($processes | Where-Object {
+        ([string]$_.CommandLine).IndexOf($apt.Executable, [StringComparison]::OrdinalIgnoreCase) -lt 0 -and
+        (Get-AptOwnerName -Process $_) -eq $Definition.Name
+    })
+    if ($staleOwned.Count -gt 0) {
+        $details = @($staleOwned | ForEach-Object {
+            $executablePath = [string]$_.ExecutablePath
+            $commandLine = [string]$_.CommandLine
+            "PID $($_.ProcessId): executable='$executablePath'; command='$commandLine'"
+        }) -join "; "
+        throw "APT shutdown is blocked for $($Definition.Name). A verified $($Definition.Name) desktop is running from an unrecognized release path: $details. Close the existing desktop gracefully through its window, verify each listed PID exits, then rerun this Stop command. Dependent frontends and infrastructure were not stopped."
+    }
     if ($owned.Count -eq 0) { Write-Host "AptDesktop is already stopped."; return }
     foreach ($entry in $owned) {
         $process = Get-Process -Id $entry.ProcessId -ErrorAction Stop
