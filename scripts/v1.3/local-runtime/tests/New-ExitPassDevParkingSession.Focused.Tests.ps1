@@ -300,16 +300,69 @@ Invoke-Case 'Dev-only durable targets are explicit' {
 $script:FakeMappings = @()
 $script:RollbackDeleteFailure = $false
 $script:LostResponseInjected = $false
+$script:FakeVolumeInventory = $null
+$script:FakeMirrorInventories = @{}
+$script:ExpectedSourcePassageway = $null
+$script:ExpectedRuntimePassageway = $null
+$mappingDirectories = @('fixture-source-mirror', 'fixture-runtime-mirror')
+$wireMockVolume = 'fixture-named-volume'
 
-function Invoke-VolumeStage { param([string]$StagePath, [string]$Image) }
-function Copy-StageToMirrors { param([string]$StagePath) }
-function Get-PersistenceState {
-    param($LiveMappings, [string]$AppKey)
-    if (@($LiveMappings | Where-Object { [string]$_.id -eq 'cccccccc-cccc-cccc-cccc-cccccccccccc' }).Count -ne 0) {
-        throw 'Fake persistent state still contains the attempted mapping.'
-    }
-    return [pscustomobject]@{ SessionCount = 1; ContentVerified = $true }
+function Copy-TestInventory($Inventory) {
+    $items = @($Inventory.Items | ForEach-Object {
+        [pscustomobject]@{
+            Id = [string]$_.Id
+            Name = [string]$_.Name
+            File = $_.File
+            Mapping = Copy-TestObject $_.Mapping
+        }
+    })
+    return [pscustomobject]@{ Path = [string]$Inventory.Path; Items = @($items) }
 }
+
+function Invoke-FakeStage($Inventory, [string]$StagePath) {
+    $items = @($Inventory.Items)
+    $writePath = Join-Path $StagePath 'write'
+    if (Test-Path -LiteralPath $writePath -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $writePath -File -Filter '*.json')) {
+            $mapping = Get-Content -Raw -LiteralPath $file.FullName | ConvertFrom-Json
+            $id = [string](Get-PropertyValue $mapping 'id')
+            $items = @($items | Where-Object { [string]$_.Name -ne $file.Name -and [string]$_.Id -ne $id })
+            $items += [pscustomobject]@{ Id = $id; Name = $file.Name; File = $file.FullName; Mapping = $mapping }
+        }
+    }
+    $removePath = Join-Path $StagePath 'remove'
+    if (Test-Path -LiteralPath $removePath -PathType Container) {
+        foreach ($marker in @(Get-ChildItem -LiteralPath $removePath -File -Filter '*.remove')) {
+            $fileName = $marker.Name.Substring(0, $marker.Name.Length - '.remove'.Length)
+            $items = @($items | Where-Object { [string]$_.Name -ne $fileName })
+        }
+    }
+    return [pscustomobject]@{ Path = [string]$Inventory.Path; Items = @($items) }
+}
+
+function Get-MirrorInventory([string]$Directory) {
+    return Copy-TestInventory $script:FakeMirrorInventories[$Directory]
+}
+
+function Get-VolumeInventory {
+    return Copy-TestInventory $script:FakeVolumeInventory
+}
+
+function Invoke-VolumeStage {
+    param([string]$StagePath, [string]$Image)
+    $script:FakeVolumeInventory = Invoke-FakeStage $script:FakeVolumeInventory $StagePath
+}
+
+function Copy-StageToMirror {
+    param([string]$StagePath, [string]$Directory)
+    $script:FakeMirrorInventories[$Directory] = Invoke-FakeStage $script:FakeMirrorInventories[$Directory] $StagePath
+}
+
+function Copy-StageToMirrors {
+    param([string]$StagePath)
+    foreach ($directory in $mappingDirectories) { Copy-StageToMirror $StagePath $directory }
+}
+
 function Invoke-WireMockAdmin {
     param([string]$Method, [string]$Uri, $Body)
     switch ($Method) {
@@ -334,33 +387,56 @@ function Invoke-WireMockAdmin {
 }
 
 function New-FakeRegistrationPlan([string]$BackupDirectory) {
-    [IO.Directory]::CreateDirectory((Join-Path $BackupDirectory 'apply-stage')) | Out-Null
-    $baseline = New-TestPassageMapping -Persistent $false
-    $original = Copy-TestObject $baseline
-    $original.persistent = $true
-    $updated = Copy-TestObject $baseline
-    $updated.response.jsonBody.data.total = 2
-    $newMapping = [pscustomobject](New-CalculateMapping (New-TestSession -TicketValue 'TICKET-200' -PlateValue 'PLATE-200') 'test-key' 'cardNum' 'cccccccc-cccc-cccc-cccc-cccccccccccc')
-    $newMapping.persistent = $false
-    return [pscustomobject]@{
-        StageDirectory = (Join-Path $BackupDirectory 'apply-stage')
-        BackupDirectory = $BackupDirectory
-        WireImage = 'fake-image'
-        PassagewayId = [string]$baseline.id
-        PassageFileName = 'passageway.json'
-        OriginalPassageway = $original
-        LiveOriginalPassageway = $baseline
-        LiveUpdatedPassageway = $updated
-        LiveNewMappings = @($newMapping)
-        AttemptedIds = @([string]$newMapping.id)
-        NewFileNames = @('new-mapping.json')
-        BeforeMappings = @($baseline)
-        InventoryCount = 1
-        AppKey = 'test-key'
+    $livePassageway = New-TestPassageMapping -Persistent $false
+    $livePassageway.request | Add-Member -NotePropertyName headers -NotePropertyValue (New-CommonHeaders 'test-key')
+
+    $sourcePassageway = Copy-TestObject $livePassageway
+    $sourcePassageway.persistent = $true
+    $sourcePassageway.request.headers.'X-Ca-Key'.equalTo = 'non-runtime-placeholder'
+    $sourcePassageway | Add-Member -NotePropertyName insertionIndex -NotePropertyValue 17
+
+    $runtimePassageway = Copy-TestObject $sourcePassageway
+    $runtimePassageway.request.headers.'X-Ca-Key'.equalTo = 'test-key'
+    $script:ExpectedSourcePassageway = Copy-TestObject $sourcePassageway
+    $script:ExpectedRuntimePassageway = Copy-TestObject $runtimePassageway
+
+    $sourceInventory = New-TestStoredInventory @($sourcePassageway)
+    $sourceInventory.Path = $mappingDirectories[0]
+    $runtimeInventory = New-TestStoredInventory @($runtimePassageway)
+    $runtimeInventory.Path = $mappingDirectories[1]
+    $script:FakeMirrorInventories = @{
+        $mappingDirectories[0] = Copy-TestInventory $sourceInventory
+        $mappingDirectories[1] = Copy-TestInventory $runtimeInventory
     }
+    $script:FakeVolumeInventory = Copy-TestInventory $runtimeInventory
+    $script:FakeVolumeInventory.Path = $wireMockVolume
+    $script:FakeMappings = @($livePassageway)
+
+    $updatedPassageway = Copy-TestObject $livePassageway
+    $updatedRecords = @($updatedPassageway.response.jsonBody.data.list) + @(
+        New-PassageRecord (New-TestSession -TicketValue 'TICKET-200' -PlateValue 'PLATE-200')
+    )
+    $updatedPassageway.response.jsonBody.data.total = $updatedRecords.Count
+    $updatedPassageway.response.jsonBody.data.list = $updatedRecords
+    $updatedPassageway.persistent = $true
+
+    $storedNewMapping = [pscustomobject](New-CalculateMapping (New-TestSession -TicketValue 'TICKET-200' -PlateValue 'PLATE-200') 'test-key' 'cardNum' 'cccccccc-cccc-cccc-cccc-cccccccccccc')
+    $liveNewMapping = Copy-TestObject $storedNewMapping
+    $liveNewMapping.persistent = $false
+    $newFiles = [ordered]@{ 'new-mapping.json' = $storedNewMapping }
+    $context = [pscustomobject]@{
+        Wire = [pscustomobject]@{ Image = 'fake-image' }
+        AppKey = 'test-key'
+        LiveMappings = @($livePassageway)
+        Persistence = [pscustomobject]@{
+            PassageFileName = 'mapping-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.json'
+            Mirrors = @($sourceInventory, $runtimeInventory)
+        }
+    }
+    return New-RegistrationPlan $context $livePassageway $updatedPassageway @($liveNewMapping) $newFiles $BackupDirectory 1
 }
 
-Invoke-Case 'applied POST with lost response is reconciled during rollback' {
+Invoke-Case 'lost response restores distinct live and stored passageway baselines' {
     $root = Join-Path ([IO.Path]::GetTempPath()) "exitpass-dev-helper-lost-response-$([Guid]::NewGuid().ToString('N'))"
     try {
         $plan = New-FakeRegistrationPlan $root
@@ -375,6 +451,22 @@ Invoke-Case 'applied POST with lost response is reconciled during rollback' {
         Assert-True ($message -like '*cccccccc-cccc-cccc-cccc-cccccccccccc*') 'The attempted mapping ID must be reported.'
         Assert-Equal '1' @($script:FakeMappings).Count 'The applied mapping must be removed during rollback.'
         Assert-Equal 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' ([string]$script:FakeMappings[0].id) 'The original passageway mapping must remain.'
+        Assert-True (-not [bool]$script:FakeMappings[0].persistent) 'The restored live passageway must retain persistent=false.'
+
+        $restored = Get-PersistenceState @($script:FakeMappings) 'test-key'
+        Assert-True $restored.ContentVerified 'The real persistence-content validator must accept the restored state.'
+        $sourceRestored = @($script:FakeMirrorInventories[$mappingDirectories[0]].Items | Where-Object Id -eq 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')[0].Mapping
+        $runtimeRestored = @($script:FakeMirrorInventories[$mappingDirectories[1]].Items | Where-Object Id -eq 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')[0].Mapping
+        $volumeRestored = @($script:FakeVolumeInventory.Items | Where-Object Id -eq 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')[0].Mapping
+        Assert-True ([bool]$sourceRestored.persistent) 'The source-mirror passageway must retain persistent=true.'
+        Assert-True ([bool]$runtimeRestored.persistent) 'The runtime-mirror passageway must retain persistent=true.'
+        Assert-True ([bool]$volumeRestored.persistent) 'The named-volume passageway must retain persistent=true.'
+        Assert-Equal (ConvertTo-CanonicalJson $script:ExpectedSourcePassageway) (ConvertTo-CanonicalJson $sourceRestored) 'The source-mirror passageway must regain its exact pre-operation content.'
+        Assert-Equal (ConvertTo-CanonicalJson $script:ExpectedRuntimePassageway) (ConvertTo-CanonicalJson $runtimeRestored) 'The runtime-mirror passageway must regain its exact pre-operation content.'
+        Assert-Equal (ConvertTo-CanonicalJson $script:ExpectedRuntimePassageway) (ConvertTo-CanonicalJson $volumeRestored) 'The named-volume passageway must regain its exact pre-operation content.'
+        foreach ($inventory in @($script:FakeVolumeInventory, $script:FakeMirrorInventories[$mappingDirectories[0]], $script:FakeMirrorInventories[$mappingDirectories[1]])) {
+            Assert-Equal '0' @($inventory.Items | Where-Object Id -eq 'cccccccc-cccc-cccc-cccc-cccccccccccc').Count 'All generated persisted mappings must be removed during rollback.'
+        }
     }
     finally {
         if (Test-Path -LiteralPath $root) { [IO.Directory]::Delete($root, $true) }

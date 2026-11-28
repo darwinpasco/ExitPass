@@ -675,21 +675,28 @@ function Add-RemoveMarker([string]$StagePath, [string]$FileName) {
     [IO.File]::WriteAllText((Join-Path $removePath "$FileName.remove"), '')
 }
 
-function Copy-StageToMirrors([string]$StagePath) {
+function Copy-StageToMirror([string]$StagePath, [string]$Directory) {
+    if ($Directory -notin @($mappingDirectories)) {
+        throw "Refusing to update an unapproved Dev mapping mirror '$Directory'."
+    }
     $writePath = Join-Path $StagePath 'write'
-    foreach ($directory in $mappingDirectories) {
+    if (Test-Path -LiteralPath $writePath -PathType Container) {
         foreach ($file in @(Get-ChildItem -LiteralPath $writePath -File -Filter '*.json')) {
-            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $directory $file.Name) -Force
-        }
-        $removePath = Join-Path $StagePath 'remove'
-        if (Test-Path -LiteralPath $removePath -PathType Container) {
-            foreach ($marker in @(Get-ChildItem -LiteralPath $removePath -File -Filter '*.remove')) {
-                $fileName = $marker.BaseName
-                $target = Join-Path $directory $fileName
-                if (Test-Path -LiteralPath $target -PathType Leaf) { Remove-Item -LiteralPath $target -Force }
-            }
+            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $Directory $file.Name) -Force
         }
     }
+    $removePath = Join-Path $StagePath 'remove'
+    if (Test-Path -LiteralPath $removePath -PathType Container) {
+        foreach ($marker in @(Get-ChildItem -LiteralPath $removePath -File -Filter '*.remove')) {
+            $fileName = $marker.BaseName
+            $target = Join-Path $Directory $fileName
+            if (Test-Path -LiteralPath $target -PathType Leaf) { Remove-Item -LiteralPath $target -Force }
+        }
+    }
+}
+
+function Copy-StageToMirrors([string]$StagePath) {
+    foreach ($directory in $mappingDirectories) { Copy-StageToMirror $StagePath $directory }
 }
 
 function New-MappingFileName([string]$TicketValue, [string]$Kind, [string]$Id) {
@@ -709,6 +716,78 @@ function Assert-LiveMappingSetEquivalent($ExpectedMappings, $ActualMappings, [st
     }
 }
 
+function Get-StoredPassagewayBaselines($Persistence, [string]$PassagewayId) {
+    $mirrors = @($Persistence.Mirrors)
+    if ($mirrors.Count -ne 2) { throw "Expected exactly two verified Dev mapping mirrors; found $($mirrors.Count)." }
+    $stored = @()
+    foreach ($mirror in $mirrors) {
+        $match = @($mirror.Items | Where-Object { [string]$_.Id -eq $PassagewayId })
+        if ($match.Count -ne 1) {
+            throw "The passageway mapping is not uniquely persisted in '$($mirror.Path)'."
+        }
+        if ((Get-PropertyValue $match[0].Mapping 'persistent') -ne $true) {
+            throw "The stored passageway baseline in '$($mirror.Path)' must have persistent=true."
+        }
+        $stored += [pscustomobject]@{
+            Name = [string]$match[0].Name
+            Mapping = ConvertFrom-Json (ConvertTo-Json -InputObject $match[0].Mapping -Depth 50)
+        }
+    }
+    if ($stored[0].Name -cne $stored[1].Name -or $stored[0].Name -cne [string]$Persistence.PassageFileName) {
+        throw 'The verified Dev passageway mapping filename is inconsistent across persistence targets.'
+    }
+    return [pscustomobject]@{
+        FileName = $stored[0].Name
+        Source = $stored[0].Mapping
+        Runtime = $stored[1].Mapping
+    }
+}
+
+function New-RegistrationPlan(
+    $Context,
+    $Passageway,
+    $UpdatedPassageway,
+    $LiveNewMappings,
+    [Collections.IDictionary]$NewFiles,
+    [string]$BackupDirectory,
+    [int]$InventoryCount
+) {
+    $liveOriginalPassageway = ConvertFrom-Json (ConvertTo-Json -InputObject $Passageway -Depth 50)
+    $liveOriginalPassageway.persistent = $false
+    $liveUpdatedPassageway = ConvertFrom-Json (ConvertTo-Json -InputObject $UpdatedPassageway -Depth 50)
+    $liveUpdatedPassageway.persistent = $false
+    $storedPassageways = Get-StoredPassagewayBaselines $Context.Persistence ([string]$Passageway.id)
+
+    $stageDirectory = Join-Path $BackupDirectory 'apply-stage'
+    $writeDirectory = Join-Path $stageDirectory 'write'
+    [IO.Directory]::CreateDirectory($writeDirectory) | Out-Null
+    Write-DurableJson (Join-Path $BackupDirectory 'passageway-live-before.json') $liveOriginalPassageway 50
+    Write-DurableJson (Join-Path $BackupDirectory 'passageway-source-before.json') $storedPassageways.Source 50
+    Write-DurableJson (Join-Path $BackupDirectory 'passageway-runtime-before.json') $storedPassageways.Runtime 50
+    Write-DurableJson (Join-Path $writeDirectory $Context.Persistence.PassageFileName) $UpdatedPassageway 50
+    foreach ($entry in $NewFiles.GetEnumerator()) {
+        Write-DurableJson (Join-Path $writeDirectory $entry.Key) $entry.Value 50
+    }
+
+    return [pscustomobject]@{
+        StageDirectory = $stageDirectory
+        BackupDirectory = $BackupDirectory
+        WireImage = [string]$Context.Wire.Image
+        PassagewayId = [string]$Passageway.id
+        PassageFileName = $storedPassageways.FileName
+        LiveOriginalPassageway = $liveOriginalPassageway
+        StoredSourceOriginalPassageway = $storedPassageways.Source
+        StoredRuntimeOriginalPassageway = $storedPassageways.Runtime
+        LiveUpdatedPassageway = $liveUpdatedPassageway
+        LiveNewMappings = @($LiveNewMappings)
+        AttemptedIds = @($LiveNewMappings | ForEach-Object { [string]$_.id })
+        NewFileNames = @($NewFiles.Keys)
+        BeforeMappings = @($Context.LiveMappings)
+        InventoryCount = $InventoryCount
+        AppKey = $Context.AppKey
+    }
+}
+
 function Restore-RegistrationBaseline($Plan) {
     $issues = [Collections.Generic.List[string]]::new()
     foreach ($id in @($Plan.AttemptedIds)) {
@@ -720,20 +799,30 @@ function Restore-RegistrationBaseline($Plan) {
     }
     catch { $issues.Add("live passageway restore failed: $($_.Exception.Message)") }
 
-    $rollbackStage = Join-Path $Plan.BackupDirectory 'rollback-stage'
+    $sourceRollbackStage = Join-Path $Plan.BackupDirectory 'rollback-source-stage'
+    $runtimeRollbackStage = Join-Path $Plan.BackupDirectory 'rollback-runtime-stage'
     try {
-        $rollbackWrite = Join-Path $rollbackStage 'write'
-        [IO.Directory]::CreateDirectory($rollbackWrite) | Out-Null
-        Write-DurableJson (Join-Path $rollbackWrite $Plan.PassageFileName) $Plan.OriginalPassageway 50
-        foreach ($fileName in @($Plan.NewFileNames)) { Add-RemoveMarker $rollbackStage $fileName }
+        foreach ($stage in @(
+            [pscustomobject]@{ Path = $sourceRollbackStage; Passageway = $Plan.StoredSourceOriginalPassageway },
+            [pscustomobject]@{ Path = $runtimeRollbackStage; Passageway = $Plan.StoredRuntimeOriginalPassageway }
+        )) {
+            $rollbackWrite = Join-Path $stage.Path 'write'
+            [IO.Directory]::CreateDirectory($rollbackWrite) | Out-Null
+            Write-DurableJson (Join-Path $rollbackWrite $Plan.PassageFileName) $stage.Passageway 50
+            foreach ($fileName in @($Plan.NewFileNames)) { Add-RemoveMarker $stage.Path $fileName }
+        }
     }
     catch { $issues.Add("rollback stage preparation failed: $($_.Exception.Message)") }
 
-    if (Test-Path -LiteralPath $rollbackStage -PathType Container) {
-        try { Invoke-VolumeStage $rollbackStage $Plan.WireImage }
+    if (Test-Path -LiteralPath $runtimeRollbackStage -PathType Container) {
+        try { Invoke-VolumeStage $runtimeRollbackStage $Plan.WireImage }
         catch { $issues.Add("named-volume restore failed: $($_.Exception.Message)") }
-        try { Copy-StageToMirrors $rollbackStage }
-        catch { $issues.Add("mapping-mirror restore failed: $($_.Exception.Message)") }
+        try { Copy-StageToMirror $runtimeRollbackStage $mappingDirectories[1] }
+        catch { $issues.Add("runtime mapping-mirror restore failed: $($_.Exception.Message)") }
+    }
+    if (Test-Path -LiteralPath $sourceRollbackStage -PathType Container) {
+        try { Copy-StageToMirror $sourceRollbackStage $mappingDirectories[0] }
+        catch { $issues.Add("source mapping-mirror restore failed: $($_.Exception.Message)") }
     }
 
     $verified = $false
@@ -871,7 +960,6 @@ try {
         vehicleType = $normalizedVehicleType
         carType = Get-HikCentralCarType $normalizedVehicleType
     }
-    $originalPassageway = ConvertFrom-Json (ConvertTo-Json -InputObject $passageway -Depth 50)
     $updatedPassageway = ConvertFrom-Json (ConvertTo-Json -InputObject $passageway -Depth 50)
     $updatedRecords = @($inventory) + @(New-PassageRecord $session)
     $updatedPassageway.response.jsonBody.data.total = $updatedRecords.Count
@@ -882,10 +970,6 @@ try {
     $plateMapping = New-CalculateMapping $session $context.AppKey 'plateLicense' ([Guid]::NewGuid().ToString('D'))
     $confirmMapping = New-ConfirmMapping $session $context.AppKey ([Guid]::NewGuid().ToString('D'))
     $newMappings = @($ticketMapping, $plateMapping, $confirmMapping)
-    $liveOriginalPassageway = ConvertFrom-Json (ConvertTo-Json -InputObject $originalPassageway -Depth 50)
-    $liveOriginalPassageway.persistent = $false
-    $liveUpdatedPassageway = ConvertFrom-Json (ConvertTo-Json -InputObject $updatedPassageway -Depth 50)
-    $liveUpdatedPassageway.persistent = $false
     $liveNewMappings = @($newMappings | ForEach-Object {
         $liveMapping = ConvertFrom-Json (ConvertTo-Json -InputObject $_ -Depth 50)
         $liveMapping.persistent = $false
@@ -899,31 +983,7 @@ try {
 
     $stamp = [DateTimeOffset]::Now.ToString('yyyyMMdd-HHmmssfff', $invariant)
     $backupDirectory = Join-Path $backupRoot $stamp
-    $stageDirectory = Join-Path $backupDirectory 'apply-stage'
-    $writeDirectory = Join-Path $stageDirectory 'write'
-    [IO.Directory]::CreateDirectory($writeDirectory) | Out-Null
-    Write-DurableJson (Join-Path $backupDirectory 'passageway-before.json') $originalPassageway 50
-    Write-DurableJson (Join-Path $writeDirectory $context.Persistence.PassageFileName) $updatedPassageway 50
-    foreach ($entry in $newFiles.GetEnumerator()) {
-        Write-DurableJson (Join-Path $writeDirectory $entry.Key) $entry.Value 50
-    }
-
-    $registrationPlan = [pscustomobject]@{
-        StageDirectory = $stageDirectory
-        BackupDirectory = $backupDirectory
-        WireImage = [string]$context.Wire.Image
-        PassagewayId = [string]$passageway.id
-        PassageFileName = $context.Persistence.PassageFileName
-        OriginalPassageway = $originalPassageway
-        LiveOriginalPassageway = $liveOriginalPassageway
-        LiveUpdatedPassageway = $liveUpdatedPassageway
-        LiveNewMappings = @($liveNewMappings)
-        AttemptedIds = @($liveNewMappings | ForEach-Object { [string]$_.id })
-        NewFileNames = @($newFiles.Keys)
-        BeforeMappings = @($beforeMappings)
-        InventoryCount = $inventory.Count
-        AppKey = $context.AppKey
-    }
+    $registrationPlan = New-RegistrationPlan $context $passageway $updatedPassageway $liveNewMappings $newFiles $backupDirectory $inventory.Count
     [void](Invoke-SessionRegistration $registrationPlan)
 
     try {
